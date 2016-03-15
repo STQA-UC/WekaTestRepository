@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>NNConditionalEstimator.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.estimators</a> &gt; <span class="el_source">NNConditionalEstimator.java</span></div><h1>NNConditionalEstimator.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    NNConditionalEstimator.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.estimators;
+
+import java.util.Random;
+import java.util.Vector;
+
+import weka.core.matrix.Matrix;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+
+/** 
+ * Conditional probability estimator for a numeric domain conditional upon
+ * a numeric domain (using Mahalanobis distance).
+ *
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 1.8 $
+ */
+<span class="pc" id="L39">public class NNConditionalEstimator implements ConditionalEstimator {</span>
+
+  /** Vector containing all of the values seen */
+<span class="nc" id="L42">  private Vector m_Values = new Vector();</span>
+
+  /** Vector containing all of the conditioning values seen */
+<span class="nc" id="L45">  private Vector m_CondValues = new Vector();</span>
+
+  /** Vector containing the associated weights */
+<span class="nc" id="L48">  private Vector m_Weights = new Vector();</span>
+
+  /** The sum of the weights so far */
+  private double m_SumOfWeights;
+
+  /** Current Conditional mean */
+  private double m_CondMean;
+
+  /** Current Values mean */
+  private double m_ValueMean;
+
+  /** Current covariance matrix */
+  private Matrix m_Covariance;
+
+  /** Whether we can optimise the kernel summation */
+<span class="nc" id="L63">  private boolean m_AllWeightsOne = true;</span>
+
+  /** 2 * PI */
+<span class="fc" id="L66">  private static double TWO_PI = 2 * Math.PI;</span>
+  
+  // ===============
+  // Private methods
+  // ===============
+
+  /**
+   * Execute a binary search to locate the nearest data value
+   *
+   * @param key the data value to locate
+   * @param secondaryKey the data value to locate
+   * @return the index of the nearest data value
+   */
+  private int findNearestPair(double key, double secondaryKey) {
+    
+<span class="nc" id="L81">    int low = 0; </span>
+<span class="nc" id="L82">    int high = m_CondValues.size();</span>
+<span class="nc" id="L83">    int middle = 0;</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">    while (low &lt; high) {</span>
+<span class="nc" id="L85">      middle = (low + high) / 2;</span>
+<span class="nc" id="L86">      double current = ((Double)m_CondValues.elementAt(middle)).doubleValue();</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">      if (current == key) {</span>
+<span class="nc" id="L88">	double secondary = ((Double)m_Values.elementAt(middle)).doubleValue();</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">	if (secondary == secondaryKey) {</span>
+<span class="nc" id="L90">	  return middle;</span>
+	}
+<span class="nc bnc" id="L92" title="All 2 branches missed.">	if (secondary &gt; secondaryKey) {</span>
+<span class="nc" id="L93">	  high = middle;</span>
+<span class="nc bnc" id="L94" title="All 2 branches missed.">	} else if (secondary &lt; secondaryKey) {</span>
+<span class="nc" id="L95">	  low = middle + 1;</span>
+	}
+      }
+<span class="nc bnc" id="L98" title="All 2 branches missed.">      if (current &gt; key) {</span>
+<span class="nc" id="L99">	high = middle;</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">      } else if (current &lt; key) {</span>
+<span class="nc" id="L101">	low = middle + 1;</span>
+      }
+    }
+<span class="nc" id="L104">    return low;</span>
+  }
+
+  /** Calculate covariance and value means */
+  private void calculateCovariance() {
+    
+<span class="nc" id="L110">    double sumValues = 0, sumConds = 0;</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">    for(int i = 0; i &lt; m_Values.size(); i++) {</span>
+<span class="nc" id="L112">      sumValues += ((Double)m_Values.elementAt(i)).doubleValue()</span>
+<span class="nc" id="L113">	* ((Double)m_Weights.elementAt(i)).doubleValue();</span>
+<span class="nc" id="L114">      sumConds += ((Double)m_CondValues.elementAt(i)).doubleValue()</span>
+<span class="nc" id="L115">	* ((Double)m_Weights.elementAt(i)).doubleValue();</span>
+    }
+<span class="nc" id="L117">    m_ValueMean = sumValues / m_SumOfWeights;</span>
+<span class="nc" id="L118">    m_CondMean = sumConds / m_SumOfWeights;</span>
+<span class="nc" id="L119">    double c00 = 0, c01 = 0, c10 = 0, c11 = 0;</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">    for(int i = 0; i &lt; m_Values.size(); i++) {</span>
+<span class="nc" id="L121">      double x = ((Double)m_Values.elementAt(i)).doubleValue();</span>
+<span class="nc" id="L122">      double y = ((Double)m_CondValues.elementAt(i)).doubleValue();</span>
+<span class="nc" id="L123">      double weight = ((Double)m_Weights.elementAt(i)).doubleValue();</span>
+<span class="nc" id="L124">      c00 += (x - m_ValueMean) * (x - m_ValueMean) * weight;</span>
+<span class="nc" id="L125">      c01 += (x - m_ValueMean) * (y - m_CondMean) * weight;</span>
+<span class="nc" id="L126">      c11 += (y - m_CondMean) * (y - m_CondMean) * weight;</span>
+    }
+<span class="nc" id="L128">    c00 /= (m_SumOfWeights - 1.0);</span>
+<span class="nc" id="L129">    c01 /= (m_SumOfWeights - 1.0);</span>
+<span class="nc" id="L130">    c10 = c01;</span>
+<span class="nc" id="L131">    c11 /= (m_SumOfWeights - 1.0);</span>
+<span class="nc" id="L132">    m_Covariance = new Matrix(2, 2);</span>
+<span class="nc" id="L133">    m_Covariance.set(0, 0, c00);</span>
+<span class="nc" id="L134">    m_Covariance.set(0, 1, c01);</span>
+<span class="nc" id="L135">    m_Covariance.set(1, 0, c10);</span>
+<span class="nc" id="L136">    m_Covariance.set(1, 1, c11);</span>
+<span class="nc" id="L137">  }</span>
+
+  /**
+   * Returns value for normal kernel
+   *
+   * @param x the argument to the kernel function
+   * @param variance the variance
+   * @return the value for a normal kernel
+   */
+  private double normalKernel(double x, double variance) {
+    
+<span class="nc" id="L148">    return Math.exp(-x * x / (2 * variance)) / Math.sqrt(variance * TWO_PI);</span>
+  }
+  
+  /**
+   * Add a new data value to the current estimator.
+   *
+   * @param data the new data value 
+   * @param given the new value that data is conditional upon 
+   * @param weight the weight assigned to the data value 
+   */
+  public void addValue(double data, double given, double weight) {
+    
+<span class="nc" id="L160">    int insertIndex = findNearestPair(given, data);</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">    if ((m_Values.size() &lt;= insertIndex)</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">	|| (((Double)m_CondValues.elementAt(insertIndex)).doubleValue()</span>
+<span class="nc" id="L163">	    != given)</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">	|| (((Double)m_Values.elementAt(insertIndex)).doubleValue()</span>
+<span class="nc" id="L165">	    != data)) {</span>
+<span class="nc" id="L166">      m_CondValues.insertElementAt(new Double(given), insertIndex);</span>
+<span class="nc" id="L167">      m_Values.insertElementAt(new Double(data), insertIndex);</span>
+<span class="nc" id="L168">      m_Weights.insertElementAt(new Double(weight), insertIndex);</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">      if (weight != 1) {</span>
+<span class="nc" id="L170">	m_AllWeightsOne = false;</span>
+      }
+    } else {
+<span class="nc" id="L173">      double newWeight = ((Double)m_Weights.elementAt(insertIndex))</span>
+<span class="nc" id="L174">	.doubleValue();</span>
+<span class="nc" id="L175">      newWeight += weight;</span>
+<span class="nc" id="L176">      m_Weights.setElementAt(new Double(newWeight), insertIndex);</span>
+<span class="nc" id="L177">      m_AllWeightsOne = false;      </span>
+    }
+<span class="nc" id="L179">    m_SumOfWeights += weight;</span>
+    // Invalidate any previously calculated covariance matrix
+<span class="nc" id="L181">    m_Covariance = null;</span>
+<span class="nc" id="L182">  }</span>
+
+  /**
+   * Get a probability estimator for a value
+   *
+   * @param given the new value that data is conditional upon 
+   * @return the estimator for the supplied value given the condition
+   */
+  public Estimator getEstimator(double given) {
+    
+<span class="nc bnc" id="L192" title="All 2 branches missed.">    if (m_Covariance == null) {</span>
+<span class="nc" id="L193">      calculateCovariance();</span>
+    }
+<span class="nc" id="L195">    Estimator result = new MahalanobisEstimator(m_Covariance,</span>
+<span class="nc" id="L196">						given - m_CondMean,</span>
+<span class="nc" id="L197">						m_ValueMean);</span>
+<span class="nc" id="L198">    return result;</span>
+  }
+
+  /**
+   * Get a probability estimate for a value
+   *
+   * @param data the value to estimate the probability of
+   * @param given the new value that data is conditional upon 
+   * @return the estimated probability of the supplied value
+   */
+  public double getProbability(double data, double given) {
+    
+<span class="nc" id="L210">    return getEstimator(given).getProbability(data);</span>
+  }
+
+  /** Display a representation of this estimator */
+  public String toString() {
+    
+<span class="nc bnc" id="L216" title="All 2 branches missed.">    if (m_Covariance == null) {</span>
+<span class="nc" id="L217">      calculateCovariance();</span>
+    }
+<span class="nc" id="L219">    String result = &quot;NN Conditional Estimator. &quot;</span>
+<span class="nc" id="L220">      + m_CondValues.size() </span>
+<span class="nc" id="L221">      + &quot; data points.  Mean = &quot; + Utils.doubleToString(m_ValueMean, 4, 2)</span>
+<span class="nc" id="L222">      + &quot;  Conditional mean = &quot; + Utils.doubleToString(m_CondMean, 4, 2);</span>
+<span class="nc" id="L223">    result += &quot;  Covariance Matrix: \n&quot; + m_Covariance;</span>
+<span class="nc" id="L224">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L233">    return RevisionUtils.extract(&quot;$Revision: 1.8 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain a sequence of numeric values
+   */
+  public static void main(String [] argv) {
+    
+    try {
+<span class="nc" id="L244">      int seed = 42;</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">      if (argv.length &gt; 0) {</span>
+<span class="nc" id="L246">	seed = Integer.parseInt(argv[0]);</span>
+      }
+<span class="nc" id="L248">      NNConditionalEstimator newEst = new NNConditionalEstimator();</span>
+
+      // Create 100 random points and add them
+<span class="nc" id="L251">      Random r = new Random(seed);</span>
+      
+<span class="nc" id="L253">      int numPoints = 50;</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">      if (argv.length &gt; 2) {</span>
+<span class="nc" id="L255">	numPoints = Integer.parseInt(argv[2]);</span>
+      }
+<span class="nc bnc" id="L257" title="All 2 branches missed.">      for(int i = 0; i &lt; numPoints; i++) {</span>
+<span class="nc" id="L258">	int x = Math.abs(r.nextInt() % 100);</span>
+<span class="nc" id="L259">	int y = Math.abs(r.nextInt() % 100);</span>
+<span class="nc" id="L260">	System.out.println(&quot;# &quot; + x + &quot;  &quot; + y);</span>
+<span class="nc" id="L261">	newEst.addValue(x, y, 1);</span>
+      }
+      //    System.out.println(newEst);
+      int cond;
+<span class="nc bnc" id="L265" title="All 2 branches missed.">      if (argv.length &gt; 1) {</span>
+<span class="nc" id="L266">	cond = Integer.parseInt(argv[1]);</span>
+      }
+<span class="nc" id="L268">      else cond = Math.abs(r.nextInt() % 100);</span>
+<span class="nc" id="L269">      System.out.println(&quot;## Conditional = &quot; + cond);</span>
+<span class="nc" id="L270">      Estimator result = newEst.getEstimator(cond);</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">      for(int i = 0; i &lt;= 100; i+= 5) {</span>
+<span class="nc" id="L272">	System.out.println(&quot; &quot; + i + &quot;  &quot; + result.getProbability(i));</span>
+      }
+<span class="nc" id="L274">    } catch (Exception e) {</span>
+<span class="nc" id="L275">      System.out.println(e.getMessage());</span>
+    }
+<span class="nc" id="L277">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

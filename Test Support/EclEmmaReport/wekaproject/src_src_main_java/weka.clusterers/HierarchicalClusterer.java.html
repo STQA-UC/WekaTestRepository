@@ -1,0 +1,1124 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>HierarchicalClusterer.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.clusterers</a> &gt; <span class="el_source">HierarchicalClusterer.java</span></div><h1>HierarchicalClusterer.java</h1><pre class="source lang-java linenums">/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * HierarchicalClusterer.java
+ * Copyright (C) 2009 University of Waikato, Hamilton, New Zealand
+ */
+
+package weka.clusterers;
+
+import java.io.Serializable;
+import java.text.DecimalFormat;
+import java.util.Comparator;
+import java.util.Enumeration;
+import java.util.PriorityQueue;
+import java.util.Vector;
+
+import weka.core.Capabilities;
+import weka.core.CapabilitiesHandler;
+import weka.core.DistanceFunction;
+import weka.core.Drawable;
+import weka.core.EuclideanDistance;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+
+/**
+&lt;!-- globalinfo-start --&gt;
+* Hierarchical clustering class.
+* Implements a number of classic hierarchical clustering methods.
+&lt;!-- globalinfo-end --&gt;
+* 
+&lt;!-- options-start --&gt;
+* Valid options are: &lt;p/&gt;
+* 
+* &lt;pre&gt; -N
+*  number of clusters
+* &lt;/pre&gt;
+* 
+* 
+* &lt;pre&gt; -L
+*  Link type (Single, Complete, Average, Mean, Centroid, Ward, Adjusted complete, Neighbor Joining)
+*  [SINGLE|COMPLETE|AVERAGE|MEAN|CENTROID|WARD|ADJCOMLPETE|NEIGHBOR_JOINING]
+* &lt;/pre&gt;
+* 
+* &lt;pre&gt; -A
+* Distance function to use. (default: weka.core.EuclideanDistance)
+* &lt;/pre&gt;
+*
+* &lt;pre&gt; -P
+* Print hierarchy in Newick format, which can be used for display in other programs.
+* &lt;/pre&gt;
+*  
+* &lt;pre&gt; -D
+* If set, classifier is run in debug mode and may output additional info to the console.
+* &lt;/pre&gt;
+* 
+* &lt;pre&gt; -B
+* \If set, distance is interpreted as branch length, otherwise it is node height.
+* &lt;/pre&gt;
+* 
+*&lt;!-- options-end --&gt;
+*
+* 
+* @author Remco Bouckaert (rrb@xm.co.nz, remco@cs.waikato.ac.nz)
+* @author Eibe Frank (eibe@cs.waikato.ac.nz)
+* @version $Revision: 6592 $
+*/
+<span class="pc" id="L88">public class HierarchicalClusterer extends AbstractClusterer implements OptionHandler, CapabilitiesHandler, Drawable {</span>
+  private static final long serialVersionUID = 1L;
+
+  /** Whether the classifier is run in debug mode. */
+<span class="nc" id="L92">  protected boolean m_bDebug = false;</span>
+
+  /** Whether the distance represent node height (if false) or branch length (if true). */
+<span class="nc" id="L95">  protected boolean m_bDistanceIsBranchLength = false;</span>
+
+  /** training data **/
+  Instances m_instances;
+
+  /** number of clusters desired in clustering **/
+<span class="nc" id="L101">  int m_nNumClusters = 2;</span>
+<span class="nc" id="L102">  public void setNumClusters(int nClusters) {m_nNumClusters = Math.max(1,nClusters);}</span>
+<span class="nc" id="L103">  public int getNumClusters() {return m_nNumClusters;}</span>
+
+  /** distance function used for comparing members of a cluster **/
+<span class="nc" id="L106">  protected DistanceFunction m_DistanceFunction = new EuclideanDistance();</span>
+<span class="nc" id="L107">  public DistanceFunction getDistanceFunction() {return m_DistanceFunction;}</span>
+<span class="nc" id="L108">  public void setDistanceFunction(DistanceFunction distanceFunction) {m_DistanceFunction = distanceFunction;}</span>
+
+  /** used for priority queue for efficient retrieval of pair of clusters to merge**/
+  class Tuple {
+<span class="nc" id="L112">    public Tuple(double d, int i, int j, int nSize1, int nSize2) {</span>
+<span class="nc" id="L113">      m_fDist = d;</span>
+<span class="nc" id="L114">      m_iCluster1 = i;</span>
+<span class="nc" id="L115">      m_iCluster2 = j;</span>
+<span class="nc" id="L116">      m_nClusterSize1 = nSize1;</span>
+<span class="nc" id="L117">      m_nClusterSize2 = nSize2;</span>
+<span class="nc" id="L118">    }</span>
+    double m_fDist;
+    int m_iCluster1;
+    int m_iCluster2;
+    int m_nClusterSize1;
+    int m_nClusterSize2;
+  }
+  /** comparator used by priority queue**/
+<span class="nc" id="L126">  class TupleComparator implements Comparator&lt;Tuple&gt; {</span>
+    public int compare(Tuple o1, Tuple o2) {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">      if (o1.m_fDist &lt; o2.m_fDist) {</span>
+<span class="nc" id="L129">        return -1;</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">      } else if (o1.m_fDist == o2.m_fDist) {</span>
+<span class="nc" id="L131">        return 0;</span>
+      }
+<span class="nc" id="L133">      return 1;</span>
+    }
+  }
+
+  /** the various link types */
+  final static int SINGLE = 0;
+  final static int COMPLETE = 1;
+  final static int AVERAGE = 2;
+  final static int MEAN = 3;
+  final static int CENTROID = 4;
+  final static int WARD = 5;
+  final static int ADJCOMLPETE = 6;
+  final static int NEIGHBOR_JOINING = 7;
+<span class="fc" id="L146">  public static final Tag[] TAGS_LINK_TYPE = {</span>
+<span class="fc" id="L147">    new Tag(SINGLE, &quot;SINGLE&quot;),</span>
+<span class="fc" id="L148">    new Tag(COMPLETE, &quot;COMPLETE&quot;),</span>
+<span class="fc" id="L149">    new Tag(AVERAGE, &quot;AVERAGE&quot;),</span>
+<span class="fc" id="L150">    new Tag(MEAN, &quot;MEAN&quot;),</span>
+<span class="fc" id="L151">    new Tag(CENTROID, &quot;CENTROID&quot;),</span>
+<span class="fc" id="L152">    new Tag(WARD, &quot;WARD&quot;),</span>
+<span class="fc" id="L153">    new Tag(ADJCOMLPETE,&quot;ADJCOMLPETE&quot;),</span>
+<span class="fc" id="L154">    new Tag(NEIGHBOR_JOINING,&quot;NEIGHBOR_JOINING&quot;)</span>
+  };
+
+  /**
+   * Holds the Link type used calculate distance between clusters
+   */
+<span class="nc" id="L160">  int m_nLinkType = SINGLE;</span>
+
+<span class="nc" id="L162">  boolean m_bPrintNewick = true;;</span>
+<span class="nc" id="L163">  public boolean getPrintNewick() {return m_bPrintNewick;}</span>
+<span class="nc" id="L164">  public void setPrintNewick(boolean bPrintNewick) {m_bPrintNewick = bPrintNewick;}</span>
+
+  public void setLinkType(SelectedTag newLinkType) {
+<span class="nc bnc" id="L167" title="All 2 branches missed.">    if (newLinkType.getTags() == TAGS_LINK_TYPE) {</span>
+<span class="nc" id="L168">      m_nLinkType = newLinkType.getSelectedTag().getID();</span>
+    }
+<span class="nc" id="L170">  }</span>
+
+  public SelectedTag getLinkType() {
+<span class="nc" id="L173">    return new SelectedTag(m_nLinkType, TAGS_LINK_TYPE);</span>
+  }
+
+  /** class representing node in cluster hierarchy **/
+<span class="nc" id="L177">  class Node implements Serializable {</span>
+    Node m_left;
+    Node m_right;
+    Node m_parent;
+    int m_iLeftInstance;
+    int m_iRightInstance;
+<span class="nc" id="L183">    double m_fLeftLength = 0;</span>
+<span class="nc" id="L184">    double m_fRightLength = 0;</span>
+<span class="nc" id="L185">    double m_fHeight = 0;</span>
+    public String toString(int attIndex) {
+<span class="nc" id="L187">      DecimalFormat myFormatter = new DecimalFormat(&quot;#.#####&quot;);</span>
+
+<span class="nc bnc" id="L189" title="All 2 branches missed.">      if (m_left == null) {</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">        if (m_right == null) {</span>
+<span class="nc" id="L191">          return &quot;(&quot; + m_instances.instance(m_iLeftInstance).stringValue(attIndex) + &quot;:&quot; + myFormatter.format(m_fLeftLength) + &quot;,&quot; +</span>
+<span class="nc" id="L192">          m_instances.instance(m_iRightInstance).stringValue(attIndex) +&quot;:&quot; + myFormatter.format(m_fRightLength) + &quot;)&quot;;</span>
+        } else {
+<span class="nc" id="L194">          return &quot;(&quot; + m_instances.instance(m_iLeftInstance).stringValue(attIndex) + &quot;:&quot; + myFormatter.format(m_fLeftLength) + &quot;,&quot; +</span>
+<span class="nc" id="L195">          m_right.toString(attIndex) + &quot;:&quot; + myFormatter.format(m_fRightLength) + &quot;)&quot;;</span>
+        }
+      } else {
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        if (m_right == null) {</span>
+<span class="nc" id="L199">          return &quot;(&quot; + m_left.toString(attIndex) + &quot;:&quot; + myFormatter.format(m_fLeftLength) + &quot;,&quot; +</span>
+<span class="nc" id="L200">          m_instances.instance(m_iRightInstance).stringValue(attIndex) + &quot;:&quot; + myFormatter.format(m_fRightLength) + &quot;)&quot;;</span>
+        } else {
+<span class="nc" id="L202">          return &quot;(&quot; + m_left.toString(attIndex) + &quot;:&quot; + myFormatter.format(m_fLeftLength) + &quot;,&quot; +m_right.toString(attIndex) + &quot;:&quot; + myFormatter.format(m_fRightLength) + &quot;)&quot;;</span>
+        }
+      }
+    }
+    public String toString2(int attIndex) {
+<span class="nc" id="L207">      DecimalFormat myFormatter = new DecimalFormat(&quot;#.#####&quot;);</span>
+
+<span class="nc bnc" id="L209" title="All 2 branches missed.">      if (m_left == null) {</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        if (m_right == null) {</span>
+<span class="nc" id="L211">          return &quot;(&quot; + m_instances.instance(m_iLeftInstance).value(attIndex) + &quot;:&quot; + myFormatter.format(m_fLeftLength) + &quot;,&quot; +</span>
+<span class="nc" id="L212">          m_instances.instance(m_iRightInstance).value(attIndex) +&quot;:&quot; + myFormatter.format(m_fRightLength) + &quot;)&quot;;</span>
+        } else {
+<span class="nc" id="L214">          return &quot;(&quot; + m_instances.instance(m_iLeftInstance).value(attIndex) + &quot;:&quot; + myFormatter.format(m_fLeftLength) + &quot;,&quot; +</span>
+<span class="nc" id="L215">          m_right.toString2(attIndex) + &quot;:&quot; + myFormatter.format(m_fRightLength) + &quot;)&quot;;</span>
+        }
+      } else {
+<span class="nc bnc" id="L218" title="All 2 branches missed.">        if (m_right == null) {</span>
+<span class="nc" id="L219">          return &quot;(&quot; + m_left.toString2(attIndex) + &quot;:&quot; + myFormatter.format(m_fLeftLength) + &quot;,&quot; +</span>
+<span class="nc" id="L220">          m_instances.instance(m_iRightInstance).value(attIndex) + &quot;:&quot; + myFormatter.format(m_fRightLength) + &quot;)&quot;;</span>
+        } else {
+<span class="nc" id="L222">          return &quot;(&quot; + m_left.toString2(attIndex) + &quot;:&quot; + myFormatter.format(m_fLeftLength) + &quot;,&quot; +m_right.toString2(attIndex) + &quot;:&quot; + myFormatter.format(m_fRightLength) + &quot;)&quot;;</span>
+        }
+      }
+    }
+    void setHeight(double fHeight1, double fHeight2) {
+<span class="nc" id="L227">      m_fHeight = fHeight1;</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">      if (m_left == null) {</span>
+<span class="nc" id="L229">        m_fLeftLength = fHeight1;</span>
+      } else {
+<span class="nc" id="L231">        m_fLeftLength = fHeight1 - m_left.m_fHeight;</span>
+      }
+<span class="nc bnc" id="L233" title="All 2 branches missed.">      if (m_right == null) {</span>
+<span class="nc" id="L234">        m_fRightLength = fHeight2;</span>
+      } else {
+<span class="nc" id="L236">        m_fRightLength = fHeight2 - m_right.m_fHeight;</span>
+      }
+<span class="nc" id="L238">    }</span>
+    void setLength(double fLength1, double fLength2) {
+<span class="nc" id="L240">      m_fLeftLength = fLength1;</span>
+<span class="nc" id="L241">      m_fRightLength = fLength2;</span>
+<span class="nc" id="L242">      m_fHeight = fLength1;</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">      if (m_left != null) {</span>
+<span class="nc" id="L244">        m_fHeight += m_left.m_fHeight;</span>
+      }
+<span class="nc" id="L246">    }</span>
+  }
+  Node [] m_clusters;
+  int [] m_nClusterNr;
+
+
+  @Override
+  public void buildClusterer(Instances data) throws Exception {
+    //		/System.err.println(&quot;Method &quot; + m_nLinkType);
+<span class="nc" id="L255">    m_instances = data;</span>
+<span class="nc" id="L256">    int nInstances = m_instances.numInstances();</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">    if (nInstances == 0) {</span>
+<span class="nc" id="L258">      return;</span>
+    }
+<span class="nc" id="L260">    m_DistanceFunction.setInstances(m_instances);</span>
+    // use array of integer vectors to store cluster indices,
+    // starting with one cluster per instance
+<span class="nc" id="L263">    Vector&lt;Integer&gt; [] nClusterID = new Vector[data.numInstances()];</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="nc" id="L265">      nClusterID[i] = new Vector&lt;Integer&gt;();</span>
+<span class="nc" id="L266">      nClusterID[i].add(i);</span>
+    }
+    // calculate distance matrix
+<span class="nc" id="L269">    int nClusters = data.numInstances();</span>
+
+    // used for keeping track of hierarchy
+<span class="nc" id="L272">    Node [] clusterNodes = new Node[nInstances];</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">    if (m_nLinkType == NEIGHBOR_JOINING) {</span>
+<span class="nc" id="L274">      neighborJoining(nClusters, nClusterID, clusterNodes);</span>
+    } else {
+<span class="nc" id="L276">      doLinkClustering(nClusters, nClusterID, clusterNodes);</span>
+    }
+
+    // move all clusters in m_nClusterID array
+    // &amp; collect hierarchy
+<span class="nc" id="L281">    int iCurrent = 0;</span>
+<span class="nc" id="L282">    m_clusters = new Node[m_nNumClusters];</span>
+<span class="nc" id="L283">    m_nClusterNr = new int[nInstances];</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">    for (int i = 0; i &lt; nInstances; i++) {</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">      if (nClusterID[i].size() &gt; 0) {</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">        for (int j = 0; j &lt; nClusterID[i].size(); j++) {</span>
+<span class="nc" id="L287">          m_nClusterNr[nClusterID[i].elementAt(j)] = iCurrent;</span>
+        }
+<span class="nc" id="L289">        m_clusters[iCurrent] = clusterNodes[i];</span>
+<span class="nc" id="L290">        iCurrent++;</span>
+      }
+    }
+
+<span class="nc" id="L294">  } // buildClusterer</span>
+
+  /** use neighbor joining algorithm for clustering
+   * This is roughly based on the RapidNJ simple implementation and runs at O(n^3)
+   * More efficient implementations exist, see RapidNJ (or my GPU implementation :-))
+   * @param nClusters
+   * @param nClusterID
+   * @param clusterNodes
+   */
+  void neighborJoining(int nClusters, Vector&lt;Integer&gt;[] nClusterID, Node [] clusterNodes) {
+<span class="nc" id="L304">    int n = m_instances.numInstances();</span>
+
+<span class="nc" id="L306">    double [][] fDist = new double[nClusters][nClusters];</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">    for (int i = 0; i &lt; nClusters; i++) {</span>
+<span class="nc" id="L308">      fDist[i][i] = 0;</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">      for (int j = i+1; j &lt; nClusters; j++) {</span>
+<span class="nc" id="L310">        fDist[i][j] = getDistance0(nClusterID[i], nClusterID[j]);</span>
+<span class="nc" id="L311">        fDist[j][i] = fDist[i][j];</span>
+      }
+    }
+
+<span class="nc" id="L315">    double [] fSeparationSums = new double [n];</span>
+<span class="nc" id="L316">    double [] fSeparations = new double [n];</span>
+<span class="nc" id="L317">    int [] nNextActive = new int[n];</span>
+
+    //calculate initial separation rows
+<span class="nc bnc" id="L320" title="All 2 branches missed.">    for(int i = 0; i &lt; n; i++){</span>
+<span class="nc" id="L321">      double fSum = 0;</span>
+<span class="nc bnc" id="L322" title="All 2 branches missed.">      for(int j = 0; j &lt; n; j++){</span>
+<span class="nc" id="L323">        fSum += fDist[i][j];</span>
+      }
+<span class="nc" id="L325">      fSeparationSums[i] = fSum;</span>
+<span class="nc" id="L326">      fSeparations[i] = fSum / (nClusters - 2);</span>
+<span class="nc" id="L327">      nNextActive[i] = i +1;</span>
+    }
+
+<span class="nc bnc" id="L330" title="All 2 branches missed.">    while (nClusters &gt; 2) {</span>
+      // find minimum
+<span class="nc" id="L332">      int iMin1 = -1;</span>
+<span class="nc" id="L333">      int iMin2 = -1;</span>
+<span class="nc" id="L334">      double fMin = Double.MAX_VALUE;</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">      if (m_bDebug) {</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">        for (int i = 0; i &lt; n; i++) {</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">          if(nClusterID[i].size() &gt; 0){</span>
+<span class="nc" id="L338">            double [] fRow = fDist[i];</span>
+<span class="nc" id="L339">            double fSep1 = fSeparations[i];</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">            for(int j = 0; j &lt; n; j++){</span>
+<span class="nc bnc" id="L341" title="All 4 branches missed.">              if(nClusterID[j].size() &gt; 0 &amp;&amp; i != j){</span>
+<span class="nc" id="L342">                double fSep2 = fSeparations[j];</span>
+<span class="nc" id="L343">                double fVal = fRow[j] - fSep1 - fSep2;</span>
+
+<span class="nc bnc" id="L345" title="All 2 branches missed.">                if(fVal &lt; fMin){</span>
+                  // new minimum
+<span class="nc" id="L347">                  iMin1 = i;</span>
+<span class="nc" id="L348">                  iMin2 = j;</span>
+<span class="nc" id="L349">                  fMin = fVal;</span>
+                }
+              }
+            }
+          }
+        }
+      } else {
+<span class="nc" id="L356">        int i = 0;</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        while (i &lt; n) {</span>
+<span class="nc" id="L358">          double fSep1 = fSeparations[i];</span>
+<span class="nc" id="L359">          double [] fRow = fDist[i];</span>
+<span class="nc" id="L360">          int j = nNextActive[i];</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">          while (j &lt; n) {</span>
+<span class="nc" id="L362">            double fSep2 = fSeparations[j];</span>
+<span class="nc" id="L363">            double fVal = fRow[j] - fSep1 - fSep2;</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">            if(fVal &lt; fMin){</span>
+              // new minimum
+<span class="nc" id="L366">              iMin1 = i;</span>
+<span class="nc" id="L367">              iMin2 = j;</span>
+<span class="nc" id="L368">              fMin = fVal;</span>
+            }
+<span class="nc" id="L370">            j = nNextActive[j];</span>
+          }
+<span class="nc" id="L372">          i = nNextActive[i];</span>
+        }		
+      }
+      // record distance
+<span class="nc" id="L376">      double fMinDistance = fDist[iMin1][iMin2];</span>
+<span class="nc" id="L377">      nClusters--;</span>
+<span class="nc" id="L378">      double fSep1 = fSeparations[iMin1];</span>
+<span class="nc" id="L379">      double fSep2 = fSeparations[iMin2];</span>
+<span class="nc" id="L380">      double fDist1 = (0.5 * fMinDistance) + (0.5 * (fSep1 - fSep2));</span>
+<span class="nc" id="L381">      double fDist2 = (0.5 * fMinDistance) + (0.5 * (fSep2 - fSep1));</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">      if (nClusters &gt; 2) {</span>
+        // update separations  &amp; distance
+<span class="nc" id="L384">        double fNewSeparationSum = 0;</span>
+<span class="nc" id="L385">        double fMutualDistance = fDist[iMin1][iMin2];</span>
+<span class="nc" id="L386">        double[] fRow1 = fDist[iMin1];</span>
+<span class="nc" id="L387">        double[] fRow2 = fDist[iMin2];</span>
+<span class="nc bnc" id="L388" title="All 2 branches missed.">        for(int i = 0; i &lt; n; i++) {</span>
+<span class="nc bnc" id="L389" title="All 6 branches missed.">          if(i == iMin1 || i == iMin2 || nClusterID[i].size() == 0) {</span>
+<span class="nc" id="L390">            fRow1[i] = 0;</span>
+          } else {
+<span class="nc" id="L392">            double fVal1 = fRow1[i];</span>
+<span class="nc" id="L393">            double fVal2 = fRow2[i];</span>
+<span class="nc" id="L394">            double fDistance = (fVal1 + fVal2 - fMutualDistance) / 2.0;</span>
+<span class="nc" id="L395">            fNewSeparationSum += fDistance;</span>
+            // update the separationsum of cluster i.
+<span class="nc" id="L397">            fSeparationSums[i] += (fDistance - fVal1 - fVal2);</span>
+<span class="nc" id="L398">            fSeparations[i] = fSeparationSums[i] / (nClusters -2);</span>
+<span class="nc" id="L399">            fRow1[i] = fDistance;</span>
+<span class="nc" id="L400">            fDist[i][iMin1] = fDistance;</span>
+          }
+        }
+<span class="nc" id="L403">        fSeparationSums[iMin1] = fNewSeparationSum;</span>
+<span class="nc" id="L404">        fSeparations[iMin1] = fNewSeparationSum / (nClusters - 2);</span>
+<span class="nc" id="L405">        fSeparationSums[iMin2] = 0;</span>
+<span class="nc" id="L406">        merge(iMin1, iMin2, fDist1, fDist2, nClusterID, clusterNodes);</span>
+<span class="nc" id="L407">        int iPrev = iMin2;</span>
+        // since iMin1 &lt; iMin2 we havenActiveRows[0] &gt;= 0, so the next loop should be save
+<span class="nc bnc" id="L409" title="All 2 branches missed.">        while (nClusterID[iPrev].size() == 0) {</span>
+<span class="nc" id="L410">          iPrev--;</span>
+        }
+<span class="nc" id="L412">        nNextActive[iPrev] = nNextActive[iMin2];</span>
+      } else {
+<span class="nc" id="L414">        merge(iMin1, iMin2, fDist1, fDist2, nClusterID, clusterNodes);</span>
+<span class="nc" id="L415">        break;</span>
+      }
+    }
+
+<span class="nc bnc" id="L419" title="All 2 branches missed.">    for (int i = 0; i &lt; n; i++) {</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">      if (nClusterID[i].size() &gt; 0) {</span>
+<span class="nc bnc" id="L421" title="All 2 branches missed.">        for (int j = i+1; j &lt; n; j++) {</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">          if (nClusterID[j].size() &gt; 0) {</span>
+<span class="nc" id="L423">            double fDist1 = fDist[i][j];</span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">            if(nClusterID[i].size() == 1) {</span>
+<span class="nc" id="L425">              merge(i,j,fDist1,0,nClusterID, clusterNodes);</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">            } else if (nClusterID[j].size() == 1) {</span>
+<span class="nc" id="L427">              merge(i,j,0,fDist1,nClusterID, clusterNodes);</span>
+            } else {
+<span class="nc" id="L429">              merge(i,j,fDist1/2.0,fDist1/2.0,nClusterID, clusterNodes);</span>
+            }
+<span class="nc" id="L431">            break;</span>
+          }
+        }
+      }
+    }
+<span class="nc" id="L436">  } // neighborJoining</span>
+
+  /** Perform clustering using a link method
+   * This implementation uses a priority queue resulting in a O(n^2 log(n)) algorithm
+   * @param nClusters number of clusters
+   * @param nClusterID 
+   * @param clusterNodes 
+   */
+  void doLinkClustering(int nClusters, Vector&lt;Integer&gt;[] nClusterID, Node [] clusterNodes) {
+<span class="nc" id="L445">    int nInstances = m_instances.numInstances();</span>
+<span class="nc" id="L446">    PriorityQueue&lt;Tuple&gt; queue = new PriorityQueue&lt;Tuple&gt;(nClusters*nClusters/2, new TupleComparator());</span>
+<span class="nc" id="L447">    double [][] fDistance0 = new double[nClusters][nClusters];</span>
+<span class="nc" id="L448">    double [][] fClusterDistance = null;</span>
+<span class="nc bnc" id="L449" title="All 2 branches missed.">    if (m_bDebug) {</span>
+<span class="nc" id="L450">      fClusterDistance = new double[nClusters][nClusters];</span>
+    }
+<span class="nc bnc" id="L452" title="All 2 branches missed.">    for (int i = 0; i &lt; nClusters; i++) {</span>
+<span class="nc" id="L453">      fDistance0[i][i] = 0;</span>
+<span class="nc bnc" id="L454" title="All 2 branches missed.">      for (int j = i+1; j &lt; nClusters; j++) {</span>
+<span class="nc" id="L455">        fDistance0[i][j] = getDistance0(nClusterID[i], nClusterID[j]);</span>
+<span class="nc" id="L456">        fDistance0[j][i] = fDistance0[i][j];</span>
+<span class="nc" id="L457">        queue.add(new Tuple(fDistance0[i][j], i, j, 1, 1));</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">        if (m_bDebug) {</span>
+<span class="nc" id="L459">          fClusterDistance[i][j] = fDistance0[i][j];</span>
+<span class="nc" id="L460">          fClusterDistance[j][i] = fDistance0[i][j];</span>
+        }
+      }
+    }
+<span class="nc bnc" id="L464" title="All 2 branches missed.">    while (nClusters &gt; m_nNumClusters) {</span>
+<span class="nc" id="L465">      int iMin1 = -1;</span>
+<span class="nc" id="L466">      int iMin2 = -1;</span>
+      // find closest two clusters
+<span class="nc bnc" id="L468" title="All 2 branches missed.">      if (m_bDebug) {</span>
+        /* simple but inefficient implementation */
+<span class="nc" id="L470">        double fMinDistance = Double.MAX_VALUE;</span>
+<span class="nc bnc" id="L471" title="All 2 branches missed.">        for (int i = 0; i &lt; nInstances; i++) {</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">          if (nClusterID[i].size()&gt;0) {</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">            for (int j = i+1; j &lt; nInstances; j++) {</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">              if (nClusterID[j].size()&gt;0) {</span>
+<span class="nc" id="L475">                double fDist = fClusterDistance[i][j];</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">                if (fDist &lt; fMinDistance) {</span>
+<span class="nc" id="L477">                  fMinDistance = fDist;</span>
+<span class="nc" id="L478">                  iMin1 = i;</span>
+<span class="nc" id="L479">                  iMin2 = j;</span>
+                }
+              }
+            }
+          }
+        }
+<span class="nc" id="L485">        merge(iMin1, iMin2, fMinDistance, fMinDistance, nClusterID, clusterNodes);</span>
+      } else {
+        // use priority queue to find next best pair to cluster
+        Tuple t;
+        do {
+<span class="nc" id="L490">          t = queue.poll();</span>
+<span class="nc bnc" id="L491" title="All 6 branches missed.">        } while (t!=null &amp;&amp; (nClusterID[t.m_iCluster1].size() != t.m_nClusterSize1 || nClusterID[t.m_iCluster2].size() != t.m_nClusterSize2));</span>
+<span class="nc" id="L492">        iMin1 = t.m_iCluster1;</span>
+<span class="nc" id="L493">        iMin2 = t.m_iCluster2;</span>
+<span class="nc" id="L494">        merge(iMin1, iMin2, t.m_fDist, t.m_fDist, nClusterID, clusterNodes);</span>
+      }
+      // merge  clusters
+
+      // update distances &amp; queue
+<span class="nc bnc" id="L499" title="All 2 branches missed.">      for (int i = 0; i &lt; nInstances; i++) {</span>
+<span class="nc bnc" id="L500" title="All 4 branches missed.">        if (i != iMin1 &amp;&amp; nClusterID[i].size()!=0) {</span>
+<span class="nc" id="L501">          int i1 = Math.min(iMin1,i);</span>
+<span class="nc" id="L502">          int i2 = Math.max(iMin1,i);</span>
+<span class="nc" id="L503">          double fDistance = getDistance(fDistance0, nClusterID[i1], nClusterID[i2]);</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">          if (m_bDebug) {</span>
+<span class="nc" id="L505">            fClusterDistance[i1][i2] = fDistance;</span>
+<span class="nc" id="L506">            fClusterDistance[i2][i1] = fDistance;</span>
+          }
+<span class="nc" id="L508">          queue.add(new Tuple(fDistance, i1, i2, nClusterID[i1].size(), nClusterID[i2].size()));</span>
+        }
+      }
+
+<span class="nc" id="L512">      nClusters--;</span>
+    }
+<span class="nc" id="L514">  } // doLinkClustering</span>
+
+  void merge(int iMin1, int iMin2, double fDist1, double fDist2, Vector&lt;Integer&gt;[] nClusterID, Node [] clusterNodes) {
+<span class="nc bnc" id="L517" title="All 2 branches missed.">    if (m_bDebug) {</span>
+<span class="nc" id="L518">      System.err.println(&quot;Merging &quot; + iMin1 + &quot; &quot; + iMin2 + &quot; &quot; + fDist1 + &quot; &quot; + fDist2);</span>
+    }
+<span class="nc bnc" id="L520" title="All 2 branches missed.">    if (iMin1 &gt; iMin2) {</span>
+<span class="nc" id="L521">      int h = iMin1; iMin1 = iMin2; iMin2 = h;</span>
+<span class="nc" id="L522">      double f = fDist1; fDist1 = fDist2; fDist2 = f;</span>
+    }
+<span class="nc" id="L524">    nClusterID[iMin1].addAll(nClusterID[iMin2]);</span>
+<span class="nc" id="L525">    nClusterID[iMin2].removeAllElements();</span>
+
+    // track hierarchy
+<span class="nc" id="L528">    Node node = new Node();</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">    if (clusterNodes[iMin1] == null) {</span>
+<span class="nc" id="L530">      node.m_iLeftInstance = iMin1;</span>
+    } else {
+<span class="nc" id="L532">      node.m_left = clusterNodes[iMin1];</span>
+<span class="nc" id="L533">      clusterNodes[iMin1].m_parent = node;</span>
+    }
+<span class="nc bnc" id="L535" title="All 2 branches missed.">    if (clusterNodes[iMin2] == null) {</span>
+<span class="nc" id="L536">      node.m_iRightInstance = iMin2;</span>
+    } else {
+<span class="nc" id="L538">      node.m_right = clusterNodes[iMin2];</span>
+<span class="nc" id="L539">      clusterNodes[iMin2].m_parent = node;</span>
+    }
+<span class="nc bnc" id="L541" title="All 2 branches missed.">    if (m_bDistanceIsBranchLength) {</span>
+<span class="nc" id="L542">      node.setLength(fDist1, fDist2);</span>
+    } else {
+<span class="nc" id="L544">      node.setHeight(fDist1, fDist2);</span>
+    }
+<span class="nc" id="L546">    clusterNodes[iMin1] = node;</span>
+<span class="nc" id="L547">  } // merge</span>
+
+  /** calculate distance the first time when setting up the distance matrix **/
+  double getDistance0(Vector&lt;Integer&gt; cluster1, Vector&lt;Integer&gt; cluster2) {
+<span class="nc" id="L551">    double fBestDist = Double.MAX_VALUE;</span>
+<span class="nc bnc" id="L552" title="All 3 branches missed.">    switch (m_nLinkType) {</span>
+    case SINGLE:
+    case NEIGHBOR_JOINING:
+    case CENTROID:
+    case COMPLETE:
+    case ADJCOMLPETE:
+    case AVERAGE:
+    case MEAN:
+      // set up two instances for distance function
+<span class="nc" id="L561">      Instance instance1 = (Instance) m_instances.instance(cluster1.elementAt(0)).copy();</span>
+<span class="nc" id="L562">      Instance instance2 = (Instance) m_instances.instance(cluster2.elementAt(0)).copy();</span>
+<span class="nc" id="L563">      fBestDist = m_DistanceFunction.distance(instance1, instance2);</span>
+<span class="nc" id="L564">      break;</span>
+    case WARD:
+    {
+      // finds the distance of the change in caused by merging the cluster.
+      // The information of a cluster is calculated as the error sum of squares of the
+      // centroids of the cluster and its members.
+<span class="nc" id="L570">      double ESS1 = calcESS(cluster1);</span>
+<span class="nc" id="L571">      double ESS2 = calcESS(cluster2);</span>
+<span class="nc" id="L572">      Vector&lt;Integer&gt; merged = new Vector&lt;Integer&gt;();</span>
+<span class="nc" id="L573">      merged.addAll(cluster1);</span>
+<span class="nc" id="L574">      merged.addAll(cluster2);</span>
+<span class="nc" id="L575">      double ESS = calcESS(merged);</span>
+<span class="nc" id="L576">      fBestDist = ESS * merged.size() - ESS1 * cluster1.size() - ESS2 * cluster2.size();</span>
+    }
+    break;
+    }
+<span class="nc" id="L580">    return fBestDist;</span>
+  } // getDistance0
+
+  /** calculate the distance between two clusters 
+   * @param cluster1 list of indices of instances in the first cluster
+   * @param cluster2 dito for second cluster
+   * @return distance between clusters based on link type
+   */
+  double getDistance(double [][] fDistance, Vector&lt;Integer&gt; cluster1, Vector&lt;Integer&gt; cluster2) {
+<span class="nc" id="L589">    double fBestDist = Double.MAX_VALUE;</span>
+<span class="nc bnc" id="L590" title="All 7 branches missed.">    switch (m_nLinkType) {</span>
+    case SINGLE:
+      // find single link distance aka minimum link, which is the closest distance between
+      // any item in cluster1 and any item in cluster2
+<span class="nc" id="L594">      fBestDist = Double.MAX_VALUE;</span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">      for (int i = 0; i &lt; cluster1.size(); i++) {</span>
+<span class="nc" id="L596">        int i1 = cluster1.elementAt(i);</span>
+<span class="nc bnc" id="L597" title="All 2 branches missed.">        for (int j = 0; j &lt; cluster2.size(); j++) {</span>
+<span class="nc" id="L598">          int i2  = cluster2.elementAt(j);</span>
+<span class="nc" id="L599">          double fDist = fDistance[i1][i2];</span>
+<span class="nc bnc" id="L600" title="All 2 branches missed.">          if (fBestDist &gt; fDist) {</span>
+<span class="nc" id="L601">            fBestDist = fDist;</span>
+          }
+        }
+      }
+<span class="nc" id="L605">      break;</span>
+    case COMPLETE:
+    case ADJCOMLPETE:
+      // find complete link distance aka maximum link, which is the largest distance between
+      // any item in cluster1 and any item in cluster2
+<span class="nc" id="L610">      fBestDist = 0;</span>
+<span class="nc bnc" id="L611" title="All 2 branches missed.">      for (int i = 0; i &lt; cluster1.size(); i++) {</span>
+<span class="nc" id="L612">        int i1 = cluster1.elementAt(i);</span>
+<span class="nc bnc" id="L613" title="All 2 branches missed.">        for (int j = 0; j &lt; cluster2.size(); j++) {</span>
+<span class="nc" id="L614">          int i2 = cluster2.elementAt(j);</span>
+<span class="nc" id="L615">          double fDist = fDistance[i1][i2];</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">          if (fBestDist &lt; fDist) {</span>
+<span class="nc" id="L617">            fBestDist = fDist;</span>
+          }
+        }
+      }
+<span class="nc bnc" id="L621" title="All 2 branches missed.">      if (m_nLinkType == COMPLETE) {</span>
+<span class="nc" id="L622">        break;</span>
+      }
+      // calculate adjustment, which is the largest within cluster distance
+<span class="nc" id="L625">      double fMaxDist = 0;</span>
+<span class="nc bnc" id="L626" title="All 2 branches missed.">      for (int i = 0; i &lt; cluster1.size(); i++) {</span>
+<span class="nc" id="L627">        int i1 = cluster1.elementAt(i);</span>
+<span class="nc bnc" id="L628" title="All 2 branches missed.">        for (int j = i+1; j &lt; cluster1.size(); j++) {</span>
+<span class="nc" id="L629">          int i2 = cluster1.elementAt(j);</span>
+<span class="nc" id="L630">          double fDist = fDistance[i1][i2];</span>
+<span class="nc bnc" id="L631" title="All 2 branches missed.">          if (fMaxDist &lt; fDist) {</span>
+<span class="nc" id="L632">            fMaxDist = fDist;</span>
+          }
+        }
+      }
+<span class="nc bnc" id="L636" title="All 2 branches missed.">      for (int i = 0; i &lt; cluster2.size(); i++) {</span>
+<span class="nc" id="L637">        int i1 = cluster2.elementAt(i);</span>
+<span class="nc bnc" id="L638" title="All 2 branches missed.">        for (int j = i+1; j &lt; cluster2.size(); j++) {</span>
+<span class="nc" id="L639">          int i2 = cluster2.elementAt(j);</span>
+<span class="nc" id="L640">          double fDist = fDistance[i1][i2];</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">          if (fMaxDist &lt; fDist) {</span>
+<span class="nc" id="L642">            fMaxDist = fDist;</span>
+          }
+        }
+      }
+<span class="nc" id="L646">      fBestDist -= fMaxDist;</span>
+<span class="nc" id="L647">      break;</span>
+    case AVERAGE:
+      // finds average distance between the elements of the two clusters
+<span class="nc" id="L650">      fBestDist = 0;</span>
+<span class="nc bnc" id="L651" title="All 2 branches missed.">      for (int i = 0; i &lt; cluster1.size(); i++) {</span>
+<span class="nc" id="L652">        int i1 = cluster1.elementAt(i);</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">        for (int j = 0; j &lt; cluster2.size(); j++) {</span>
+<span class="nc" id="L654">          int i2 = cluster2.elementAt(j);</span>
+<span class="nc" id="L655">          fBestDist += fDistance[i1][i2];</span>
+        }
+      }
+<span class="nc" id="L658">      fBestDist /= (cluster1.size() * cluster2.size());</span>
+<span class="nc" id="L659">      break;</span>
+    case MEAN: 
+    {
+      // calculates the mean distance of a merged cluster (akak Group-average agglomerative clustering)
+<span class="nc" id="L663">      Vector&lt;Integer&gt; merged = new Vector&lt;Integer&gt;();</span>
+<span class="nc" id="L664">      merged.addAll(cluster1);</span>
+<span class="nc" id="L665">      merged.addAll(cluster2);</span>
+<span class="nc" id="L666">      fBestDist = 0;</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">      for (int i = 0; i &lt; merged.size(); i++) {</span>
+<span class="nc" id="L668">        int i1 = merged.elementAt(i);</span>
+<span class="nc bnc" id="L669" title="All 2 branches missed.">        for (int j = i+1; j &lt; merged.size(); j++) {</span>
+<span class="nc" id="L670">          int i2 = merged.elementAt(j);</span>
+<span class="nc" id="L671">          fBestDist += fDistance[i1][i2];</span>
+        }
+      }
+<span class="nc" id="L674">      int n = merged.size();</span>
+<span class="nc" id="L675">      fBestDist /= (n*(n-1.0)/2.0);</span>
+    }
+<span class="nc" id="L677">    break;</span>
+    case CENTROID:
+      // finds the distance of the centroids of the clusters
+<span class="nc" id="L680">      double [] fValues1 = new double[m_instances.numAttributes()];</span>
+<span class="nc bnc" id="L681" title="All 2 branches missed.">      for (int i = 0; i &lt; cluster1.size(); i++) {</span>
+<span class="nc" id="L682">        Instance instance = m_instances.instance(cluster1.elementAt(i));</span>
+<span class="nc bnc" id="L683" title="All 2 branches missed.">        for (int j = 0; j &lt; m_instances.numAttributes(); j++) {</span>
+<span class="nc" id="L684">          fValues1[j] += instance.value(j);</span>
+        }
+      }
+<span class="nc" id="L687">      double [] fValues2 = new double[m_instances.numAttributes()];</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">      for (int i = 0; i &lt; cluster2.size(); i++) {</span>
+<span class="nc" id="L689">        Instance instance = m_instances.instance(cluster2.elementAt(i));</span>
+<span class="nc bnc" id="L690" title="All 2 branches missed.">        for (int j = 0; j &lt; m_instances.numAttributes(); j++) {</span>
+<span class="nc" id="L691">          fValues2[j] += instance.value(j);</span>
+        }
+      }
+<span class="nc bnc" id="L694" title="All 2 branches missed.">      for (int j = 0; j &lt; m_instances.numAttributes(); j++) {</span>
+<span class="nc" id="L695">        fValues1[j] /= cluster1.size();</span>
+<span class="nc" id="L696">        fValues2[j] /= cluster2.size();</span>
+      }
+      // set up two instances for distance function
+<span class="nc" id="L699">      Instance instance1 = (Instance) m_instances.instance(0).copy();</span>
+<span class="nc" id="L700">      Instance instance2 = (Instance) m_instances.instance(0).copy();</span>
+<span class="nc bnc" id="L701" title="All 2 branches missed.">      for (int j = 0; j &lt; m_instances.numAttributes(); j++) {</span>
+<span class="nc" id="L702">        instance1.setValue(j, fValues1[j]);</span>
+<span class="nc" id="L703">        instance2.setValue(j, fValues2[j]);</span>
+      }
+<span class="nc" id="L705">      fBestDist = m_DistanceFunction.distance(instance1, instance2);</span>
+<span class="nc" id="L706">      break;</span>
+    case WARD:
+    {
+      // finds the distance of the change in caused by merging the cluster.
+      // The information of a cluster is calculated as the error sum of squares of the
+      // centroids of the cluster and its members.
+<span class="nc" id="L712">      double ESS1 = calcESS(cluster1);</span>
+<span class="nc" id="L713">      double ESS2 = calcESS(cluster2);</span>
+<span class="nc" id="L714">      Vector&lt;Integer&gt; merged = new Vector&lt;Integer&gt;();</span>
+<span class="nc" id="L715">      merged.addAll(cluster1);</span>
+<span class="nc" id="L716">      merged.addAll(cluster2);</span>
+<span class="nc" id="L717">      double ESS = calcESS(merged);</span>
+<span class="nc" id="L718">      fBestDist = ESS * merged.size() - ESS1 * cluster1.size() - ESS2 * cluster2.size();</span>
+    }
+    break;
+    }
+<span class="nc" id="L722">    return fBestDist;</span>
+  } // getDistance
+
+  /** calculated error sum-of-squares for instances wrt centroid **/
+  double calcESS(Vector&lt;Integer&gt; cluster) {
+<span class="nc" id="L727">    double [] fValues1 = new double[m_instances.numAttributes()];</span>
+<span class="nc bnc" id="L728" title="All 2 branches missed.">    for (int i = 0; i &lt; cluster.size(); i++) {</span>
+<span class="nc" id="L729">      Instance instance = m_instances.instance(cluster.elementAt(i));</span>
+<span class="nc bnc" id="L730" title="All 2 branches missed.">      for (int j = 0; j &lt; m_instances.numAttributes(); j++) {</span>
+<span class="nc" id="L731">        fValues1[j] += instance.value(j);</span>
+      }
+    }
+<span class="nc bnc" id="L734" title="All 2 branches missed.">    for (int j = 0; j &lt; m_instances.numAttributes(); j++) {</span>
+<span class="nc" id="L735">      fValues1[j] /= cluster.size();</span>
+    }
+    // set up two instances for distance function
+<span class="nc" id="L738">    Instance centroid = (Instance) m_instances.instance(cluster.elementAt(0)).copy();</span>
+<span class="nc bnc" id="L739" title="All 2 branches missed.">    for (int j = 0; j &lt; m_instances.numAttributes(); j++) {</span>
+<span class="nc" id="L740">      centroid.setValue(j, fValues1[j]);</span>
+    }
+<span class="nc" id="L742">    double fESS = 0;</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">    for (int i = 0; i &lt; cluster.size(); i++) {</span>
+<span class="nc" id="L744">      Instance instance = m_instances.instance(cluster.elementAt(i));</span>
+<span class="nc" id="L745">      fESS += m_DistanceFunction.distance(centroid, instance);</span>
+    }
+<span class="nc" id="L747">    return fESS / cluster.size(); </span>
+  } // calcESS
+
+  @Override
+  /** instances are assigned a cluster by finding the instance in the training data 
+   * with the closest distance to the instance to be clustered. The cluster index of
+   * the training data point is taken as the cluster index.
+   */
+  public int clusterInstance(Instance instance) throws Exception {
+<span class="nc bnc" id="L756" title="All 2 branches missed.">    if (m_instances.numInstances() == 0) {</span>
+<span class="nc" id="L757">      return 0;</span>
+    }
+<span class="nc" id="L759">    double fBestDist = Double.MAX_VALUE;</span>
+<span class="nc" id="L760">    int iBestInstance = -1;</span>
+<span class="nc bnc" id="L761" title="All 2 branches missed.">    for (int i = 0; i &lt; m_instances.numInstances(); i++) {</span>
+<span class="nc" id="L762">      double fDist = m_DistanceFunction.distance(instance, m_instances.instance(i));</span>
+<span class="nc bnc" id="L763" title="All 2 branches missed.">      if (fDist &lt; fBestDist) {</span>
+<span class="nc" id="L764">        fBestDist = fDist;</span>
+<span class="nc" id="L765">        iBestInstance = i;</span>
+      }
+    }
+<span class="nc" id="L768">    return m_nClusterNr[iBestInstance];</span>
+  }
+
+  @Override
+  /** create distribution with all clusters having zero probability, except the
+   * cluster the instance is assigned to.
+   */
+  public double[] distributionForInstance(Instance instance) throws Exception {
+<span class="nc bnc" id="L776" title="All 2 branches missed.">    if (numberOfClusters() == 0) {</span>
+<span class="nc" id="L777">      double [] p = new double[1];</span>
+<span class="nc" id="L778">      p[0] = 1;</span>
+<span class="nc" id="L779">      return p;</span>
+    }
+<span class="nc" id="L781">    double [] p = new double[numberOfClusters()];</span>
+<span class="nc" id="L782">    p[clusterInstance(instance)] = 1.0;</span>
+<span class="nc" id="L783">    return p;</span>
+  }
+
+  @Override
+  public Capabilities getCapabilities() {
+<span class="nc" id="L788">    Capabilities result = new Capabilities(this);</span>
+<span class="nc" id="L789">    result.disableAll();</span>
+<span class="nc" id="L790">    result.enable(Capability.NO_CLASS);</span>
+
+    // attributes
+<span class="nc" id="L793">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L794">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L795">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="nc" id="L796">    result.enable(Capability.MISSING_VALUES);</span>
+<span class="nc" id="L797">    result.enable(Capability.STRING_ATTRIBUTES);</span>
+
+    // other
+<span class="nc" id="L800">    result.setMinimumNumberInstances(0);</span>
+<span class="nc" id="L801">    return result;</span>
+  }
+
+  @Override
+  public int numberOfClusters() throws Exception {
+<span class="nc" id="L806">    return Math.min(m_nNumClusters, m_instances.numInstances());</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="nc" id="L816">    Vector newVector = new Vector(8);</span>
+<span class="nc" id="L817">    newVector.addElement(new Option(</span>
+<span class="nc" id="L818">        &quot;\tIf set, classifier is run in debug mode and\n&quot;</span>
+        + &quot;\tmay output additional info to the console&quot;,
+<span class="nc" id="L820">        &quot;D&quot;, 0, &quot;-D&quot;));</span>
+<span class="nc" id="L821">    newVector.addElement(new Option(</span>
+<span class="nc" id="L822">        &quot;\tIf set, distance is interpreted as branch length\n&quot;</span>
+        + &quot;\totherwise it is node height.&quot;,
+<span class="nc" id="L824">        &quot;B&quot;, 0, &quot;-B&quot;));</span>
+
+<span class="nc" id="L826">    newVector.addElement(new Option(</span>
+<span class="nc" id="L827">        &quot;\tnumber of clusters&quot;,</span>
+<span class="nc" id="L828">        &quot;N&quot;, 1,&quot;-N &lt;Nr Of Clusters&gt;&quot;));</span>
+<span class="nc" id="L829">    newVector.addElement(new Option(</span>
+<span class="nc" id="L830">        &quot;\tFlag to indicate the cluster should be printed in Newick format.&quot;,</span>
+<span class="nc" id="L831">        &quot;P&quot;, 0,&quot;-P&quot;));</span>
+<span class="nc" id="L832">    newVector.addElement(</span>
+<span class="nc" id="L833">        new Option(</span>
+<span class="nc" id="L834">            &quot;Link type (Single, Complete, Average, Mean, Centroid, Ward, Adjusted complete, Neighbor joining)&quot;, &quot;L&quot;, 1,</span>
+<span class="nc" id="L835">        &quot;-L [SINGLE|COMPLETE|AVERAGE|MEAN|CENTROID|WARD|ADJCOMLPETE|NEIGHBOR_JOINING]&quot;));</span>
+<span class="nc" id="L836">    newVector.add(new Option(</span>
+<span class="nc" id="L837">        &quot;\tDistance function to use.\n&quot;</span>
+        + &quot;\t(default: weka.core.EuclideanDistance)&quot;,
+<span class="nc" id="L839">        &quot;A&quot;, 1,&quot;-A &lt;classname and options&gt;&quot;));</span>
+<span class="nc" id="L840">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+	   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+	   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="nc" id="L855">    m_bPrintNewick = Utils.getFlag('P', options);</span>
+
+<span class="nc" id="L857">    String optionString = Utils.getOption('N', options); </span>
+<span class="nc bnc" id="L858" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L859">      Integer temp = new Integer(optionString);</span>
+<span class="nc" id="L860">      setNumClusters(temp);</span>
+    }
+    else {
+<span class="nc" id="L863">      setNumClusters(2);</span>
+    }
+
+<span class="nc" id="L866">    setDebug(Utils.getFlag('D', options));</span>
+<span class="nc" id="L867">    setDistanceIsBranchLength(Utils.getFlag('B', options));</span>
+
+<span class="nc" id="L869">    String sLinkType = Utils.getOption('L', options);</span>
+
+
+<span class="nc bnc" id="L872" title="All 2 branches missed.">    if (sLinkType.compareTo(&quot;SINGLE&quot;) == 0) {setLinkType(new SelectedTag(SINGLE, TAGS_LINK_TYPE));}</span>
+<span class="nc bnc" id="L873" title="All 2 branches missed.">    if (sLinkType.compareTo(&quot;COMPLETE&quot;) == 0) {setLinkType(new SelectedTag(COMPLETE, TAGS_LINK_TYPE));}</span>
+<span class="nc bnc" id="L874" title="All 2 branches missed.">    if (sLinkType.compareTo(&quot;AVERAGE&quot;) == 0) {setLinkType(new SelectedTag(AVERAGE, TAGS_LINK_TYPE));}</span>
+<span class="nc bnc" id="L875" title="All 2 branches missed.">    if (sLinkType.compareTo(&quot;MEAN&quot;) == 0) {setLinkType(new SelectedTag(MEAN, TAGS_LINK_TYPE));}</span>
+<span class="nc bnc" id="L876" title="All 2 branches missed.">    if (sLinkType.compareTo(&quot;CENTROID&quot;) == 0) {setLinkType(new SelectedTag(CENTROID, TAGS_LINK_TYPE));}</span>
+<span class="nc bnc" id="L877" title="All 2 branches missed.">    if (sLinkType.compareTo(&quot;WARD&quot;) == 0) {setLinkType(new SelectedTag(WARD, TAGS_LINK_TYPE));}</span>
+<span class="nc bnc" id="L878" title="All 2 branches missed.">    if (sLinkType.compareTo(&quot;ADJCOMLPETE&quot;) == 0) {setLinkType(new SelectedTag(ADJCOMLPETE, TAGS_LINK_TYPE));}</span>
+<span class="nc bnc" id="L879" title="All 2 branches missed.">    if (sLinkType.compareTo(&quot;NEIGHBOR_JOINING&quot;) == 0) {setLinkType(new SelectedTag(NEIGHBOR_JOINING, TAGS_LINK_TYPE));}</span>
+
+<span class="nc" id="L881">    String nnSearchClass = Utils.getOption('A', options);</span>
+<span class="nc bnc" id="L882" title="All 2 branches missed.">    if(nnSearchClass.length() != 0) {</span>
+<span class="nc" id="L883">      String nnSearchClassSpec[] = Utils.splitOptions(nnSearchClass);</span>
+<span class="nc bnc" id="L884" title="All 2 branches missed.">      if(nnSearchClassSpec.length == 0) { </span>
+<span class="nc" id="L885">        throw new Exception(&quot;Invalid DistanceFunction specification string.&quot;); </span>
+      }
+<span class="nc" id="L887">      String className = nnSearchClassSpec[0];</span>
+<span class="nc" id="L888">      nnSearchClassSpec[0] = &quot;&quot;;</span>
+
+<span class="nc" id="L890">      setDistanceFunction( (DistanceFunction)</span>
+<span class="nc" id="L891">          Utils.forName( DistanceFunction.class, </span>
+<span class="nc" id="L892">              className, nnSearchClassSpec) );</span>
+    }
+    else {
+<span class="nc" id="L895">      setDistanceFunction(new EuclideanDistance());</span>
+    }
+
+<span class="nc" id="L898">    Utils.checkForRemainingOptions(options);</span>
+<span class="nc" id="L899">  }</span>
+
+  /**
+   * Gets the current settings of the clusterer.
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String [] getOptions() {
+
+<span class="nc" id="L908">    String [] options = new String [14];</span>
+<span class="nc" id="L909">    int current = 0;</span>
+
+<span class="nc" id="L911">    options[current++] = &quot;-N&quot;;</span>
+<span class="nc" id="L912">    options[current++] = &quot;&quot; + getNumClusters();</span>
+
+<span class="nc" id="L914">    options[current++] = &quot;-L&quot;;</span>
+<span class="nc bnc" id="L915" title="All 9 branches missed.">    switch (m_nLinkType) {</span>
+<span class="nc" id="L916">    case (SINGLE) :options[current++] = &quot;SINGLE&quot;;break;</span>
+<span class="nc" id="L917">    case (COMPLETE) :options[current++] = &quot;COMPLETE&quot;;break;</span>
+<span class="nc" id="L918">    case (AVERAGE) :options[current++] = &quot;AVERAGE&quot;;break;</span>
+<span class="nc" id="L919">    case (MEAN) :options[current++] = &quot;MEAN&quot;;break;</span>
+<span class="nc" id="L920">    case (CENTROID) :options[current++] = &quot;CENTROID&quot;;break;</span>
+<span class="nc" id="L921">    case (WARD) :options[current++] = &quot;WARD&quot;;break;</span>
+<span class="nc" id="L922">    case (ADJCOMLPETE) :options[current++] = &quot;ADJCOMLPETE&quot;;break;</span>
+<span class="nc" id="L923">    case (NEIGHBOR_JOINING) :options[current++] = &quot;NEIGHBOR_JOINING&quot;;break;</span>
+    }
+<span class="nc bnc" id="L925" title="All 2 branches missed.">    if (m_bPrintNewick) {</span>
+<span class="nc" id="L926">      options[current++] = &quot;-P&quot;;</span>
+    }
+<span class="nc bnc" id="L928" title="All 2 branches missed.">    if (getDebug()) {</span>
+<span class="nc" id="L929">      options[current++] = &quot;-D&quot;;</span>
+    }
+<span class="nc bnc" id="L931" title="All 2 branches missed.">    if (getDistanceIsBranchLength()) {</span>
+<span class="nc" id="L932">      options[current++] = &quot;-B&quot;;</span>
+    }
+
+<span class="nc" id="L935">    options[current++] = &quot;-A&quot;;</span>
+<span class="nc" id="L936">    options[current++] = (m_DistanceFunction.getClass().getName() + &quot; &quot; +</span>
+<span class="nc" id="L937">        Utils.joinOptions(m_DistanceFunction.getOptions())).trim();</span>
+
+<span class="nc bnc" id="L939" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L940">      options[current++] = &quot;&quot;;</span>
+    }
+
+<span class="nc" id="L943">    return options;</span>
+  }
+  public String toString() {
+<span class="nc" id="L946">    StringBuffer buf = new StringBuffer();</span>
+<span class="nc" id="L947">    int attIndex = m_instances.classIndex();</span>
+<span class="nc bnc" id="L948" title="All 2 branches missed.">    if (attIndex &lt; 0) {</span>
+      // try find a string, or last attribute otherwise
+<span class="nc" id="L950">      attIndex = 0;</span>
+<span class="nc bnc" id="L951" title="All 2 branches missed.">      while (attIndex &lt; m_instances.numAttributes()-1) {</span>
+<span class="nc bnc" id="L952" title="All 2 branches missed.">        if (m_instances.attribute(attIndex).isString()) {</span>
+<span class="nc" id="L953">          break;</span>
+        }
+<span class="nc" id="L955">        attIndex++;</span>
+      }
+    }
+    try {
+<span class="nc bnc" id="L959" title="All 4 branches missed.">      if (m_bPrintNewick &amp;&amp; (numberOfClusters() &gt; 0)) {</span>
+<span class="nc bnc" id="L960" title="All 2 branches missed.">        for (int i = 0; i &lt; m_clusters.length; i++) {</span>
+<span class="nc bnc" id="L961" title="All 2 branches missed.">          if (m_clusters[i] != null) {</span>
+<span class="nc" id="L962">            buf.append(&quot;Cluster &quot; + i + &quot;\n&quot;);</span>
+<span class="nc bnc" id="L963" title="All 2 branches missed.">            if (m_instances.attribute(attIndex).isString()) {</span>
+<span class="nc" id="L964">              buf.append(m_clusters[i].toString(attIndex));</span>
+            } else {
+<span class="nc" id="L966">              buf.append(m_clusters[i].toString2(attIndex));</span>
+            }
+<span class="nc" id="L968">            buf.append(&quot;\n\n&quot;);</span>
+          }
+        }
+      }
+<span class="nc" id="L972">    } catch (Exception e) {</span>
+<span class="nc" id="L973">      e.printStackTrace();</span>
+    }
+<span class="nc" id="L975">    return buf.toString();</span>
+  }
+  /**
+   * Set debugging mode.
+   *
+   * @param debug true if debug output should be printed
+   */
+  public void setDebug(boolean debug) {
+
+<span class="nc" id="L984">    m_bDebug = debug;</span>
+<span class="nc" id="L985">  }</span>
+
+  /**
+   * Get whether debugging is turned on.
+   *
+   * @return true if debugging output is on
+   */
+  public boolean getDebug() {
+
+<span class="nc" id="L994">    return m_bDebug;</span>
+  }
+
+<span class="nc" id="L997">  public boolean getDistanceIsBranchLength() {return m_bDistanceIsBranchLength;}</span>
+
+<span class="nc" id="L999">  public void setDistanceIsBranchLength(boolean bDistanceIsHeight) {m_bDistanceIsBranchLength = bDistanceIsHeight;}</span>
+
+  public String distanceIsBranchLengthTipText() {
+<span class="nc" id="L1002">    return &quot;If set to false, the distance between clusters is interpreted &quot; +</span>
+    &quot;as the height of the node linking the clusters. This is appropriate for &quot; +
+    &quot;example for single link clustering. However, for neighbor joining, the &quot; +
+    &quot;distance is better interpreted as branch length. Set this flag to &quot; +
+    &quot;get the latter interpretation.&quot;;
+  }
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String debugTipText() {
+<span class="nc" id="L1014">    return &quot;If set to true, classifier may output additional info to &quot; +</span>
+    &quot;the console.&quot;;
+  }
+  /**
+   * @return a string to describe the NumClusters
+   */
+  public String numClustersTipText() {
+<span class="nc" id="L1021">    return &quot;Sets the number of clusters. &quot; +</span>
+    &quot;If a single hierarchy is desired, set this to 1.&quot;;
+  }
+
+  /**
+   * @return a string to describe the print Newick flag
+   */
+  public String printNewickTipText() {
+<span class="nc" id="L1029">    return &quot;Flag to indicate whether the cluster should be print in Newick format.&quot; +</span>
+    &quot; This can be useful for display in other programs. However, for large datasets&quot; +
+    &quot; a lot of text may be produced, which may not be a nuisance when the Newick format&quot; +
+    &quot; is not required&quot;;
+  }
+
+  /**
+   * @return a string to describe the distance function
+   */
+  public String distanceFunctionTipText() {
+<span class="nc" id="L1039">    return &quot;Sets the distance function, which measures the distance between two individual. &quot; +</span>
+    &quot;instances (or possibly the distance between an instance and the centroid of a cluster&quot; +
+    &quot;depending on the Link type).&quot;;
+  }
+
+  /**
+   * @return a string to describe the Link type
+   */
+  public String linkTypeTipText() {
+<span class="nc" id="L1048">    return &quot;Sets the method used to measure the distance between two clusters.\n&quot; +</span>
+    &quot;SINGLE:\n&quot; +
+    &quot; find single link distance aka minimum link, which is the closest distance between&quot; +
+    &quot; any item in cluster1 and any item in cluster2\n&quot; +
+    &quot;COMPLETE:\n&quot; +
+    &quot; find complete link distance aka maximum link, which is the largest distance between&quot; +
+    &quot; any item in cluster1 and any item in cluster2\n&quot; +
+    &quot;ADJCOMLPETE:\n&quot; +
+    &quot; as COMPLETE, but with adjustment, which is the largest within cluster distance\n&quot; +
+    &quot;AVERAGE:\n&quot; +
+    &quot; finds average distance between the elements of the two clusters\n&quot; +
+    &quot;MEAN: \n&quot; +
+    &quot; calculates the mean distance of a merged cluster (akak Group-average agglomerative clustering)\n&quot; +
+    &quot;CENTROID:\n&quot; +
+    &quot; finds the distance of the centroids of the clusters\n&quot; +
+    &quot;WARD:\n&quot; +
+    &quot; finds the distance of the change in caused by merging the cluster.&quot; +
+    &quot; The information of a cluster is calculated as the error sum of squares of the&quot; +
+    &quot; centroids of the cluster and its members.\n&quot; +
+    &quot;NEIGHBOR_JOINING\n&quot; +
+    &quot; use neighbor joining algorithm.&quot;
+    ;
+  }
+
+  /**
+   * This will return a string describing the clusterer.
+   * @return The string.
+   */
+  public String globalInfo() {
+<span class="nc" id="L1077">    return </span>
+<span class="nc" id="L1078">    &quot;Hierarchical clustering class.\n&quot; +</span>
+    &quot;Implements a number of classic agglomorative (i.e. bottom up) hierarchical clustering methods&quot; +
+    &quot;based on .&quot;;
+  }
+
+  public static void main(String [] argv) {
+<span class="nc" id="L1084">    runClusterer(new HierarchicalClusterer(), argv);</span>
+<span class="nc" id="L1085">  }</span>
+
+  public String graph() throws Exception {
+<span class="nc bnc" id="L1088" title="All 2 branches missed.">    if (numberOfClusters() == 0) {</span>
+<span class="nc" id="L1089">      return &quot;Newick:(no,clusters)&quot;;</span>
+    }
+<span class="nc" id="L1091">    int attIndex = m_instances.classIndex();</span>
+<span class="nc bnc" id="L1092" title="All 2 branches missed.">    if (attIndex &lt; 0) {</span>
+      // try find a string, or last attribute otherwise
+<span class="nc" id="L1094">      attIndex = 0;</span>
+<span class="nc bnc" id="L1095" title="All 2 branches missed.">      while (attIndex &lt; m_instances.numAttributes()-1) {</span>
+<span class="nc bnc" id="L1096" title="All 2 branches missed.">        if (m_instances.attribute(attIndex).isString()) {</span>
+<span class="nc" id="L1097">          break;</span>
+        }
+<span class="nc" id="L1099">        attIndex++;</span>
+      }
+    }
+<span class="nc" id="L1102">    String sNewick = null;</span>
+<span class="nc bnc" id="L1103" title="All 2 branches missed.">    if (m_instances.attribute(attIndex).isString()) {</span>
+<span class="nc" id="L1104">      sNewick = m_clusters[0].toString(attIndex);</span>
+    } else {
+<span class="nc" id="L1106">      sNewick = m_clusters[0].toString2(attIndex);</span>
+    }
+<span class="nc" id="L1108">    return &quot;Newick:&quot; + sNewick;</span>
+  }
+
+  public int graphType() {
+<span class="nc" id="L1112">    return Drawable.Newick;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1121">    return RevisionUtils.extract(&quot;$Revision: 6592 $&quot;);</span>
+  }
+} // class HierarchicalClusterer
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

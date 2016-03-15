@@ -1,0 +1,586 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>GenericPropertiesCreator.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui</a> &gt; <span class="el_source">GenericPropertiesCreator.java</span></div><h1>GenericPropertiesCreator.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * GenericPropertiesCreator.java
+ * Copyright (C) 2005 University of Waikato, Hamilton, New Zealand
+ *
+ */
+package weka.gui;
+
+import weka.core.ClassDiscovery;
+import weka.core.Utils;
+import weka.core.ClassDiscovery.StringCompare;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.HashSet;
+import java.util.Hashtable;
+import java.util.Properties;
+import java.util.StringTokenizer;
+import java.util.Vector;
+
+/**
+ * This class can generate the properties object that is normally loaded from
+ * the &lt;code&gt;GenericObjectEditor.props&lt;/code&gt; file (= PROPERTY_FILE). It takes
+ * the &lt;code&gt;GenericPropertiesCreator.props&lt;/code&gt; file as a template to
+ * determine all the derived classes by checking the classes in the given
+ * packages (a file with the same name in your home directory overrides the
+ * the one in the weka/gui directory/package). &lt;br&gt;
+ * E.g. if we want to have all the subclasses of the &lt;code&gt;Classifier&lt;/code&gt;
+ * class then we specify the superclass (&quot;weka.classifiers.Classifier&quot;) and the
+ * packages where to look for (&quot;weka.classifiers.bayes&quot; etc.):
+ * 
+ * &lt;pre&gt;
+ * 
+ *   weka.classifiers.Classifier=\
+ *     weka.classifiers.bayes,\
+ *     weka.classifiers.functions,\
+ *     weka.classifiers.lazy,\
+ *     weka.classifiers.meta,\
+ *     weka.classifiers.trees,\
+ *     weka.classifiers.rules
+ *  
+ * &lt;/pre&gt;
+ * 
+ * This creates the same list as stored in the
+ * &lt;code&gt;GenericObjectEditor.props&lt;/code&gt; file, but it will also add
+ * additional classes, that are not listed in the static list (e.g. a newly
+ * developed Classifier), but still in the classpath. &lt;br&gt;
+ * &lt;br&gt;
+ * For discovering the subclasses the whole classpath is inspected, which means
+ * that you can have several parallel directories with the same package
+ * structure (e.g. a release directory and a developer directory with additional
+ * classes). &lt;br&gt;
+ * &lt;br&gt;
+ * The dynamic discovery can be turned off via the &lt;code&gt;UseDyanmic&lt;/code&gt;
+ * property in the props file (values: true|false).
+ * 
+ * @see #CREATOR_FILE
+ * @see #PROPERTY_FILE
+ * @see #USE_DYNAMIC
+ * @see GenericObjectEditor
+ * @see weka.core.ClassDiscovery
+ * @author FracPete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 7059 $
+ */
+<span class="fc" id="L83">public class GenericPropertiesCreator {</span>
+  
+  /** whether to output some debug information */
+  public final static boolean VERBOSE = false;
+
+  /** name of property whether to use the dynamic approach or the old 
+   * GenericObjectEditor.props file */
+  public final static String USE_DYNAMIC = &quot;UseDynamic&quot;;
+  
+  /** The name of the properties file to use as a template. Contains the 
+   * packages in which to look for derived classes. It has the same structure
+   * as the &lt;code&gt;PROPERTY_FILE&lt;/code&gt;
+   * @see #PROPERTY_FILE
+   */
+<span class="fc" id="L97">  protected static String CREATOR_FILE = &quot;weka/gui/GenericPropertiesCreator.props&quot;;</span>
+  
+  /** The name of the properties file that lists classes/interfaces/superclasses
+   * to exclude from being shown in the GUI. See the file for more information.
+   */
+<span class="fc" id="L102">  protected static String EXCLUDE_FILE = &quot;weka/gui/GenericPropertiesCreator.excludes&quot;;</span>
+
+  /** the prefix for an interface exclusion */
+<span class="fc" id="L105">  protected static String EXCLUDE_INTERFACE = &quot;I&quot;;</span>
+
+  /** the prefix for an (exact) class exclusion */
+<span class="fc" id="L108">  protected static String EXCLUDE_CLASS = &quot;C&quot;;</span>
+
+  /** the prefix for a superclass exclusion */
+<span class="fc" id="L111">  protected static String EXCLUDE_SUPERCLASS = &quot;S&quot;;</span>
+  
+  /** The name of the properties file for the static GenericObjectEditor 
+   * (&lt;code&gt;USE_DYNAMIC&lt;/code&gt; = &lt;code&gt;false&lt;/code&gt;) 
+   * @see GenericObjectEditor 
+   * @see #USE_DYNAMIC 
+   */
+<span class="fc" id="L118">  protected static String PROPERTY_FILE = &quot;weka/gui/GenericObjectEditor.props&quot;;</span>
+  
+  /** the input file with the packages */
+  protected String m_InputFilename;
+  
+  /** the output props file for the GenericObjectEditor */
+  protected String m_OutputFilename;
+  
+  /** the &quot;template&quot; properties file with the layout and the packages */
+  protected Properties m_InputProperties;
+  
+  /** the output properties file with the filled in classes */
+  protected Properties m_OutputProperties;
+  
+  /** whether an explicit input file was given - if false, the Utils class
+   * is used to locate the props-file */
+  protected boolean m_ExplicitPropsFile;
+  
+  /** the hashtable that stores the excludes: 
+   * key -&amp;gt; Hashtable(prefix -&amp;gt; Vector of classnames) */
+  protected Hashtable m_Excludes;
+  
+  /**
+   * initializes the creator, locates the props file with the Utils class.
+   * 
+   * @throws Exception if loading of CREATOR_FILE fails
+   * @see #CREATOR_FILE
+   * @see Utils#readProperties(String)
+   * @see #loadInputProperties()
+   */
+  public GenericPropertiesCreator() throws Exception {
+<span class="fc" id="L149">    this(CREATOR_FILE);</span>
+<span class="fc" id="L150">    m_ExplicitPropsFile = false;</span>
+<span class="fc" id="L151">  }</span>
+
+  /**
+   * initializes the creator, the given file overrides the props-file search
+   * of the Utils class
+   * 
+   * @param filename the file containing the packages to create a props file from
+   * @throws Exception if loading of the file fails
+   * @see #CREATOR_FILE
+   * @see Utils#readProperties(String)
+   * @see #loadInputProperties()
+   */
+  public GenericPropertiesCreator(String filename) throws Exception {
+<span class="fc" id="L164">    super();</span>
+<span class="fc" id="L165">    m_InputFilename     = filename;</span>
+<span class="fc" id="L166">    m_OutputFilename    = PROPERTY_FILE;</span>
+<span class="fc" id="L167">    m_InputProperties   = null;</span>
+<span class="fc" id="L168">    m_OutputProperties  = null;</span>
+<span class="fc" id="L169">    m_ExplicitPropsFile = true;</span>
+<span class="fc" id="L170">    m_Excludes          = new Hashtable();</span>
+<span class="fc" id="L171">  }</span>
+
+  /**
+   * if FALSE, the locating of a props-file of the Utils-class is used, 
+   * otherwise it's tried to load the specified file
+   * 
+   * @param value 	if true the specified file will be loaded not via the 
+   * 			Utils-class
+   * @see Utils#readProperties(String)
+   * @see #loadInputProperties()
+   */
+  public void setExplicitPropsFile(boolean value) {
+<span class="nc" id="L183">    m_ExplicitPropsFile = value;</span>
+<span class="nc" id="L184">  }</span>
+  
+  /**
+   * returns TRUE, if a file is loaded and not the Utils class used for 
+   * locating the props file.
+   * 
+   * @return	true if the specified file is used and not the one found by
+   * 		the Utils class
+   * @see Utils#readProperties(String)
+   * @see #loadInputProperties()
+   */
+  public boolean getExplicitPropsFile() {
+<span class="fc" id="L196">    return m_ExplicitPropsFile;</span>
+  }
+  
+  /**
+   * returns the name of the output file
+   * 
+   * @return the name of the output file 
+   */
+  public String getOutputFilename() {
+<span class="nc" id="L205">    return m_OutputFilename;</span>
+  }
+  
+  /**
+   * sets the file to output the properties for the GEO to
+   * 
+   * @param filename the filename for the output 
+   */
+  public void setOutputFilename(String filename) {
+<span class="nc" id="L214">    m_OutputFilename = filename;</span>
+<span class="nc" id="L215">  }</span>
+
+  /**
+   * returns the name of the input file
+   * 
+   * @return the name of the input file 
+   */
+  public String getInputFilename() {
+<span class="fc" id="L223">    return m_InputFilename;</span>
+  }
+  
+  /**
+   * sets the file to get the information about the packages from. 
+   * automatically sets explicitPropsFile to TRUE.
+   * 
+   * @param filename the filename for the input 
+   * @see #setExplicitPropsFile(boolean)
+   */
+  public void setInputFilename(String filename) {
+<span class="nc" id="L234">    m_InputFilename = filename;</span>
+<span class="nc" id="L235">    setExplicitPropsFile(true);</span>
+<span class="nc" id="L236">  }</span>
+  
+  /**
+   * returns the input properties object (template containing the packages)
+   * 
+   * @return		the input properties (the template)
+   */
+  public Properties getInputProperties() {
+<span class="fc" id="L244">    return m_InputProperties;</span>
+  }
+  
+  /**
+   * returns the output properties object (structure like the template, but
+   * filled with classes instead of packages)
+   * 
+   * @return		the output properties (filled with classes)
+   */
+  public Properties getOutputProperties() {
+<span class="fc" id="L254">    return m_OutputProperties;</span>
+  }
+  
+  /**
+   * loads the property file containing the layout and the packages of 
+   * the output-property-file. The exlcude property file is also read here.
+   * 
+   * @see #m_InputProperties
+   * @see #m_InputFilename
+   */
+  protected void loadInputProperties()  {
+    if (VERBOSE)
+      System.out.println(Messages.getInstance().getString(&quot;GenericPropertiesCreator_LoadInputProperties_Text_First&quot;) + getInputFilename() + Messages.getInstance().getString(&quot;GenericPropertiesCreator_LoadInputProperties_Text_Second&quot;));
+<span class="fc" id="L267">    m_InputProperties = new Properties();</span>
+    try {
+<span class="fc" id="L269">      File f = new File(getInputFilename());</span>
+<span class="pc bpc" id="L270" title="3 of 4 branches missed.">      if (getExplicitPropsFile() &amp;&amp; f.exists())</span>
+<span class="nc" id="L271">        m_InputProperties.load(new FileInputStream(getInputFilename()));</span>
+      else
+<span class="fc" id="L273">        m_InputProperties = Utils.readProperties(getInputFilename());</span>
+      
+      // excludes
+<span class="fc" id="L276">      m_Excludes.clear();</span>
+<span class="fc" id="L277">      Properties p = Utils.readProperties(EXCLUDE_FILE);</span>
+<span class="fc" id="L278">      Enumeration enm = p.propertyNames();</span>
+<span class="fc bfc" id="L279" title="All 2 branches covered.">      while (enm.hasMoreElements()) {</span>
+<span class="fc" id="L280">	String name = enm.nextElement().toString();</span>
+	// new Hashtable for key
+<span class="fc" id="L282">	Hashtable t = new Hashtable();</span>
+<span class="fc" id="L283">	m_Excludes.put(name, t);</span>
+<span class="fc" id="L284">	t.put(EXCLUDE_INTERFACE, new Vector());</span>
+<span class="fc" id="L285">	t.put(EXCLUDE_CLASS, new Vector());</span>
+<span class="fc" id="L286">	t.put(EXCLUDE_SUPERCLASS, new Vector());</span>
+	
+	// process entries
+<span class="fc" id="L289">	StringTokenizer tok = new StringTokenizer(p.getProperty(name), &quot;,&quot;);</span>
+<span class="fc bfc" id="L290" title="All 2 branches covered.">	while (tok.hasMoreTokens()) {</span>
+<span class="fc" id="L291">	  String item = tok.nextToken();</span>
+	  // get list
+<span class="fc" id="L293">	  Vector list = new Vector();</span>
+<span class="fc bfc" id="L294" title="All 2 branches covered.">	  if (item.startsWith(EXCLUDE_INTERFACE + &quot;:&quot;))</span>
+<span class="fc" id="L295">	    list = (Vector) t.get(EXCLUDE_INTERFACE);</span>
+<span class="pc bpc" id="L296" title="1 of 2 branches missed.">	  else if (item.startsWith(EXCLUDE_CLASS + &quot;:&quot;))</span>
+<span class="fc" id="L297">	    list = (Vector) t.get(EXCLUDE_CLASS);</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">	  else if (item.startsWith(EXCLUDE_SUPERCLASS))</span>
+<span class="nc" id="L299">	    list = (Vector) t.get(EXCLUDE_SUPERCLASS);</span>
+	  // add to list
+<span class="fc" id="L301">	  list.add(item.substring(item.indexOf(&quot;:&quot;) + 1));</span>
+	}
+      }
+    }
+<span class="nc" id="L305">    catch (Exception e) {</span>
+<span class="nc" id="L306">      e.printStackTrace();</span>
+    }
+<span class="fc" id="L308">  }</span>
+
+  /**
+   * gets whether the dynamic approach should be used or not
+   * 
+   * @return		true if the dynamic approach is to be used
+   */
+  public boolean useDynamic() {
+<span class="pc bpc" id="L316" title="1 of 2 branches missed.">    if (getInputProperties() == null)</span>
+<span class="fc" id="L317">      loadInputProperties();</span>
+    
+    // check our classloader against the system one - if different then
+    // return false (as dynamic classloading only works for classes discoverable
+    // in the system classpath
+<span class="pc bpc" id="L322" title="1 of 2 branches missed.">    if (!ClassLoader.getSystemClassLoader().equals(this.getClass().getClassLoader())) {</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">      if (Boolean.parseBoolean(getInputProperties().getProperty(USE_DYNAMIC, &quot;true&quot;)) == true) {</span>
+<span class="nc" id="L324">        System.out.println(Messages.getInstance().getString(&quot;GenericPropertiesCreator_UseDynamic_Text&quot;));</span>
+      }
+<span class="nc" id="L326">      return false;</span>
+    }
+    
+<span class="fc" id="L329">    return Boolean.parseBoolean(</span>
+<span class="fc" id="L330">	getInputProperties().getProperty(USE_DYNAMIC, &quot;true&quot;));</span>
+  }
+  
+  /**
+   * checks whether the classname is a valid one, i.e., from a public class
+   *
+   * @param classname   the classname to check
+   * @return            whether the classname is a valid one
+   */
+  protected boolean isValidClassname(String classname) {
+<span class="fc bfc" id="L340" title="All 2 branches covered.">    return (classname.indexOf(&quot;$&quot;) == -1);</span>
+  }
+
+  /**
+   * Checks whether the classname is a valid one for the given key. This is
+   * based on the settings in the Exclude file.
+   *
+   * @param key         the property key
+   * @param classname   the classname to check
+   * @return            whether the classname is a valid one
+   * @see		#EXCLUDE_FILE
+   */
+  protected boolean isValidClassname(String key, String classname) {
+    boolean	result;
+    Class	cls;
+    Class	clsCurrent;
+    Vector	list;
+    int		i;
+
+<span class="fc" id="L359">    result = true;</span>
+
+    // are there excludes for this key?
+<span class="fc bfc" id="L362" title="All 2 branches covered.">    if (m_Excludes.containsKey(key)) {</span>
+      try {
+<span class="fc" id="L364">	clsCurrent = Class.forName(classname);</span>
+      }
+<span class="nc" id="L366">      catch (Exception e) {</span>
+	// we ignore this Exception
+<span class="nc" id="L368">	clsCurrent = null;</span>
+      }
+      
+      // interface
+<span class="pc bpc" id="L372" title="2 of 4 branches missed.">      if ((clsCurrent != null) &amp;&amp; result) {</span>
+<span class="fc" id="L373">	list = (Vector) ((Hashtable) m_Excludes.get(key)).get(EXCLUDE_INTERFACE);</span>
+<span class="fc bfc" id="L374" title="All 2 branches covered.">	for (i = 0; i &lt; list.size(); i++) {</span>
+	  try {
+<span class="fc" id="L376">	    cls = Class.forName(list.get(i).toString());</span>
+<span class="fc bfc" id="L377" title="All 2 branches covered.">	    if (ClassDiscovery.hasInterface(cls, clsCurrent)) {</span>
+<span class="fc" id="L378">	      result = false;</span>
+<span class="fc" id="L379">	      break;</span>
+	    }
+	  }
+<span class="nc" id="L382">	  catch (Exception e) {</span>
+	    // we ignore this Exception
+	  }
+	}
+      }
+      
+      // superclass
+<span class="pc bpc" id="L389" title="1 of 4 branches missed.">      if ((clsCurrent != null) &amp;&amp; result) {</span>
+<span class="fc" id="L390">	list = (Vector) ((Hashtable) m_Excludes.get(key)).get(EXCLUDE_SUPERCLASS);</span>
+<span class="pc bpc" id="L391" title="1 of 2 branches missed.">	for (i = 0; i &lt; list.size(); i++) {</span>
+	  try {
+<span class="nc" id="L393">	    cls = Class.forName(list.get(i).toString());</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">	    if (ClassDiscovery.isSubclass(cls, clsCurrent)) {</span>
+<span class="nc" id="L395">	      result = false;</span>
+<span class="nc" id="L396">	      break;</span>
+	    }
+	  }
+<span class="nc" id="L399">	  catch (Exception e) {</span>
+	    // we ignore this Exception
+	  }
+	}
+      }
+      
+      // class
+<span class="pc bpc" id="L406" title="1 of 4 branches missed.">      if ((clsCurrent != null) &amp;&amp; result) {</span>
+<span class="fc" id="L407">	list = (Vector) ((Hashtable) m_Excludes.get(key)).get(EXCLUDE_CLASS);</span>
+<span class="fc bfc" id="L408" title="All 2 branches covered.">	for (i = 0; i &lt; list.size(); i++) {</span>
+	  try {
+<span class="fc" id="L410">	    cls = Class.forName(list.get(i).toString());</span>
+<span class="fc bfc" id="L411" title="All 2 branches covered.">	    if (cls.getName().equals(clsCurrent.getName()))</span>
+<span class="fc" id="L412">	      result = false;</span>
+	  }
+<span class="fc" id="L414">	  catch (Exception e) {</span>
+	    // we ignore this Exception
+	  }
+	}
+      }
+    }
+
+<span class="fc" id="L421">    return result;</span>
+  }
+  
+  /**
+   * fills in all the classes (based on the packages in the input properties 
+   * file) into the output properties file
+   *     
+   * @throws Exception 	if something goes wrong
+   * @see #m_OutputProperties
+   */
+  protected void generateOutputProperties() throws Exception {
+    Enumeration       keys;
+    String            key;
+    String            value;
+    String            pkg;
+    StringTokenizer   tok;
+    Vector            classes;
+    HashSet           names;
+    int               i;
+    
+<span class="fc" id="L441">    m_OutputProperties = new Properties();</span>
+<span class="fc" id="L442">    keys               = m_InputProperties.propertyNames();</span>
+<span class="fc bfc" id="L443" title="All 2 branches covered.">    while (keys.hasMoreElements()) {</span>
+<span class="fc" id="L444">      key   = keys.nextElement().toString();</span>
+<span class="fc bfc" id="L445" title="All 2 branches covered.">      if (key.equals(USE_DYNAMIC))</span>
+<span class="fc" id="L446">	continue;</span>
+<span class="fc" id="L447">      tok   = new StringTokenizer(m_InputProperties.getProperty(key), &quot;,&quot;);</span>
+<span class="fc" id="L448">      names = new HashSet();</span>
+      
+      // get classes for all packages
+<span class="fc bfc" id="L451" title="All 2 branches covered.">      while (tok.hasMoreTokens()) {</span>
+<span class="fc" id="L452">        pkg = tok.nextToken().trim();</span>
+        
+        try {
+<span class="fc" id="L455">          classes = ClassDiscovery.find(Class.forName(key), pkg);</span>
+        }
+<span class="nc" id="L457">        catch (Exception e) {</span>
+<span class="nc" id="L458">          System.out.println(Messages.getInstance().getString(&quot;GenericPropertiesCreator_GenerateOutputProperties_Text_First&quot;) + key + Messages.getInstance().getString(&quot;GenericPropertiesCreator_GenerateOutputProperties_Text_Second&quot;) + e);</span>
+<span class="nc" id="L459">          classes = new Vector();</span>
+        }
+        
+<span class="fc bfc" id="L462" title="All 2 branches covered.">        for (i = 0; i &lt; classes.size(); i++) {</span>
+          // skip non-public classes
+<span class="fc bfc" id="L464" title="All 2 branches covered.">          if (!isValidClassname(classes.get(i).toString()))</span>
+<span class="fc" id="L465">            continue;</span>
+          // some classes should not be listed for some keys
+<span class="fc bfc" id="L467" title="All 2 branches covered.">          if (!isValidClassname(key, classes.get(i).toString()))</span>
+<span class="fc" id="L468">            continue;</span>
+<span class="fc" id="L469">          names.add(classes.get(i));</span>
+        }
+      }
+      
+      // generate list
+<span class="fc" id="L474">      value   = &quot;&quot;;</span>
+<span class="fc" id="L475">      classes = new Vector();</span>
+<span class="fc" id="L476">      classes.addAll(names);</span>
+<span class="fc" id="L477">      Collections.sort(classes, new StringCompare());</span>
+<span class="fc bfc" id="L478" title="All 2 branches covered.">      for (i = 0; i &lt; classes.size(); i++) {</span>
+<span class="fc bfc" id="L479" title="All 2 branches covered.">        if (!value.equals(&quot;&quot;))</span>
+<span class="fc" id="L480">          value += &quot;,&quot;;</span>
+<span class="fc" id="L481">        value += classes.get(i).toString();</span>
+      }
+      if (VERBOSE)
+        System.out.println(pkg + &quot; -&gt; &quot; + value);
+      
+      // set value
+<span class="fc" id="L487">      m_OutputProperties.setProperty(key, value);</span>
+    }
+<span class="fc" id="L489">  }</span>
+  
+  /**
+   * stores the generated output properties file
+   * 
+   * @throws Exception	if the saving fails
+   * @see #m_OutputProperties
+   * @see #m_OutputFilename 
+   */
+  protected void storeOutputProperties() throws Exception {
+    if (VERBOSE)
+      System.out.println(Messages.getInstance().getString(&quot;GenericPropertiesCreator_StoreOutputProperties_Text_First&quot;) + getOutputFilename() + Messages.getInstance().getString(&quot;GenericPropertiesCreator_StoreOutputProperties_Text_Second&quot;));
+<span class="nc" id="L501">    m_OutputProperties.store(</span>
+<span class="nc" id="L502">        new FileOutputStream(getOutputFilename()), </span>
+<span class="nc" id="L503">        Messages.getInstance().getString(&quot;GenericPropertiesCreator_StoreOutputProperties_Text_Third&quot;));</span>
+<span class="nc" id="L504">  }</span>
+  
+  /**
+   * generates the props-file for the GenericObjectEditor and stores it
+   * 
+   * @throws Exception	if something goes wrong
+   * @see #execute(boolean)
+   */
+  public void execute() throws Exception {
+<span class="nc" id="L513">    execute(true);</span>
+<span class="nc" id="L514">  }</span>
+  
+  /**
+   * generates the props-file for the GenericObjectEditor and stores it only
+   * if the the param &lt;code&gt;store&lt;/code&gt; is TRUE. If it is FALSE then the
+   * generated properties file can be retrieved via the &lt;code&gt;getOutputProperties&lt;/code&gt;
+   * method. 
+   * 
+   * @param store     	if TRUE then the properties file is stored to the stored 
+   *                  	filename
+   * @throws Exception	if something goes wrong
+   * @see #getOutputFilename()
+   * @see #setOutputFilename(String)
+   * @see #getOutputProperties()
+   */
+  public void execute(boolean store) throws Exception {
+    // read properties file
+<span class="fc" id="L531">    loadInputProperties();</span>
+    
+    // generate the props file
+<span class="fc" id="L534">    generateOutputProperties();</span>
+    
+    // write properties file
+<span class="pc bpc" id="L537" title="1 of 2 branches missed.">    if (store)</span>
+<span class="nc" id="L538">      storeOutputProperties();</span>
+<span class="fc" id="L539">  }</span>
+  
+  /**
+   * for generating props file:
+   * &lt;ul&gt;
+   *   &lt;li&gt;
+   *     no parameter: 
+   *     see default constructor
+   *   &lt;/li&gt;
+   *   &lt;li&gt;
+   *     1 parameter (i.e., filename): 
+   *     see default constructor + setOutputFilename(String)
+   *   &lt;/li&gt;
+   *   &lt;li&gt;
+   *     2 parameters (i.e, filenames): 
+   *     see constructor with String argument + setOutputFilename(String)
+   *   &lt;/li&gt;
+   * &lt;/ul&gt;
+   *
+   * @param args	the commandline arguments
+   * @throws Exception 	if something goes wrong
+   * @see #GenericPropertiesCreator()
+   * @see #GenericPropertiesCreator(String)
+   * @see #setOutputFilename(String)
+   */
+  public static void main(String[] args) throws Exception {
+<span class="nc" id="L565">    GenericPropertiesCreator   c = null;</span>
+    
+<span class="nc bnc" id="L567" title="All 2 branches missed.">    if (args.length == 0) {</span>
+<span class="nc" id="L568">      c = new GenericPropertiesCreator();</span>
+    }
+<span class="nc bnc" id="L570" title="All 2 branches missed.">    else if (args.length == 1) {</span>
+<span class="nc" id="L571">      c = new GenericPropertiesCreator();</span>
+<span class="nc" id="L572">      c.setOutputFilename(args[0]);</span>
+    }
+<span class="nc bnc" id="L574" title="All 2 branches missed.">    else if (args.length == 2) {</span>
+<span class="nc" id="L575">      c = new GenericPropertiesCreator(args[0]);</span>
+<span class="nc" id="L576">      c.setOutputFilename(args[1]);</span>
+    }
+    else {
+<span class="nc" id="L579">      System.out.println(Messages.getInstance().getString(&quot;GenericPropertiesCreator_Main_Text_First&quot;) + GenericPropertiesCreator.class.getName() + Messages.getInstance().getString(&quot;GenericPropertiesCreator_Main_Text_Second&quot;));</span>
+<span class="nc" id="L580">      System.exit(1);</span>
+    }
+    
+<span class="nc" id="L583">    c.execute(true);</span>
+<span class="nc" id="L584">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

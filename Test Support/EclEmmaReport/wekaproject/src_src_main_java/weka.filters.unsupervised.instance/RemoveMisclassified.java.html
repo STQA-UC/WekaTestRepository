@@ -1,0 +1,741 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RemoveMisclassified.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.filters.unsupervised.instance</a> &gt; <span class="el_source">RemoveMisclassified.java</span></div><h1>RemoveMisclassified.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RemoveMisclassified.java
+ *    Copyright (C) 2002 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.filters.unsupervised.instance;
+
+import weka.classifiers.Classifier;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.filters.Filter;
+import weka.filters.UnsupervisedFilter;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * A filter that removes instances which are incorrectly classified. Useful for removing outliers.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;classifier specification&amp;gt;
+ *  Full class name of classifier to use, followed
+ *  by scheme options. eg:
+ *   &quot;weka.classifiers.bayes.NaiveBayes -D&quot;
+ *  (default: weka.classifiers.rules.ZeroR)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;class index&amp;gt;
+ *  Attribute on which misclassifications are based.
+ *  If &amp;lt; 0 will use any current set class or default to the last attribute.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -F &amp;lt;number of folds&amp;gt;
+ *  The number of folds to use for cross-validation cleansing.
+ *  (&amp;lt;2 = no cross-validation - default).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -T &amp;lt;threshold&amp;gt;
+ *  Threshold for the max error when predicting numeric class.
+ *  (Value should be &amp;gt;= 0, default = 0.1).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I
+ *  The maximum number of cleansing iterations to perform.
+ *  (&amp;lt;1 = until fully cleansed - default)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V
+ *  Invert the match so that correctly classified instances are discarded.
+ * &lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Richard Kirkby (rkirkby@cs.waikato.ac.nz)
+ * @author Malcolm Ware (mfw4@cs.waikato.ac.nz)
+ * @version $Revision: 5548 $
+ */
+<span class="nc" id="L80">public class RemoveMisclassified </span>
+  extends Filter 
+  implements UnsupervisedFilter, OptionHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = 5469157004717663171L;
+
+  /** The classifier used to do the cleansing */
+<span class="nc" id="L88">  protected Classifier m_cleansingClassifier = new weka.classifiers.rules.ZeroR();</span>
+
+  /** The attribute to treat as the class for purposes of cleansing. */
+<span class="nc" id="L91">  protected int m_classIndex = -1;</span>
+
+  /** The number of cross validation folds to perform (&amp;lt;2 = no cross validation)  */
+<span class="nc" id="L94">  protected int m_numOfCrossValidationFolds = 0;</span>
+  
+  /** The maximum number of cleansing iterations to perform (&amp;lt;1 = until fully cleansed)  */
+<span class="nc" id="L97">  protected int m_numOfCleansingIterations = 0;</span>
+
+  /** The threshold for deciding when a numeric value is correctly classified */
+<span class="nc" id="L100">  protected double m_numericClassifyThreshold = 0.1;</span>
+
+  /** Whether to invert the match so the correctly classified instances are discarded */
+<span class="nc" id="L103">  protected boolean m_invertMatching = false;</span>
+
+  /** Have we processed the first batch (i.e. training data)? */
+<span class="nc" id="L106">  protected boolean m_firstBatchFinished = false;</span>
+
+  /** 
+   * Returns the Capabilities of this filter.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+    Capabilities 	result;
+    
+<span class="nc bnc" id="L117" title="All 2 branches missed.">    if (getClassifier() == null) {</span>
+<span class="nc" id="L118">      result = super.getCapabilities();</span>
+<span class="nc" id="L119">      result.disableAll();</span>
+    } else {
+<span class="nc" id="L121">      result = getClassifier().getCapabilities();</span>
+    }
+    
+<span class="nc" id="L124">    result.setMinimumNumberInstances(0);</span>
+    
+<span class="nc" id="L126">    return result;</span>
+  }
+
+  /**
+   * Sets the format of the input instances.
+   *
+   * @param instanceInfo an Instances object containing the input instance
+   * structure (any instances contained in the object are ignored - only the
+   * structure is required).
+   * @return true if the outputFormat may be collected immediately
+   * @throws Exception if the inputFormat can't be set successfully 
+   */ 
+  public boolean setInputFormat(Instances instanceInfo) throws Exception {
+    
+<span class="nc" id="L140">    super.setInputFormat(instanceInfo);</span>
+<span class="nc" id="L141">    setOutputFormat(instanceInfo);</span>
+<span class="nc" id="L142">    m_firstBatchFinished = false;</span>
+<span class="nc" id="L143">    return true;</span>
+  }
+
+  /**
+   * Cleanses the data based on misclassifications when used training data.
+   *
+   * @param data the data to train with and cleanse
+   * @return the cleansed data
+   * @throws Exception if something goes wrong
+   */
+  private Instances cleanseTrain(Instances data) throws Exception {
+    
+    Instance inst;
+<span class="nc" id="L156">    Instances buildSet = new Instances(data);  </span>
+<span class="nc" id="L157">    Instances temp = new Instances(data, data.numInstances());</span>
+<span class="nc" id="L158">    Instances inverseSet = new Instances(data, data.numInstances()); </span>
+<span class="nc" id="L159">    int count = 0;</span>
+    double ans;
+<span class="nc" id="L161">    int iterations = 0;</span>
+<span class="nc" id="L162">    int classIndex = m_classIndex;</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">    if (classIndex &lt; 0) classIndex = data.classIndex();</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">    if (classIndex &lt; 0) classIndex = data.numAttributes()-1;</span>
+
+    // loop until perfect
+<span class="nc bnc" id="L167" title="All 2 branches missed.">    while(count != buildSet.numInstances()) {</span>
+      
+      // check if hit maximum number of iterations
+<span class="nc" id="L170">      iterations++;</span>
+<span class="nc bnc" id="L171" title="All 4 branches missed.">      if (m_numOfCleansingIterations &gt; 0 &amp;&amp; iterations &gt; m_numOfCleansingIterations) break;</span>
+
+      // build classifier
+<span class="nc" id="L174">      count = buildSet.numInstances();</span>
+<span class="nc" id="L175">      buildSet.setClassIndex(classIndex);</span>
+<span class="nc" id="L176">      m_cleansingClassifier.buildClassifier(buildSet);</span>
+
+<span class="nc" id="L178">      temp = new Instances(buildSet, buildSet.numInstances());</span>
+
+      // test on training data
+<span class="nc bnc" id="L181" title="All 2 branches missed.">      for (int i = 0; i &lt; buildSet.numInstances(); i++) {</span>
+<span class="nc" id="L182">	inst = buildSet.instance(i);</span>
+<span class="nc" id="L183">	ans = m_cleansingClassifier.classifyInstance(inst);</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">	if (buildSet.classAttribute().isNumeric()) {</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">	  if (ans &gt;= inst.classValue() - m_numericClassifyThreshold &amp;&amp;</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">	      ans &lt;= inst.classValue() + m_numericClassifyThreshold) {</span>
+<span class="nc" id="L187">	    temp.add(inst);</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">	  } else if (m_invertMatching) {</span>
+<span class="nc" id="L189">	    inverseSet.add(inst);</span>
+	  }
+	}
+	else { //class is nominal
+<span class="nc bnc" id="L193" title="All 2 branches missed.">	  if (ans == inst.classValue()) {</span>
+<span class="nc" id="L194">	    temp.add(inst);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">	  } else if (m_invertMatching) {</span>
+<span class="nc" id="L196">	    inverseSet.add(inst);</span>
+	  }
+	}
+      }
+<span class="nc" id="L200">      buildSet = temp;</span>
+    }
+
+<span class="nc bnc" id="L203" title="All 2 branches missed.">    if (m_invertMatching) {</span>
+<span class="nc" id="L204">      inverseSet.setClassIndex(data.classIndex());</span>
+<span class="nc" id="L205">      return inverseSet;</span>
+    }
+    else {
+<span class="nc" id="L208">      buildSet.setClassIndex(data.classIndex());</span>
+<span class="nc" id="L209">      return buildSet;</span>
+    }
+  }
+
+  /**
+   * Cleanses the data based on misclassifications when performing cross-validation.
+   *
+   * @param data the data to train with and cleanse
+   * @return the cleansed data
+   * @throws Exception if something goes wrong
+   */
+  private Instances cleanseCross(Instances data) throws Exception {
+    
+    Instance inst;
+<span class="nc" id="L223">    Instances crossSet = new Instances(data);</span>
+<span class="nc" id="L224">    Instances temp = new Instances(data, data.numInstances());    </span>
+<span class="nc" id="L225">    Instances inverseSet = new Instances(data, data.numInstances()); </span>
+<span class="nc" id="L226">    int count = 0;</span>
+    double ans;
+<span class="nc" id="L228">    int iterations = 0;</span>
+<span class="nc" id="L229">    int classIndex = m_classIndex;</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">    if (classIndex &lt; 0) classIndex = data.classIndex();</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">    if (classIndex &lt; 0) classIndex = data.numAttributes()-1;</span>
+
+    // loop until perfect
+<span class="nc bnc" id="L234" title="All 2 branches missed.">    while (count != crossSet.numInstances() &amp;&amp; </span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">	   crossSet.numInstances() &gt;= m_numOfCrossValidationFolds) {</span>
+
+<span class="nc" id="L237">      count = crossSet.numInstances();</span>
+      
+      // check if hit maximum number of iterations
+<span class="nc" id="L240">      iterations++;</span>
+<span class="nc bnc" id="L241" title="All 4 branches missed.">      if (m_numOfCleansingIterations &gt; 0 &amp;&amp; iterations &gt; m_numOfCleansingIterations) break;</span>
+
+<span class="nc" id="L243">      crossSet.setClassIndex(classIndex);</span>
+
+<span class="nc bnc" id="L245" title="All 2 branches missed.">      if (crossSet.classAttribute().isNominal()) {</span>
+<span class="nc" id="L246">	crossSet.stratify(m_numOfCrossValidationFolds);</span>
+      }
+      // do the folds
+<span class="nc" id="L249">      temp = new Instances(crossSet, crossSet.numInstances());</span>
+      
+<span class="nc bnc" id="L251" title="All 2 branches missed.">      for (int fold = 0; fold &lt; m_numOfCrossValidationFolds; fold++) {</span>
+<span class="nc" id="L252">	Instances train = crossSet.trainCV(m_numOfCrossValidationFolds, fold);</span>
+<span class="nc" id="L253">	m_cleansingClassifier.buildClassifier(train);</span>
+<span class="nc" id="L254">	Instances test = crossSet.testCV(m_numOfCrossValidationFolds, fold);</span>
+	//now test
+<span class="nc bnc" id="L256" title="All 2 branches missed.">	for (int i = 0; i &lt; test.numInstances(); i++) {</span>
+<span class="nc" id="L257">	  inst = test.instance(i);</span>
+<span class="nc" id="L258">	  ans = m_cleansingClassifier.classifyInstance(inst);</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">	  if (crossSet.classAttribute().isNumeric()) {</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">	    if (ans &gt;= inst.classValue() - m_numericClassifyThreshold &amp;&amp;</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">		ans &lt;= inst.classValue() + m_numericClassifyThreshold) {</span>
+<span class="nc" id="L262">	      temp.add(inst);</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">	    } else if (m_invertMatching) {</span>
+<span class="nc" id="L264">	      inverseSet.add(inst);</span>
+	    }
+	  }
+	  else { //class is nominal
+<span class="nc bnc" id="L268" title="All 2 branches missed.">	    if (ans == inst.classValue()) {</span>
+<span class="nc" id="L269">	      temp.add(inst);</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">	    } else if (m_invertMatching) {</span>
+<span class="nc" id="L271">	      inverseSet.add(inst);</span>
+	    }
+	  }
+	}
+      }
+<span class="nc" id="L276">      crossSet = temp;</span>
+    }
+
+<span class="nc bnc" id="L279" title="All 2 branches missed.">    if (m_invertMatching) {</span>
+<span class="nc" id="L280">      inverseSet.setClassIndex(data.classIndex());</span>
+<span class="nc" id="L281">      return inverseSet;</span>
+    }
+    else {
+<span class="nc" id="L284">      crossSet.setClassIndex(data.classIndex());</span>
+<span class="nc" id="L285">      return crossSet;</span>
+    }
+
+  }
+ 
+  /**
+   * Input an instance for filtering.
+   *
+   * @param instance the input instance
+   * @return true if the filtered instance may now be
+   * collected with output().
+   * @throws NullPointerException if the input format has not been
+   * defined.
+   * @throws Exception if the input instance was not of the correct 
+   * format or if there was a problem with the filtering.  
+   */
+  public boolean input(Instance instance) throws Exception {
+
+<span class="nc bnc" id="L303" title="All 2 branches missed.">    if (inputFormatPeek() == null) {</span>
+<span class="nc" id="L304">      throw new NullPointerException(&quot;No input instance format defined&quot;);</span>
+    }
+
+<span class="nc bnc" id="L307" title="All 2 branches missed.">    if (m_NewBatch) {</span>
+<span class="nc" id="L308">      resetQueue();</span>
+<span class="nc" id="L309">      m_NewBatch = false;</span>
+    }
+<span class="nc bnc" id="L311" title="All 2 branches missed.">    if (m_firstBatchFinished) {</span>
+<span class="nc" id="L312">      push(instance);</span>
+<span class="nc" id="L313">      return true;</span>
+    } else {
+<span class="nc" id="L315">      bufferInput(instance);</span>
+<span class="nc" id="L316">      return false;</span>
+    }
+  }
+ 
+  /**
+   * Signify that this batch of input to the filter is finished.
+   *
+   * @return true if there are instances pending output
+   * @throws IllegalStateException if no input structure has been defined 
+   */  
+  public boolean batchFinished() throws Exception {
+
+<span class="nc bnc" id="L328" title="All 2 branches missed.">    if (getInputFormat() == null) {</span>
+<span class="nc" id="L329">      throw new IllegalStateException(&quot;No input instance format defined&quot;);</span>
+    }
+
+<span class="nc bnc" id="L332" title="All 2 branches missed.">    if (!m_firstBatchFinished) {</span>
+
+      Instances filtered;
+<span class="nc bnc" id="L335" title="All 2 branches missed.">      if (m_numOfCrossValidationFolds &lt; 2) {</span>
+<span class="nc" id="L336">	filtered = cleanseTrain(getInputFormat());</span>
+      } else {
+<span class="nc" id="L338">	filtered = cleanseCross(getInputFormat());</span>
+      }
+      
+<span class="nc bnc" id="L341" title="All 2 branches missed.">      for (int i=0; i&lt;filtered.numInstances(); i++) {</span>
+<span class="nc" id="L342">	push(filtered.instance(i));</span>
+      }
+      
+<span class="nc" id="L345">      m_firstBatchFinished = true;</span>
+<span class="nc" id="L346">      flushInput();</span>
+    }
+<span class="nc" id="L348">    m_NewBatch = true;</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">    return (numPendingOutput() != 0);</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+    
+<span class="nc" id="L359">    Vector newVector = new Vector(6);</span>
+    
+<span class="nc" id="L361">    newVector.addElement(new Option(</span>
+<span class="nc" id="L362">	      &quot;\tFull class name of classifier to use, followed\n&quot;</span>
+	      + &quot;\tby scheme options. eg:\n&quot;
+	      + &quot;\t\t\&quot;weka.classifiers.bayes.NaiveBayes -D\&quot;\n&quot;
+	      + &quot;\t(default: weka.classifiers.rules.ZeroR)&quot;,
+<span class="nc" id="L366">	      &quot;W&quot;, 1, &quot;-W &lt;classifier specification&gt;&quot;));</span>
+<span class="nc" id="L367">    newVector.addElement(new Option(</span>
+<span class="nc" id="L368">	      &quot;\tAttribute on which misclassifications are based.\n&quot;</span>
+	      + &quot;\tIf &lt; 0 will use any current set class or default to the last attribute.&quot;,
+<span class="nc" id="L370">	      &quot;C&quot;, 1, &quot;-C &lt;class index&gt;&quot;));</span>
+<span class="nc" id="L371">    newVector.addElement(new Option(</span>
+<span class="nc" id="L372">	      &quot;\tThe number of folds to use for cross-validation cleansing.\n&quot;</span>
+	      +&quot;\t(&lt;2 = no cross-validation - default).&quot;,
+<span class="nc" id="L374">	      &quot;F&quot;, 1, &quot;-F &lt;number of folds&gt;&quot;));</span>
+<span class="nc" id="L375">    newVector.addElement(new Option(</span>
+<span class="nc" id="L376">	      &quot;\tThreshold for the max error when predicting numeric class.\n&quot;</span>
+	      +&quot;\t(Value should be &gt;= 0, default = 0.1).&quot;,
+<span class="nc" id="L378">	      &quot;T&quot;, 1, &quot;-T &lt;threshold&gt;&quot;));</span>
+<span class="nc" id="L379">    newVector.addElement(new Option(</span>
+<span class="nc" id="L380">	      &quot;\tThe maximum number of cleansing iterations to perform.\n&quot;</span>
+	      +&quot;\t(&lt;1 = until fully cleansed - default)&quot;,
+<span class="nc" id="L382">	      &quot;I&quot;, 1,&quot;-I&quot;));</span>
+<span class="nc" id="L383">    newVector.addElement(new Option(</span>
+<span class="nc" id="L384">	      &quot;\tInvert the match so that correctly classified instances are discarded.\n&quot;,</span>
+<span class="nc" id="L385">	      &quot;V&quot;, 0,&quot;-V&quot;));</span>
+    
+<span class="nc" id="L387">    return newVector.elements();</span>
+  }
+
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;classifier specification&amp;gt;
+   *  Full class name of classifier to use, followed
+   *  by scheme options. eg:
+   *   &quot;weka.classifiers.bayes.NaiveBayes -D&quot;
+   *  (default: weka.classifiers.rules.ZeroR)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;class index&amp;gt;
+   *  Attribute on which misclassifications are based.
+   *  If &amp;lt; 0 will use any current set class or default to the last attribute.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -F &amp;lt;number of folds&amp;gt;
+   *  The number of folds to use for cross-validation cleansing.
+   *  (&amp;lt;2 = no cross-validation - default).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -T &amp;lt;threshold&amp;gt;
+   *  Threshold for the max error when predicting numeric class.
+   *  (Value should be &amp;gt;= 0, default = 0.1).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -I
+   *  The maximum number of cleansing iterations to perform.
+   *  (&amp;lt;1 = until fully cleansed - default)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V
+   *  Invert the match so that correctly classified instances are discarded.
+   * &lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="nc" id="L430">    String classifierString = Utils.getOption('W', options);</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">    if (classifierString.length() == 0)</span>
+<span class="nc" id="L432">      classifierString = weka.classifiers.rules.ZeroR.class.getName();</span>
+<span class="nc" id="L433">    String[] classifierSpec = Utils.splitOptions(classifierString);</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">    if (classifierSpec.length == 0) {</span>
+<span class="nc" id="L435">      throw new Exception(&quot;Invalid classifier specification string&quot;);</span>
+    }
+<span class="nc" id="L437">    String classifierName = classifierSpec[0];</span>
+<span class="nc" id="L438">    classifierSpec[0] = &quot;&quot;;</span>
+<span class="nc" id="L439">    setClassifier(Classifier.forName(classifierName, classifierSpec));</span>
+
+<span class="nc" id="L441">    String cString = Utils.getOption('C', options);</span>
+<span class="nc bnc" id="L442" title="All 2 branches missed.">    if (cString.length() != 0) {</span>
+<span class="nc" id="L443">      setClassIndex((new Double(cString)).intValue());</span>
+    } else {
+<span class="nc" id="L445">      setClassIndex(-1);</span>
+    }
+
+<span class="nc" id="L448">    String fString = Utils.getOption('F', options);</span>
+<span class="nc bnc" id="L449" title="All 2 branches missed.">    if (fString.length() != 0) {</span>
+<span class="nc" id="L450">      setNumFolds((new Double(fString)).intValue());</span>
+    } else {
+<span class="nc" id="L452">      setNumFolds(0);</span>
+    }
+
+<span class="nc" id="L455">    String tString = Utils.getOption('T', options);</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">    if (tString.length() != 0) {</span>
+<span class="nc" id="L457">      setThreshold((new Double(tString)).doubleValue());</span>
+    } else {
+<span class="nc" id="L459">      setThreshold(0.1);</span>
+    }
+
+<span class="nc" id="L462">    String iString = Utils.getOption('I', options);</span>
+<span class="nc bnc" id="L463" title="All 2 branches missed.">    if (iString.length() != 0) {</span>
+<span class="nc" id="L464">      setMaxIterations((new Double(iString)).intValue());</span>
+    } else {
+<span class="nc" id="L466">      setMaxIterations(0);</span>
+    }
+    
+<span class="nc bnc" id="L469" title="All 2 branches missed.">    if (Utils.getFlag('V', options)) {</span>
+<span class="nc" id="L470">      setInvert(true);</span>
+    } else {
+<span class="nc" id="L472">      setInvert(false);</span>
+    }
+        
+<span class="nc" id="L475">    Utils.checkForRemainingOptions(options);</span>
+
+<span class="nc" id="L477">  }</span>
+
+  /**
+   * Gets the current settings of the filter.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+
+<span class="nc" id="L486">    String [] options = new String [15];</span>
+<span class="nc" id="L487">    int current = 0;</span>
+
+<span class="nc" id="L489">    options[current++] = &quot;-W&quot;; options[current++] = &quot;&quot; + getClassifierSpec();</span>
+<span class="nc" id="L490">    options[current++] = &quot;-C&quot;; options[current++] = &quot;&quot; + getClassIndex();</span>
+<span class="nc" id="L491">    options[current++] = &quot;-F&quot;; options[current++] = &quot;&quot; + getNumFolds();</span>
+<span class="nc" id="L492">    options[current++] = &quot;-T&quot;; options[current++] = &quot;&quot; + getThreshold();</span>
+<span class="nc" id="L493">    options[current++] = &quot;-I&quot;; options[current++] = &quot;&quot; + getMaxIterations();</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">    if (getInvert()) {</span>
+<span class="nc" id="L495">      options[current++] = &quot;-V&quot;;</span>
+    }
+    
+<span class="nc bnc" id="L498" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L499">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="nc" id="L501">    return options;</span>
+  }
+
+  /**
+   * Returns a string describing this filter
+   *
+   * @return a description of the filter suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L511">    return </span>
+<span class="nc" id="L512">        &quot;A filter that removes instances which are incorrectly classified. &quot;</span>
+      + &quot;Useful for removing outliers.&quot;;
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String classifierTipText() {
+
+<span class="nc" id="L524">    return &quot;The classifier upon which to base the misclassifications.&quot;;</span>
+  }
+
+  /**
+   * Sets the classifier to classify instances with.
+   *
+   * @param classifier The classifier to be used (with its options set).
+   */
+  public void setClassifier(Classifier classifier) {
+
+<span class="nc" id="L534">    m_cleansingClassifier = classifier;</span>
+<span class="nc" id="L535">  }</span>
+  
+  /**
+   * Gets the classifier used by the filter.
+   *
+   * @return The classifier to be used.
+   */
+  public Classifier getClassifier() {
+
+<span class="nc" id="L544">    return m_cleansingClassifier;</span>
+  }
+
+  /**
+   * Gets the classifier specification string, which contains the class name of
+   * the classifier and any options to the classifier.
+   *
+   * @return the classifier string.
+   */
+  protected String getClassifierSpec() {
+    
+<span class="nc" id="L555">    Classifier c = getClassifier();</span>
+<span class="nc bnc" id="L556" title="All 2 branches missed.">    if (c instanceof OptionHandler) {</span>
+<span class="nc" id="L557">      return c.getClass().getName() + &quot; &quot;</span>
+<span class="nc" id="L558">	+ Utils.joinOptions(((OptionHandler)c).getOptions());</span>
+    }
+<span class="nc" id="L560">    return c.getClass().getName();</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String classIndexTipText() {
+
+<span class="nc" id="L571">    return &quot;Index of the class upon which to base the misclassifications. &quot;</span>
+      + &quot;If &lt; 0 will use any current set class or default to the last attribute.&quot;;
+  }
+
+  /**
+   * Sets the attribute on which misclassifications are based.
+   * If &amp;lt; 0 will use any current set class or default to the last attribute.
+   *
+   * @param classIndex the class index.
+   */
+  public void setClassIndex(int classIndex) {
+    
+<span class="nc" id="L583">    m_classIndex = classIndex;</span>
+<span class="nc" id="L584">  }</span>
+
+  /**
+   * Gets the attribute on which misclassifications are based.
+   *
+   * @return the class index.
+   */
+  public int getClassIndex() {
+
+<span class="nc" id="L593">    return m_classIndex;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numFoldsTipText() {
+
+<span class="nc" id="L604">    return &quot;The number of cross-validation folds to use. If &lt; 2 then no cross-validation will be performed.&quot;;</span>
+  }
+
+  /**
+   * Sets the number of cross-validation folds to use
+   * - &amp;lt; 2 means no cross-validation.
+   *
+   * @param numOfFolds the number of folds.
+   */
+  public void setNumFolds(int numOfFolds) {
+    
+<span class="nc" id="L615">    m_numOfCrossValidationFolds = numOfFolds;</span>
+<span class="nc" id="L616">  }</span>
+
+  /**
+   * Gets the number of cross-validation folds used by the filter.
+   *
+   * @return the number of folds.
+   */
+  public int getNumFolds() {
+
+<span class="nc" id="L625">    return m_numOfCrossValidationFolds;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String thresholdTipText() {
+
+<span class="nc" id="L636">    return &quot;Threshold for the max allowable error when predicting a numeric class. Should be &gt;= 0.&quot;;</span>
+  }
+
+  /**
+   * Sets the threshold for the max error when predicting a numeric class.
+   * The value should be &amp;gt;= 0.
+   *
+   * @param threshold the numeric theshold.
+   */
+  public void setThreshold(double threshold) {
+    
+<span class="nc" id="L647">    m_numericClassifyThreshold = threshold;</span>
+<span class="nc" id="L648">  }</span>
+
+  /**
+   * Gets the threshold for the max error when predicting a numeric class.
+   *
+   * @return the numeric threshold.
+   */
+  public double getThreshold() {
+
+<span class="nc" id="L657">    return m_numericClassifyThreshold;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String maxIterationsTipText() {
+
+<span class="nc" id="L668">    return &quot;The maximum number of iterations to perform. &lt; 1 means filter will go until fully cleansed.&quot;;</span>
+  }
+
+  /**
+   * Sets the maximum number of cleansing iterations to perform
+   * - &amp;lt; 1 means go until fully cleansed
+   *
+   * @param iterations the maximum number of iterations.
+   */
+  public void setMaxIterations(int iterations) {
+    
+<span class="nc" id="L679">    m_numOfCleansingIterations = iterations;</span>
+<span class="nc" id="L680">  }</span>
+
+  /**
+   * Gets the maximum number of cleansing iterations performed
+   *
+   * @return the maximum number of iterations. 
+   */
+  public int getMaxIterations() {
+
+<span class="nc" id="L689">    return m_numOfCleansingIterations;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String invertTipText() {
+
+<span class="nc" id="L700">    return &quot;Whether or not to invert the selection. If true, correctly classified instances will be discarded.&quot;;</span>
+  }
+
+  /**
+   * Set whether selection is inverted.
+   *
+   * @param invert whether or not to invert selection.
+   */
+  public void setInvert(boolean invert) {
+    
+<span class="nc" id="L710">    m_invertMatching = invert;</span>
+<span class="nc" id="L711">  }</span>
+
+  /**
+   * Get whether selection is inverted.
+   *
+   * @return whether or not selection is inverted.
+   */
+  public boolean getInvert() {
+    
+<span class="nc" id="L720">    return m_invertMatching;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L729">    return RevisionUtils.extract(&quot;$Revision: 5548 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain arguments to the filter: use -h for help
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L738">    runFilter(new RemoveMisclassified(), argv);</span>
+<span class="nc" id="L739">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

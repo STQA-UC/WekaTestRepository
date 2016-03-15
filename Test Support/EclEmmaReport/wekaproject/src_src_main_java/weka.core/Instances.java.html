@@ -1,0 +1,2082 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Instances.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core</a> &gt; <span class="el_source">Instances.java</span></div><h1>Instances.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Instances.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.core;
+
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.Reader;
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.HashSet;
+import java.util.Random;
+
+import weka.core.converters.ArffLoader.ArffReader;
+import weka.core.converters.ConverterUtils.DataSource;
+
+/**
+ * Class for handling an ordered set of weighted instances.
+ * &lt;p&gt;
+ * 
+ * Typical usage:
+ * &lt;p&gt;
+ * 
+ * &lt;pre&gt;
+ * import weka.core.converters.ConverterUtils.DataSource;
+ * ...
+ * 
+ * // Read all the instances in the file (ARFF, CSV, XRFF, ...)
+ * DataSource source = new DataSource(filename);
+ * Instances instances = source.getDataSet();
+ * 
+ * // Make the last attribute be the class
+ * instances.setClassIndex(instances.numAttributes() - 1);
+ * 
+ * // Print header and instances.
+ * System.out.println(&quot;\nDataset:\n&quot;);
+ * System.out.println(instances);
+ * 
+ * ...
+ * &lt;/pre&gt;
+ * &lt;p&gt;
+ * 
+ * All methods that change a set of instances are safe, ie. a change of a set of
+ * instances does not affect any other sets of instances. All methods that
+ * change a datasets's attribute information clone the dataset before it is
+ * changed.
+ * 
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @author FracPete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 9764 $
+ */
+public class Instances implements Serializable, RevisionHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -19412345060742748L;
+
+  /** The filename extension that should be used for arff files */
+  public final static String FILE_EXTENSION = &quot;.arff&quot;;
+
+  /**
+   * The filename extension that should be used for bin. serialized instances
+   * files
+   */
+  public final static String SERIALIZED_OBJ_FILE_EXTENSION = &quot;.bsi&quot;;
+
+  /** The keyword used to denote the start of an arff header */
+  public final static String ARFF_RELATION = &quot;@relation&quot;;
+
+  /** The keyword used to denote the start of the arff data section */
+  public final static String ARFF_DATA = &quot;@data&quot;;
+
+  /** The dataset's name. */
+  protected/* @spec_public non_null@ */String m_RelationName;
+
+  /** The attribute information. */
+  protected/* @spec_public non_null@ */FastVector m_Attributes;
+  /*
+   * public invariant (\forall int i; 0 &lt;= i &amp;&amp; i &lt; m_Attributes.size();
+   * m_Attributes.elementAt(i) != null);
+   */
+
+  /** The instances. */
+  protected/* @spec_public non_null@ */FastVector m_Instances;
+
+  /** The class attribute's index */
+  protected int m_ClassIndex;
+  // @ protected invariant classIndex() == m_ClassIndex;
+
+  /**
+   * The lines read so far in case of incremental loading. Since the
+   * StreamTokenizer will be re-initialized with every instance that is read, we
+   * have to keep track of the number of lines read so far.
+   * 
+   * @see #readInstance(Reader)
+   */
+<span class="pc" id="L116">  protected int m_Lines = 0;</span>
+
+  /**
+   * used in randomizeAttribute and undoRandomizeAttribute to store/restore the
+   * index of attribute that was last shuffled, and it's original values
+   */
+<span class="pc" id="L122">  private final int attIdx4Randomization = -1;</span>
+  private double[] attIdxOrigValues;
+
+  /**
+   * Reads an ARFF file from a reader, and assigns a weight of one to each
+   * instance. Lets the index of the class attribute be undefined (negative).
+   * 
+   * @param reader the reader
+   * @throws IOException if the ARFF file is not read successfully
+   */
+<span class="fc" id="L132">  public Instances(/* @non_null@ */Reader reader) throws IOException {</span>
+<span class="fc" id="L133">    ArffReader arff = new ArffReader(reader);</span>
+<span class="fc" id="L134">    Instances dataset = arff.getData();</span>
+<span class="fc" id="L135">    initialize(dataset, dataset.numInstances());</span>
+<span class="fc" id="L136">    dataset.copyInstances(0, this, dataset.numInstances());</span>
+<span class="fc" id="L137">    compactify();</span>
+<span class="fc" id="L138">  }</span>
+
+  /**
+   * Reads the header of an ARFF file from a reader and reserves space for the
+   * given number of instances. Lets the class index be undefined (negative).
+   * 
+   * @param reader the reader
+   * @param capacity the capacity
+   * @throws IllegalArgumentException if the header is not read successfully or
+   *           the capacity is negative.
+   * @throws IOException if there is a problem with the reader.
+   * @deprecated instead of using this method in conjunction with the
+   *             &lt;code&gt;readInstance(Reader)&lt;/code&gt; method, one should use the
+   *             &lt;code&gt;ArffLoader&lt;/code&gt; or &lt;code&gt;DataSource&lt;/code&gt; class
+   *             instead.
+   * @see weka.core.converters.ArffLoader
+   * @see weka.core.converters.ConverterUtils.DataSource
+   */
+  // @ requires capacity &gt;= 0;
+  // @ ensures classIndex() == -1;
+  @Deprecated
+<span class="nc" id="L159">  public Instances(/* @non_null@ */Reader reader, int capacity)</span>
+      throws IOException {
+
+<span class="nc" id="L162">    ArffReader arff = new ArffReader(reader, 0);</span>
+<span class="nc" id="L163">    Instances header = arff.getStructure();</span>
+<span class="nc" id="L164">    initialize(header, capacity);</span>
+<span class="nc" id="L165">    m_Lines = arff.getLineNo();</span>
+<span class="nc" id="L166">  }</span>
+
+  /**
+   * Constructor copying all instances and references to the header information
+   * from the given set of instances.
+   * 
+   * @param dataset the set to be copied
+   */
+  public Instances(/* @non_null@ */Instances dataset) {
+
+<span class="fc" id="L176">    this(dataset, dataset.numInstances());</span>
+
+<span class="fc" id="L178">    dataset.copyInstances(0, this, dataset.numInstances());</span>
+<span class="fc" id="L179">  }</span>
+
+  /**
+   * Constructor creating an empty set of instances. Copies references to the
+   * header information from the given set of instances. Sets the capacity of
+   * the set of instances to 0 if its negative.
+   * 
+   * @param dataset the instances from which the header information is to be
+   *          taken
+   * @param capacity the capacity of the new dataset
+   */
+<span class="fc" id="L190">  public Instances(/* @non_null@ */Instances dataset, int capacity) {</span>
+<span class="fc" id="L191">    initialize(dataset, capacity);</span>
+<span class="fc" id="L192">  }</span>
+
+  /**
+   * initializes with the header information of the given dataset and sets the
+   * capacity of the set of instances.
+   * 
+   * @param dataset the dataset to use as template
+   * @param capacity the number of rows to reserve
+   */
+  protected void initialize(Instances dataset, int capacity) {
+<span class="pc bpc" id="L202" title="1 of 2 branches missed.">    if (capacity &lt; 0)</span>
+<span class="nc" id="L203">      capacity = 0;</span>
+
+    // Strings only have to be &quot;shallow&quot; copied because
+    // they can't be modified.
+<span class="fc" id="L207">    m_ClassIndex = dataset.m_ClassIndex;</span>
+<span class="fc" id="L208">    m_RelationName = dataset.m_RelationName;</span>
+<span class="fc" id="L209">    m_Attributes = dataset.m_Attributes;</span>
+<span class="fc" id="L210">    m_Instances = new FastVector(capacity);</span>
+<span class="fc" id="L211">  }</span>
+
+  /**
+   * Creates a new set of instances by copying a subset of another set.
+   * 
+   * @param source the set of instances from which a subset is to be created
+   * @param first the index of the first instance to be copied
+   * @param toCopy the number of instances to be copied
+   * @throws IllegalArgumentException if first and toCopy are out of range
+   */
+  // @ requires 0 &lt;= first;
+  // @ requires 0 &lt;= toCopy;
+  // @ requires first + toCopy &lt;= source.numInstances();
+  public Instances(/* @non_null@ */Instances source, int first, int toCopy) {
+
+<span class="fc" id="L226">    this(source, toCopy);</span>
+
+<span class="pc bpc" id="L228" title="2 of 4 branches missed.">    if ((first &lt; 0) || ((first + toCopy) &gt; source.numInstances())) {</span>
+<span class="nc" id="L229">      throw new IllegalArgumentException(&quot;Parameters first and/or toCopy out &quot;</span>
+          + &quot;of range&quot;);
+    }
+<span class="fc" id="L232">    source.copyInstances(first, this, toCopy);</span>
+<span class="fc" id="L233">  }</span>
+
+  /**
+   * Creates an empty set of instances. Uses the given attribute information.
+   * Sets the capacity of the set of instances to 0 if its negative. Given
+   * attribute information must not be changed after this constructor has been
+   * used.
+   * 
+   * @param name the name of the relation
+   * @param attInfo the attribute information
+   * @param capacity the capacity of the set
+   */
+<span class="fc" id="L245">  public Instances(/* @non_null@ */String name,</span>
+  /* @non_null@ */FastVector attInfo, int capacity) {
+
+    // check whether the attribute names are unique
+<span class="fc" id="L249">    HashSet&lt;String&gt; names = new HashSet&lt;String&gt;();</span>
+<span class="fc" id="L250">    StringBuffer nonUniqueNames = new StringBuffer();</span>
+<span class="fc bfc" id="L251" title="All 2 branches covered.">    for (int i = 0; i &lt; attInfo.size(); i++) {</span>
+<span class="pc bpc" id="L252" title="1 of 2 branches missed.">      if (names.contains(((Attribute) attInfo.elementAt(i)).name())) {</span>
+<span class="nc" id="L253">        nonUniqueNames.append(&quot;'&quot; + ((Attribute) attInfo.elementAt(i)).name()</span>
+<span class="nc" id="L254">            + &quot;' &quot;);</span>
+      }
+<span class="fc" id="L256">      names.add(((Attribute) attInfo.elementAt(i)).name());</span>
+    }
+<span class="pc bpc" id="L258" title="1 of 2 branches missed.">    if (names.size() != attInfo.size())</span>
+<span class="nc" id="L259">      throw new IllegalArgumentException(&quot;Attribute names are not unique!&quot;</span>
+<span class="nc" id="L260">          + &quot; Causes: &quot; + nonUniqueNames.toString());</span>
+<span class="fc" id="L261">    names.clear();</span>
+
+<span class="fc" id="L263">    m_RelationName = name;</span>
+<span class="fc" id="L264">    m_ClassIndex = -1;</span>
+<span class="fc" id="L265">    m_Attributes = attInfo;</span>
+<span class="fc bfc" id="L266" title="All 2 branches covered.">    for (int i = 0; i &lt; numAttributes(); i++) {</span>
+<span class="fc" id="L267">      attribute(i).setIndex(i);</span>
+    }
+<span class="fc" id="L269">    m_Instances = new FastVector(capacity);</span>
+<span class="fc" id="L270">  }</span>
+
+  /**
+   * Create a copy of the structure if the data has string or relational
+   * attributes, &quot;cleanses&quot; string types (i.e. doesn't contain references to the
+   * strings seen in the past) and all relational attributes.
+   * 
+   * @return a copy of the instance structure.
+   */
+  public Instances stringFreeStructure() {
+
+<span class="fc" id="L281">    FastVector newAtts = new FastVector();</span>
+<span class="fc bfc" id="L282" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Attributes.size(); i++) {</span>
+<span class="fc" id="L283">      Attribute att = (Attribute) m_Attributes.elementAt(i);</span>
+<span class="fc bfc" id="L284" title="All 2 branches covered.">      if (att.type() == Attribute.STRING) {</span>
+<span class="fc" id="L285">        newAtts.addElement(new Attribute(att.name(), (FastVector) null, i));</span>
+<span class="fc bfc" id="L286" title="All 2 branches covered.">      } else if (att.type() == Attribute.RELATIONAL) {</span>
+<span class="fc" id="L287">        newAtts.addElement(new Attribute(att.name(), new Instances(att</span>
+<span class="fc" id="L288">            .relation(), 0), i));</span>
+      }
+    }
+<span class="fc bfc" id="L291" title="All 2 branches covered.">    if (newAtts.size() == 0) {</span>
+<span class="fc" id="L292">      return new Instances(this, 0);</span>
+    }
+<span class="fc" id="L294">    FastVector atts = (FastVector) m_Attributes.copy();</span>
+<span class="fc bfc" id="L295" title="All 2 branches covered.">    for (int i = 0; i &lt; newAtts.size(); i++) {</span>
+<span class="fc" id="L296">      atts.setElementAt(newAtts.elementAt(i),</span>
+<span class="fc" id="L297">          ((Attribute) newAtts.elementAt(i)).index());</span>
+    }
+<span class="fc" id="L299">    Instances result = new Instances(this, 0);</span>
+<span class="fc" id="L300">    result.m_Attributes = atts;</span>
+<span class="fc" id="L301">    return result;</span>
+  }
+
+  /**
+   * Adds one instance to the end of the set. Shallow copies instance before it
+   * is added. Increases the size of the dataset if it is not large enough. Does
+   * not check if the instance is compatible with the dataset. Note: String or
+   * relational values are not transferred.
+   * 
+   * @param instance the instance to be added
+   */
+  public void add(/* @non_null@ */Instance instance) {
+
+<span class="fc" id="L314">    Instance newInstance = (Instance) instance.copy();</span>
+
+<span class="fc" id="L316">    newInstance.setDataset(this);</span>
+<span class="fc" id="L317">    m_Instances.addElement(newInstance);</span>
+<span class="fc" id="L318">  }</span>
+
+  /**
+   * Returns an attribute.
+   * 
+   * @param index the attribute's index (index starts with 0)
+   * @return the attribute at the given position
+   */
+  // @ requires 0 &lt;= index;
+  // @ requires index &lt; m_Attributes.size();
+  // @ ensures \result != null;
+  public/* @pure@ */Attribute attribute(int index) {
+
+<span class="fc" id="L331">    return (Attribute) m_Attributes.elementAt(index);</span>
+  }
+
+  /**
+   * Returns an attribute given its name. If there is more than one attribute
+   * with the same name, it returns the first one. Returns null if the attribute
+   * can't be found.
+   * 
+   * @param name the attribute's name
+   * @return the attribute with the given name, null if the attribute can't be
+   *         found
+   */
+  public/* @pure@ */Attribute attribute(String name) {
+
+<span class="fc bfc" id="L345" title="All 2 branches covered.">    for (int i = 0; i &lt; numAttributes(); i++) {</span>
+<span class="fc bfc" id="L346" title="All 2 branches covered.">      if (attribute(i).name().equals(name)) {</span>
+<span class="fc" id="L347">        return attribute(i);</span>
+      }
+    }
+<span class="fc" id="L350">    return null;</span>
+  }
+
+  /**
+   * Checks for attributes of the given type in the dataset
+   * 
+   * @param attType the attribute type to look for
+   * @return true if attributes of the given type are present
+   */
+  public boolean checkForAttributeType(int attType) {
+
+<span class="fc" id="L361">    int i = 0;</span>
+
+<span class="fc bfc" id="L363" title="All 2 branches covered.">    while (i &lt; m_Attributes.size()) {</span>
+<span class="fc bfc" id="L364" title="All 2 branches covered.">      if (attribute(i++).type() == attType) {</span>
+<span class="fc" id="L365">        return true;</span>
+      }
+    }
+<span class="fc" id="L368">    return false;</span>
+  }
+
+  /**
+   * Checks for string attributes in the dataset
+   * 
+   * @return true if string attributes are present, false otherwise
+   */
+  public/* @pure@ */boolean checkForStringAttributes() {
+<span class="fc" id="L377">    return checkForAttributeType(Attribute.STRING);</span>
+  }
+
+  /**
+   * Checks if the given instance is compatible with this dataset. Only looks at
+   * the size of the instance and the ranges of the values for nominal and
+   * string attributes.
+   * 
+   * @param instance the instance to check
+   * @return true if the instance is compatible with the dataset
+   */
+  public/* @pure@ */boolean checkInstance(Instance instance) {
+
+<span class="nc bnc" id="L390" title="All 2 branches missed.">    if (instance.numAttributes() != numAttributes()) {</span>
+<span class="nc" id="L391">      return false;</span>
+    }
+<span class="nc bnc" id="L393" title="All 2 branches missed.">    for (int i = 0; i &lt; numAttributes(); i++) {</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">      if (instance.isMissing(i)) {</span>
+<span class="nc" id="L395">        continue;</span>
+<span class="nc bnc" id="L396" title="All 4 branches missed.">      } else if (attribute(i).isNominal() || attribute(i).isString()) {</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">        if (!(Utils.eq(instance.value(i), (int) instance.value(i)))) {</span>
+<span class="nc" id="L398">          return false;</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">        } else if (Utils.sm(instance.value(i), 0)</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">            || Utils.gr(instance.value(i), attribute(i).numValues())) {</span>
+<span class="nc" id="L401">          return false;</span>
+        }
+      }
+    }
+<span class="nc" id="L405">    return true;</span>
+  }
+
+  /**
+   * Returns the class attribute.
+   * 
+   * @return the class attribute
+   * @throws UnassignedClassException if the class is not set
+   */
+  // @ requires classIndex() &gt;= 0;
+  public/* @pure@ */Attribute classAttribute() {
+
+<span class="pc bpc" id="L417" title="1 of 2 branches missed.">    if (m_ClassIndex &lt; 0) {</span>
+<span class="nc" id="L418">      throw new UnassignedClassException(&quot;Class index is negative (not set)!&quot;);</span>
+    }
+<span class="fc" id="L420">    return attribute(m_ClassIndex);</span>
+  }
+
+  /**
+   * Returns the class attribute's index. Returns negative number if it's
+   * undefined.
+   * 
+   * @return the class index as an integer
+   */
+  // ensures \result == m_ClassIndex;
+  public/* @pure@ */int classIndex() {
+
+<span class="fc" id="L432">    return m_ClassIndex;</span>
+  }
+
+  /**
+   * Compactifies the set of instances. Decreases the capacity of the set so
+   * that it matches the number of instances in the set.
+   */
+  public void compactify() {
+
+<span class="fc" id="L441">    m_Instances.trimToSize();</span>
+<span class="fc" id="L442">  }</span>
+
+  /**
+   * Removes all instances from the set.
+   */
+  public void delete() {
+
+<span class="fc" id="L449">    m_Instances = new FastVector();</span>
+<span class="fc" id="L450">  }</span>
+
+  /**
+   * Removes an instance at the given position from the set.
+   * 
+   * @param index the instance's position (index starts with 0)
+   */
+  // @ requires 0 &lt;= index &amp;&amp; index &lt; numInstances();
+  public void delete(int index) {
+
+<span class="fc" id="L460">    m_Instances.removeElementAt(index);</span>
+<span class="fc" id="L461">  }</span>
+
+  /**
+   * Deletes an attribute at the given position (0 to numAttributes() - 1). A
+   * deep copy of the attribute information is performed before the attribute is
+   * deleted.
+   * 
+   * @param position the attribute's position (position starts with 0)
+   * @throws IllegalArgumentException if the given index is out of range or the
+   *           class attribute is being deleted
+   */
+  // @ requires 0 &lt;= position &amp;&amp; position &lt; numAttributes();
+  // @ requires position != classIndex();
+  public void deleteAttributeAt(int position) {
+
+<span class="pc bpc" id="L476" title="2 of 4 branches missed.">    if ((position &lt; 0) || (position &gt;= m_Attributes.size())) {</span>
+<span class="nc" id="L477">      throw new IllegalArgumentException(&quot;Index out of range&quot;);</span>
+    }
+<span class="pc bpc" id="L479" title="1 of 2 branches missed.">    if (position == m_ClassIndex) {</span>
+<span class="nc" id="L480">      throw new IllegalArgumentException(&quot;Can't delete class attribute&quot;);</span>
+    }
+<span class="fc" id="L482">    freshAttributeInfo();</span>
+<span class="fc bfc" id="L483" title="All 2 branches covered.">    if (m_ClassIndex &gt; position) {</span>
+<span class="fc" id="L484">      m_ClassIndex--;</span>
+    }
+<span class="fc" id="L486">    m_Attributes.removeElementAt(position);</span>
+<span class="fc bfc" id="L487" title="All 2 branches covered.">    for (int i = position; i &lt; m_Attributes.size(); i++) {</span>
+<span class="fc" id="L488">      Attribute current = (Attribute) m_Attributes.elementAt(i);</span>
+<span class="fc" id="L489">      current.setIndex(current.index() - 1);</span>
+    }
+<span class="fc bfc" id="L491" title="All 2 branches covered.">    for (int i = 0; i &lt; numInstances(); i++) {</span>
+<span class="fc" id="L492">      instance(i).forceDeleteAttributeAt(position);</span>
+    }
+<span class="fc" id="L494">  }</span>
+
+  /**
+   * Deletes all attributes of the given type in the dataset. A deep copy of the
+   * attribute information is performed before an attribute is deleted.
+   * 
+   * @param attType the attribute type to delete
+   * @throws IllegalArgumentException if attribute couldn't be successfully
+   *           deleted (probably because it is the class attribute).
+   */
+  public void deleteAttributeType(int attType) {
+<span class="nc" id="L505">    int i = 0;</span>
+<span class="nc bnc" id="L506" title="All 2 branches missed.">    while (i &lt; m_Attributes.size()) {</span>
+<span class="nc bnc" id="L507" title="All 2 branches missed.">      if (attribute(i).type() == attType) {</span>
+<span class="nc" id="L508">        deleteAttributeAt(i);</span>
+      } else {
+<span class="nc" id="L510">        i++;</span>
+      }
+    }
+<span class="nc" id="L513">  }</span>
+
+  /**
+   * Deletes all string attributes in the dataset. A deep copy of the attribute
+   * information is performed before an attribute is deleted.
+   * 
+   * @throws IllegalArgumentException if string attribute couldn't be
+   *           successfully deleted (probably because it is the class
+   *           attribute).
+   * @see #deleteAttributeType(int)
+   */
+  public void deleteStringAttributes() {
+<span class="nc" id="L525">    deleteAttributeType(Attribute.STRING);</span>
+<span class="nc" id="L526">  }</span>
+
+  /**
+   * Removes all instances with missing values for a particular attribute from
+   * the dataset.
+   * 
+   * @param attIndex the attribute's index (index starts with 0)
+   */
+  // @ requires 0 &lt;= attIndex &amp;&amp; attIndex &lt; numAttributes();
+  public void deleteWithMissing(int attIndex) {
+
+<span class="fc" id="L537">    FastVector newInstances = new FastVector(numInstances());</span>
+
+<span class="fc bfc" id="L539" title="All 2 branches covered.">    for (int i = 0; i &lt; numInstances(); i++) {</span>
+<span class="fc bfc" id="L540" title="All 2 branches covered.">      if (!instance(i).isMissing(attIndex)) {</span>
+<span class="fc" id="L541">        newInstances.addElement(instance(i));</span>
+      }
+    }
+<span class="fc" id="L544">    m_Instances = newInstances;</span>
+<span class="fc" id="L545">  }</span>
+
+  /**
+   * Removes all instances with missing values for a particular attribute from
+   * the dataset.
+   * 
+   * @param att the attribute
+   */
+  public void deleteWithMissing(/* @non_null@ */Attribute att) {
+
+<span class="nc" id="L555">    deleteWithMissing(att.index());</span>
+<span class="nc" id="L556">  }</span>
+
+  /**
+   * Removes all instances with a missing class value from the dataset.
+   * 
+   * @throws UnassignedClassException if class is not set
+   */
+  public void deleteWithMissingClass() {
+
+<span class="pc bpc" id="L565" title="1 of 2 branches missed.">    if (m_ClassIndex &lt; 0) {</span>
+<span class="nc" id="L566">      throw new UnassignedClassException(&quot;Class index is negative (not set)!&quot;);</span>
+    }
+<span class="fc" id="L568">    deleteWithMissing(m_ClassIndex);</span>
+<span class="fc" id="L569">  }</span>
+
+  /**
+   * Returns an enumeration of all the attributes.
+   * 
+   * @return enumeration of all the attributes.
+   */
+  public/* @non_null pure@ */Enumeration enumerateAttributes() {
+
+<span class="fc" id="L578">    return m_Attributes.elements(m_ClassIndex);</span>
+  }
+
+  /**
+   * Returns an enumeration of all instances in the dataset.
+   * 
+   * @return enumeration of all instances in the dataset
+   */
+  public/* @non_null pure@ */Enumeration enumerateInstances() {
+
+<span class="fc" id="L588">    return m_Instances.elements();</span>
+  }
+
+  /**
+   * Checks if two headers are equivalent.
+   * 
+   * @param dataset another dataset
+   * @return true if the header of the given dataset is equivalent to this
+   *         header
+   */
+  public/* @pure@ */boolean equalHeaders(Instances dataset) {
+
+    // Check class and all attributes
+<span class="pc bpc" id="L601" title="1 of 2 branches missed.">    if (m_ClassIndex != dataset.m_ClassIndex) {</span>
+<span class="nc" id="L602">      return false;</span>
+    }
+<span class="pc bpc" id="L604" title="1 of 2 branches missed.">    if (m_Attributes.size() != dataset.m_Attributes.size()) {</span>
+<span class="nc" id="L605">      return false;</span>
+    }
+<span class="fc bfc" id="L607" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Attributes.size(); i++) {</span>
+<span class="pc bpc" id="L608" title="1 of 2 branches missed.">      if (!(attribute(i).equals(dataset.attribute(i)))) {</span>
+<span class="nc" id="L609">        return false;</span>
+      }
+    }
+<span class="fc" id="L612">    return true;</span>
+  }
+
+  /**
+   * Returns the first instance in the set.
+   * 
+   * @return the first instance in the set
+   */
+  // @ requires numInstances() &gt; 0;
+  public/* @non_null pure@ */Instance firstInstance() {
+
+<span class="fc" id="L623">    return (Instance) m_Instances.firstElement();</span>
+  }
+
+  /**
+   * Returns a random number generator. The initial seed of the random number
+   * generator depends on the given seed and the hash code of a string
+   * representation of a instances chosen based on the given seed.
+   * 
+   * @param seed the given seed
+   * @return the random number generator
+   */
+  public Random getRandomNumberGenerator(long seed) {
+
+<span class="fc" id="L636">    Random r = new Random(seed);</span>
+<span class="fc" id="L637">    r.setSeed(instance(r.nextInt(numInstances())).toStringNoWeight().hashCode()</span>
+<span class="fc" id="L638">        + seed);</span>
+<span class="fc" id="L639">    return r;</span>
+  }
+
+  /**
+   * Inserts an attribute at the given position (0 to numAttributes()) and sets
+   * all values to be missing. Shallow copies the attribute before it is
+   * inserted, and performs a deep copy of the existing attribute information.
+   * 
+   * @param att the attribute to be inserted
+   * @param position the attribute's position (position starts with 0)
+   * @throws IllegalArgumentException if the given index is out of range
+   */
+  // @ requires 0 &lt;= position;
+  // @ requires position &lt;= numAttributes();
+  public void insertAttributeAt(/* @non_null@ */Attribute att, int position) {
+
+<span class="pc bpc" id="L655" title="2 of 4 branches missed.">    if ((position &lt; 0) || (position &gt; m_Attributes.size())) {</span>
+<span class="nc" id="L656">      throw new IllegalArgumentException(&quot;Index out of range&quot;);</span>
+    }
+<span class="pc bpc" id="L658" title="1 of 2 branches missed.">    if (attribute(att.name()) != null) {</span>
+<span class="nc" id="L659">      throw new IllegalArgumentException(&quot;Attribute name '&quot; + att.name()</span>
+<span class="nc" id="L660">          + &quot;' already in use at position #&quot; + attribute(att.name()).index());</span>
+    }
+<span class="fc" id="L662">    att = (Attribute) att.copy();</span>
+<span class="fc" id="L663">    freshAttributeInfo();</span>
+<span class="fc" id="L664">    att.setIndex(position);</span>
+<span class="fc" id="L665">    m_Attributes.insertElementAt(att, position);</span>
+<span class="fc bfc" id="L666" title="All 2 branches covered.">    for (int i = position + 1; i &lt; m_Attributes.size(); i++) {</span>
+<span class="fc" id="L667">      Attribute current = (Attribute) m_Attributes.elementAt(i);</span>
+<span class="fc" id="L668">      current.setIndex(current.index() + 1);</span>
+    }
+<span class="fc bfc" id="L670" title="All 2 branches covered.">    for (int i = 0; i &lt; numInstances(); i++) {</span>
+<span class="fc" id="L671">      instance(i).forceInsertAttributeAt(position);</span>
+    }
+<span class="fc bfc" id="L673" title="All 2 branches covered.">    if (m_ClassIndex &gt;= position) {</span>
+<span class="fc" id="L674">      m_ClassIndex++;</span>
+    }
+<span class="fc" id="L676">  }</span>
+
+  /**
+   * Returns the instance at the given position.
+   * 
+   * @param index the instance's index (index starts with 0)
+   * @return the instance at the given position
+   */
+  // @ requires 0 &lt;= index;
+  // @ requires index &lt; numInstances();
+  public/* @non_null pure@ */Instance instance(int index) {
+
+<span class="fc" id="L688">    return (Instance) m_Instances.elementAt(index);</span>
+  }
+
+  /**
+   * Returns the kth-smallest attribute value of a numeric attribute.
+   * 
+   * @param att the Attribute object
+   * @param k the value of k
+   * @return the kth-smallest value
+   */
+  public double kthSmallestValue(Attribute att, int k) {
+
+<span class="nc" id="L700">    return kthSmallestValue(att.index(), k);</span>
+  }
+
+  /**
+   * Returns the kth-smallest attribute value of a numeric attribute. NOTE
+   * CHANGE: Missing values (NaN values) are now treated as Double.MAX_VALUE.
+   * Also, the order of the instances in the data is no longer affected.
+   * 
+   * @param attIndex the attribute's index
+   * @param k the value of k
+   * @return the kth-smallest value
+   */
+  public double kthSmallestValue(int attIndex, int k) {
+
+<span class="nc bnc" id="L714" title="All 2 branches missed.">    if (!attribute(attIndex).isNumeric()) {</span>
+<span class="nc" id="L715">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L716">          &quot;Instances: attribute must be numeric to compute kth-smallest value.&quot;);</span>
+    }
+
+<span class="nc bnc" id="L719" title="All 4 branches missed.">    if ((k &lt; 1) || (k &gt; numInstances())) {</span>
+<span class="nc" id="L720">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L721">          &quot;Instances: value for k for computing kth-smallest value too large.&quot;);</span>
+    }
+
+<span class="nc" id="L724">    double[] vals = new double[numInstances()];</span>
+<span class="nc bnc" id="L725" title="All 2 branches missed.">    for (int i = 0; i &lt; vals.length; i++) {</span>
+<span class="nc" id="L726">      double val = instance(i).value(attIndex);</span>
+<span class="nc bnc" id="L727" title="All 2 branches missed.">      if (Instance.isMissingValue(val)) {</span>
+<span class="nc" id="L728">        vals[i] = Double.MAX_VALUE;</span>
+      } else {
+<span class="nc" id="L730">        vals[i] = val;</span>
+      }
+    }
+<span class="nc" id="L733">    return Utils.kthSmallestValue(vals, k);</span>
+  }
+
+  /**
+   * Returns the last instance in the set.
+   * 
+   * @return the last instance in the set
+   */
+  // @ requires numInstances() &gt; 0;
+  public/* @non_null pure@ */Instance lastInstance() {
+
+<span class="fc" id="L744">    return (Instance) m_Instances.lastElement();</span>
+  }
+
+  /**
+   * Returns the mean (mode) for a numeric (nominal) attribute as a
+   * floating-point value. Returns 0 if the attribute is neither nominal nor
+   * numeric. If all values are missing it returns zero.
+   * 
+   * @param attIndex the attribute's index (index starts with 0)
+   * @return the mean or the mode
+   */
+  public/* @pure@ */double meanOrMode(int attIndex) {
+
+    double result, found;
+    int[] counts;
+
+<span class="fc bfc" id="L760" title="All 2 branches covered.">    if (attribute(attIndex).isNumeric()) {</span>
+<span class="fc" id="L761">      result = found = 0;</span>
+<span class="fc bfc" id="L762" title="All 2 branches covered.">      for (int j = 0; j &lt; numInstances(); j++) {</span>
+<span class="fc bfc" id="L763" title="All 2 branches covered.">        if (!instance(j).isMissing(attIndex)) {</span>
+<span class="fc" id="L764">          found += instance(j).weight();</span>
+<span class="fc" id="L765">          result += instance(j).weight() * instance(j).value(attIndex);</span>
+        }
+      }
+<span class="fc bfc" id="L768" title="All 2 branches covered.">      if (found &lt;= 0) {</span>
+<span class="fc" id="L769">        return 0;</span>
+      } else {
+<span class="fc" id="L771">        return result / found;</span>
+      }
+<span class="fc bfc" id="L773" title="All 2 branches covered.">    } else if (attribute(attIndex).isNominal()) {</span>
+<span class="fc" id="L774">      counts = new int[attribute(attIndex).numValues()];</span>
+<span class="fc bfc" id="L775" title="All 2 branches covered.">      for (int j = 0; j &lt; numInstances(); j++) {</span>
+<span class="pc bpc" id="L776" title="1 of 2 branches missed.">        if (!instance(j).isMissing(attIndex)) {</span>
+<span class="fc" id="L777">          counts[(int) instance(j).value(attIndex)] += instance(j).weight();</span>
+        }
+      }
+<span class="fc" id="L780">      return Utils.maxIndex(counts);</span>
+    } else {
+<span class="fc" id="L782">      return 0;</span>
+    }
+  }
+
+  /**
+   * Returns the mean (mode) for a numeric (nominal) attribute as a
+   * floating-point value. Returns 0 if the attribute is neither nominal nor
+   * numeric. If all values are missing it returns zero.
+   * 
+   * @param att the attribute
+   * @return the mean or the mode
+   */
+  public/* @pure@ */double meanOrMode(Attribute att) {
+
+<span class="fc" id="L796">    return meanOrMode(att.index());</span>
+  }
+
+  /**
+   * Returns the number of attributes.
+   * 
+   * @return the number of attributes as an integer
+   */
+  // @ ensures \result == m_Attributes.size();
+  public/* @pure@ */int numAttributes() {
+
+<span class="fc" id="L807">    return m_Attributes.size();</span>
+  }
+
+  /**
+   * Returns the number of class labels.
+   * 
+   * @return the number of class labels as an integer if the class attribute is
+   *         nominal, 1 otherwise.
+   * @throws UnassignedClassException if the class is not set
+   */
+  // @ requires classIndex() &gt;= 0;
+  public/* @pure@ */int numClasses() {
+
+<span class="pc bpc" id="L820" title="1 of 2 branches missed.">    if (m_ClassIndex &lt; 0) {</span>
+<span class="nc" id="L821">      throw new UnassignedClassException(&quot;Class index is negative (not set)!&quot;);</span>
+    }
+<span class="fc bfc" id="L823" title="All 2 branches covered.">    if (!classAttribute().isNominal()) {</span>
+<span class="fc" id="L824">      return 1;</span>
+    } else {
+<span class="fc" id="L826">      return classAttribute().numValues();</span>
+    }
+  }
+
+  /**
+   * Returns the number of distinct values of a given attribute. Returns the
+   * number of instances if the attribute is a string attribute. The value
+   * 'missing' is not counted.
+   * 
+   * @param attIndex the attribute (index starts with 0)
+   * @return the number of distinct values of a given attribute
+   */
+  // @ requires 0 &lt;= attIndex;
+  // @ requires attIndex &lt; numAttributes();
+  public/* @pure@ */int numDistinctValues(int attIndex) {
+
+<span class="fc bfc" id="L842" title="All 2 branches covered.">    if (attribute(attIndex).isNumeric()) {</span>
+<span class="fc" id="L843">      double[] attVals = attributeToDoubleArray(attIndex);</span>
+<span class="fc" id="L844">      int[] sorted = Utils.sort(attVals);</span>
+<span class="fc" id="L845">      double prev = 0;</span>
+<span class="fc" id="L846">      int counter = 0;</span>
+<span class="fc bfc" id="L847" title="All 2 branches covered.">      for (int i = 0; i &lt; sorted.length; i++) {</span>
+<span class="fc" id="L848">        Instance current = instance(sorted[i]);</span>
+<span class="fc bfc" id="L849" title="All 2 branches covered.">        if (current.isMissing(attIndex)) {</span>
+<span class="fc" id="L850">          break;</span>
+        }
+<span class="fc bfc" id="L852" title="All 4 branches covered.">        if ((i == 0) || (current.value(attIndex) &gt; prev)) {</span>
+<span class="fc" id="L853">          prev = current.value(attIndex);</span>
+<span class="fc" id="L854">          counter++;</span>
+        }
+      }
+<span class="fc" id="L857">      return counter;</span>
+    } else {
+<span class="fc" id="L859">      return attribute(attIndex).numValues();</span>
+    }
+  }
+
+  /**
+   * Returns the number of distinct values of a given attribute. Returns the
+   * number of instances if the attribute is a string attribute. The value
+   * 'missing' is not counted.
+   * 
+   * @param att the attribute
+   * @return the number of distinct values of a given attribute
+   */
+  public/* @pure@ */int numDistinctValues(/* @non_null@ */Attribute att) {
+
+<span class="fc" id="L873">    return numDistinctValues(att.index());</span>
+  }
+
+  /**
+   * Returns the number of instances in the dataset.
+   * 
+   * @return the number of instances in the dataset as an integer
+   */
+  // @ ensures \result == m_Instances.size();
+  public/* @pure@ */int numInstances() {
+
+<span class="fc" id="L884">    return m_Instances.size();</span>
+  }
+
+  /**
+   * Shuffles the instances in the set so that they are ordered randomly.
+   * 
+   * @param random a random number generator
+   */
+  public void randomize(Random random) {
+
+<span class="fc bfc" id="L894" title="All 2 branches covered.">    for (int j = numInstances() - 1; j &gt; 0; j--)</span>
+<span class="fc" id="L895">      swap(j, random.nextInt(j + 1));</span>
+<span class="fc" id="L896">  }</span>
+
+  /**
+   * Reads a single instance from the reader and appends it to the dataset.
+   * Automatically expands the dataset if it is not large enough to hold the
+   * instance. This method does not check for carriage return at the end of the
+   * line.
+   * 
+   * @param reader the reader
+   * @return false if end of file has been reached
+   * @throws IOException if the information is not read successfully
+   * @deprecated instead of using this method in conjunction with the
+   *             &lt;code&gt;readInstance(Reader)&lt;/code&gt; method, one should use the
+   *             &lt;code&gt;ArffLoader&lt;/code&gt; or &lt;code&gt;DataSource&lt;/code&gt; class
+   *             instead.
+   * @see weka.core.converters.ArffLoader
+   * @see weka.core.converters.ConverterUtils.DataSource
+   */
+  @Deprecated
+  public boolean readInstance(Reader reader) throws IOException {
+
+<span class="nc" id="L917">    ArffReader arff = new ArffReader(reader, this, m_Lines, 1);</span>
+<span class="nc" id="L918">    Instance inst = arff.readInstance(arff.getData(), false);</span>
+<span class="nc" id="L919">    m_Lines = arff.getLineNo();</span>
+<span class="nc bnc" id="L920" title="All 2 branches missed.">    if (inst != null) {</span>
+<span class="nc" id="L921">      add(inst);</span>
+<span class="nc" id="L922">      return true;</span>
+    } else {
+<span class="nc" id="L924">      return false;</span>
+    }
+  }
+
+  /**
+   * Returns the relation's name.
+   * 
+   * @return the relation's name as a string
+   */
+  // @ ensures \result == m_RelationName;
+  public/* @pure@ */String relationName() {
+
+<span class="fc" id="L936">    return m_RelationName;</span>
+  }
+
+  /**
+   * Renames an attribute. This change only affects this dataset.
+   * 
+   * @param att the attribute's index (index starts with 0)
+   * @param name the new name
+   */
+  public void renameAttribute(int att, String name) {
+    // name already present?
+<span class="nc bnc" id="L947" title="All 2 branches missed.">    for (int i = 0; i &lt; numAttributes(); i++) {</span>
+<span class="nc bnc" id="L948" title="All 2 branches missed.">      if (i == att)</span>
+<span class="nc" id="L949">        continue;</span>
+<span class="nc bnc" id="L950" title="All 2 branches missed.">      if (attribute(i).name().equals(name)) {</span>
+<span class="nc" id="L951">        throw new IllegalArgumentException(&quot;Attribute name '&quot; + name</span>
+<span class="nc" id="L952">            + &quot;' already present at position #&quot; + i);</span>
+      }
+    }
+
+<span class="nc" id="L956">    Attribute newAtt = attribute(att).copy(name);</span>
+<span class="nc" id="L957">    FastVector newVec = new FastVector(numAttributes());</span>
+<span class="nc bnc" id="L958" title="All 2 branches missed.">    for (int i = 0; i &lt; numAttributes(); i++) {</span>
+<span class="nc bnc" id="L959" title="All 2 branches missed.">      if (i == att) {</span>
+<span class="nc" id="L960">        newVec.addElement(newAtt);</span>
+      } else {
+<span class="nc" id="L962">        newVec.addElement(attribute(i));</span>
+      }
+    }
+<span class="nc" id="L965">    m_Attributes = newVec;</span>
+<span class="nc" id="L966">  }</span>
+
+  /**
+   * Renames an attribute. This change only affects this dataset.
+   * 
+   * @param att the attribute
+   * @param name the new name
+   */
+  public void renameAttribute(Attribute att, String name) {
+
+<span class="nc" id="L976">    renameAttribute(att.index(), name);</span>
+<span class="nc" id="L977">  }</span>
+
+  /**
+   * Renames the value of a nominal (or string) attribute value. This change
+   * only affects this dataset.
+   * 
+   * @param att the attribute's index (index starts with 0)
+   * @param val the value's index (index starts with 0)
+   * @param name the new name
+   */
+  public void renameAttributeValue(int att, int val, String name) {
+
+<span class="nc" id="L989">    Attribute newAtt = (Attribute) attribute(att).copy();</span>
+<span class="nc" id="L990">    FastVector newVec = new FastVector(numAttributes());</span>
+
+<span class="nc" id="L992">    newAtt.setValue(val, name);</span>
+<span class="nc bnc" id="L993" title="All 2 branches missed.">    for (int i = 0; i &lt; numAttributes(); i++) {</span>
+<span class="nc bnc" id="L994" title="All 2 branches missed.">      if (i == att) {</span>
+<span class="nc" id="L995">        newVec.addElement(newAtt);</span>
+      } else {
+<span class="nc" id="L997">        newVec.addElement(attribute(i));</span>
+      }
+    }
+<span class="nc" id="L1000">    m_Attributes = newVec;</span>
+<span class="nc" id="L1001">  }</span>
+
+  /**
+   * Renames the value of a nominal (or string) attribute value. This change
+   * only affects this dataset.
+   * 
+   * @param att the attribute
+   * @param val the value
+   * @param name the new name
+   */
+  public void renameAttributeValue(Attribute att, String val, String name) {
+
+<span class="nc" id="L1013">    int v = att.indexOfValue(val);</span>
+<span class="nc bnc" id="L1014" title="All 2 branches missed.">    if (v == -1)</span>
+<span class="nc" id="L1015">      throw new IllegalArgumentException(val + &quot; not found&quot;);</span>
+<span class="nc" id="L1016">    renameAttributeValue(att.index(), v, name);</span>
+<span class="nc" id="L1017">  }</span>
+
+  /**
+   * Creates a new dataset of the same size using random sampling with
+   * replacement.
+   * 
+   * @param random a random number generator
+   * @return the new dataset
+   */
+  public Instances resample(Random random) {
+
+<span class="nc" id="L1028">    Instances newData = new Instances(this, numInstances());</span>
+<span class="nc bnc" id="L1029" title="All 2 branches missed.">    while (newData.numInstances() &lt; numInstances()) {</span>
+<span class="nc" id="L1030">      newData.add(instance(random.nextInt(numInstances())));</span>
+    }
+<span class="nc" id="L1032">    return newData;</span>
+  }
+
+  /**
+   * Creates a new dataset of the same size using random sampling with
+   * replacement according to the current instance weights. The weights of the
+   * instances in the new dataset are set to one.
+   * 
+   * @param random a random number generator
+   * @return the new dataset
+   */
+  public Instances resampleWithWeights(Random random) {
+
+<span class="fc" id="L1045">    double[] weights = new double[numInstances()];</span>
+<span class="fc bfc" id="L1046" title="All 2 branches covered.">    for (int i = 0; i &lt; weights.length; i++) {</span>
+<span class="fc" id="L1047">      weights[i] = instance(i).weight();</span>
+    }
+<span class="fc" id="L1049">    return resampleWithWeights(random, weights);</span>
+  }
+
+  /**
+   * Creates a new dataset of the same size using random sampling with
+   * replacement according to the current instance weights. The weights of the
+   * instances in the new dataset are set to one. See also
+   * resampleWithWeights(Random, double[], boolean[]).
+   * 
+   * @param random a random number generator
+   * @param sampled an array indicating what has been sampled
+   * @return the new dataset
+   */
+  public Instances resampleWithWeights(Random random, boolean[] sampled) {
+
+<span class="fc" id="L1064">    double[] weights = new double[numInstances()];</span>
+<span class="fc bfc" id="L1065" title="All 2 branches covered.">    for (int i = 0; i &lt; weights.length; i++) {</span>
+<span class="fc" id="L1066">      weights[i] = instance(i).weight();</span>
+    }
+<span class="fc" id="L1068">    return resampleWithWeights(random, weights, sampled);</span>
+  }
+
+  /**
+   * Creates a new dataset of the same size using random sampling with
+   * replacement according to the given weight vector. See also
+   * resampleWithWeights(Random, double[], boolean[]).
+   * 
+   * @param random a random number generator
+   * @param weights the weight vector
+   * @return the new dataset
+   * @throws IllegalArgumentException if the weights array is of the wrong
+   *           length or contains negative weights.
+   */
+  public Instances resampleWithWeights(Random random, double[] weights) {
+
+<span class="fc" id="L1084">    return resampleWithWeights(random, weights, null);</span>
+  }
+
+  /**
+   * Creates a new dataset of the same size using random sampling with
+   * replacement according to the given weight vector. The weights of the
+   * instances in the new dataset are set to one. The length of the weight
+   * vector has to be the same as the number of instances in the dataset, and
+   * all weights have to be positive. Uses Walker's method, see pp. 232 of
+   * &quot;Stochastic Simulation&quot; by B.D. Ripley (1987).
+   * 
+   * @param random a random number generator
+   * @param weights the weight vector
+   * @param sampled an array indicating what has been sampled, can be null
+   * @return the new dataset
+   * @throws IllegalArgumentException if the weights array is of the wrong
+   *           length or contains negative weights.
+   */
+  public Instances resampleWithWeights(Random random, double[] weights,
+      boolean[] sampled) {
+
+<span class="pc bpc" id="L1105" title="1 of 2 branches missed.">    if (weights.length != numInstances()) {</span>
+<span class="nc" id="L1106">      throw new IllegalArgumentException(&quot;weights.length != numInstances.&quot;);</span>
+    }
+
+<span class="fc" id="L1109">    Instances newData = new Instances(this, numInstances());</span>
+<span class="fc bfc" id="L1110" title="All 2 branches covered.">    if (numInstances() == 0) {</span>
+<span class="fc" id="L1111">      return newData;</span>
+    }
+
+    // Walker's method, see pp. 232 of &quot;Stochastic Simulation&quot; by B.D. Ripley
+<span class="fc" id="L1115">    double[] P = new double[weights.length];</span>
+<span class="fc" id="L1116">    System.arraycopy(weights, 0, P, 0, weights.length);</span>
+<span class="fc" id="L1117">    Utils.normalize(P);</span>
+<span class="fc" id="L1118">    double[] Q = new double[weights.length];</span>
+<span class="fc" id="L1119">    int[] A = new int[weights.length];</span>
+<span class="fc" id="L1120">    int[] W = new int[weights.length];</span>
+<span class="fc" id="L1121">    int M = weights.length;</span>
+<span class="fc" id="L1122">    int NN = -1;</span>
+<span class="fc" id="L1123">    int NP = M;</span>
+<span class="fc bfc" id="L1124" title="All 2 branches covered.">    for (int I = 0; I &lt; M; I++) {</span>
+<span class="pc bpc" id="L1125" title="1 of 2 branches missed.">      if (P[I] &lt; 0) {</span>
+<span class="nc" id="L1126">        throw new IllegalArgumentException(&quot;Weights have to be positive.&quot;);</span>
+      }
+<span class="fc" id="L1128">      Q[I] = M * P[I];</span>
+<span class="fc bfc" id="L1129" title="All 2 branches covered.">      if (Q[I] &lt; 1.0) {</span>
+<span class="fc" id="L1130">        W[++NN] = I;</span>
+      } else {
+<span class="fc" id="L1132">        W[--NP] = I;</span>
+      }
+    }
+<span class="pc bpc" id="L1135" title="1 of 4 branches missed.">    if (NN &gt; -1 &amp;&amp; NP &lt; M) {</span>
+<span class="pc bpc" id="L1136" title="1 of 2 branches missed.">      for (int S = 0; S &lt; M - 1; S++) {</span>
+<span class="fc" id="L1137">        int I = W[S];</span>
+<span class="fc" id="L1138">        int J = W[NP];</span>
+<span class="fc" id="L1139">        A[I] = J;</span>
+<span class="fc" id="L1140">        Q[J] += Q[I] - 1.0;</span>
+<span class="fc bfc" id="L1141" title="All 2 branches covered.">        if (Q[J] &lt; 1.0) {</span>
+<span class="fc" id="L1142">          NP++;</span>
+        }
+<span class="fc bfc" id="L1144" title="All 2 branches covered.">        if (NP &gt;= M) {</span>
+<span class="fc" id="L1145">          break;</span>
+        }
+      }
+      // A[W[M]] = W[M];
+    }
+
+<span class="fc bfc" id="L1151" title="All 2 branches covered.">    for (int I = 0; I &lt; M; I++) {</span>
+<span class="fc" id="L1152">      Q[I] += I;</span>
+    }
+
+<span class="fc bfc" id="L1155" title="All 2 branches covered.">    for (int i = 0; i &lt; numInstances(); i++) {</span>
+      int ALRV;
+<span class="fc" id="L1157">      double U = M * random.nextDouble();</span>
+<span class="fc" id="L1158">      int I = (int) U;</span>
+<span class="fc bfc" id="L1159" title="All 2 branches covered.">      if (U &lt; Q[I]) {</span>
+<span class="fc" id="L1160">        ALRV = I;</span>
+      } else {
+<span class="fc" id="L1162">        ALRV = A[I];</span>
+      }
+<span class="fc" id="L1164">      newData.add(instance(ALRV));</span>
+<span class="fc bfc" id="L1165" title="All 2 branches covered.">      if (sampled != null) {</span>
+<span class="fc" id="L1166">        sampled[ALRV] = true;</span>
+      }
+<span class="fc" id="L1168">      newData.instance(newData.numInstances() - 1).setWeight(1);</span>
+    }
+
+<span class="fc" id="L1171">    return newData;</span>
+  }
+
+  /**
+   * Sets the class attribute.
+   * 
+   * @param att attribute to be the class
+   */
+  public void setClass(Attribute att) {
+
+<span class="fc" id="L1181">    m_ClassIndex = att.index();</span>
+<span class="fc" id="L1182">  }</span>
+
+  /**
+   * Sets the class index of the set. If the class index is negative there is
+   * assumed to be no class. (ie. it is undefined)
+   * 
+   * @param classIndex the new class index (index starts with 0)
+   * @throws IllegalArgumentException if the class index is too big or &lt; 0
+   */
+  public void setClassIndex(int classIndex) {
+
+<span class="pc bpc" id="L1193" title="1 of 2 branches missed.">    if (classIndex &gt;= numAttributes()) {</span>
+<span class="nc" id="L1194">      throw new IllegalArgumentException(&quot;Invalid class index: &quot; + classIndex);</span>
+    }
+<span class="fc" id="L1196">    m_ClassIndex = classIndex;</span>
+<span class="fc" id="L1197">  }</span>
+
+  /**
+   * Sets the relation's name.
+   * 
+   * @param newName the new relation name.
+   */
+  public void setRelationName(/* @non_null@ */String newName) {
+
+<span class="fc" id="L1206">    m_RelationName = newName;</span>
+<span class="fc" id="L1207">  }</span>
+
+  /**
+   * Sorts the instances based on an attribute. For numeric attributes,
+   * instances are sorted in ascending order. For nominal attributes, instances
+   * are sorted based on the attribute label ordering specified in the header.
+   * Instances with missing values for the attribute are placed at the end of
+   * the dataset.
+   * 
+   * @param attIndex the attribute's index (index starts with 0)
+   */
+  public void sort(int attIndex) {
+
+<span class="fc" id="L1220">    double[] vals = new double[numInstances()];</span>
+<span class="fc bfc" id="L1221" title="All 2 branches covered.">    for (int i = 0; i &lt; vals.length; i++) {</span>
+<span class="fc" id="L1222">      double val = instance(i).value(attIndex);</span>
+<span class="fc bfc" id="L1223" title="All 2 branches covered.">      if (Instance.isMissingValue(val)) {</span>
+<span class="fc" id="L1224">        vals[i] = Double.MAX_VALUE;</span>
+      } else {
+<span class="fc" id="L1226">        vals[i] = val;</span>
+      }
+    }
+
+<span class="fc" id="L1230">    int[] sortOrder = Utils.sortWithNoMissingValues(vals);</span>
+<span class="fc" id="L1231">    Instance[] backup = new Instance[vals.length];</span>
+<span class="fc bfc" id="L1232" title="All 2 branches covered.">    for (int i = 0; i &lt; vals.length; i++) {</span>
+<span class="fc" id="L1233">      backup[i] = instance(i);</span>
+    }
+<span class="fc bfc" id="L1235" title="All 2 branches covered.">    for (int i = 0; i &lt; vals.length; i++) {</span>
+<span class="fc" id="L1236">      m_Instances.setElementAt(backup[sortOrder[i]], i);</span>
+    }
+<span class="fc" id="L1238">  }</span>
+
+  /**
+   * Sorts the instances based on an attribute. For numeric attributes,
+   * instances are sorted into ascending order. For nominal attributes,
+   * instances are sorted based on the attribute label ordering specified in the
+   * header. Instances with missing values for the attribute are placed at the
+   * end of the dataset.
+   * 
+   * @param att the attribute
+   */
+  public void sort(Attribute att) {
+
+<span class="fc" id="L1251">    sort(att.index());</span>
+<span class="fc" id="L1252">  }</span>
+
+  /**
+   * Stratifies a set of instances according to its class values if the class
+   * attribute is nominal (so that afterwards a stratified cross-validation can
+   * be performed).
+   * 
+   * @param numFolds the number of folds in the cross-validation
+   * @throws UnassignedClassException if the class is not set
+   */
+  public void stratify(int numFolds) {
+
+<span class="pc bpc" id="L1264" title="1 of 2 branches missed.">    if (numFolds &lt;= 1) {</span>
+<span class="nc" id="L1265">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L1266">          &quot;Number of folds must be greater than 1&quot;);</span>
+    }
+<span class="pc bpc" id="L1268" title="1 of 2 branches missed.">    if (m_ClassIndex &lt; 0) {</span>
+<span class="nc" id="L1269">      throw new UnassignedClassException(&quot;Class index is negative (not set)!&quot;);</span>
+    }
+<span class="fc bfc" id="L1271" title="All 2 branches covered.">    if (classAttribute().isNominal()) {</span>
+
+      // sort by class
+<span class="fc" id="L1274">      int index = 1;</span>
+<span class="fc bfc" id="L1275" title="All 2 branches covered.">      while (index &lt; numInstances()) {</span>
+<span class="fc" id="L1276">        Instance instance1 = instance(index - 1);</span>
+<span class="fc bfc" id="L1277" title="All 2 branches covered.">        for (int j = index; j &lt; numInstances(); j++) {</span>
+<span class="fc" id="L1278">          Instance instance2 = instance(j);</span>
+<span class="fc bfc" id="L1279" title="All 2 branches covered.">          if ((instance1.classValue() == instance2.classValue())</span>
+<span class="pc bpc" id="L1280" title="3 of 4 branches missed.">              || (instance1.classIsMissing() &amp;&amp; instance2.classIsMissing())) {</span>
+<span class="fc" id="L1281">            swap(index, j);</span>
+<span class="fc" id="L1282">            index++;</span>
+          }
+        }
+<span class="fc" id="L1285">        index++;</span>
+      }
+<span class="fc" id="L1287">      stratStep(numFolds);</span>
+    }
+<span class="fc" id="L1289">  }</span>
+
+  /**
+   * Computes the sum of all the instances' weights.
+   * 
+   * @return the sum of all the instances' weights as a double
+   */
+  public/* @pure@ */double sumOfWeights() {
+
+<span class="fc" id="L1298">    double sum = 0;</span>
+
+<span class="fc bfc" id="L1300" title="All 2 branches covered.">    for (int i = 0; i &lt; numInstances(); i++) {</span>
+<span class="fc" id="L1301">      sum += instance(i).weight();</span>
+    }
+<span class="fc" id="L1303">    return sum;</span>
+  }
+
+  /**
+   * Creates the test set for one fold of a cross-validation on the dataset.
+   * 
+   * @param numFolds the number of folds in the cross-validation. Must be
+   *          greater than 1.
+   * @param numFold 0 for the first fold, 1 for the second, ...
+   * @return the test set as a set of weighted instances
+   * @throws IllegalArgumentException if the number of folds is less than 2 or
+   *           greater than the number of instances.
+   */
+  // @ requires 2 &lt;= numFolds &amp;&amp; numFolds &lt; numInstances();
+  // @ requires 0 &lt;= numFold &amp;&amp; numFold &lt; numFolds;
+  public Instances testCV(int numFolds, int numFold) {
+
+    int numInstForFold, first, offset;
+    Instances test;
+
+<span class="pc bpc" id="L1323" title="1 of 2 branches missed.">    if (numFolds &lt; 2) {</span>
+<span class="nc" id="L1324">      throw new IllegalArgumentException(&quot;Number of folds must be at least 2!&quot;);</span>
+    }
+<span class="pc bpc" id="L1326" title="1 of 2 branches missed.">    if (numFolds &gt; numInstances()) {</span>
+<span class="nc" id="L1327">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L1328">          &quot;Can't have more folds than instances!&quot;);</span>
+    }
+<span class="fc" id="L1330">    numInstForFold = numInstances() / numFolds;</span>
+<span class="fc bfc" id="L1331" title="All 2 branches covered.">    if (numFold &lt; numInstances() % numFolds) {</span>
+<span class="fc" id="L1332">      numInstForFold++;</span>
+<span class="fc" id="L1333">      offset = numFold;</span>
+    } else
+<span class="fc" id="L1335">      offset = numInstances() % numFolds;</span>
+<span class="fc" id="L1336">    test = new Instances(this, numInstForFold);</span>
+<span class="fc" id="L1337">    first = numFold * (numInstances() / numFolds) + offset;</span>
+<span class="fc" id="L1338">    copyInstances(first, test, numInstForFold);</span>
+<span class="fc" id="L1339">    return test;</span>
+  }
+
+  /**
+   * Returns the dataset as a string in ARFF format. Strings are quoted if they
+   * contain whitespace characters, or if they are a question mark.
+   * 
+   * @return the dataset in ARFF format as a string
+   */
+  @Override
+  public String toString() {
+
+<span class="nc" id="L1351">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc" id="L1353">    text.append(ARFF_RELATION).append(&quot; &quot;).append(Utils.quote(m_RelationName))</span>
+<span class="nc" id="L1354">        .append(&quot;\n\n&quot;);</span>
+<span class="nc bnc" id="L1355" title="All 2 branches missed.">    for (int i = 0; i &lt; numAttributes(); i++) {</span>
+<span class="nc" id="L1356">      text.append(attribute(i)).append(&quot;\n&quot;);</span>
+    }
+<span class="nc" id="L1358">    text.append(&quot;\n&quot;).append(ARFF_DATA).append(&quot;\n&quot;);</span>
+
+<span class="nc" id="L1360">    text.append(stringWithoutHeader());</span>
+<span class="nc" id="L1361">    return text.toString();</span>
+  }
+
+  /**
+   * Returns the instances in the dataset as a string in ARFF format. Strings
+   * are quoted if they contain whitespace characters, or if they are a question
+   * mark.
+   * 
+   * @return the dataset in ARFF format as a string
+   */
+  protected String stringWithoutHeader() {
+
+<span class="nc" id="L1373">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc bnc" id="L1375" title="All 2 branches missed.">    for (int i = 0; i &lt; numInstances(); i++) {</span>
+<span class="nc" id="L1376">      text.append(instance(i));</span>
+<span class="nc bnc" id="L1377" title="All 2 branches missed.">      if (i &lt; numInstances() - 1) {</span>
+<span class="nc" id="L1378">        text.append('\n');</span>
+      }
+    }
+<span class="nc" id="L1381">    return text.toString();</span>
+  }
+
+  /**
+   * Creates the training set for one fold of a cross-validation on the dataset.
+   * 
+   * @param numFolds the number of folds in the cross-validation. Must be
+   *          greater than 1.
+   * @param numFold 0 for the first fold, 1 for the second, ...
+   * @return the training set
+   * @throws IllegalArgumentException if the number of folds is less than 2 or
+   *           greater than the number of instances.
+   */
+  // @ requires 2 &lt;= numFolds &amp;&amp; numFolds &lt; numInstances();
+  // @ requires 0 &lt;= numFold &amp;&amp; numFold &lt; numFolds;
+  public Instances trainCV(int numFolds, int numFold) {
+
+    int numInstForFold, first, offset;
+    Instances train;
+
+<span class="pc bpc" id="L1401" title="1 of 2 branches missed.">    if (numFolds &lt; 2) {</span>
+<span class="nc" id="L1402">      throw new IllegalArgumentException(&quot;Number of folds must be at least 2!&quot;);</span>
+    }
+<span class="pc bpc" id="L1404" title="1 of 2 branches missed.">    if (numFolds &gt; numInstances()) {</span>
+<span class="nc" id="L1405">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L1406">          &quot;Can't have more folds than instances!&quot;);</span>
+    }
+<span class="fc" id="L1408">    numInstForFold = numInstances() / numFolds;</span>
+<span class="fc bfc" id="L1409" title="All 2 branches covered.">    if (numFold &lt; numInstances() % numFolds) {</span>
+<span class="fc" id="L1410">      numInstForFold++;</span>
+<span class="fc" id="L1411">      offset = numFold;</span>
+    } else
+<span class="fc" id="L1413">      offset = numInstances() % numFolds;</span>
+<span class="fc" id="L1414">    train = new Instances(this, numInstances() - numInstForFold);</span>
+<span class="fc" id="L1415">    first = numFold * (numInstances() / numFolds) + offset;</span>
+<span class="fc" id="L1416">    copyInstances(0, train, first);</span>
+<span class="fc" id="L1417">    copyInstances(first + numInstForFold, train, numInstances() - first</span>
+<span class="fc" id="L1418">        - numInstForFold);</span>
+
+<span class="fc" id="L1420">    return train;</span>
+  }
+
+  /**
+   * Creates the training set for one fold of a cross-validation on the dataset.
+   * The data is subsequently randomized based on the given random number
+   * generator.
+   * 
+   * @param numFolds the number of folds in the cross-validation. Must be
+   *          greater than 1.
+   * @param numFold 0 for the first fold, 1 for the second, ...
+   * @param random the random number generator
+   * @return the training set
+   * @throws IllegalArgumentException if the number of folds is less than 2 or
+   *           greater than the number of instances.
+   */
+  // @ requires 2 &lt;= numFolds &amp;&amp; numFolds &lt; numInstances();
+  // @ requires 0 &lt;= numFold &amp;&amp; numFold &lt; numFolds;
+  public Instances trainCV(int numFolds, int numFold, Random random) {
+
+<span class="fc" id="L1440">    Instances train = trainCV(numFolds, numFold);</span>
+<span class="fc" id="L1441">    train.randomize(random);</span>
+<span class="fc" id="L1442">    return train;</span>
+  }
+
+  /**
+   * Computes the variance for a numeric attribute.
+   * 
+   * @param attIndex the numeric attribute (index starts with 0)
+   * @return the variance if the attribute is numeric
+   * @throws IllegalArgumentException if the attribute is not numeric
+   */
+  public/* @pure@ */double variance(int attIndex) {
+
+<span class="fc" id="L1454">    double sum = 0, sumSquared = 0, sumOfWeights = 0;</span>
+
+<span class="pc bpc" id="L1456" title="1 of 2 branches missed.">    if (!attribute(attIndex).isNumeric()) {</span>
+<span class="nc" id="L1457">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L1458">          &quot;Can't compute variance because attribute is &quot; + &quot;not numeric!&quot;);</span>
+    }
+<span class="fc bfc" id="L1460" title="All 2 branches covered.">    for (int i = 0; i &lt; numInstances(); i++) {</span>
+<span class="fc bfc" id="L1461" title="All 2 branches covered.">      if (!instance(i).isMissing(attIndex)) {</span>
+<span class="fc" id="L1462">        sum += instance(i).weight() * instance(i).value(attIndex);</span>
+<span class="fc" id="L1463">        sumSquared += instance(i).weight() * instance(i).value(attIndex)</span>
+<span class="fc" id="L1464">            * instance(i).value(attIndex);</span>
+<span class="fc" id="L1465">        sumOfWeights += instance(i).weight();</span>
+      }
+    }
+<span class="fc bfc" id="L1468" title="All 2 branches covered.">    if (sumOfWeights &lt;= 1) {</span>
+<span class="fc" id="L1469">      return 0;</span>
+    }
+<span class="fc" id="L1471">    double result = (sumSquared - (sum * sum / sumOfWeights))</span>
+<span class="fc" id="L1472">        / (sumOfWeights - 1);</span>
+
+    // We don't like negative variance
+<span class="fc bfc" id="L1475" title="All 2 branches covered.">    if (result &lt; 0) {</span>
+<span class="fc" id="L1476">      return 0;</span>
+    } else {
+<span class="fc" id="L1478">      return result;</span>
+    }
+  }
+
+  /**
+   * Computes the variance for a numeric attribute.
+   * 
+   * @param att the numeric attribute
+   * @return the variance if the attribute is numeric
+   * @throws IllegalArgumentException if the attribute is not numeric
+   */
+  public/* @pure@ */double variance(Attribute att) {
+
+<span class="nc" id="L1491">    return variance(att.index());</span>
+  }
+
+  /**
+   * Calculates summary statistics on the values that appear in this set of
+   * instances for a specified attribute.
+   * 
+   * @param index the index of the attribute to summarize (index starts with 0)
+   * @return an AttributeStats object with it's fields calculated.
+   */
+  // @ requires 0 &lt;= index &amp;&amp; index &lt; numAttributes();
+  public AttributeStats attributeStats(int index) {
+
+<span class="fc" id="L1504">    AttributeStats result = new AttributeStats();</span>
+<span class="fc bfc" id="L1505" title="All 2 branches covered.">    if (attribute(index).isNominal()) {</span>
+<span class="fc" id="L1506">      result.nominalCounts = new int[attribute(index).numValues()];</span>
+    }
+<span class="fc bfc" id="L1508" title="All 2 branches covered.">    if (attribute(index).isNumeric()) {</span>
+<span class="fc" id="L1509">      result.numericStats = new weka.experiment.Stats();</span>
+    }
+<span class="fc" id="L1511">    result.totalCount = numInstances();</span>
+
+<span class="fc" id="L1513">    double[] attVals = attributeToDoubleArray(index);</span>
+<span class="fc" id="L1514">    int[] sorted = Utils.sort(attVals);</span>
+<span class="fc" id="L1515">    int currentCount = 0;</span>
+<span class="fc" id="L1516">    double prev = Instance.missingValue();</span>
+<span class="fc bfc" id="L1517" title="All 2 branches covered.">    for (int j = 0; j &lt; numInstances(); j++) {</span>
+<span class="fc" id="L1518">      Instance current = instance(sorted[j]);</span>
+<span class="fc bfc" id="L1519" title="All 2 branches covered.">      if (current.isMissing(index)) {</span>
+<span class="fc" id="L1520">        result.missingCount = numInstances() - j;</span>
+<span class="fc" id="L1521">        break;</span>
+      }
+<span class="fc bfc" id="L1523" title="All 2 branches covered.">      if (current.value(index) == prev) {</span>
+<span class="fc" id="L1524">        currentCount++;</span>
+      } else {
+<span class="fc" id="L1526">        result.addDistinct(prev, currentCount);</span>
+<span class="fc" id="L1527">        currentCount = 1;</span>
+<span class="fc" id="L1528">        prev = current.value(index);</span>
+      }
+    }
+<span class="fc" id="L1531">    result.addDistinct(prev, currentCount);</span>
+<span class="fc" id="L1532">    result.distinctCount--; // So we don't count &quot;missing&quot; as a value</span>
+<span class="fc" id="L1533">    return result;</span>
+  }
+
+  /**
+   * Gets the value of all instances in this dataset for a particular attribute.
+   * Useful in conjunction with Utils.sort to allow iterating through the
+   * dataset in sorted order for some attribute.
+   * 
+   * @param index the index of the attribute.
+   * @return an array containing the value of the desired attribute for each
+   *         instance in the dataset.
+   */
+  // @ requires 0 &lt;= index &amp;&amp; index &lt; numAttributes();
+  public/* @pure@ */double[] attributeToDoubleArray(int index) {
+
+<span class="fc" id="L1548">    double[] result = new double[numInstances()];</span>
+<span class="fc bfc" id="L1549" title="All 2 branches covered.">    for (int i = 0; i &lt; result.length; i++) {</span>
+<span class="fc" id="L1550">      result[i] = instance(i).value(index);</span>
+    }
+<span class="fc" id="L1552">    return result;</span>
+  }
+
+  /**
+   * Generates a string summarizing the set of instances. Gives a breakdown for
+   * each attribute indicating the number of missing/discrete/unique values and
+   * other information.
+   * 
+   * @return a string summarizing the dataset
+   */
+  public String toSummaryString() {
+
+<span class="nc" id="L1564">    StringBuffer result = new StringBuffer();</span>
+<span class="nc" id="L1565">    result.append(&quot;Relation Name:  &quot;).append(relationName()).append('\n');</span>
+<span class="nc" id="L1566">    result.append(&quot;Num Instances:  &quot;).append(numInstances()).append('\n');</span>
+<span class="nc" id="L1567">    result.append(&quot;Num Attributes: &quot;).append(numAttributes()).append('\n');</span>
+<span class="nc" id="L1568">    result.append('\n');</span>
+
+<span class="nc" id="L1570">    result.append(Utils.padLeft(&quot;&quot;, 5)).append(Utils.padRight(&quot;Name&quot;, 25));</span>
+<span class="nc" id="L1571">    result.append(Utils.padLeft(&quot;Type&quot;, 5)).append(Utils.padLeft(&quot;Nom&quot;, 5));</span>
+<span class="nc" id="L1572">    result.append(Utils.padLeft(&quot;Int&quot;, 5)).append(Utils.padLeft(&quot;Real&quot;, 5));</span>
+<span class="nc" id="L1573">    result.append(Utils.padLeft(&quot;Missing&quot;, 12));</span>
+<span class="nc" id="L1574">    result.append(Utils.padLeft(&quot;Unique&quot;, 12));</span>
+<span class="nc" id="L1575">    result.append(Utils.padLeft(&quot;Dist&quot;, 6)).append('\n');</span>
+<span class="nc bnc" id="L1576" title="All 2 branches missed.">    for (int i = 0; i &lt; numAttributes(); i++) {</span>
+<span class="nc" id="L1577">      Attribute a = attribute(i);</span>
+<span class="nc" id="L1578">      AttributeStats as = attributeStats(i);</span>
+<span class="nc" id="L1579">      result.append(Utils.padLeft(&quot;&quot; + (i + 1), 4)).append(' ');</span>
+<span class="nc" id="L1580">      result.append(Utils.padRight(a.name(), 25)).append(' ');</span>
+      long percent;
+<span class="nc bnc" id="L1582" title="All 6 branches missed.">      switch (a.type()) {</span>
+      case Attribute.NOMINAL:
+<span class="nc" id="L1584">        result.append(Utils.padLeft(&quot;Nom&quot;, 4)).append(' ');</span>
+<span class="nc" id="L1585">        percent = Math.round(100.0 * as.intCount / as.totalCount);</span>
+<span class="nc" id="L1586">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1587">        result.append(Utils.padLeft(&quot;&quot; + 0, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1588">        percent = Math.round(100.0 * as.realCount / as.totalCount);</span>
+<span class="nc" id="L1589">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1590">        break;</span>
+      case Attribute.NUMERIC:
+<span class="nc" id="L1592">        result.append(Utils.padLeft(&quot;Num&quot;, 4)).append(' ');</span>
+<span class="nc" id="L1593">        result.append(Utils.padLeft(&quot;&quot; + 0, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1594">        percent = Math.round(100.0 * as.intCount / as.totalCount);</span>
+<span class="nc" id="L1595">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1596">        percent = Math.round(100.0 * as.realCount / as.totalCount);</span>
+<span class="nc" id="L1597">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1598">        break;</span>
+      case Attribute.DATE:
+<span class="nc" id="L1600">        result.append(Utils.padLeft(&quot;Dat&quot;, 4)).append(' ');</span>
+<span class="nc" id="L1601">        result.append(Utils.padLeft(&quot;&quot; + 0, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1602">        percent = Math.round(100.0 * as.intCount / as.totalCount);</span>
+<span class="nc" id="L1603">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1604">        percent = Math.round(100.0 * as.realCount / as.totalCount);</span>
+<span class="nc" id="L1605">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1606">        break;</span>
+      case Attribute.STRING:
+<span class="nc" id="L1608">        result.append(Utils.padLeft(&quot;Str&quot;, 4)).append(' ');</span>
+<span class="nc" id="L1609">        percent = Math.round(100.0 * as.intCount / as.totalCount);</span>
+<span class="nc" id="L1610">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1611">        result.append(Utils.padLeft(&quot;&quot; + 0, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1612">        percent = Math.round(100.0 * as.realCount / as.totalCount);</span>
+<span class="nc" id="L1613">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1614">        break;</span>
+      case Attribute.RELATIONAL:
+<span class="nc" id="L1616">        result.append(Utils.padLeft(&quot;Rel&quot;, 4)).append(' ');</span>
+<span class="nc" id="L1617">        percent = Math.round(100.0 * as.intCount / as.totalCount);</span>
+<span class="nc" id="L1618">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1619">        result.append(Utils.padLeft(&quot;&quot; + 0, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1620">        percent = Math.round(100.0 * as.realCount / as.totalCount);</span>
+<span class="nc" id="L1621">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1622">        break;</span>
+      default:
+<span class="nc" id="L1624">        result.append(Utils.padLeft(&quot;???&quot;, 4)).append(' ');</span>
+<span class="nc" id="L1625">        result.append(Utils.padLeft(&quot;&quot; + 0, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1626">        percent = Math.round(100.0 * as.intCount / as.totalCount);</span>
+<span class="nc" id="L1627">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1628">        percent = Math.round(100.0 * as.realCount / as.totalCount);</span>
+<span class="nc" id="L1629">        result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+        break;
+      }
+<span class="nc" id="L1632">      result.append(Utils.padLeft(&quot;&quot; + as.missingCount, 5)).append(&quot; /&quot;);</span>
+<span class="nc" id="L1633">      percent = Math.round(100.0 * as.missingCount / as.totalCount);</span>
+<span class="nc" id="L1634">      result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1635">      result.append(Utils.padLeft(&quot;&quot; + as.uniqueCount, 5)).append(&quot; /&quot;);</span>
+<span class="nc" id="L1636">      percent = Math.round(100.0 * as.uniqueCount / as.totalCount);</span>
+<span class="nc" id="L1637">      result.append(Utils.padLeft(&quot;&quot; + percent, 3)).append(&quot;% &quot;);</span>
+<span class="nc" id="L1638">      result.append(Utils.padLeft(&quot;&quot; + as.distinctCount, 5)).append(' ');</span>
+<span class="nc" id="L1639">      result.append('\n');</span>
+    }
+<span class="nc" id="L1641">    return result.toString();</span>
+  }
+
+  /**
+   * Copies instances from one set to the end of another one.
+   * 
+   * @param from the position of the first instance to be copied
+   * @param dest the destination for the instances
+   * @param num the number of instances to be copied
+   */
+  // @ requires 0 &lt;= from &amp;&amp; from &lt;= numInstances() - num;
+  // @ requires 0 &lt;= num;
+  protected void copyInstances(int from, /* @non_null@ */Instances dest, int num) {
+
+<span class="fc bfc" id="L1655" title="All 2 branches covered.">    for (int i = 0; i &lt; num; i++) {</span>
+<span class="fc" id="L1656">      dest.add(instance(from + i));</span>
+    }
+<span class="fc" id="L1658">  }</span>
+
+  /**
+   * Replaces the attribute information by a clone of itself.
+   */
+  protected void freshAttributeInfo() {
+
+<span class="fc" id="L1665">    m_Attributes = (FastVector) m_Attributes.copyElements();</span>
+<span class="fc" id="L1666">  }</span>
+
+  /**
+   * Returns string including all instances, their weights and their indices in
+   * the original dataset.
+   * 
+   * @return description of instance and its weight as a string
+   */
+  protected/* @pure@ */String instancesAndWeights() {
+
+<span class="nc" id="L1676">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc bnc" id="L1678" title="All 2 branches missed.">    for (int i = 0; i &lt; numInstances(); i++) {</span>
+<span class="nc" id="L1679">      text.append(instance(i) + &quot; &quot; + instance(i).weight());</span>
+<span class="nc bnc" id="L1680" title="All 2 branches missed.">      if (i &lt; numInstances() - 1) {</span>
+<span class="nc" id="L1681">        text.append(&quot;\n&quot;);</span>
+      }
+    }
+<span class="nc" id="L1684">    return text.toString();</span>
+  }
+
+  /**
+   * Help function needed for stratification of set.
+   * 
+   * @param numFolds the number of folds for the stratification
+   */
+  protected void stratStep(int numFolds) {
+
+<span class="fc" id="L1694">    FastVector newVec = new FastVector(m_Instances.capacity());</span>
+<span class="fc" id="L1695">    int start = 0, j;</span>
+
+    // create stratified batch
+<span class="fc bfc" id="L1698" title="All 2 branches covered.">    while (newVec.size() &lt; numInstances()) {</span>
+<span class="fc" id="L1699">      j = start;</span>
+<span class="fc bfc" id="L1700" title="All 2 branches covered.">      while (j &lt; numInstances()) {</span>
+<span class="fc" id="L1701">        newVec.addElement(instance(j));</span>
+<span class="fc" id="L1702">        j = j + numFolds;</span>
+      }
+<span class="fc" id="L1704">      start++;</span>
+    }
+<span class="fc" id="L1706">    m_Instances = newVec;</span>
+<span class="fc" id="L1707">  }</span>
+
+  /**
+   * Swaps two instances in the set.
+   * 
+   * @param i the first instance's index (index starts with 0)
+   * @param j the second instance's index (index starts with 0)
+   */
+  // @ requires 0 &lt;= i &amp;&amp; i &lt; numInstances();
+  // @ requires 0 &lt;= j &amp;&amp; j &lt; numInstances();
+  public void swap(int i, int j) {
+
+<span class="fc" id="L1719">    m_Instances.swap(i, j);</span>
+<span class="fc" id="L1720">  }</span>
+
+  /**
+   * Merges two sets of Instances together. The resulting set will have all the
+   * attributes of the first set plus all the attributes of the second set. The
+   * number of instances in both sets must be the same.
+   * 
+   * @param first the first set of Instances
+   * @param second the second set of Instances
+   * @return the merged set of Instances
+   * @throws IllegalArgumentException if the datasets are not the same size
+   */
+  public static Instances mergeInstances(Instances first, Instances second) {
+
+<span class="nc bnc" id="L1734" title="All 2 branches missed.">    if (first.numInstances() != second.numInstances()) {</span>
+<span class="nc" id="L1735">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L1736">          &quot;Instance sets must be of the same size&quot;);</span>
+    }
+
+    // Create the vector of merged attributes
+<span class="nc" id="L1740">    FastVector newAttributes = new FastVector();</span>
+<span class="nc bnc" id="L1741" title="All 2 branches missed.">    for (int i = 0; i &lt; first.numAttributes(); i++) {</span>
+<span class="nc" id="L1742">      newAttributes.addElement(first.attribute(i));</span>
+    }
+<span class="nc bnc" id="L1744" title="All 2 branches missed.">    for (int i = 0; i &lt; second.numAttributes(); i++) {</span>
+<span class="nc" id="L1745">      newAttributes.addElement(second.attribute(i));</span>
+    }
+
+    // Create the set of Instances
+<span class="nc" id="L1749">    Instances merged = new Instances(first.relationName() + '_'</span>
+<span class="nc" id="L1750">        + second.relationName(), newAttributes, first.numInstances());</span>
+    // Merge each instance
+<span class="nc bnc" id="L1752" title="All 2 branches missed.">    for (int i = 0; i &lt; first.numInstances(); i++) {</span>
+<span class="nc" id="L1753">      merged.add(first.instance(i).mergeInstance(second.instance(i)));</span>
+    }
+<span class="nc" id="L1755">    return merged;</span>
+  }
+
+  /**
+   * Method for testing this class.
+   * 
+   * @param argv should contain one element: the name of an ARFF file
+   */
+  // @ requires argv != null;
+  // @ requires argv.length == 1;
+  // @ requires argv[0] != null;
+  public static void test(String[] argv) {
+
+    Instances instances, secondInstances, train, test, empty;
+<span class="nc" id="L1769">    Random random = new Random(2);</span>
+    Reader reader;
+    int start, num;
+    FastVector testAtts, testVals;
+    int i, j;
+
+    try {
+<span class="nc bnc" id="L1776" title="All 2 branches missed.">      if (argv.length &gt; 1) {</span>
+<span class="nc" id="L1777">        throw (new Exception(&quot;Usage: Instances [&lt;filename&gt;]&quot;));</span>
+      }
+
+      // Creating set of instances from scratch
+<span class="nc" id="L1781">      testVals = new FastVector(2);</span>
+<span class="nc" id="L1782">      testVals.addElement(&quot;first_value&quot;);</span>
+<span class="nc" id="L1783">      testVals.addElement(&quot;second_value&quot;);</span>
+<span class="nc" id="L1784">      testAtts = new FastVector(2);</span>
+<span class="nc" id="L1785">      testAtts.addElement(new Attribute(&quot;nominal_attribute&quot;, testVals));</span>
+<span class="nc" id="L1786">      testAtts.addElement(new Attribute(&quot;numeric_attribute&quot;));</span>
+<span class="nc" id="L1787">      instances = new Instances(&quot;test_set&quot;, testAtts, 10);</span>
+<span class="nc" id="L1788">      instances.add(new Instance(instances.numAttributes()));</span>
+<span class="nc" id="L1789">      instances.add(new Instance(instances.numAttributes()));</span>
+<span class="nc" id="L1790">      instances.add(new Instance(instances.numAttributes()));</span>
+<span class="nc" id="L1791">      instances.setClassIndex(0);</span>
+<span class="nc" id="L1792">      System.out.println(&quot;\nSet of instances created from scratch:\n&quot;);</span>
+<span class="nc" id="L1793">      System.out.println(instances);</span>
+
+<span class="nc bnc" id="L1795" title="All 2 branches missed.">      if (argv.length == 1) {</span>
+<span class="nc" id="L1796">        String filename = argv[0];</span>
+<span class="nc" id="L1797">        reader = new FileReader(filename);</span>
+
+        // Read first five instances and print them
+<span class="nc" id="L1800">        System.out.println(&quot;\nFirst five instances from file:\n&quot;);</span>
+<span class="nc" id="L1801">        instances = new Instances(reader, 1);</span>
+<span class="nc" id="L1802">        instances.setClassIndex(instances.numAttributes() - 1);</span>
+<span class="nc" id="L1803">        i = 0;</span>
+<span class="nc bnc" id="L1804" title="All 4 branches missed.">        while ((i &lt; 5) &amp;&amp; (instances.readInstance(reader))) {</span>
+<span class="nc" id="L1805">          i++;</span>
+        }
+<span class="nc" id="L1807">        System.out.println(instances);</span>
+
+        // Read all the instances in the file
+<span class="nc" id="L1810">        reader = new FileReader(filename);</span>
+<span class="nc" id="L1811">        instances = new Instances(reader);</span>
+
+        // Make the last attribute be the class
+<span class="nc" id="L1814">        instances.setClassIndex(instances.numAttributes() - 1);</span>
+
+        // Print header and instances.
+<span class="nc" id="L1817">        System.out.println(&quot;\nDataset:\n&quot;);</span>
+<span class="nc" id="L1818">        System.out.println(instances);</span>
+<span class="nc" id="L1819">        System.out.println(&quot;\nClass index: &quot; + instances.classIndex());</span>
+      }
+
+      // Test basic methods based on class index.
+<span class="nc" id="L1823">      System.out.println(&quot;\nClass name: &quot; + instances.classAttribute().name());</span>
+<span class="nc" id="L1824">      System.out.println(&quot;\nClass index: &quot; + instances.classIndex());</span>
+<span class="nc" id="L1825">      System.out.println(&quot;\nClass is nominal: &quot;</span>
+<span class="nc" id="L1826">          + instances.classAttribute().isNominal());</span>
+<span class="nc" id="L1827">      System.out.println(&quot;\nClass is numeric: &quot;</span>
+<span class="nc" id="L1828">          + instances.classAttribute().isNumeric());</span>
+<span class="nc" id="L1829">      System.out.println(&quot;\nClasses:\n&quot;);</span>
+<span class="nc bnc" id="L1830" title="All 2 branches missed.">      for (i = 0; i &lt; instances.numClasses(); i++) {</span>
+<span class="nc" id="L1831">        System.out.println(instances.classAttribute().value(i));</span>
+      }
+<span class="nc" id="L1833">      System.out.println(&quot;\nClass values and labels of instances:\n&quot;);</span>
+<span class="nc bnc" id="L1834" title="All 2 branches missed.">      for (i = 0; i &lt; instances.numInstances(); i++) {</span>
+<span class="nc" id="L1835">        Instance inst = instances.instance(i);</span>
+<span class="nc" id="L1836">        System.out.print(inst.classValue() + &quot;\t&quot;);</span>
+<span class="nc" id="L1837">        System.out.print(inst.toString(inst.classIndex()));</span>
+<span class="nc bnc" id="L1838" title="All 2 branches missed.">        if (instances.instance(i).classIsMissing()) {</span>
+<span class="nc" id="L1839">          System.out.println(&quot;\tis missing&quot;);</span>
+        } else {
+<span class="nc" id="L1841">          System.out.println();</span>
+        }
+      }
+
+      // Create random weights.
+<span class="nc" id="L1846">      System.out.println(&quot;\nCreating random weights for instances.&quot;);</span>
+<span class="nc bnc" id="L1847" title="All 2 branches missed.">      for (i = 0; i &lt; instances.numInstances(); i++) {</span>
+<span class="nc" id="L1848">        instances.instance(i).setWeight(random.nextDouble());</span>
+      }
+
+      // Print all instances and their weights (and the sum of weights).
+<span class="nc" id="L1852">      System.out.println(&quot;\nInstances and their weights:\n&quot;);</span>
+<span class="nc" id="L1853">      System.out.println(instances.instancesAndWeights());</span>
+<span class="nc" id="L1854">      System.out.print(&quot;\nSum of weights: &quot;);</span>
+<span class="nc" id="L1855">      System.out.println(instances.sumOfWeights());</span>
+
+      // Insert an attribute
+<span class="nc" id="L1858">      secondInstances = new Instances(instances);</span>
+<span class="nc" id="L1859">      Attribute testAtt = new Attribute(&quot;Inserted&quot;);</span>
+<span class="nc" id="L1860">      secondInstances.insertAttributeAt(testAtt, 0);</span>
+<span class="nc" id="L1861">      System.out.println(&quot;\nSet with inserted attribute:\n&quot;);</span>
+<span class="nc" id="L1862">      System.out.println(secondInstances);</span>
+<span class="nc" id="L1863">      System.out.println(&quot;\nClass name: &quot;</span>
+<span class="nc" id="L1864">          + secondInstances.classAttribute().name());</span>
+
+      // Delete the attribute
+<span class="nc" id="L1867">      secondInstances.deleteAttributeAt(0);</span>
+<span class="nc" id="L1868">      System.out.println(&quot;\nSet with attribute deleted:\n&quot;);</span>
+<span class="nc" id="L1869">      System.out.println(secondInstances);</span>
+<span class="nc" id="L1870">      System.out.println(&quot;\nClass name: &quot;</span>
+<span class="nc" id="L1871">          + secondInstances.classAttribute().name());</span>
+
+      // Test if headers are equal
+<span class="nc" id="L1874">      System.out.println(&quot;\nHeaders equal: &quot;</span>
+<span class="nc" id="L1875">          + instances.equalHeaders(secondInstances) + &quot;\n&quot;);</span>
+
+      // Print data in internal format.
+<span class="nc" id="L1878">      System.out.println(&quot;\nData (internal values):\n&quot;);</span>
+<span class="nc bnc" id="L1879" title="All 2 branches missed.">      for (i = 0; i &lt; instances.numInstances(); i++) {</span>
+<span class="nc bnc" id="L1880" title="All 2 branches missed.">        for (j = 0; j &lt; instances.numAttributes(); j++) {</span>
+<span class="nc bnc" id="L1881" title="All 2 branches missed.">          if (instances.instance(i).isMissing(j)) {</span>
+<span class="nc" id="L1882">            System.out.print(&quot;? &quot;);</span>
+          } else {
+<span class="nc" id="L1884">            System.out.print(instances.instance(i).value(j) + &quot; &quot;);</span>
+          }
+        }
+<span class="nc" id="L1887">        System.out.println();</span>
+      }
+
+      // Just print header
+<span class="nc" id="L1891">      System.out.println(&quot;\nEmpty dataset:\n&quot;);</span>
+<span class="nc" id="L1892">      empty = new Instances(instances, 0);</span>
+<span class="nc" id="L1893">      System.out.println(empty);</span>
+<span class="nc" id="L1894">      System.out.println(&quot;\nClass name: &quot; + empty.classAttribute().name());</span>
+
+      // Create copy and rename an attribute and a value (if possible)
+<span class="nc bnc" id="L1897" title="All 2 branches missed.">      if (empty.classAttribute().isNominal()) {</span>
+<span class="nc" id="L1898">        Instances copy = new Instances(empty, 0);</span>
+<span class="nc" id="L1899">        copy.renameAttribute(copy.classAttribute(), &quot;new_name&quot;);</span>
+<span class="nc" id="L1900">        copy.renameAttributeValue(copy.classAttribute(), copy.classAttribute()</span>
+<span class="nc" id="L1901">            .value(0), &quot;new_val_name&quot;);</span>
+<span class="nc" id="L1902">        System.out.println(&quot;\nDataset with names changed:\n&quot; + copy);</span>
+<span class="nc" id="L1903">        System.out.println(&quot;\nOriginal dataset:\n&quot; + empty);</span>
+      }
+
+      // Create and prints subset of instances.
+<span class="nc" id="L1907">      start = instances.numInstances() / 4;</span>
+<span class="nc" id="L1908">      num = instances.numInstances() / 2;</span>
+<span class="nc" id="L1909">      System.out.print(&quot;\nSubset of dataset: &quot;);</span>
+<span class="nc" id="L1910">      System.out.println(num + &quot; instances from &quot; + (start + 1) + &quot;. instance&quot;);</span>
+<span class="nc" id="L1911">      secondInstances = new Instances(instances, start, num);</span>
+<span class="nc" id="L1912">      System.out.println(&quot;\nClass name: &quot;</span>
+<span class="nc" id="L1913">          + secondInstances.classAttribute().name());</span>
+
+      // Print all instances and their weights (and the sum of weights).
+<span class="nc" id="L1916">      System.out.println(&quot;\nInstances and their weights:\n&quot;);</span>
+<span class="nc" id="L1917">      System.out.println(secondInstances.instancesAndWeights());</span>
+<span class="nc" id="L1918">      System.out.print(&quot;\nSum of weights: &quot;);</span>
+<span class="nc" id="L1919">      System.out.println(secondInstances.sumOfWeights());</span>
+
+      // Create and print training and test sets for 3-fold
+      // cross-validation.
+<span class="nc" id="L1923">      System.out.println(&quot;\nTrain and test folds for 3-fold CV:&quot;);</span>
+<span class="nc bnc" id="L1924" title="All 2 branches missed.">      if (instances.classAttribute().isNominal()) {</span>
+<span class="nc" id="L1925">        instances.stratify(3);</span>
+      }
+<span class="nc bnc" id="L1927" title="All 2 branches missed.">      for (j = 0; j &lt; 3; j++) {</span>
+<span class="nc" id="L1928">        train = instances.trainCV(3, j, new Random(1));</span>
+<span class="nc" id="L1929">        test = instances.testCV(3, j);</span>
+
+        // Print all instances and their weights (and the sum of weights).
+<span class="nc" id="L1932">        System.out.println(&quot;\nTrain: &quot;);</span>
+<span class="nc" id="L1933">        System.out.println(&quot;\nInstances and their weights:\n&quot;);</span>
+<span class="nc" id="L1934">        System.out.println(train.instancesAndWeights());</span>
+<span class="nc" id="L1935">        System.out.print(&quot;\nSum of weights: &quot;);</span>
+<span class="nc" id="L1936">        System.out.println(train.sumOfWeights());</span>
+<span class="nc" id="L1937">        System.out.println(&quot;\nClass name: &quot; + train.classAttribute().name());</span>
+<span class="nc" id="L1938">        System.out.println(&quot;\nTest: &quot;);</span>
+<span class="nc" id="L1939">        System.out.println(&quot;\nInstances and their weights:\n&quot;);</span>
+<span class="nc" id="L1940">        System.out.println(test.instancesAndWeights());</span>
+<span class="nc" id="L1941">        System.out.print(&quot;\nSum of weights: &quot;);</span>
+<span class="nc" id="L1942">        System.out.println(test.sumOfWeights());</span>
+<span class="nc" id="L1943">        System.out.println(&quot;\nClass name: &quot; + test.classAttribute().name());</span>
+      }
+
+      // Randomize instances and print them.
+<span class="nc" id="L1947">      System.out.println(&quot;\nRandomized dataset:&quot;);</span>
+<span class="nc" id="L1948">      instances.randomize(random);</span>
+
+      // Print all instances and their weights (and the sum of weights).
+<span class="nc" id="L1951">      System.out.println(&quot;\nInstances and their weights:\n&quot;);</span>
+<span class="nc" id="L1952">      System.out.println(instances.instancesAndWeights());</span>
+<span class="nc" id="L1953">      System.out.print(&quot;\nSum of weights: &quot;);</span>
+<span class="nc" id="L1954">      System.out.println(instances.sumOfWeights());</span>
+
+      // Sort instances according to first attribute and
+      // print them.
+<span class="nc" id="L1958">      System.out.print(&quot;\nInstances sorted according to first attribute:\n &quot;);</span>
+<span class="nc" id="L1959">      instances.sort(0);</span>
+
+      // Print all instances and their weights (and the sum of weights).
+<span class="nc" id="L1962">      System.out.println(&quot;\nInstances and their weights:\n&quot;);</span>
+<span class="nc" id="L1963">      System.out.println(instances.instancesAndWeights());</span>
+<span class="nc" id="L1964">      System.out.print(&quot;\nSum of weights: &quot;);</span>
+<span class="nc" id="L1965">      System.out.println(instances.sumOfWeights());</span>
+<span class="nc" id="L1966">    } catch (Exception e) {</span>
+<span class="nc" id="L1967">      e.printStackTrace();</span>
+    }
+<span class="nc" id="L1969">  }</span>
+
+  /**
+   * Main method for this class. The following calls are possible:
+   * &lt;ul&gt;
+   * &lt;li&gt;
+   * &lt;code&gt;weka.core.Instances&lt;/code&gt; help&lt;br/&gt;
+   * prints a short list of possible commands.&lt;/li&gt;
+   * &lt;li&gt;
+   * &lt;code&gt;weka.core.Instances&lt;/code&gt; &amp;lt;filename&amp;gt;&lt;br/&gt;
+   * prints a summary of a set of instances.&lt;/li&gt;
+   * &lt;li&gt;
+   * &lt;code&gt;weka.core.Instances&lt;/code&gt; merge &amp;lt;filename1&amp;gt; &amp;lt;filename2&amp;gt;&lt;br/&gt;
+   * merges the two datasets (must have same number of instances) and outputs
+   * the results on stdout.&lt;/li&gt;
+   * &lt;li&gt;
+   * &lt;code&gt;weka.core.Instances&lt;/code&gt; append &amp;lt;filename1&amp;gt; &amp;lt;filename2&amp;gt;
+   * &lt;br/&gt;
+   * appends the second dataset to the first one (must have same headers) and
+   * outputs the results on stdout.&lt;/li&gt;
+   * &lt;li&gt;
+   * &lt;code&gt;weka.core.Instances&lt;/code&gt; headers &amp;lt;filename1&amp;gt;
+   * &amp;lt;filename2&amp;gt;&lt;br/&gt;
+   * Compares the headers of the two datasets and prints whether they match or
+   * not.&lt;/li&gt;
+   * &lt;li&gt;
+   * &lt;code&gt;weka.core.Instances&lt;/code&gt; randomize &amp;lt;seed&amp;gt; &amp;lt;filename&amp;gt;&lt;br/&gt;
+   * randomizes the dataset with the given seed and outputs the result on
+   * stdout.&lt;/li&gt;
+   * &lt;/ul&gt;
+   * 
+   * @param args the commandline parameters
+   */
+  public static void main(String[] args) {
+
+    try {
+      Instances i;
+      // read from stdin and print statistics
+<span class="nc bnc" id="L2007" title="All 2 branches missed.">      if (args.length == 0) {</span>
+<span class="nc" id="L2008">        DataSource source = new DataSource(System.in);</span>
+<span class="nc" id="L2009">        i = source.getDataSet();</span>
+<span class="nc" id="L2010">        System.out.println(i.toSummaryString());</span>
+      }
+      // read file and print statistics
+<span class="nc bnc" id="L2013" title="All 4 branches missed.">      else if ((args.length == 1) &amp;&amp; (!args[0].equals(&quot;-h&quot;))</span>
+<span class="nc bnc" id="L2014" title="All 2 branches missed.">          &amp;&amp; (!args[0].equals(&quot;help&quot;))) {</span>
+<span class="nc" id="L2015">        DataSource source = new DataSource(args[0]);</span>
+<span class="nc" id="L2016">        i = source.getDataSet();</span>
+<span class="nc" id="L2017">        System.out.println(i.toSummaryString());</span>
+      }
+      // read two files, merge them and print result to stdout
+<span class="nc bnc" id="L2020" title="All 4 branches missed.">      else if ((args.length == 3) &amp;&amp; (args[0].toLowerCase().equals(&quot;merge&quot;))) {</span>
+<span class="nc" id="L2021">        DataSource source1 = new DataSource(args[1]);</span>
+<span class="nc" id="L2022">        DataSource source2 = new DataSource(args[2]);</span>
+<span class="nc" id="L2023">        i = Instances</span>
+<span class="nc" id="L2024">            .mergeInstances(source1.getDataSet(), source2.getDataSet());</span>
+<span class="nc" id="L2025">        System.out.println(i);</span>
+      }
+      // read two files, append them and print result to stdout
+<span class="nc bnc" id="L2028" title="All 4 branches missed.">      else if ((args.length == 3) &amp;&amp; (args[0].toLowerCase().equals(&quot;append&quot;))) {</span>
+<span class="nc" id="L2029">        DataSource source1 = new DataSource(args[1]);</span>
+<span class="nc" id="L2030">        DataSource source2 = new DataSource(args[2]);</span>
+<span class="nc bnc" id="L2031" title="All 2 branches missed.">        if (!source1.getStructure().equalHeaders(source2.getStructure()))</span>
+<span class="nc" id="L2032">          throw new Exception(&quot;The two datasets have different headers!&quot;);</span>
+<span class="nc" id="L2033">        Instances structure = source1.getStructure();</span>
+<span class="nc" id="L2034">        System.out.println(source1.getStructure());</span>
+<span class="nc bnc" id="L2035" title="All 2 branches missed.">        while (source1.hasMoreElements(structure))</span>
+<span class="nc" id="L2036">          System.out.println(source1.nextElement(structure));</span>
+<span class="nc" id="L2037">        structure = source2.getStructure();</span>
+<span class="nc bnc" id="L2038" title="All 2 branches missed.">        while (source2.hasMoreElements(structure))</span>
+<span class="nc" id="L2039">          System.out.println(source2.nextElement(structure));</span>
+      }
+      // read two files and compare their headers
+<span class="nc bnc" id="L2042" title="All 4 branches missed.">      else if ((args.length == 3) &amp;&amp; (args[0].toLowerCase().equals(&quot;headers&quot;))) {</span>
+<span class="nc" id="L2043">        DataSource source1 = new DataSource(args[1]);</span>
+<span class="nc" id="L2044">        DataSource source2 = new DataSource(args[2]);</span>
+<span class="nc bnc" id="L2045" title="All 2 branches missed.">        if (source1.getStructure().equalHeaders(source2.getStructure()))</span>
+<span class="nc" id="L2046">          System.out.println(&quot;Headers match&quot;);</span>
+        else
+<span class="nc" id="L2048">          System.out.println(&quot;Headers don't match&quot;);</span>
+      }
+      // read file and seed value, randomize data and print result to stdout
+<span class="nc bnc" id="L2051" title="All 2 branches missed.">      else if ((args.length == 3)</span>
+<span class="nc bnc" id="L2052" title="All 2 branches missed.">          &amp;&amp; (args[0].toLowerCase().equals(&quot;randomize&quot;))) {</span>
+<span class="nc" id="L2053">        DataSource source = new DataSource(args[2]);</span>
+<span class="nc" id="L2054">        i = source.getDataSet();</span>
+<span class="nc" id="L2055">        i.randomize(new Random(Integer.parseInt(args[1])));</span>
+<span class="nc" id="L2056">        System.out.println(i);</span>
+      }
+      // wrong parameters
+      else {
+<span class="nc" id="L2060">        System.err.println(&quot;\nUsage:\n&quot; + &quot;\tweka.core.Instances help\n&quot;</span>
+            + &quot;\tweka.core.Instances &lt;filename&gt;\n&quot;
+            + &quot;\tweka.core.Instances merge &lt;filename1&gt; &lt;filename2&gt;\n&quot;
+            + &quot;\tweka.core.Instances append &lt;filename1&gt; &lt;filename2&gt;\n&quot;
+            + &quot;\tweka.core.Instances headers &lt;filename1&gt; &lt;filename2&gt;\n&quot;
+            + &quot;\tweka.core.Instances randomize &lt;seed&gt; &lt;filename&gt;\n&quot;);
+      }
+<span class="nc" id="L2067">    } catch (Exception ex) {</span>
+<span class="nc" id="L2068">      ex.printStackTrace();</span>
+<span class="nc" id="L2069">      System.err.println(ex.getMessage());</span>
+    }
+<span class="nc" id="L2071">  }</span>
+
+  /**
+   * Returns the revision string.
+   * 
+   * @return the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L2079">    return RevisionUtils.extract(&quot;$Revision: 9764 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

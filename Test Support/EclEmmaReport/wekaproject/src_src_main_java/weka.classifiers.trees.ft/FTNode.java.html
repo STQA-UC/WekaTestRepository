@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>FTNode.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees.ft</a> &gt; <span class="el_source">FTNode.java</span></div><h1>FTNode.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    FTNode.java
+ *    Copyright (C) 2007 University of Porto, Porto, Portugal
+ *
+ */
+
+package weka.classifiers.trees.ft;
+
+import weka.classifiers.functions.SimpleLinearRegression;
+import weka.classifiers.trees.j48.C45ModelSelection;
+import weka.classifiers.trees.j48.C45Split;
+import weka.classifiers.trees.j48.NoSplit;
+import weka.core.Attribute;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+
+/**
+ * Class for Functional tree structure. 
+ *
+ * @author Jo\~{a}o Gama
+ * @author Carlos Ferreira
+ *
+ * @version $Revision: 1.4 $
+ */
+public class FTNode 
+  extends FTtree {   
+  
+  /** for serialization. */
+  private static final long serialVersionUID = 2317688685139295063L;
+
+  /**
+   * Constructor for Functional tree node. 
+   *
+   * @param errorOnProbabilities Use error on probabilities for stopping criterion of LogitBoost?
+   * @param numBoostingIterations sets the numBoostingIterations parameter
+   * @param minNumInstances minimum number of instances at which a node is considered for splitting
+   *
+   */
+<span class="fc" id="L57">  public FTNode( boolean errorOnProbabilities, int numBoostingIterations, </span>
+                 int minNumInstances, double weightTrimBeta, boolean useAIC) {
+<span class="fc" id="L59">    m_errorOnProbabilities = errorOnProbabilities;</span>
+<span class="fc" id="L60">    m_fixedNumIterations = numBoostingIterations;      </span>
+<span class="fc" id="L61">    m_minNumInstances = minNumInstances;</span>
+<span class="fc" id="L62">    m_maxIterations = 200;</span>
+<span class="fc" id="L63">    setWeightTrimBeta(weightTrimBeta);</span>
+<span class="fc" id="L64">    setUseAIC(useAIC);</span>
+<span class="fc" id="L65">  }         </span>
+    
+  /**
+   * Method for building a Functional tree (only called for the root node).
+   * Grows an initial Functional Tree.
+   *
+   * @param data the data to train with
+   * @throws Exception if something goes wrong
+   */
+  public void buildClassifier(Instances data) throws Exception{
+	
+    // Insert new attributes
+<span class="fc" id="L77">    data= insertNewAttr(data); </span>
+         
+    //build tree using all the data
+<span class="fc" id="L80">    buildTree(data, null, data.numInstances(), 0);</span>
+	
+<span class="fc" id="L82">  }</span>
+
+  /**
+   * Method for building the tree structure.
+   * Builds a logistic model, splits the node and recursively builds tree for child nodes.
+   * @param data the training data passed on to this node
+   * @param higherRegressions An array of regression functions produced by LogitBoost at higher 
+   * levels in the tree. They represent a logistic regression model that is refined locally 
+   * at this node.
+   * @param totalInstanceWeight the total number of training examples
+   * @param higherNumParameters effective number of parameters in the logistic regression model built
+   * in parent nodes
+   * @throws Exception if something goes wrong
+   */
+  public void buildTree(Instances data, SimpleLinearRegression[][] higherRegressions, 
+                        double totalInstanceWeight, double higherNumParameters) throws Exception{
+
+    //save some stuff
+<span class="fc" id="L100">    m_totalInstanceWeight = totalInstanceWeight;</span>
+<span class="fc" id="L101">    m_train = new Instances(data);</span>
+<span class="fc" id="L102">    m_train= removeExtAttributes( m_train);</span>
+        
+<span class="fc" id="L104">    m_isLeaf = true;</span>
+<span class="fc" id="L105">    m_sons = null;</span>
+	
+<span class="fc" id="L107">    m_numInstances = m_train.numInstances();</span>
+<span class="fc" id="L108">    m_numClasses = m_train.numClasses();				</span>
+	
+    //init 
+<span class="fc" id="L111">    m_numericData = getNumericData(m_train);		  </span>
+<span class="fc" id="L112">    m_numericDataHeader = new Instances(m_numericData, 0);</span>
+	
+<span class="fc" id="L114">    m_regressions = initRegressions();</span>
+<span class="fc" id="L115">    m_numRegressions = 0;</span>
+	
+<span class="fc bfc" id="L117" title="All 2 branches covered.">    if (higherRegressions != null) m_higherRegressions = higherRegressions;</span>
+<span class="fc" id="L118">    else m_higherRegressions = new SimpleLinearRegression[m_numClasses][0];	</span>
+
+<span class="fc" id="L120">    m_numHigherRegressions = m_higherRegressions[0].length;	</span>
+        
+<span class="fc" id="L122">    m_numParameters = higherNumParameters;</span>
+        
+    //build logistic model
+<span class="pc bpc" id="L125" title="1 of 2 branches missed.">    if (m_numInstances &gt;= m_numFoldsBoosting) {</span>
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">      if (m_fixedNumIterations &gt; 0){</span>
+<span class="fc" id="L127">        performBoosting(m_fixedNumIterations);</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">      } else if (getUseAIC()) {</span>
+<span class="nc" id="L129">        performBoostingInfCriterion();</span>
+      } else {
+<span class="nc" id="L131">        performBoostingCV();</span>
+      }
+    }
+        
+<span class="fc" id="L135">    m_numParameters += m_numRegressions;</span>
+	
+    //only keep the simple regression functions that correspond to the selected number of LogitBoost iterations
+<span class="fc" id="L138">    m_regressions = selectRegressions(m_regressions);</span>
+         
+    boolean grow;
+       
+    //Compute logistic probs
+    double[][] FsConst;
+    double[] probsConst;
+    int j;
+<span class="fc" id="L146">    FsConst = getFs(m_numericData);</span>
+        
+<span class="fc bfc" id="L148" title="All 2 branches covered.">    for (j = 0; j &lt; data.numInstances(); j++)</span>
+      {
+<span class="fc" id="L150">        probsConst=probs(FsConst[j]);</span>
+        // auxiliary to compute constructor error
+<span class="fc bfc" id="L152" title="All 2 branches covered.">        if (data.instance(j).classValue()!=getConstError(probsConst)) m_constError=m_constError +1;</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">        for (int i = 0; i&lt;data.classAttribute().numValues() ; i++)</span>
+<span class="fc" id="L154">          data.instance(j).setValue(i,probsConst[i]);</span>
+      } 
+  
+        
+    //needed by dynamic data
+<span class="fc" id="L159">    m_modelSelection=new  C45ModelSelection(m_minNumInstances, data);</span>
+      
+<span class="fc" id="L161">    m_localModel = m_modelSelection.selectModel(data);</span>
+       
+    //split node if more than minNumInstances...
+<span class="fc bfc" id="L164" title="All 2 branches covered.">    if (m_numInstances &gt; m_minNumInstances) {</span>
+<span class="fc bfc" id="L165" title="All 2 branches covered.">      grow = (m_localModel.numSubsets() &gt; 1);</span>
+    } else {
+<span class="fc" id="L167">      grow = false;</span>
+    }
+        
+    // logitboost uses distribution for instance
+<span class="fc" id="L171">    m_hasConstr=false;</span>
+<span class="fc" id="L172">    m_train=data;</span>
+<span class="fc bfc" id="L173" title="All 2 branches covered.">    if (grow) {	</span>
+      //create and build children of node
+<span class="fc" id="L175">      m_isLeaf = false;</span>
+<span class="fc" id="L176">      Instances[] localInstances = m_localModel.split(data);</span>
+      // deletes extended attributes
+<span class="pc bpc" id="L178" title="2 of 4 branches missed.">      if (((C45Split)m_localModel).attIndex() &gt;=0 &amp;&amp; ((C45Split)m_localModel).attIndex()&lt; data.classAttribute().numValues()) </span>
+<span class="fc" id="L179">        m_hasConstr=true;                         </span>
+               
+<span class="fc" id="L181">      m_sons = new FTNode[m_localModel.numSubsets()];</span>
+<span class="fc bfc" id="L182" title="All 2 branches covered.">      for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="fc" id="L183">        m_sons[i] = new FTNode(m_errorOnProbabilities,m_fixedNumIterations, </span>
+<span class="fc" id="L184">                               m_minNumInstances,getWeightTrimBeta(), getUseAIC());</span>
+<span class="fc" id="L185">        m_sons[i].buildTree(localInstances[i],</span>
+<span class="fc" id="L186">                            mergeArrays(m_regressions, m_higherRegressions), m_totalInstanceWeight, m_numParameters);		</span>
+<span class="fc" id="L187">        localInstances[i] = null;</span>
+      }	    
+    } 
+    else{
+<span class="fc" id="L191">      m_leafclass=m_localModel.distribution().maxClass();</span>
+    }
+<span class="fc" id="L193">  }</span>
+
+  /**
+   * Method for prunning a tree using C4.5 pruning procedure.
+   *
+   * @exception Exception if something goes wrong
+   */
+  public double prune() throws Exception {
+
+    double errorsLeaf;
+    double errorsTree;
+    double errorsConstModel;
+<span class="fc" id="L205">    double treeError=0;</span>
+    int i;
+    double probBranch;
+
+    // Compute error if this Tree would be leaf without contructor
+<span class="fc" id="L210">    errorsLeaf = getEstimatedErrorsForDistribution(m_localModel.distribution());</span>
+<span class="fc bfc" id="L211" title="All 2 branches covered.">    if (m_isLeaf ) { </span>
+<span class="fc" id="L212">      return  errorsLeaf;</span>
+    } else {
+      //Computes da error of the constructor model
+<span class="fc" id="L215">      errorsConstModel = getEtimateConstModel(m_localModel.distribution());</span>
+<span class="fc" id="L216">      errorsTree=0;</span>
+<span class="fc bfc" id="L217" title="All 2 branches covered.">      for (i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="fc" id="L218">        probBranch = m_localModel.distribution().perBag(i) /</span>
+<span class="fc" id="L219">          m_localModel.distribution().total();</span>
+<span class="fc" id="L220">        errorsTree += probBranch* m_sons[i].prune();</span>
+      }
+      // Decide if leaf is best choice.
+
+<span class="pc bpc" id="L224" title="3 of 4 branches missed.">      if (Utils.smOrEq(errorsLeaf, errorsTree) &amp;&amp; Utils.smOrEq(errorsLeaf, errorsConstModel)) {</span>
+        // Free son Trees
+<span class="nc" id="L226">        m_sons = null;</span>
+<span class="nc" id="L227">        m_isLeaf = true;</span>
+<span class="nc" id="L228">        m_hasConstr=false;</span>
+<span class="nc" id="L229">        m_leafclass=m_localModel.distribution().maxClass();</span>
+        // Get NoSplit Model for node.
+<span class="nc" id="L231">        m_localModel = new NoSplit(m_localModel.distribution());</span>
+<span class="nc" id="L232">        treeError=errorsLeaf;</span>
+
+      }else{
+        // Decide if Constructor is best choice.
+<span class="pc bpc" id="L236" title="1 of 2 branches missed.">        if (Utils.smOrEq(errorsConstModel, errorsTree)) {</span>
+          // Free son Trees
+<span class="fc" id="L238">          m_sons = null;</span>
+<span class="fc" id="L239">          m_isLeaf = true;</span>
+<span class="fc" id="L240">          m_hasConstr =true;</span>
+          // Get NoSplit Model for node.
+<span class="fc" id="L242">          m_localModel = new NoSplit(m_localModel.distribution());</span>
+<span class="fc" id="L243">          treeError=errorsConstModel;</span>
+        } else
+<span class="nc" id="L245">          treeError=errorsTree;</span>
+      }
+    }
+<span class="fc" id="L248">    return  treeError;</span>
+  }
+ 
+  /**
+   * Returns the class probabilities for an instance given by the Functional Tree.
+   * @param instance the instance
+   * @return the array of probabilities
+   */
+  public double[] distributionForInstance(Instance instance) throws Exception {
+    double[] probs;
+
+<span class="pc bpc" id="L259" title="1 of 4 branches missed.">    if (m_isLeaf &amp;&amp; m_hasConstr) { //leaf</span>
+      //leaf: use majoraty class or constructor model
+<span class="fc" id="L261">      probs = modelDistributionForInstance(instance);</span>
+    } else { 
+<span class="pc bpc" id="L263" title="2 of 4 branches missed.">      if (m_isLeaf &amp;&amp; !m_hasConstr)</span>
+        {
+<span class="fc" id="L265">          probs=new double[instance.numClasses()];</span>
+<span class="fc" id="L266">          probs[m_leafclass]=(double)1;</span>
+        }else{
+               
+<span class="nc" id="L269">        probs = modelDistributionForInstance(instance);</span>
+        //Built auxiliary split instance    
+<span class="nc" id="L271">        Instance instanceSplit=new Instance(instance.numAttributes()+instance.numClasses());</span>
+<span class="nc" id="L272">        instanceSplit.setDataset(instance.dataset());</span>
+           
+        // Inserts attribute and their value
+<span class="nc bnc" id="L275" title="All 2 branches missed.">        for(int i=0; i&lt; instance.numClasses();i++)</span>
+          {
+<span class="nc" id="L277">            instanceSplit.dataset().insertAttributeAt( new Attribute(&quot;N&quot;+ (instance.numClasses()-i)), 0);</span>
+<span class="nc" id="L278">            instanceSplit.setValue(i,probs[i]);</span>
+          }
+<span class="nc bnc" id="L280" title="All 2 branches missed.">        for(int i=0; i&lt; instance.numAttributes();i++)</span>
+<span class="nc" id="L281">          instanceSplit.setValue(i+instance.numClasses(),instance.value(i));</span>
+           
+        //chooses best branch           
+<span class="nc" id="L284">        int branch = m_localModel.whichSubset(instanceSplit); //split</span>
+           
+        //delete added attributes
+<span class="nc bnc" id="L287" title="All 2 branches missed.">        for(int i=0; i&lt; instance.numClasses();i++)</span>
+<span class="nc" id="L288">          instanceSplit.dataset().deleteAttributeAt(0);</span>
+            
+<span class="nc" id="L290">        probs = m_sons[branch].distributionForInstance(instance);</span>
+      }
+    }
+<span class="fc" id="L293">    return probs;</span>
+	
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L303">    return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

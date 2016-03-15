@@ -1,0 +1,644 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>BoundaryPanelDistributed.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui.boundaryvisualizer</a> &gt; <span class="el_source">BoundaryPanelDistributed.java</span></div><h1>BoundaryPanelDistributed.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *   BoundaryPanelDistrubuted.java
+ *   Copyright (C) 2003 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.gui.boundaryvisualizer;
+
+import weka.classifiers.Classifier;
+import weka.core.FastVector;
+import weka.core.Instances;
+import weka.core.Utils;
+import weka.experiment.Compute;
+import weka.experiment.RemoteExperimentEvent;
+import weka.experiment.RemoteExperimentListener;
+import weka.experiment.TaskStatusInfo;
+
+import java.awt.BorderLayout;
+import java.io.BufferedReader;
+import java.io.FileInputStream;
+import java.io.FileReader;
+import java.io.ObjectInputStream;
+import java.rmi.Naming;
+import java.util.Vector;
+
+/**
+ * This class extends BoundaryPanel with code for distributing the
+ * processing necessary to create a visualization among a list of
+ * remote machines. Specifically, a visualization is broken down and
+ * processed row by row using the available remote computers.
+ *
+ * @author &lt;a href=&quot;mailto:mhall@cs.waikato.ac.nz&quot;&gt;Mark Hall&lt;/a&gt;
+ * @version $Revision: 7059 $
+ * @since 1.0
+ * @see BoundaryPanel
+ */
+public class BoundaryPanelDistributed
+  extends BoundaryPanel {
+
+  /** for serialization */
+  private static final long serialVersionUID = -1743284397893937776L;
+
+  /** a list of RemoteExperimentListeners */
+<span class="nc" id="L60">  protected Vector m_listeners = new Vector();</span>
+
+  /** Holds the names of machines with remoteEngine servers running */
+<span class="nc" id="L63">  protected Vector m_remoteHosts = new Vector();</span>
+  
+  /** The queue of available hosts */
+<span class="nc" id="L66">  private weka.core.Queue m_remoteHostsQueue = new weka.core.Queue();</span>
+
+  /** The status of each of the remote hosts */
+  private int [] m_remoteHostsStatus;
+
+  /** The number of times tasks have failed on each remote host */
+  private int [] m_remoteHostFailureCounts;
+
+  protected static final int AVAILABLE=0;
+  protected static final int IN_USE=1;
+  protected static final int CONNECTION_FAILED=2;
+  protected static final int SOME_OTHER_FAILURE=3;
+
+  protected static final int MAX_FAILURES=3;
+
+  /** Set to true if MAX_FAILURES exceeded on all hosts or connections fail 
+      on all hosts or user aborts plotting */
+<span class="nc" id="L83">  private boolean m_plottingAborted = false;</span>
+
+  /** The number of hosts removed due to exceeding max failures */
+  private int m_removedHosts;
+
+  /** The count of failed sub-tasks */
+  private int m_failedCount;
+
+  /** The count of successfully completed sub-tasks */
+  private int m_finishedCount;
+
+  /** The queue of sub-tasks waiting to be processed */
+<span class="nc" id="L95">  private weka.core.Queue m_subExpQueue = new weka.core.Queue();</span>
+
+  /** number of seconds between polling server */
+<span class="nc" id="L98">  private int m_minTaskPollTime = 1000;</span>
+
+  private int [] m_hostPollingTime;
+
+  /**
+   * Creates a new &lt;code&gt;BoundaryPanelDistributed&lt;/code&gt; instance.
+   *
+   * @param panelWidth width of the display
+   * @param panelHeight height of the display
+   */
+  public BoundaryPanelDistributed(int panelWidth, int panelHeight) {
+<span class="nc" id="L109">    super(panelWidth, panelHeight);</span>
+<span class="nc" id="L110">  }</span>
+
+  /**
+   * Set a list of host names of machines to distribute processing to
+   *
+   * @param remHosts a Vector of host names (Strings)
+   */
+  public void setRemoteHosts(Vector remHosts) {
+<span class="nc" id="L118">    m_remoteHosts = remHosts;</span>
+<span class="nc" id="L119">  }</span>
+
+  /**
+   * Add an object to the list of those interested in recieving update
+   * information from the RemoteExperiment
+   * @param r a listener
+   */
+  public void addRemoteExperimentListener(RemoteExperimentListener r) {
+<span class="nc" id="L127">    m_listeners.addElement(r);</span>
+<span class="nc" id="L128">  }</span>
+
+  protected void initialize() {
+<span class="nc" id="L131">    super.initialize();</span>
+
+<span class="nc" id="L133">    m_plottingAborted = false;</span>
+<span class="nc" id="L134">    m_finishedCount = 0;</span>
+<span class="nc" id="L135">    m_failedCount = 0;</span>
+
+    // initialize all remote hosts to available
+<span class="nc" id="L138">    m_remoteHostsStatus = new int [m_remoteHosts.size()];    </span>
+<span class="nc" id="L139">    m_remoteHostFailureCounts = new int [m_remoteHosts.size()];</span>
+
+<span class="nc" id="L141">    m_remoteHostsQueue = new weka.core.Queue();</span>
+
+<span class="nc bnc" id="L143" title="All 2 branches missed.">    if (m_remoteHosts.size() == 0) {</span>
+<span class="nc" id="L144">      System.err.println(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Initialize_Error_Text&quot;));</span>
+<span class="nc" id="L145">      System.exit(1);</span>
+    }
+
+    // prime the hosts queue
+<span class="nc" id="L149">    m_hostPollingTime = new int [m_remoteHosts.size()];</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">    for (int i=0;i&lt;m_remoteHosts.size();i++) {</span>
+<span class="nc" id="L151">      m_remoteHostsQueue.push(new Integer(i));</span>
+<span class="nc" id="L152">      m_hostPollingTime[i] = m_minTaskPollTime;</span>
+    }
+
+    // set up sub taskss (just holds the row numbers to be processed
+<span class="nc" id="L156">    m_subExpQueue = new weka.core.Queue();</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">    for (int i = 0; i &lt; m_panelHeight; i++) {</span>
+<span class="nc" id="L158">      m_subExpQueue.push(new Integer(i));</span>
+    }
+    
+    try {
+      // need to build classifier and data generator
+<span class="nc" id="L163">      m_classifier.buildClassifier(m_trainingData);</span>
+<span class="nc" id="L164">    } catch (Exception ex) {</span>
+<span class="nc" id="L165">      ex.printStackTrace();</span>
+<span class="nc" id="L166">      System.exit(1);</span>
+    }
+    
+    boolean [] attsToWeightOn;
+    // build DataGenerator
+<span class="nc" id="L171">    attsToWeightOn = new boolean[m_trainingData.numAttributes()];</span>
+<span class="nc" id="L172">    attsToWeightOn[m_xAttribute] = true;</span>
+<span class="nc" id="L173">    attsToWeightOn[m_yAttribute] = true;</span>
+    
+<span class="nc" id="L175">    m_dataGenerator.setWeightingDimensions(attsToWeightOn);    </span>
+    try {
+<span class="nc" id="L177">      m_dataGenerator.buildGenerator(m_trainingData);</span>
+<span class="nc" id="L178">    } catch (Exception ex) {</span>
+<span class="nc" id="L179">      ex.printStackTrace();</span>
+<span class="nc" id="L180">      System.exit(1);</span>
+    }
+<span class="nc" id="L182">  }</span>
+
+  /**
+   * Start processing
+   *
+   * @exception Exception if an error occurs
+   */
+  public void start() throws Exception {
+    // done in the sub task
+    /*     m_numOfSamplesPerGenerator = 
+	   (int)Math.pow(m_samplesBase, m_trainingData.numAttributes()-3); */
+
+<span class="nc" id="L194">    m_stopReplotting = true;</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">    if (m_trainingData == null) {</span>
+<span class="nc" id="L196">      throw new Exception(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Start_Error_Text_First&quot;));</span>
+    }
+<span class="nc bnc" id="L198" title="All 2 branches missed.">    if (m_classifier == null) {</span>
+<span class="nc" id="L199">      throw new Exception(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Start_Error_Text_Second&quot;));</span>
+    }
+<span class="nc bnc" id="L201" title="All 2 branches missed.">    if (m_dataGenerator == null) {</span>
+<span class="nc" id="L202">      throw new Exception(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Start_Error_Text_Third&quot;));</span>
+    }
+<span class="nc bnc" id="L204" title="All 2 branches missed.">    if (m_trainingData.attribute(m_xAttribute).isNominal() || </span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">	m_trainingData.attribute(m_yAttribute).isNominal()) {</span>
+<span class="nc" id="L206">      throw new Exception(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Start_Error_Text_Fourth&quot;));</span>
+    }
+    
+<span class="nc" id="L209">    computeMinMaxAtts();</span>
+<span class="nc" id="L210">    initialize();</span>
+
+    // launch tasks on all available hosts
+<span class="nc" id="L213">    int totalHosts = m_remoteHostsQueue.size();</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">    for (int i = 0; i &lt; totalHosts; i++) {</span>
+<span class="nc" id="L215">      availableHost(-1);</span>
+<span class="nc" id="L216">      Thread.sleep(70);</span>
+    }
+<span class="nc" id="L218">  }</span>
+
+  /**
+   * Push a host back onto the list of available hosts and launch a waiting
+   * Task (if any).
+   *
+   * @param hostNum the number of the host to return to the queue. -1
+   * if no host to return.
+   */
+  protected synchronized void availableHost(int hostNum) {
+<span class="nc bnc" id="L228" title="All 2 branches missed.">    if (hostNum &gt;= 0) { </span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">      if (m_remoteHostFailureCounts[hostNum] &lt; MAX_FAILURES) {</span>
+<span class="nc" id="L230">	m_remoteHostsQueue.push(new Integer(hostNum));</span>
+      } else {
+<span class="nc" id="L232">	notifyListeners(false,true,false,Messages.getInstance().getString(&quot;BoundaryPanelDistributed_AvailableHost_MaxFailuresExceededForHost_Text_Front&quot;)</span>
+<span class="nc" id="L233">			+((String)m_remoteHosts.elementAt(hostNum))</span>
+<span class="nc" id="L234">			+Messages.getInstance().getString(&quot;BoundaryPanelDistributed_AvailableHost_MaxFailuresExceededForHost_Text_End&quot;));</span>
+<span class="nc" id="L235">	m_removedHosts++;</span>
+      }
+    }
+
+    // check for all sub exp complete or all hosts failed or failed count
+    // exceeded
+<span class="nc bnc" id="L241" title="All 2 branches missed.">    if (m_failedCount == (MAX_FAILURES * m_remoteHosts.size())) {</span>
+<span class="nc" id="L242">      m_plottingAborted = true;</span>
+<span class="nc" id="L243">      notifyListeners(false,true,true,</span>
+<span class="nc" id="L244">      Messages.getInstance().getString(&quot;BoundaryPanelDistributed_AvailableHost_PlottingAborted_MaxFailure_Text&quot;));</span>
+<span class="nc" id="L245">      return;</span>
+    }
+
+    /*    System.err.println(&quot;--------------&quot;);
+    System.err.println(&quot;exp q :&quot;+m_subExpQueue.size());
+    System.err.println(&quot;host list size &quot;+m_remoteHosts.size());
+    System.err.println(&quot;actual host list size &quot;+m_remoteHostsQueue.size());
+    System.err.println(&quot;removed hosts &quot;+m_removedHosts); */
+<span class="nc bnc" id="L253" title="All 2 branches missed.">    if (m_subExpQueue.size() == 0 &amp;&amp; </span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">	(m_remoteHosts.size() == </span>
+<span class="nc" id="L255">	 (m_remoteHostsQueue.size() + m_removedHosts))) {</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">      if (m_plotTrainingData) {</span>
+<span class="nc" id="L257">	plotTrainingData();</span>
+      }
+<span class="nc" id="L259">      notifyListeners(false,true,true,Messages.getInstance().getString(&quot;BoundaryPanelDistributed_AvailableHost_PlottingCompleted_Text&quot;));</span>
+<span class="nc" id="L260">      return;</span>
+    }
+
+
+<span class="nc bnc" id="L264" title="All 2 branches missed.">    if (checkForAllFailedHosts()) {</span>
+<span class="nc" id="L265">      return;</span>
+    }
+
+<span class="nc bnc" id="L268" title="All 2 branches missed.">    if (m_plottingAborted &amp;&amp; </span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">	(m_remoteHostsQueue.size() + m_removedHosts) == </span>
+<span class="nc" id="L270">	m_remoteHosts.size()) {</span>
+<span class="nc" id="L271">      notifyListeners(false,true,true,</span>
+<span class="nc" id="L272">    		  Messages.getInstance().getString(&quot;BoundaryPanelDistributed_AvailableHost_PlottingAborted_AllRemoteTasks_Text&quot;));</span>
+    }
+
+<span class="nc bnc" id="L275" title="All 4 branches missed.">    if (!m_subExpQueue.empty() &amp;&amp; !m_plottingAborted) {</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">      if (!m_remoteHostsQueue.empty()) {</span>
+	int availHost, waitingTask;
+	try {
+<span class="nc" id="L279">	  availHost = ((Integer)m_remoteHostsQueue.pop()).intValue();</span>
+<span class="nc" id="L280">	  waitingTask = ((Integer)m_subExpQueue.pop()).intValue();</span>
+<span class="nc" id="L281">	  launchNext(waitingTask, availHost);</span>
+<span class="nc" id="L282">	} catch (Exception ex) {</span>
+<span class="nc" id="L283">	  ex.printStackTrace();</span>
+	}
+      }
+    }    
+<span class="nc" id="L287">  }</span>
+
+  /**
+   * Inform all listeners of progress
+   * @param status true if this is a status type of message
+   * @param log true if this is a log type of message
+   * @param finished true if the remote task has finished
+   * @param message the message.
+   */
+  private synchronized void notifyListeners(boolean status, 
+					    boolean log, 
+					    boolean finished,
+					    String message) {
+<span class="nc bnc" id="L300" title="All 2 branches missed.">    if (m_listeners.size() &gt; 0) {</span>
+<span class="nc bnc" id="L301" title="All 2 branches missed.">      for (int i=0;i&lt;m_listeners.size();i++) {</span>
+<span class="nc" id="L302">	RemoteExperimentListener r = </span>
+<span class="nc" id="L303">	  (RemoteExperimentListener)(m_listeners.elementAt(i));</span>
+<span class="nc" id="L304">	r.remoteExperimentStatus(new RemoteExperimentEvent(status,</span>
+<span class="nc" id="L305">							   log,</span>
+<span class="nc" id="L306">							   finished,</span>
+<span class="nc" id="L307">							   message));</span>
+      }
+    } else {
+<span class="nc" id="L310">      System.err.println(message);</span>
+    }
+<span class="nc" id="L312">  }</span>
+
+  /**
+   * Check to see if we have failed to connect to all hosts
+   */
+  private boolean checkForAllFailedHosts() {
+<span class="nc" id="L318">    boolean allbad = true;</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">    for (int i = 0; i &lt; m_remoteHostsStatus.length; i++) {</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">      if (m_remoteHostsStatus[i] != CONNECTION_FAILED) {</span>
+<span class="nc" id="L321">	allbad = false;</span>
+<span class="nc" id="L322">	break;</span>
+      }
+    }
+<span class="nc bnc" id="L325" title="All 2 branches missed.">    if (allbad) {</span>
+<span class="nc" id="L326">      m_plottingAborted = true;</span>
+<span class="nc" id="L327">      notifyListeners(false,true,true,</span>
+<span class="nc" id="L328">      Messages.getInstance().getString(&quot;BoundaryPanelDistributed_AvailableHost_PlottingAborted_AllConnection_Text&quot;));</span>
+    }
+<span class="nc" id="L330">    return allbad;</span>
+  }
+
+  /**
+   * Increment the number of successfully completed sub experiments
+   */
+  protected synchronized void incrementFinished() {
+<span class="nc" id="L337">    m_finishedCount++;</span>
+<span class="nc" id="L338">  }</span>
+
+  /**
+   * Increment the overall number of failures and the number of failures for
+   * a particular host
+   * @param hostNum the index of the host to increment failure count
+   */
+  protected synchronized void incrementFailed(int hostNum) {
+<span class="nc" id="L346">    m_failedCount++;</span>
+<span class="nc" id="L347">    m_remoteHostFailureCounts[hostNum]++;</span>
+<span class="nc" id="L348">  }</span>
+
+  /**
+   * Push an experiment back on the queue of waiting experiments
+   * @param expNum the index of the experiment to push onto the queue
+   */
+  protected synchronized void waitingTask(int expNum) {
+<span class="nc" id="L355">    m_subExpQueue.push(new Integer(expNum));</span>
+<span class="nc" id="L356">  }</span>
+
+  protected void launchNext(final int wtask, final int ah) {
+    Thread subTaskThread;
+<span class="nc" id="L360">    subTaskThread = new Thread() {</span>
+	public void run() {
+<span class="nc" id="L362">	  m_remoteHostsStatus[ah] = IN_USE;</span>
+	  //	  m_subExpComplete[wtask] = TaskStatusInfo.PROCESSING;
+<span class="nc" id="L364">	  RemoteBoundaryVisualizerSubTask vSubTask = </span>
+<span class="nc" id="L365">	    new RemoteBoundaryVisualizerSubTask();</span>
+<span class="nc" id="L366">	  vSubTask.setXAttribute(m_xAttribute);</span>
+<span class="nc" id="L367">	  vSubTask.setYAttribute(m_yAttribute);</span>
+<span class="nc" id="L368">	  vSubTask.setRowNumber(wtask);</span>
+<span class="nc" id="L369">	  vSubTask.setPanelWidth(m_panelWidth);</span>
+<span class="nc" id="L370">	  vSubTask.setPanelHeight(m_panelHeight);</span>
+<span class="nc" id="L371">	  vSubTask.setPixHeight(m_pixHeight);</span>
+<span class="nc" id="L372">	  vSubTask.setPixWidth(m_pixWidth);</span>
+<span class="nc" id="L373">	  vSubTask.setClassifier(m_classifier);</span>
+<span class="nc" id="L374">	  vSubTask.setDataGenerator(m_dataGenerator);</span>
+<span class="nc" id="L375">	  vSubTask.setInstances(m_trainingData);</span>
+<span class="nc" id="L376">	  vSubTask.setMinMaxX(m_minX, m_maxX);</span>
+<span class="nc" id="L377">	  vSubTask.setMinMaxY(m_minY, m_maxY);</span>
+<span class="nc" id="L378">	  vSubTask.setNumSamplesPerRegion(m_numOfSamplesPerRegion);</span>
+<span class="nc" id="L379">	  vSubTask.setGeneratorSamplesBase(m_samplesBase);</span>
+	  try {
+<span class="nc" id="L381">	    String name = Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_RemoteHost_Text_Front&quot;) +((String)m_remoteHosts.elementAt(ah)) + Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_RemoteHost_Text_End&quot;);</span>
+<span class="nc" id="L382">	    Compute comp = (Compute) Naming.lookup(name);</span>
+	    // assess the status of the sub-exp
+<span class="nc" id="L384">	    notifyListeners(false,true,false,</span>
+<span class="nc" id="L385">	    		Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_StartingRow_Text_Front&quot;) + wtask + Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_StartingRow_Text_End&quot;) + ((String)m_remoteHosts.elementAt(ah)));</span>
+<span class="nc" id="L386">	    Object subTaskId = comp.executeTask(vSubTask);</span>
+<span class="nc" id="L387">	    boolean finished = false;</span>
+<span class="nc" id="L388">	    TaskStatusInfo is = null;</span>
+<span class="nc" id="L389">	    long startTime = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">	    while (!finished) {</span>
+	      try {
+<span class="nc" id="L392">		Thread.sleep(Math.max(m_minTaskPollTime, </span>
+<span class="nc" id="L393">				      m_hostPollingTime[ah]));</span>
+		
+<span class="nc" id="L395">		TaskStatusInfo cs = (TaskStatusInfo)comp.</span>
+<span class="nc" id="L396">		  checkStatus(subTaskId);</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">		if (cs.getExecutionStatus() == TaskStatusInfo.FINISHED) {</span>
+		  // push host back onto queue and try launching any waiting 
+		  // sub-experiments
+<span class="nc" id="L400">		  long runTime = System.currentTimeMillis() - startTime;</span>
+<span class="nc" id="L401">		  runTime /= 4;</span>
+<span class="nc bnc" id="L402" title="All 2 branches missed.">		  if (runTime &lt; 1000) {</span>
+<span class="nc" id="L403">		    runTime = 1000;</span>
+		  }
+<span class="nc" id="L405">		  m_hostPollingTime[ah] = (int)runTime;</span>
+
+		  // Extract the row from the result
+<span class="nc" id="L408">		  RemoteResult rr =  (RemoteResult)cs.getTaskResult();</span>
+<span class="nc" id="L409">		  double [][] probs = rr.getProbabilities();</span>
+		  
+<span class="nc bnc" id="L411" title="All 2 branches missed.">		  for (int i = 0; i &lt; m_panelWidth; i++) {</span>
+<span class="nc" id="L412">		    m_probabilityCache[wtask][i] = probs[i];</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">		    if (i &lt; m_panelWidth-1) {</span>
+<span class="nc" id="L414">		      plotPoint(i, wtask, probs[i], false);</span>
+		    } else {
+<span class="nc" id="L416">		      plotPoint(i, wtask, probs[i], true);</span>
+		    }
+		  }
+<span class="nc" id="L419">		  notifyListeners(false, true, false,  cs.getStatusMessage());</span>
+<span class="nc" id="L420">		  m_remoteHostsStatus[ah] = AVAILABLE;</span>
+<span class="nc" id="L421">		  incrementFinished();</span>
+<span class="nc" id="L422">		  availableHost(ah);</span>
+<span class="nc" id="L423">		  finished = true;</span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">		} else if (cs.getExecutionStatus() == </span>
+<span class="nc" id="L425">			   TaskStatusInfo.FAILED) {</span>
+		  // a non connection related error---possibly host doesn't have
+		  // access to data sets or security policy is not set up
+		  // correctly or classifier(s) failed for some reason
+<span class="nc" id="L429">		  notifyListeners(false, true, false,  </span>
+<span class="nc" id="L430">				  cs.getStatusMessage());</span>
+<span class="nc" id="L431">		  m_remoteHostsStatus[ah] = SOME_OTHER_FAILURE;</span>
+		  //		  m_subExpComplete[wexp] = TaskStatusInfo.FAILED;
+<span class="nc" id="L433">		  notifyListeners(false,true,false,Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_SchedulingRow_Text_Front&quot;) + wtask + &quot; &quot; + cs.getStatusMessage() + Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_SchedulingRow_Text_End&quot;));</span>
+<span class="nc" id="L434">		  incrementFailed(ah);</span>
+		  // push experiment back onto queue
+<span class="nc" id="L436">		  waitingTask(wtask);	</span>
+		  // push host back onto queue and try launching any waiting 
+		  // Tasks. Host is pushed back on the queue as the
+		  // failure may be temporary.
+<span class="nc" id="L440">		  availableHost(ah);</span>
+<span class="nc" id="L441">		  finished = true;</span>
+		} else {
+<span class="nc bnc" id="L443" title="All 2 branches missed.">		  if (is == null) {</span>
+<span class="nc" id="L444">		    is = cs;</span>
+<span class="nc" id="L445">		    notifyListeners(false, true, false, cs.getStatusMessage());</span>
+		  } else {
+<span class="nc" id="L447">		    RemoteResult rr = (RemoteResult)cs.getTaskResult();</span>
+<span class="nc bnc" id="L448" title="All 2 branches missed.">		    if (rr != null) {</span>
+<span class="nc" id="L449">		      int percentComplete = rr.getPercentCompleted();</span>
+<span class="nc" id="L450">		      String timeRemaining = &quot;&quot;;</span>
+<span class="nc bnc" id="L451" title="All 4 branches missed.">		      if (percentComplete &gt; 0 &amp;&amp; percentComplete &lt; 100) {</span>
+<span class="nc" id="L452">			double timeSoFar = (double)System.currentTimeMillis() -</span>
+<span class="nc" id="L453">			  (double)startTime;</span>
+<span class="nc" id="L454">			double timeToGo = </span>
+<span class="nc" id="L455">			  ((100.0 - percentComplete) </span>
+<span class="nc" id="L456">			   / (double)percentComplete) * timeSoFar;</span>
+<span class="nc bnc" id="L457" title="All 2 branches missed.">			if (timeToGo &lt; m_hostPollingTime[ah]) {</span>
+<span class="nc" id="L458">			  m_hostPollingTime[ah] = (int)timeToGo;</span>
+			}
+<span class="nc" id="L460">			String units = Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_UnitsSeconds_Text&quot;);</span>
+<span class="nc" id="L461">			timeToGo /= 1000.0;</span>
+<span class="nc bnc" id="L462" title="All 2 branches missed.">			if (timeToGo &gt; 60) {</span>
+<span class="nc" id="L463">			  units = Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_UnitsMinutes_Text&quot;);</span>
+<span class="nc" id="L464">			  timeToGo /= 60.0;</span>
+			}
+<span class="nc bnc" id="L466" title="All 2 branches missed.">			if (timeToGo &gt; 60) {</span>
+<span class="nc" id="L467">			  units = Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_UnitsHours_Text&quot;);</span>
+<span class="nc" id="L468">			  timeToGo /= 60.0;</span>
+			}
+<span class="nc" id="L470">			timeRemaining = Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_TimeRemaining_Text_Front&quot;)</span>
+<span class="nc" id="L471">			  +Utils.doubleToString(timeToGo, 1)+&quot; &quot;+units+Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_TimeRemaining_Text_End&quot;);</span>
+		      }
+<span class="nc bnc" id="L473" title="All 2 branches missed.">		      if (percentComplete &lt; 25 </span>
+			  /*&amp;&amp; minTaskPollTime &lt; 30000*/) {		
+<span class="nc bnc" id="L475" title="All 2 branches missed.">			if (percentComplete &gt; 0) {</span>
+<span class="nc" id="L476">			  m_hostPollingTime[ah] = </span>
+<span class="nc" id="L477">			    (int)((25.0 / (double)percentComplete) * </span>
+<span class="nc" id="L478">				  m_hostPollingTime[ah]);</span>
+			} else {
+<span class="nc" id="L480">			  m_hostPollingTime[ah] *= 2;</span>
+			}
+<span class="nc bnc" id="L482" title="All 2 branches missed.">			if (m_hostPollingTime[ah] &gt; 60000) {</span>
+<span class="nc" id="L483">			  m_hostPollingTime[ah] = 60000;</span>
+			}
+		      }
+<span class="nc" id="L486">		      notifyListeners(false, true, false,</span>
+<span class="nc" id="L487">				      Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_TimeRemaining_Row_Text_First&quot;)+wtask+&quot; &quot;+percentComplete</span>
+<span class="nc" id="L488">				      +Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_TimeRemaining_Row_Text_Second&quot;)+timeRemaining+Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_TimeRemaining_Row_Text_Third&quot;));</span>
+		    } else {
+<span class="nc" id="L490">		      notifyListeners(false, true, false,</span>
+<span class="nc" id="L491">				      Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_TimeRemaining_RowQueue_Text_Front&quot;)+wtask+Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_TimeRemaining_RowQueue_Text_End&quot;)</span>
+<span class="nc" id="L492">				      +((String)m_remoteHosts.</span>
+<span class="nc" id="L493">					elementAt(ah)));</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">		      if (m_hostPollingTime[ah] &lt; 60000) {</span>
+<span class="nc" id="L495">			m_hostPollingTime[ah] *= 2;</span>
+		      }
+		    }
+
+<span class="nc" id="L499">		    is = cs;</span>
+		  }
+		}
+<span class="nc" id="L502">	      } catch (InterruptedException ie) {</span>
+<span class="nc" id="L503">		ie.printStackTrace();</span>
+	      }
+	    }
+<span class="nc" id="L506">	  } catch (Exception ce) {</span>
+<span class="nc" id="L507">	    m_remoteHostsStatus[ah] = CONNECTION_FAILED;</span>
+<span class="nc" id="L508">	    m_removedHosts++;</span>
+<span class="nc" id="L509">	    System.err.println(ce);</span>
+<span class="nc" id="L510">	    ce.printStackTrace();</span>
+<span class="nc" id="L511">	    notifyListeners(false,true,false,Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_Error_Connection_Text_First&quot;)</span>
+<span class="nc" id="L512">			    +((String)m_remoteHosts.elementAt(ah))</span>
+<span class="nc" id="L513">			    +Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_Error_Connection_Text_Second&quot;)</span>
+<span class="nc" id="L514">			    +wtask</span>
+<span class="nc" id="L515">			    +Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_Error_Connection_Text_Third&quot;));</span>
+<span class="nc" id="L516">	    checkForAllFailedHosts();</span>
+<span class="nc" id="L517">	    waitingTask(wtask);</span>
+<span class="nc" id="L518">	  } finally {</span>
+<span class="nc bnc" id="L519" title="All 6 branches missed.">	    if (isInterrupted()) {</span>
+<span class="nc" id="L520">	      System.err.println(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_LaunchNext_Run_Error_Text&quot;));</span>
+	    }
+<span class="nc" id="L522">	  }</span>
+<span class="nc" id="L523">	}</span>
+      };
+<span class="nc" id="L525">    subTaskThread.setPriority(Thread.MIN_PRIORITY);</span>
+<span class="nc" id="L526">    subTaskThread.start();</span>
+<span class="nc" id="L527">  }</span>
+
+  /**
+   * Main method for testing this class
+   *
+   * @param args a &lt;code&gt;String[]&lt;/code&gt; value
+   */
+  public static void main (String [] args) {
+    try {
+<span class="nc bnc" id="L536" title="All 2 branches missed.">      if (args.length &lt; 8) {</span>
+<span class="nc" id="L537">	System.err.println(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Main_Error_Text_First&quot;));</span>
+<span class="nc" id="L538">	System.exit(1);</span>
+      }
+      
+<span class="nc" id="L541">      Vector hostNames = new Vector();</span>
+      // try loading hosts file
+      try {
+<span class="nc" id="L544">	BufferedReader br = new BufferedReader(new FileReader(&quot;hosts.vis&quot;));</span>
+<span class="nc" id="L545">	String hostName = br.readLine();</span>
+<span class="nc bnc" id="L546" title="All 2 branches missed.">	while (hostName != null) {</span>
+<span class="nc" id="L547">	  System.out.println(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Main_Error_Text_First_Alpha&quot;) + hostName);</span>
+<span class="nc" id="L548">	  hostNames.add(hostName);</span>
+<span class="nc" id="L549">	  hostName = br.readLine();</span>
+	}
+<span class="nc" id="L551">	br.close();</span>
+<span class="nc" id="L552">      } catch (Exception ex) {</span>
+<span class="nc" id="L553">	System.err.println(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Main_Error_Text_Second&quot;));</span>
+<span class="nc" id="L554">	System.exit(1);</span>
+      }
+
+<span class="nc" id="L557">      final javax.swing.JFrame jf = </span>
+<span class="nc" id="L558">	new javax.swing.JFrame(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Main_JFrame_Title_Text&quot;));</span>
+<span class="nc" id="L559">      jf.getContentPane().setLayout(new BorderLayout());</span>
+
+<span class="nc" id="L561">      System.err.println(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Main_Error_LoadingInstances_Text&quot;)+args[0]);</span>
+<span class="nc" id="L562">      java.io.Reader r = new java.io.BufferedReader(</span>
+<span class="nc" id="L563">			 new java.io.FileReader(args[0]));</span>
+<span class="nc" id="L564">      final Instances i = new Instances(r);</span>
+<span class="nc" id="L565">      i.setClassIndex(Integer.parseInt(args[1]));</span>
+
+      //      bv.setClassifier(new Logistic());
+<span class="nc" id="L568">      final int xatt = Integer.parseInt(args[2]);</span>
+<span class="nc" id="L569">      final int yatt = Integer.parseInt(args[3]);</span>
+<span class="nc" id="L570">      int base = Integer.parseInt(args[4]);</span>
+<span class="nc" id="L571">      int loc = Integer.parseInt(args[5]);</span>
+
+<span class="nc" id="L573">      int bandWidth = Integer.parseInt(args[6]);</span>
+<span class="nc" id="L574">      int panelWidth = Integer.parseInt(args[7]);</span>
+<span class="nc" id="L575">      int panelHeight = Integer.parseInt(args[8]);</span>
+
+<span class="nc" id="L577">      final String classifierName = args[9];</span>
+<span class="nc" id="L578">      final BoundaryPanelDistributed bv = </span>
+<span class="nc" id="L579">	new BoundaryPanelDistributed(panelWidth,panelHeight);</span>
+<span class="nc" id="L580">      bv.addRemoteExperimentListener(new RemoteExperimentListener() {</span>
+	  public void remoteExperimentStatus(RemoteExperimentEvent e) {
+<span class="nc bnc" id="L582" title="All 2 branches missed.">	    if (e.m_experimentFinished) {</span>
+<span class="nc" id="L583">	      String classifierNameNew = </span>
+<span class="nc" id="L584">		classifierName.substring(classifierName.lastIndexOf('.')+1, </span>
+<span class="nc" id="L585">					 classifierName.length());</span>
+<span class="nc" id="L586">	      bv.saveImage(classifierNameNew+&quot;_&quot;+i.relationName()</span>
+<span class="nc" id="L587">			   +&quot;_X&quot;+xatt+&quot;_Y&quot;+yatt+&quot;.jpg&quot;);</span>
+	    } else {
+<span class="nc" id="L589">	      System.err.println(e.m_messageString);</span>
+	    }
+<span class="nc" id="L591">	  }</span>
+	});
+<span class="nc" id="L593">      bv.setRemoteHosts(hostNames);</span>
+
+<span class="nc" id="L595">      jf.getContentPane().add(bv, BorderLayout.CENTER);</span>
+<span class="nc" id="L596">      jf.setSize(bv.getMinimumSize());</span>
+      //      jf.setSize(200,200);
+<span class="nc" id="L598">      jf.addWindowListener(new java.awt.event.WindowAdapter() {</span>
+	  public void windowClosing(java.awt.event.WindowEvent e) {
+<span class="nc" id="L600">	    jf.dispose();</span>
+<span class="nc" id="L601">	    System.exit(0);</span>
+<span class="nc" id="L602">	  }</span>
+	});
+
+<span class="nc" id="L605">      jf.pack();</span>
+<span class="nc" id="L606">      jf.setVisible(true);</span>
+      //      bv.initialize();
+<span class="nc" id="L608">      bv.repaint();</span>
+      
+
+<span class="nc" id="L611">      String [] argsR = null;</span>
+<span class="nc bnc" id="L612" title="All 2 branches missed.">      if (args.length &gt; 10) {</span>
+<span class="nc" id="L613">	argsR = new String [args.length-10];</span>
+<span class="nc bnc" id="L614" title="All 2 branches missed.">	for (int j = 10; j &lt; args.length; j++) {</span>
+<span class="nc" id="L615">	  argsR[j-10] = args[j];</span>
+	}
+      }
+<span class="nc" id="L618">      Classifier c = Classifier.forName(args[9], argsR);</span>
+<span class="nc" id="L619">      KDDataGenerator dataGen = new KDDataGenerator();</span>
+<span class="nc" id="L620">      dataGen.setKernelBandwidth(bandWidth);</span>
+<span class="nc" id="L621">      bv.setDataGenerator(dataGen);</span>
+<span class="nc" id="L622">      bv.setNumSamplesPerRegion(loc);</span>
+<span class="nc" id="L623">      bv.setGeneratorSamplesBase(base);</span>
+<span class="nc" id="L624">      bv.setClassifier(c);</span>
+<span class="nc" id="L625">      bv.setTrainingData(i);</span>
+<span class="nc" id="L626">      bv.setXAttribute(xatt);</span>
+<span class="nc" id="L627">      bv.setYAttribute(yatt);</span>
+
+      try {
+	// try and load a color map if one exists
+<span class="nc" id="L631">	FileInputStream fis = new FileInputStream(&quot;colors.ser&quot;);</span>
+<span class="nc" id="L632">	ObjectInputStream ois = new ObjectInputStream(fis);</span>
+<span class="nc" id="L633">	FastVector colors = (FastVector)ois.readObject();</span>
+<span class="nc" id="L634">	bv.setColors(colors);	</span>
+<span class="nc" id="L635">      } catch (Exception ex) {</span>
+<span class="nc" id="L636">	System.err.println(Messages.getInstance().getString(&quot;BoundaryPanelDistributed_Main_Error_NoColorMapFile_Text&quot;));</span>
+      }
+<span class="nc" id="L638">      bv.start();</span>
+<span class="nc" id="L639">    } catch (Exception ex) {</span>
+<span class="nc" id="L640">      ex.printStackTrace();</span>
+    }
+<span class="nc" id="L642">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

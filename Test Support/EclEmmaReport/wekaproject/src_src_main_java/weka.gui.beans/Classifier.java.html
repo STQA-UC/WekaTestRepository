@@ -1,0 +1,2057 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Classifier.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui.beans</a> &gt; <span class="el_source">Classifier.java</span></div><h1>Classifier.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Classifier.java
+ *    Copyright (C) 2002 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.gui.beans;
+
+import java.awt.BorderLayout;
+import java.beans.EventSetDescriptor;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.Vector;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+import javax.swing.JFileChooser;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.filechooser.FileFilter;
+
+import weka.classifiers.rules.ZeroR;
+import weka.core.Instances;
+import weka.core.OptionHandler;
+import weka.core.Utils;
+import weka.core.xml.KOML;
+import weka.core.xml.XStream;
+import weka.experiment.Task;
+import weka.experiment.TaskStatusInfo;
+import weka.gui.ExtensionFileFilter;
+import weka.gui.Logger;
+
+/**
+ * Bean that wraps around weka.classifiers
+ * 
+ * @author &lt;a href=&quot;mailto:mhall@cs.waikato.ac.nz&quot;&gt;Mark Hall&lt;/a&gt;
+ * @version $Revision: 9294 $
+ * @since 1.0
+ * @see JPanel
+ * @see BeanCommon
+ * @see Visible
+ * @see WekaWrapper
+ * @see Serializable
+ * @see UserRequestAcceptor
+ * @see TrainingSetListener
+ * @see TestSetListener
+ */
+<span class="nc" id="L74">public class Classifier extends JPanel implements BeanCommon, Visible,</span>
+    WekaWrapper, EventConstraints, Serializable, UserRequestAcceptor,
+    TrainingSetListener, TestSetListener, InstanceListener {
+
+  /** for serialization */
+  private static final long serialVersionUID = 659603893917736008L;
+
+<span class="nc" id="L81">  protected BeanVisual m_visual = new BeanVisual(&quot;Classifier&quot;,</span>
+<span class="nc" id="L82">      BeanVisual.ICON_PATH + &quot;DefaultClassifier.gif&quot;, BeanVisual.ICON_PATH</span>
+          + &quot;DefaultClassifier_animated.gif&quot;);
+
+<span class="nc" id="L85">  private static int IDLE = 0;</span>
+<span class="nc" id="L86">  private static int BUILDING_MODEL = 1;</span>
+<span class="nc" id="L87">  private static int CLASSIFYING = 2;</span>
+
+<span class="nc" id="L89">  private int m_state = IDLE;</span>
+
+  // private Thread m_buildThread = null;
+
+  /**
+   * Global info for the wrapped classifier (if it exists).
+   */
+  protected String m_globalInfo;
+
+  /**
+   * Objects talking to us
+   */
+<span class="nc" id="L101">  private final Hashtable m_listenees = new Hashtable();</span>
+
+  /**
+   * Objects listening for batch classifier events
+   */
+<span class="nc" id="L106">  private final Vector m_batchClassifierListeners = new Vector();</span>
+
+  /**
+   * Objects listening for incremental classifier events
+   */
+<span class="nc" id="L111">  private final Vector m_incrementalClassifierListeners = new Vector();</span>
+
+  /**
+   * Objects listening for graph events
+   */
+<span class="nc" id="L116">  private final Vector m_graphListeners = new Vector();</span>
+
+  /**
+   * Objects listening for text events
+   */
+<span class="nc" id="L121">  private final Vector m_textListeners = new Vector();</span>
+
+  /**
+   * Holds training instances for batch training. Not transient because header
+   * is retained for validating any instance events that this classifier might
+   * be asked to predict in the future.
+   */
+  private Instances m_trainingSet;
+  private transient Instances m_testingSet;
+<span class="nc" id="L130">  private weka.classifiers.Classifier m_Classifier = new ZeroR();</span>
+  /** Template used for creating copies when building in parallel */
+<span class="nc" id="L132">  private weka.classifiers.Classifier m_ClassifierTemplate = m_Classifier;</span>
+
+<span class="nc" id="L134">  private final IncrementalClassifierEvent m_ie = new IncrementalClassifierEvent(</span>
+<span class="nc" id="L135">      this);</span>
+
+  /** the extension for serialized models (binary Java serialization) */
+  public final static String FILE_EXTENSION = &quot;model&quot;;
+
+<span class="nc" id="L140">  private transient JFileChooser m_fileChooser = null;</span>
+
+<span class="nc" id="L142">  protected FileFilter m_binaryFilter = new ExtensionFileFilter(&quot;.&quot;</span>
+<span class="nc" id="L143">      + FILE_EXTENSION, Messages.getInstance().getString(</span>
+<span class="nc" id="L144">      &quot;Classifier_BinaryFilter_ExtensionFileFilter_Text_First&quot;)</span>
+<span class="nc" id="L145">      + FILE_EXTENSION</span>
+<span class="nc" id="L146">      + Messages.getInstance().getString(</span>
+<span class="nc" id="L147">          &quot;Classifier_BinaryFilter_ExtensionFileFilter_Text_Second&quot;));</span>
+
+<span class="nc" id="L149">  protected FileFilter m_KOMLFilter = new ExtensionFileFilter(</span>
+<span class="nc" id="L150">      KOML.FILE_EXTENSION + FILE_EXTENSION, Messages.getInstance().getString(</span>
+<span class="nc" id="L151">          &quot;Classifier_KOMLFilter_ExtensionFileFilter_Text_First&quot;)</span>
+<span class="nc" id="L152">          + KOML.FILE_EXTENSION</span>
+<span class="nc" id="L153">          + FILE_EXTENSION</span>
+<span class="nc" id="L154">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L155">              &quot;Classifier_KOMLFilter_ExtensionFileFilter_Text_Second&quot;));</span>
+
+<span class="nc" id="L157">  protected FileFilter m_XStreamFilter = new ExtensionFileFilter(</span>
+<span class="nc" id="L158">      XStream.FILE_EXTENSION + FILE_EXTENSION, Messages.getInstance()</span>
+<span class="nc" id="L159">          .getString(&quot;Classifier_XStreamFilter_ExtensionFileFilter_Text_First&quot;)</span>
+<span class="nc" id="L160">          + XStream.FILE_EXTENSION</span>
+<span class="nc" id="L161">          + FILE_EXTENSION</span>
+<span class="nc" id="L162">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L163">              &quot;Classifier_XStreamFilter_ExtensionFileFilter_Text_Second&quot;));</span>
+
+  /**
+   * If the classifier is an incremental classifier, should we update it (ie
+   * train it on incoming instances). This makes it possible incrementally test
+   * on a separate stream of instances without updating the classifier, or mix
+   * batch training/testing with incremental training/testing
+   */
+<span class="nc" id="L171">  private boolean m_updateIncrementalClassifier = true;</span>
+
+<span class="nc" id="L173">  private transient Logger m_log = null;</span>
+
+  /**
+   * Event to handle when processing incremental updates
+   */
+  private InstanceEvent m_incrementalEvent;
+
+  /**
+   * Number of threads to use to train models with
+   */
+<span class="nc" id="L183">  protected int m_executionSlots = 2;</span>
+
+  // protected int m_queueSize = 5;
+
+  /**
+   * Pool of threads to train models on incoming data
+   */
+  protected transient ThreadPoolExecutor m_executorPool;
+
+  /**
+   * Stores completed models and associated data sets.
+   */
+  protected transient BatchClassifierEvent[][] m_outputQueues;
+
+  /**
+   * Stores which sets from which runs have been completed.
+   */
+  protected transient boolean[][] m_completedSets;
+
+  /**
+   * Identifier for the current batch. A batch is a group of related runs/sets.
+   */
+  protected transient Date m_currentBatchIdentifier;
+<span class="nc" id="L206">  protected transient boolean m_batchStarted = false;</span>
+
+  /**
+   * Holds original icon label text
+   */
+<span class="nc" id="L211">  protected String m_oldText = &quot;&quot;;</span>
+
+  /**
+   * true if we should block any further training data sets.
+   */
+<span class="nc" id="L216">  protected boolean m_block = false;</span>
+
+  /**
+   * Global info (if it exists) for the wrapped classifier
+   * 
+   * @return the global info
+   */
+  public String globalInfo() {
+<span class="nc" id="L224">    return m_globalInfo;</span>
+  }
+
+  /**
+   * Creates a new &lt;code&gt;Classifier&lt;/code&gt; instance.
+   */
+<span class="nc" id="L230">  public Classifier() {</span>
+<span class="nc" id="L231">    setLayout(new BorderLayout());</span>
+<span class="nc" id="L232">    add(m_visual, BorderLayout.CENTER);</span>
+<span class="nc" id="L233">    setClassifierTemplate(m_ClassifierTemplate);</span>
+
+    // setupFileChooser();
+<span class="nc" id="L236">  }</span>
+
+  private void startExecutorPool() {
+
+<span class="nc bnc" id="L240" title="All 2 branches missed.">    if (m_executorPool != null) {</span>
+<span class="nc" id="L241">      m_executorPool.shutdownNow();</span>
+    }
+
+<span class="nc" id="L244">    m_executorPool = new ThreadPoolExecutor(m_executionSlots, m_executionSlots,</span>
+<span class="nc" id="L245">        120, TimeUnit.SECONDS, new LinkedBlockingQueue&lt;Runnable&gt;());</span>
+<span class="nc" id="L246">  }</span>
+
+  /**
+   * Set a custom (descriptive) name for this bean
+   * 
+   * @param name the name to use
+   */
+  public void setCustomName(String name) {
+<span class="nc" id="L254">    m_visual.setText(name);</span>
+<span class="nc" id="L255">  }</span>
+
+  /**
+   * Get the custom (descriptive) name for this bean (if one has been set)
+   * 
+   * @return the custom name (or the default name)
+   */
+  public String getCustomName() {
+<span class="nc" id="L263">    return m_visual.getText();</span>
+  }
+
+  protected void setupFileChooser() {
+<span class="nc bnc" id="L267" title="All 2 branches missed.">    if (m_fileChooser == null) {</span>
+<span class="nc" id="L268">      m_fileChooser = new JFileChooser(new File(System.getProperty(&quot;user.dir&quot;)));</span>
+    }
+
+<span class="nc" id="L271">    m_fileChooser.addChoosableFileFilter(m_binaryFilter);</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">    if (KOML.isPresent()) {</span>
+<span class="nc" id="L273">      m_fileChooser.addChoosableFileFilter(m_KOMLFilter);</span>
+    }
+<span class="nc bnc" id="L275" title="All 2 branches missed.">    if (XStream.isPresent()) {</span>
+<span class="nc" id="L276">      m_fileChooser.addChoosableFileFilter(m_XStreamFilter);</span>
+    }
+<span class="nc" id="L278">    m_fileChooser.setFileFilter(m_binaryFilter);</span>
+<span class="nc" id="L279">  }</span>
+
+  /**
+   * Get the number of execution slots (threads) used to train models.
+   * 
+   * @return the number of execution slots.
+   */
+  public int getExecutionSlots() {
+<span class="nc" id="L287">    return m_executionSlots;</span>
+  }
+
+  /**
+   * Set the number of execution slots (threads) to use to train models with.
+   * 
+   * @param slots the number of execution slots to use.
+   */
+  public void setExecutionSlots(int slots) {
+<span class="nc" id="L296">    m_executionSlots = slots;</span>
+<span class="nc" id="L297">  }</span>
+
+  /**
+   * Set the classifier for this wrapper
+   * 
+   * @param c a &lt;code&gt;weka.classifiers.Classifier&lt;/code&gt; value
+   */
+  public void setClassifierTemplate(weka.classifiers.Classifier c) {
+<span class="nc" id="L305">    boolean loadImages = true;</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">    if (c.getClass().getName()</span>
+<span class="nc" id="L307">        .compareTo(m_ClassifierTemplate.getClass().getName()) == 0) {</span>
+<span class="nc" id="L308">      loadImages = false;</span>
+    } else {
+      // classifier has changed so any batch training status is now
+      // invalid
+<span class="nc" id="L312">      m_trainingSet = null;</span>
+    }
+<span class="nc" id="L314">    m_ClassifierTemplate = c;</span>
+<span class="nc" id="L315">    String classifierName = c.getClass().toString();</span>
+<span class="nc" id="L316">    classifierName = classifierName.substring(</span>
+<span class="nc" id="L317">        classifierName.lastIndexOf('.') + 1, classifierName.length());</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">    if (loadImages) {</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">      if (!m_visual.loadIcons(BeanVisual.ICON_PATH + classifierName + &quot;.gif&quot;,</span>
+<span class="nc" id="L320">          BeanVisual.ICON_PATH + classifierName + &quot;_animated.gif&quot;)) {</span>
+<span class="nc" id="L321">        useDefaultVisual();</span>
+      }
+<span class="nc" id="L323">      m_visual.setText(classifierName);</span>
+    }
+
+<span class="nc bnc" id="L326" title="All 2 branches missed.">    if (!(m_ClassifierTemplate instanceof weka.classifiers.UpdateableClassifier)</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">        &amp;&amp; (m_listenees.containsKey(&quot;instance&quot;))) {</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L329">        m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L330">            &quot;Classifier_SetClassifierTemplate_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L331">            + statusMessagePrefix()</span>
+<span class="nc" id="L332">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L333">                &quot;Classifier_SetClassifierTemplate_LogMessage_Text_Second&quot;)</span>
+<span class="nc" id="L334">            + getCustomName()</span>
+<span class="nc" id="L335">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L336">                &quot;Classifier_SetClassifierTemplate_LogMessage_Text_Third&quot;));</span>
+      }
+    }
+    // get global info
+<span class="nc" id="L340">    m_globalInfo = KnowledgeFlowApp.getGlobalInfo(m_ClassifierTemplate);</span>
+<span class="nc" id="L341">  }</span>
+
+  /**
+   * Return the classifier template currently in use.
+   * 
+   * @return the classifier template currently in use.
+   */
+  public weka.classifiers.Classifier getClassifierTemplate() {
+<span class="nc" id="L349">    return m_ClassifierTemplate;</span>
+  }
+
+  private void setTrainedClassifier(weka.classifiers.Classifier tc)
+      throws Exception {
+
+    // set the template
+<span class="nc" id="L356">    weka.classifiers.Classifier newTemplate = null;</span>
+
+<span class="nc" id="L358">    String[] options = tc.getOptions();</span>
+<span class="nc" id="L359">    newTemplate = weka.classifiers.Classifier.forName(tc.getClass().getName(),</span>
+<span class="nc" id="L360">        options);</span>
+
+<span class="nc bnc" id="L362" title="All 2 branches missed.">    if (!newTemplate.getClass().equals(m_ClassifierTemplate.getClass())) {</span>
+<span class="nc" id="L363">      throw new Exception(&quot;Classifier model &quot; + tc.getClass().getName()</span>
+<span class="nc" id="L364">          + &quot; is not the same type &quot; + &quot;of classifier as this one (&quot;</span>
+<span class="nc" id="L365">          + m_ClassifierTemplate.getClass().getName() + &quot;)&quot;);</span>
+    }
+<span class="nc" id="L367">    setClassifierTemplate(newTemplate);</span>
+
+<span class="nc" id="L369">    m_Classifier = tc;</span>
+<span class="nc" id="L370">  }</span>
+
+  /**
+   * Returns true if this classifier has an incoming connection that is an
+   * instance stream
+   * 
+   * @return true if has an incoming connection that is an instance stream
+   */
+  public boolean hasIncomingStreamInstances() {
+<span class="nc bnc" id="L379" title="All 2 branches missed.">    if (m_listenees.size() == 0) {</span>
+<span class="nc" id="L380">      return false;</span>
+    }
+<span class="nc bnc" id="L382" title="All 2 branches missed.">    if (m_listenees.containsKey(&quot;instance&quot;)) {</span>
+<span class="nc" id="L383">      return true;</span>
+    }
+<span class="nc" id="L385">    return false;</span>
+  }
+
+  /**
+   * Returns true if this classifier has an incoming connection that is a batch
+   * set of instances
+   * 
+   * @return a &lt;code&gt;boolean&lt;/code&gt; value
+   */
+  public boolean hasIncomingBatchInstances() {
+<span class="nc bnc" id="L395" title="All 2 branches missed.">    if (m_listenees.size() == 0) {</span>
+<span class="nc" id="L396">      return false;</span>
+    }
+<span class="nc bnc" id="L398" title="All 2 branches missed.">    if (m_listenees.containsKey(&quot;trainingSet&quot;)</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">        || m_listenees.containsKey(&quot;testSet&quot;)) {</span>
+<span class="nc" id="L400">      return true;</span>
+    }
+<span class="nc" id="L402">    return false;</span>
+  }
+
+  /**
+   * Get the classifier currently set for this wrapper
+   * 
+   * @return a &lt;code&gt;weka.classifiers.Classifier&lt;/code&gt; value
+   */
+  public weka.classifiers.Classifier getClassifier() {
+<span class="nc" id="L411">    return m_Classifier;</span>
+  }
+
+  /**
+   * Sets the algorithm (classifier) for this bean
+   * 
+   * @param algorithm an &lt;code&gt;Object&lt;/code&gt; value
+   * @exception IllegalArgumentException if an error occurs
+   */
+  public void setWrappedAlgorithm(Object algorithm) {
+
+<span class="nc bnc" id="L422" title="All 2 branches missed.">    if (!(algorithm instanceof weka.classifiers.Classifier)) {</span>
+<span class="nc" id="L423">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L424">          algorithm.getClass()</span>
+<span class="nc" id="L425">              + Messages</span>
+<span class="nc" id="L426">                  .getInstance()</span>
+<span class="nc" id="L427">                  .getString(</span>
+<span class="nc" id="L428">                      &quot;Classifier_SetWrappedAlgorithm_IllegalArgumentException_Text_First&quot;));</span>
+    }
+<span class="nc" id="L430">    setClassifierTemplate((weka.classifiers.Classifier) algorithm);</span>
+<span class="nc" id="L431">  }</span>
+
+  /**
+   * Returns the wrapped classifier
+   * 
+   * @return an &lt;code&gt;Object&lt;/code&gt; value
+   */
+  public Object getWrappedAlgorithm() {
+<span class="nc" id="L439">    return getClassifierTemplate();</span>
+  }
+
+  /**
+   * Get whether an incremental classifier will be updated on the incoming
+   * instance stream.
+   * 
+   * @return true if an incremental classifier is to be updated.
+   */
+  public boolean getUpdateIncrementalClassifier() {
+<span class="nc" id="L449">    return m_updateIncrementalClassifier;</span>
+  }
+
+  /**
+   * Set whether an incremental classifier will be updated on the incoming
+   * instance stream.
+   * 
+   * @param update true if an incremental classifier is to be updated.
+   */
+  public void setUpdateIncrementalClassifier(boolean update) {
+<span class="nc" id="L459">    m_updateIncrementalClassifier = update;</span>
+<span class="nc" id="L460">  }</span>
+
+  /**
+   * Accepts an instance for incremental processing.
+   * 
+   * @param e an &lt;code&gt;InstanceEvent&lt;/code&gt; value
+   */
+  public void acceptInstance(InstanceEvent e) {
+<span class="nc" id="L468">    m_incrementalEvent = e;</span>
+<span class="nc" id="L469">    handleIncrementalEvent();</span>
+<span class="nc" id="L470">  }</span>
+
+  /**
+   * Handles initializing and updating an incremental classifier
+   */
+  private void handleIncrementalEvent() {
+<span class="nc bnc" id="L476" title="All 2 branches missed.">    if (m_executorPool != null</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">        &amp;&amp; (m_executorPool.getQueue().size() &gt; 0 || m_executorPool</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">            .getActiveCount() &gt; 0)) {</span>
+
+<span class="nc" id="L480">      String messg = Messages.getInstance().getString(</span>
+<span class="nc" id="L481">          &quot;Classifier_HandleIncrementalEvent_Messg_Text_First&quot;)</span>
+<span class="nc" id="L482">          + statusMessagePrefix()</span>
+<span class="nc" id="L483">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L484">              &quot;Classifier_HandleIncrementalEvent_Messg_Text_Second&quot;);</span>
+<span class="nc bnc" id="L485" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L486">        m_log.logMessage(messg);</span>
+<span class="nc" id="L487">        m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L488">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L489">                &quot;Classifier_HandleIncrementalEvent_StatusMessage_Text_First&quot;));</span>
+      } else {
+<span class="nc" id="L491">        System.err.println(messg);</span>
+      }
+<span class="nc" id="L493">      return;</span>
+    }
+
+<span class="nc bnc" id="L496" title="All 2 branches missed.">    if (m_incrementalEvent.getStatus() == InstanceEvent.FORMAT_AVAILABLE) {</span>
+      // clear any warnings/errors from the log
+<span class="nc bnc" id="L498" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L499">        m_log.statusMessage(statusMessagePrefix() + &quot;remove&quot;);</span>
+      }
+
+      // Instances dataset = m_incrementalEvent.getInstance().dataset();
+<span class="nc" id="L503">      Instances dataset = m_incrementalEvent.getStructure();</span>
+      // default to the last column if no class is set
+<span class="nc bnc" id="L505" title="All 2 branches missed.">      if (dataset.classIndex() &lt; 0) {</span>
+<span class="nc" id="L506">        stop();</span>
+<span class="nc" id="L507">        String errorMessage = statusMessagePrefix()</span>
+<span class="nc" id="L508">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L509">                &quot;Classifier_HandleIncrementalEvent_ErrorMessage_Text_First&quot;);</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L511">          m_log.statusMessage(errorMessage);</span>
+<span class="nc" id="L512">          m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L513">              &quot;Classifier_HandleIncrementalEvent_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L514">              + getCustomName()</span>
+<span class="nc" id="L515">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L516">                  &quot;Classifier_HandleIncrementalEvent_LogMessage_Text_Second&quot;)</span>
+<span class="nc" id="L517">              + errorMessage);</span>
+        } else {
+<span class="nc" id="L519">          System.err.println(Messages.getInstance().getString(</span>
+<span class="nc" id="L520">              &quot;Classifier_HandleIncrementalEvent_Error_Text_First&quot;)</span>
+<span class="nc" id="L521">              + getCustomName()</span>
+<span class="nc" id="L522">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L523">                  &quot;Classifier_HandleIncrementalEvent_Error_Text_Second&quot;)</span>
+<span class="nc" id="L524">              + errorMessage);</span>
+        }
+<span class="nc" id="L526">        return;</span>
+
+        // System.err.println(&quot;Classifier : setting class index...&quot;);
+        // dataset.setClassIndex(dataset.numAttributes()-1);
+      }
+      try {
+        // initialize classifier if m_trainingSet is null
+        // otherwise assume that classifier has been pre-trained in batch
+        // mode, *if* headers match
+<span class="nc bnc" id="L535" title="All 4 branches missed.">        if (m_trainingSet == null || (!dataset.equalHeaders(m_trainingSet))) {</span>
+<span class="nc bnc" id="L536" title="All 2 branches missed.">          if (!(m_ClassifierTemplate instanceof weka.classifiers.UpdateableClassifier)) {</span>
+<span class="nc" id="L537">            stop(); // stop all processing</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">            if (m_log != null) {</span>
+<span class="nc bnc" id="L539" title="All 2 branches missed.">              String msg = (m_trainingSet == null) ? statusMessagePrefix()</span>
+<span class="nc" id="L540">                  + Messages.getInstance().getString(</span>
+<span class="nc" id="L541">                      &quot;Classifier_HandleIncrementalEvent_Msg_Text_First&quot;)</span>
+<span class="nc" id="L542">                  : statusMessagePrefix()</span>
+<span class="nc" id="L543">                      + Messages.getInstance().getString(</span>
+<span class="nc" id="L544">                          &quot;Classifier_HandleIncrementalEvent_Msg_Text_Second&quot;);</span>
+<span class="nc" id="L545">              m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L546">                  &quot;Classifier_HandleIncrementalEvent_LogMessage_Text_Third&quot;)</span>
+<span class="nc" id="L547">                  + msg);</span>
+<span class="nc" id="L548">              m_log.statusMessage(msg);</span>
+            }
+<span class="nc" id="L550">            return;</span>
+          }
+<span class="nc bnc" id="L552" title="All 4 branches missed.">          if (m_trainingSet != null &amp;&amp; (!dataset.equalHeaders(m_trainingSet))) {</span>
+<span class="nc bnc" id="L553" title="All 2 branches missed.">            if (m_log != null) {</span>
+<span class="nc" id="L554">              String msg = statusMessagePrefix()</span>
+<span class="nc" id="L555">                  + Messages.getInstance().getString(</span>
+<span class="nc" id="L556">                      &quot;Classifier_HandleIncrementalEvent_Msg_Text_Third&quot;);</span>
+<span class="nc" id="L557">              m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L558">                  &quot;Classifier_HandleIncrementalEvent_LogMessage_Text_Fourth&quot;)</span>
+<span class="nc" id="L559">                  + msg);</span>
+<span class="nc" id="L560">              m_log.statusMessage(msg);</span>
+            }
+<span class="nc" id="L562">            m_trainingSet = null;</span>
+          }
+<span class="nc bnc" id="L564" title="All 2 branches missed.">          if (m_trainingSet == null) {</span>
+            // initialize the classifier if it hasn't been trained yet
+<span class="nc" id="L566">            m_trainingSet = new Instances(dataset, 0);</span>
+<span class="nc" id="L567">            m_Classifier = weka.classifiers.Classifier</span>
+<span class="nc" id="L568">                .makeCopy(m_ClassifierTemplate);</span>
+<span class="nc" id="L569">            m_Classifier.buildClassifier(m_trainingSet);</span>
+          }
+        }
+<span class="nc" id="L572">      } catch (Exception ex) {</span>
+<span class="nc" id="L573">        stop();</span>
+<span class="nc bnc" id="L574" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L575">          m_log</span>
+<span class="nc" id="L576">              .statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L577">                  + Messages</span>
+<span class="nc" id="L578">                      .getInstance()</span>
+<span class="nc" id="L579">                      .getString(</span>
+<span class="nc" id="L580">                          &quot;Classifier_HandleIncrementalEvent_StatusMessage_Text_Second&quot;));</span>
+<span class="nc" id="L581">          m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L582">              &quot;Classifier_HandleIncrementalEvent_LogMessage_Text_Fifth&quot;)</span>
+<span class="nc" id="L583">              + statusMessagePrefix()</span>
+<span class="nc" id="L584">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L585">                  &quot;Classifier_HandleIncrementalEvent_LogMessage_Text_Sixth&quot;)</span>
+<span class="nc" id="L586">              + ex.getMessage());</span>
+        }
+<span class="nc" id="L588">        ex.printStackTrace();</span>
+<span class="nc" id="L589">        return;</span>
+      }
+      // Notify incremental classifier listeners of new batch
+<span class="nc" id="L592">      System.err.println(&quot;NOTIFYING NEW BATCH&quot;);</span>
+<span class="nc" id="L593">      m_ie.setStructure(dataset);</span>
+<span class="nc" id="L594">      m_ie.setClassifier(m_Classifier);</span>
+
+<span class="nc" id="L596">      notifyIncrementalClassifierListeners(m_ie);</span>
+<span class="nc" id="L597">      return;</span>
+    } else {
+<span class="nc bnc" id="L599" title="All 2 branches missed.">      if (m_trainingSet == null) {</span>
+        // simply return. If the training set is still null after
+        // the first instance then the classifier must not be updateable
+        // and hasn't been previously batch trained - therefore we can't
+        // do anything meaningful
+<span class="nc" id="L604">        return;</span>
+      }
+    }
+
+    try {
+      // test on this instance
+<span class="nc bnc" id="L610" title="All 2 branches missed.">      if (m_incrementalEvent.getInstance().dataset().classIndex() &lt; 0) {</span>
+        // System.err.println(&quot;Classifier : setting class index...&quot;);
+<span class="nc" id="L612">        m_incrementalEvent</span>
+<span class="nc" id="L613">            .getInstance()</span>
+<span class="nc" id="L614">            .dataset()</span>
+<span class="nc" id="L615">            .setClassIndex(</span>
+<span class="nc" id="L616">                m_incrementalEvent.getInstance().dataset().numAttributes() - 1);</span>
+      }
+
+<span class="nc" id="L619">      int status = IncrementalClassifierEvent.WITHIN_BATCH;</span>
+      /*
+       * if (m_incrementalEvent.getStatus() == InstanceEvent.FORMAT_AVAILABLE) {
+       * status = IncrementalClassifierEvent.NEW_BATCH;
+       */
+<span class="nc bnc" id="L624" title="All 2 branches missed.">      /* } else */if (m_incrementalEvent.getStatus() == InstanceEvent.BATCH_FINISHED) {</span>
+<span class="nc" id="L625">        status = IncrementalClassifierEvent.BATCH_FINISHED;</span>
+      }
+
+<span class="nc" id="L628">      m_ie.setStatus(status);</span>
+<span class="nc" id="L629">      m_ie.setClassifier(m_Classifier);</span>
+<span class="nc" id="L630">      m_ie.setCurrentInstance(m_incrementalEvent.getInstance());</span>
+
+<span class="nc" id="L632">      notifyIncrementalClassifierListeners(m_ie);</span>
+
+      // now update on this instance (if class is not missing and classifier
+      // is updateable and user has specified that classifier is to be
+      // updated)
+<span class="nc bnc" id="L637" title="All 2 branches missed.">      if (m_ClassifierTemplate instanceof weka.classifiers.UpdateableClassifier</span>
+<span class="nc bnc" id="L638" title="All 2 branches missed.">          &amp;&amp; m_updateIncrementalClassifier == true</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">          &amp;&amp; !(m_incrementalEvent.getInstance().isMissing(m_incrementalEvent</span>
+<span class="nc" id="L640">              .getInstance().dataset().classIndex()))) {</span>
+<span class="nc" id="L641">        ((weka.classifiers.UpdateableClassifier) m_Classifier)</span>
+<span class="nc" id="L642">            .updateClassifier(m_incrementalEvent.getInstance());</span>
+      }
+<span class="nc bnc" id="L644" title="All 2 branches missed.">      if (m_incrementalEvent.getStatus() == InstanceEvent.BATCH_FINISHED) {</span>
+<span class="nc bnc" id="L645" title="All 2 branches missed.">        if (m_textListeners.size() &gt; 0) {</span>
+<span class="nc" id="L646">          String modelString = m_Classifier.toString();</span>
+<span class="nc" id="L647">          String titleString = m_Classifier.getClass().getName();</span>
+
+<span class="nc" id="L649">          titleString = titleString.substring(titleString.lastIndexOf('.') + 1,</span>
+<span class="nc" id="L650">              titleString.length());</span>
+<span class="nc" id="L651">          modelString = Messages.getInstance().getString(</span>
+<span class="nc" id="L652">              &quot;Classifier_HandleIncrementalEvent_ModelString_Text_First&quot;)</span>
+<span class="nc" id="L653">              + titleString</span>
+<span class="nc" id="L654">              + &quot;\n&quot;</span>
+<span class="nc" id="L655">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L656">                  &quot;Classifier_HandleIncrementalEvent_ModelString_Text_Second&quot;)</span>
+<span class="nc" id="L657">              + m_trainingSet.relationName() + &quot;\n\n&quot; + modelString;</span>
+<span class="nc" id="L658">          titleString = Messages.getInstance().getString(</span>
+<span class="nc" id="L659">              &quot;Classifier_HandleIncrementalEvent_TitleString_Text_First&quot;)</span>
+<span class="nc" id="L660">              + titleString;</span>
+<span class="nc" id="L661">          TextEvent nt = new TextEvent(this, modelString, titleString);</span>
+<span class="nc" id="L662">          notifyTextListeners(nt);</span>
+        }
+      }
+<span class="nc" id="L665">    } catch (Exception ex) {</span>
+<span class="nc" id="L666">      stop();</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L668">        m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L669">            &quot;Classifier_HandleIncrementalEvent_LogMessage_Text_Seventh&quot;)</span>
+<span class="nc" id="L670">            + statusMessagePrefix() + ex.getMessage());</span>
+<span class="nc" id="L671">        m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L672">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L673">                &quot;Classifier_HandleIncrementalEvent_StatusMessage_Text_Third&quot;));</span>
+<span class="nc" id="L674">        ex.printStackTrace();</span>
+      } else {
+<span class="nc" id="L676">        ex.printStackTrace();</span>
+      }
+    }
+<span class="nc" id="L679">  }</span>
+
+  protected class TrainingTask implements Runnable, Task {
+    private final int m_runNum;
+    private final int m_maxRunNum;
+    private final int m_setNum;
+    private final int m_maxSetNum;
+<span class="nc" id="L686">    private Instances m_train = null;</span>
+<span class="nc" id="L687">    private final TaskStatusInfo m_taskInfo = new TaskStatusInfo();</span>
+
+<span class="nc" id="L689">    public TrainingTask(int runNum, int maxRunNum, int setNum, int maxSetNum,</span>
+        Instances train) {
+<span class="nc" id="L691">      m_runNum = runNum;</span>
+<span class="nc" id="L692">      m_maxRunNum = maxRunNum;</span>
+<span class="nc" id="L693">      m_setNum = setNum;</span>
+<span class="nc" id="L694">      m_maxSetNum = maxSetNum;</span>
+<span class="nc" id="L695">      m_train = train;</span>
+<span class="nc" id="L696">      m_taskInfo.setExecutionStatus(TaskStatusInfo.TO_BE_RUN);</span>
+<span class="nc" id="L697">    }</span>
+
+    public void run() {
+<span class="nc" id="L700">      execute();</span>
+<span class="nc" id="L701">    }</span>
+
+    public void execute() {
+      try {
+<span class="nc bnc" id="L705" title="All 2 branches missed.">        if (m_train != null) {</span>
+<span class="nc bnc" id="L706" title="All 2 branches missed.">          if (m_train.classIndex() &lt; 0) {</span>
+            // stop all processing
+<span class="nc" id="L708">            stop();</span>
+<span class="nc" id="L709">            String errorMessage = statusMessagePrefix()</span>
+<span class="nc" id="L710">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L711">                    &quot;Classifier_TrainingTask_Execute_ErrorMessage_Text_First&quot;);</span>
+<span class="nc bnc" id="L712" title="All 2 branches missed.">            if (m_log != null) {</span>
+<span class="nc" id="L713">              m_log.statusMessage(errorMessage);</span>
+<span class="nc" id="L714">              m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L715">                  &quot;Classifier_TrainingTask_Execute_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L716">                  + errorMessage);</span>
+            } else {
+<span class="nc" id="L718">              System.err.println(Messages.getInstance().getString(</span>
+<span class="nc" id="L719">                  &quot;Classifier_TrainingTask_Execute_Error_Text_First&quot;)</span>
+<span class="nc" id="L720">                  + errorMessage);</span>
+            }
+<span class="nc" id="L722">            return;</span>
+
+            /*
+             * // assume last column is the class
+             * m_train.setClassIndex(m_train.numAttributes()-1); if (m_log !=
+             * null) { m_log.logMessage(&quot;[Classifier] &quot; + statusMessagePrefix()
+             * + &quot; : assuming last &quot; +&quot;column is the class&quot;); }
+             */
+          }
+<span class="nc bnc" id="L731" title="All 4 branches missed.">          if (m_runNum == 1 &amp;&amp; m_setNum == 1) {</span>
+            // set this back to idle once the last fold
+            // of the last run has completed
+<span class="nc" id="L734">            m_state = BUILDING_MODEL; // global state</span>
+
+            // local status of this runnable
+<span class="nc" id="L737">            m_taskInfo.setExecutionStatus(TaskStatusInfo.PROCESSING);</span>
+          }
+
+          // m_visual.setAnimated();
+          // m_visual.setText(&quot;Building model...&quot;);
+<span class="nc" id="L742">          String msg = statusMessagePrefix()</span>
+<span class="nc" id="L743">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L744">                  &quot;Classifier_TrainingTask_Execute_Msg_Text_First&quot;)</span>
+<span class="nc" id="L745">              + m_runNum</span>
+<span class="nc" id="L746">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L747">                  &quot;Classifier_TrainingTask_Execute_Msg_Text_Second&quot;) + m_setNum;</span>
+<span class="nc bnc" id="L748" title="All 2 branches missed.">          if (m_log != null) {</span>
+<span class="nc" id="L749">            m_log.statusMessage(msg);</span>
+          } else {
+<span class="nc" id="L751">            System.err.println(msg);</span>
+          }
+          // buildClassifier();
+
+          // copy the classifier configuration
+<span class="nc" id="L756">          weka.classifiers.Classifier classifierCopy = weka.classifiers.Classifier</span>
+<span class="nc" id="L757">              .makeCopy(m_ClassifierTemplate);</span>
+
+          // build this model
+<span class="nc" id="L760">          classifierCopy.buildClassifier(m_train);</span>
+<span class="nc bnc" id="L761" title="All 4 branches missed.">          if (m_runNum == m_maxRunNum &amp;&amp; m_setNum == m_maxSetNum) {</span>
+            // Save the last classifier (might be used later on for
+            // classifying further test sets.
+<span class="nc" id="L764">            m_Classifier = classifierCopy;</span>
+<span class="nc" id="L765">            m_trainingSet = new Instances(m_train, 0);</span>
+          }
+
+          // if (m_batchClassifierListeners.size() &gt; 0) {
+          // notify anyone who might be interested in just the model
+          // and training set.
+<span class="nc" id="L771">          BatchClassifierEvent ce = new BatchClassifierEvent(Classifier.this,</span>
+<span class="nc" id="L772">              classifierCopy, new DataSetEvent(this, m_train), null, // no test</span>
+                                                                     // set
+                                                                     // (yet)
+<span class="nc" id="L775">              m_setNum, m_maxSetNum);</span>
+<span class="nc" id="L776">          ce.setGroupIdentifier(m_currentBatchIdentifier.getTime());</span>
+<span class="nc" id="L777">          notifyBatchClassifierListeners(ce);</span>
+
+          // store in the output queue (if we have incoming test set events)
+<span class="nc" id="L780">          classifierTrainingComplete(ce);</span>
+          // }
+
+<span class="nc bnc" id="L783" title="All 2 branches missed.">          if (classifierCopy instanceof weka.core.Drawable</span>
+<span class="nc bnc" id="L784" title="All 2 branches missed.">              &amp;&amp; m_graphListeners.size() &gt; 0) {</span>
+<span class="nc" id="L785">            String grphString = ((weka.core.Drawable) classifierCopy).graph();</span>
+<span class="nc" id="L786">            int grphType = ((weka.core.Drawable) classifierCopy).graphType();</span>
+<span class="nc" id="L787">            String grphTitle = classifierCopy.getClass().getName();</span>
+<span class="nc" id="L788">            grphTitle = grphTitle.substring(grphTitle.lastIndexOf('.') + 1,</span>
+<span class="nc" id="L789">                grphTitle.length());</span>
+<span class="nc" id="L790">            grphTitle = Messages.getInstance().getString(</span>
+<span class="nc" id="L791">                &quot;Classifier_TrainingTask_Execute_GrphTitle_Text_First&quot;)</span>
+<span class="nc" id="L792">                + m_setNum + &quot; (&quot; + m_train.relationName() + &quot;) &quot; + grphTitle;</span>
+
+<span class="nc" id="L794">            GraphEvent ge = new GraphEvent(Classifier.this, grphString,</span>
+<span class="nc" id="L795">                grphTitle, grphType);</span>
+<span class="nc" id="L796">            notifyGraphListeners(ge);</span>
+          }
+
+<span class="nc bnc" id="L799" title="All 2 branches missed.">          if (m_textListeners.size() &gt; 0) {</span>
+<span class="nc" id="L800">            String modelString = classifierCopy.toString();</span>
+<span class="nc" id="L801">            String titleString = classifierCopy.getClass().getName();</span>
+
+<span class="nc" id="L803">            titleString = titleString.substring(</span>
+<span class="nc" id="L804">                titleString.lastIndexOf('.') + 1, titleString.length());</span>
+<span class="nc" id="L805">            modelString = Messages.getInstance().getString(</span>
+<span class="nc" id="L806">                &quot;Classifier_TrainingTask_Execute_ModelString_Text_First&quot;)</span>
+<span class="nc" id="L807">                + titleString</span>
+<span class="nc" id="L808">                + &quot;\n&quot;</span>
+<span class="nc" id="L809">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L810">                    &quot;Classifier_TrainingTask_Execute_ModelString_Text_Second&quot;)</span>
+<span class="nc" id="L811">                + m_train.relationName()</span>
+<span class="nc bnc" id="L812" title="All 2 branches missed.">                + ((m_maxSetNum &gt; 1) ? Messages.getInstance().getString(</span>
+<span class="nc" id="L813">                    &quot;Classifier_TrainingTask_Execute_ModelString_Text_Third&quot;)</span>
+<span class="nc" id="L814">                    + m_setNum : &quot;&quot;) + &quot;\n\n&quot; + modelString;</span>
+<span class="nc" id="L815">            titleString = Messages.getInstance().getString(</span>
+<span class="nc" id="L816">                &quot;Classifier_TrainingTask_Execute_TitleString_Text_First&quot;)</span>
+<span class="nc" id="L817">                + titleString;</span>
+
+<span class="nc" id="L819">            TextEvent nt = new TextEvent(Classifier.this, modelString,</span>
+<span class="nc" id="L820">                titleString);</span>
+<span class="nc" id="L821">            notifyTextListeners(nt);</span>
+          }
+        }
+<span class="nc" id="L824">      } catch (Exception ex) {</span>
+        // Stop all processing
+<span class="nc" id="L826">        stop();</span>
+<span class="nc" id="L827">        ex.printStackTrace();</span>
+<span class="nc bnc" id="L828" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L829">          String titleString = Messages.getInstance().getString(</span>
+<span class="nc" id="L830">              &quot;Classifier_TrainingTask_Execute_TitleString_Text_Second&quot;)</span>
+<span class="nc" id="L831">              + statusMessagePrefix();</span>
+
+<span class="nc" id="L833">          titleString += Messages.getInstance().getString(</span>
+<span class="nc" id="L834">              &quot;Classifier_TrainingTask_Execute_TitleString_Text_Third&quot;)</span>
+<span class="nc" id="L835">              + m_runNum</span>
+<span class="nc" id="L836">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L837">                  &quot;Classifier_TrainingTask_Execute_TitleString_Text_Fourth&quot;)</span>
+<span class="nc" id="L838">              + m_setNum</span>
+<span class="nc" id="L839">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L840">                  &quot;Classifier_TrainingTask_Execute_TitleString_Text_Fifth&quot;);</span>
+<span class="nc" id="L841">          m_log.logMessage(titleString</span>
+<span class="nc" id="L842">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L843">                  &quot;Classifier_TrainingTask_Execute_LogMessage_Text_Fourth&quot;)</span>
+<span class="nc" id="L844">              + ex.getMessage());</span>
+<span class="nc" id="L845">          m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L846">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L847">                  &quot;Classifier_TrainingTask_Execute_StatusMessage_Text_First&quot;));</span>
+<span class="nc" id="L848">          ex.printStackTrace();</span>
+        }
+<span class="nc" id="L850">        m_taskInfo.setExecutionStatus(TaskStatusInfo.FAILED);</span>
+<span class="nc" id="L851">      } finally {</span>
+<span class="nc" id="L852">        m_visual.setStatic();</span>
+<span class="nc bnc" id="L853" title="All 8 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L854">          m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L855">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L856">                  &quot;Classifier_TrainingTask_Execute_StatusMessage_Text_Second&quot;));</span>
+        }
+<span class="nc" id="L858">        m_state = IDLE;</span>
+
+<span class="nc bnc" id="L860" title="All 8 branches missed.">        if (Thread.currentThread().isInterrupted()) {</span>
+          // prevent any classifier events from being fired
+<span class="nc" id="L862">          m_trainingSet = null;</span>
+<span class="nc bnc" id="L863" title="All 8 branches missed.">          if (m_log != null) {</span>
+<span class="nc" id="L864">            String titleString = Messages.getInstance().getString(</span>
+<span class="nc" id="L865">                &quot;Classifier_TrainingTask_Execute_TitleString_Text_Sixth&quot;)</span>
+<span class="nc" id="L866">                + statusMessagePrefix();</span>
+
+<span class="nc" id="L868">            m_log.logMessage(titleString</span>
+<span class="nc" id="L869">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L870">                    &quot;Classifier_TrainingTask_Execute_LogMessage_Text_Fifth&quot;)</span>
+<span class="nc" id="L871">                + m_runNum</span>
+<span class="nc" id="L872">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L873">                    &quot;Classifier_TrainingTask_Execute_LogMessage_Text_Sixth&quot;)</span>
+<span class="nc" id="L874">                + m_setNum</span>
+<span class="nc" id="L875">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L876">                    &quot;Classifier_TrainingTask_Execute_LogMessage_Text_Seventh&quot;));</span>
+<span class="nc" id="L877">            m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L878">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L879">                    &quot;Classifier_TrainingTask_Execute_LogMessage_Text_Seventh&quot;));</span>
+
+            /*
+             * // are we the last active thread? if
+             * (m_executorPool.getActiveCount() == 1) { String msg =
+             * &quot;[Classifier] &quot; + statusMessagePrefix() +
+             * &quot; last classifier unblocking...&quot;; m_log.logMessage(msg); //
+             * m_log.statusMessage(statusMessagePrefix() + &quot;finished.&quot;); m_block
+             * = false; // block(false); }
+             */
+          }
+          /*
+           * System.err.println(&quot;Queue size: &quot; +
+           * m_executorPool.getQueue().size() + &quot; Active count: &quot; +
+           * m_executorPool.getActiveCount());
+           */
+        } /*
+           * else { // check to see if we are the last active thread if
+           * (m_executorPool == null || (m_executorPool.getQueue().size() == 0
+           * &amp;&amp; m_executorPool.getActiveCount() == 1)) {
+           * 
+           * String msg = &quot;[Classifier] &quot; + statusMessagePrefix() +
+           * &quot; last classifier unblocking...&quot;; if (m_log != null) {
+           * m_log.logMessage(msg); } else { System.err.println(msg); }
+           * //m_visual.setText(m_oldText);
+           * 
+           * if (m_log != null) { m_log.statusMessage(statusMessagePrefix() +
+           * &quot;Finished.&quot;); } // m_outputQueues = null; // free memory m_block =
+           * false; m_state = IDLE; // block(false); } }
+           */
+<span class="nc" id="L909">      }</span>
+<span class="nc" id="L910">    }</span>
+
+    public TaskStatusInfo getTaskStatus() {
+      // TODO
+<span class="nc" id="L914">      return null;</span>
+    }
+  }
+
+  /**
+   * Accepts a training set and builds batch classifier
+   * 
+   * @param e a &lt;code&gt;TrainingSetEvent&lt;/code&gt; value
+   */
+  public void acceptTrainingSet(final TrainingSetEvent e) {
+
+<span class="nc bnc" id="L925" title="All 2 branches missed.">    if (e.isStructureOnly()) {</span>
+      // no need to build a classifier, instead just generate a dummy
+      // BatchClassifierEvent in order to pass on instance structure to
+      // any listeners - eg. PredictionAppender can use it to determine
+      // the final structure of instances with predictions appended
+<span class="nc" id="L930">      BatchClassifierEvent ce = new BatchClassifierEvent(this, m_Classifier,</span>
+<span class="nc" id="L931">          new DataSetEvent(this, e.getTrainingSet()), new DataSetEvent(this,</span>
+<span class="nc" id="L932">              e.getTrainingSet()), e.getSetNumber(), e.getMaxSetNumber());</span>
+
+<span class="nc" id="L934">      notifyBatchClassifierListeners(ce);</span>
+<span class="nc" id="L935">      return;</span>
+    }
+
+<span class="nc bnc" id="L938" title="All 2 branches missed.">    if (m_block) {</span>
+      // block(true);
+<span class="nc bnc" id="L940" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L941">        m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L942">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L943">                &quot;Classifier_AcceptTrainingSet_StatusMessage_Text_First&quot;));</span>
+<span class="nc" id="L944">        m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L945">            &quot;Classifier_AcceptTrainingSet_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L946">            + statusMessagePrefix()</span>
+<span class="nc" id="L947">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L948">                &quot;Classifier_AcceptTrainingSet_LogMessage_Text_Second&quot;));</span>
+      }
+<span class="nc" id="L950">      return;</span>
+    }
+
+    // Do some initialization if this is the first set of the first run
+<span class="nc bnc" id="L954" title="All 4 branches missed.">    if (e.getRunNumber() == 1 &amp;&amp; e.getSetNumber() == 1) {</span>
+      // m_oldText = m_visual.getText();
+      // store the training header
+<span class="nc" id="L957">      m_trainingSet = new Instances(e.getTrainingSet(), 0);</span>
+<span class="nc" id="L958">      m_state = BUILDING_MODEL;</span>
+
+<span class="nc" id="L960">      String msg = Messages.getInstance().getString(</span>
+<span class="nc" id="L961">          &quot;Classifier_AcceptTrainingSet_Msg_Text_First&quot;)</span>
+<span class="nc" id="L962">          + statusMessagePrefix()</span>
+<span class="nc" id="L963">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L964">              &quot;Classifier_AcceptTrainingSet_Msg_Text_Second&quot;)</span>
+<span class="nc" id="L965">          + getExecutionSlots()</span>
+<span class="nc" id="L966">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L967">              &quot;Classifier_AcceptTrainingSet_Msg_Text_Third&quot;);</span>
+<span class="nc bnc" id="L968" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L969">        m_log.logMessage(msg);</span>
+      } else {
+<span class="nc" id="L971">        System.err.println(msg);</span>
+      }
+
+      // start the execution pool (always re-create the executor because the
+      // user
+      // might have changed the number of execution slots since the last time)
+      // if (m_executorPool == null) {
+<span class="nc" id="L978">      startExecutorPool();</span>
+      // }
+
+      // setup output queues
+<span class="nc" id="L982">      msg = Messages.getInstance().getString(</span>
+<span class="nc" id="L983">          &quot;Classifier_AcceptTrainingSet_Msg_Text_Fourth&quot;)</span>
+<span class="nc" id="L984">          + statusMessagePrefix()</span>
+<span class="nc" id="L985">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L986">              &quot;Classifier_AcceptTrainingSet_Msg_Text_Fifth&quot;);</span>
+<span class="nc bnc" id="L987" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L988">        m_log.logMessage(msg);</span>
+      } else {
+<span class="nc" id="L990">        System.err.println(msg);</span>
+      }
+
+<span class="nc bnc" id="L993" title="All 2 branches missed.">      if (!m_batchStarted) {</span>
+<span class="nc" id="L994">        m_outputQueues = new BatchClassifierEvent[e.getMaxRunNumber()][e</span>
+<span class="nc" id="L995">            .getMaxSetNumber()];</span>
+<span class="nc" id="L996">        m_completedSets = new boolean[e.getMaxRunNumber()][e.getMaxSetNumber()];</span>
+<span class="nc" id="L997">        m_currentBatchIdentifier = new Date();</span>
+<span class="nc" id="L998">        m_batchStarted = true;</span>
+      }
+    }
+
+    // create a new task and schedule for execution
+<span class="nc" id="L1003">    TrainingTask newTask = new TrainingTask(e.getRunNumber(),</span>
+<span class="nc" id="L1004">        e.getMaxRunNumber(), e.getSetNumber(), e.getMaxSetNumber(),</span>
+<span class="nc" id="L1005">        e.getTrainingSet());</span>
+<span class="nc" id="L1006">    String msg = Messages.getInstance().getString(</span>
+<span class="nc" id="L1007">        &quot;Classifier_AcceptTrainingSet_Msg_Text_Sixth&quot;)</span>
+<span class="nc" id="L1008">        + statusMessagePrefix()</span>
+<span class="nc" id="L1009">        + Messages.getInstance().getString(</span>
+<span class="nc" id="L1010">            &quot;Classifier_AcceptTrainingSet_Msg_Text_Seventh&quot;)</span>
+<span class="nc" id="L1011">        + e.getRunNumber()</span>
+<span class="nc" id="L1012">        + Messages.getInstance().getString(</span>
+<span class="nc" id="L1013">            &quot;Classifier_AcceptTrainingSet_Msg_Text_Eighth&quot;)</span>
+<span class="nc" id="L1014">        + e.getSetNumber()</span>
+<span class="nc" id="L1015">        + Messages.getInstance().getString(</span>
+<span class="nc" id="L1016">            &quot;Classifier_AcceptTrainingSet_Msg_Text_Nineth&quot;);</span>
+<span class="nc bnc" id="L1017" title="All 2 branches missed.">    if (m_log != null) {</span>
+<span class="nc" id="L1018">      m_log.logMessage(msg);</span>
+    } else {
+<span class="nc" id="L1020">      System.err.println(msg);</span>
+    }
+
+    // delay just a little bit
+    /*
+     * try { Thread.sleep(10); } catch (Exception ex){}
+     */
+<span class="nc" id="L1027">    m_executorPool.execute(newTask);</span>
+<span class="nc" id="L1028">  }</span>
+
+  /**
+   * Accepts a test set for a batch trained classifier
+   * 
+   * @param e a &lt;code&gt;TestSetEvent&lt;/code&gt; value
+   */
+  public synchronized void acceptTestSet(TestSetEvent e) {
+
+<span class="nc bnc" id="L1037" title="All 2 branches missed.">    if (m_block) {</span>
+      // block(true);
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L1040">        m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L1041">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L1042">                &quot;Classifier_AcceptTrainingSet_StatusMessage_Text_Second&quot;));</span>
+<span class="nc" id="L1043">        m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L1044">            &quot;Classifier_AcceptTrainingSet_Msg_Text_Nineth&quot;)</span>
+<span class="nc" id="L1045">            + statusMessagePrefix()</span>
+<span class="nc" id="L1046">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L1047">                &quot;Classifier_AcceptTrainingSet_StatusMessage_Text_Second&quot;));</span>
+      }
+<span class="nc" id="L1049">      return;</span>
+    }
+
+<span class="nc" id="L1052">    Instances testSet = e.getTestSet();</span>
+<span class="nc bnc" id="L1053" title="All 2 branches missed.">    if (testSet != null) {</span>
+<span class="nc bnc" id="L1054" title="All 2 branches missed.">      if (testSet.classIndex() &lt; 0) {</span>
+        // testSet.setClassIndex(testSet.numAttributes() - 1);
+        // stop all processing
+<span class="nc" id="L1057">        stop();</span>
+<span class="nc" id="L1058">        String errorMessage = statusMessagePrefix()</span>
+<span class="nc" id="L1059">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L1060">                &quot;Classifier_AcceptTestSet_ErrorMessage_Text_First&quot;);</span>
+<span class="nc bnc" id="L1061" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L1062">          m_log.statusMessage(errorMessage);</span>
+<span class="nc" id="L1063">          m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L1064">              &quot;Classifier_AcceptTestSet_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L1065">              + errorMessage);</span>
+        } else {
+<span class="nc" id="L1067">          System.err.println(Messages.getInstance().getString(</span>
+<span class="nc" id="L1068">              &quot;Classifier_AcceptTestSet_Error_Text_First&quot;)</span>
+<span class="nc" id="L1069">              + errorMessage);</span>
+        }
+<span class="nc" id="L1071">        return;</span>
+      }
+    }
+
+    // If we just have a test set connection or
+    // there is just one run involving one set (and we are not
+    // currently building a model), then use the
+    // last saved model
+<span class="nc bnc" id="L1079" title="All 4 branches missed.">    if (m_Classifier != null &amp;&amp; m_state == IDLE</span>
+<span class="nc bnc" id="L1080" title="All 2 branches missed.">        &amp;&amp; (!m_listenees.containsKey(&quot;trainingSet&quot;))) {</span>
+
+      // if this is structure only then just return at this point
+<span class="nc bnc" id="L1083" title="All 4 branches missed.">      if (e.getTestSet() != null &amp;&amp; e.isStructureOnly()) {</span>
+<span class="nc" id="L1084">        return;</span>
+      }
+
+      // first check that we have a training set/header (if we don't,
+      // then it means that no model has been loaded
+<span class="nc bnc" id="L1089" title="All 2 branches missed.">      if (m_trainingSet == null) {</span>
+<span class="nc" id="L1090">        stop();</span>
+<span class="nc" id="L1091">        String errorMessage = statusMessagePrefix()</span>
+<span class="nc" id="L1092">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L1093">                &quot;Classifier_AcceptTestSet_ErrorMessage_Text_First_Alpha&quot;);</span>
+<span class="nc bnc" id="L1094" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L1095">          m_log.statusMessage(errorMessage);</span>
+<span class="nc" id="L1096">          m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L1097">              &quot;Classifier_AcceptTestSet_LogMessage_Text_Second&quot;)</span>
+<span class="nc" id="L1098">              + errorMessage);</span>
+        } else {
+<span class="nc" id="L1100">          System.err.println(Messages.getInstance().getString(</span>
+<span class="nc" id="L1101">              &quot;Classifier_AcceptTestSet_Error_Text_Second&quot;)</span>
+<span class="nc" id="L1102">              + errorMessage);</span>
+        }
+<span class="nc" id="L1104">        return;</span>
+      }
+
+<span class="nc" id="L1107">      testSet = e.getTestSet();</span>
+<span class="nc bnc" id="L1108" title="All 4 branches missed.">      if (e.getRunNumber() == 1 &amp;&amp; e.getSetNumber() == 1) {</span>
+<span class="nc" id="L1109">        m_currentBatchIdentifier = new Date();</span>
+      }
+
+<span class="nc bnc" id="L1112" title="All 2 branches missed.">      if (testSet != null) {</span>
+        /*
+         * if (testSet.classIndex() &lt; 0) {
+         * testSet.setClassIndex(testSet.numAttributes() - 1); }
+         */
+
+<span class="nc bnc" id="L1118" title="All 2 branches missed.">        if (m_trainingSet.equalHeaders(testSet)) {</span>
+<span class="nc" id="L1119">          BatchClassifierEvent ce = new BatchClassifierEvent(this,</span>
+<span class="nc" id="L1120">              m_Classifier, new DataSetEvent(this, m_trainingSet),</span>
+<span class="nc" id="L1121">              new DataSetEvent(this, e.getTestSet()), e.getRunNumber(),</span>
+<span class="nc" id="L1122">              e.getMaxRunNumber(), e.getSetNumber(), e.getMaxSetNumber());</span>
+<span class="nc" id="L1123">          ce.setGroupIdentifier(m_currentBatchIdentifier.getTime());</span>
+
+<span class="nc bnc" id="L1125" title="All 4 branches missed.">          if (m_log != null &amp;&amp; !e.isStructureOnly()) {</span>
+<span class="nc" id="L1126">            m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L1127">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L1128">                    &quot;Classifier_AcceptTestSet_StatusMessage_Text_First&quot;));</span>
+          }
+<span class="nc" id="L1130">          m_batchStarted = false;</span>
+<span class="nc" id="L1131">          notifyBatchClassifierListeners(ce);</span>
+        }
+      }
+    } else {
+      /*
+       * System.err.println(&quot;[Classifier] accepting test set: run &quot; +
+       * e.getRunNumber() + &quot; fold &quot; + e.getSetNumber());
+       */
+<span class="nc bnc" id="L1139" title="All 4 branches missed.">      if (e.getRunNumber() == 1 &amp;&amp; e.getSetNumber() == 1) {</span>
+<span class="nc bnc" id="L1140" title="All 2 branches missed.">        if (!m_batchStarted) {</span>
+<span class="nc" id="L1141">          m_outputQueues = new BatchClassifierEvent[e.getMaxRunNumber()][e</span>
+<span class="nc" id="L1142">              .getMaxSetNumber()];</span>
+<span class="nc" id="L1143">          m_completedSets = new boolean[e.getMaxRunNumber()][e</span>
+<span class="nc" id="L1144">              .getMaxSetNumber()];</span>
+<span class="nc" id="L1145">          m_currentBatchIdentifier = new Date();</span>
+<span class="nc" id="L1146">          m_batchStarted = true;</span>
+        }
+      }
+
+<span class="nc bnc" id="L1150" title="All 2 branches missed.">      if (m_outputQueues[e.getRunNumber() - 1][e.getSetNumber() - 1] == null) {</span>
+        // store an event with a null model and training set (to be filled in
+        // later)
+<span class="nc" id="L1153">        m_outputQueues[e.getRunNumber() - 1][e.getSetNumber() - 1] = new BatchClassifierEvent(</span>
+<span class="nc" id="L1154">            this, null, null, new DataSetEvent(this, e.getTestSet()),</span>
+<span class="nc" id="L1155">            e.getRunNumber(), e.getMaxRunNumber(), e.getSetNumber(),</span>
+<span class="nc" id="L1156">            e.getMaxSetNumber());</span>
+
+<span class="nc bnc" id="L1158" title="All 2 branches missed.">        if (e.getRunNumber() == e.getMaxRunNumber()</span>
+<span class="nc bnc" id="L1159" title="All 2 branches missed.">            &amp;&amp; e.getSetNumber() == e.getMaxSetNumber()) {</span>
+
+          // block on the last fold of the last run
+          /*
+           * System.err.println(&quot;[Classifier] blocking on last fold of last run...&quot;
+           * ); block(true);
+           */
+<span class="nc bnc" id="L1166" title="All 2 branches missed.">          if (e.getMaxSetNumber() != 1) {</span>
+<span class="nc" id="L1167">            m_block = true;</span>
+          }
+        }
+      } else {
+        // Otherwise, there is a model here waiting for a test set...
+<span class="nc" id="L1172">        m_outputQueues[e.getRunNumber() - 1][e.getSetNumber() - 1]</span>
+<span class="nc" id="L1173">            .setTestSet(new DataSetEvent(this, e.getTestSet()));</span>
+<span class="nc" id="L1174">        checkCompletedRun(e.getRunNumber(), e.getMaxRunNumber(),</span>
+<span class="nc" id="L1175">            e.getMaxSetNumber());</span>
+      }
+    }
+<span class="nc" id="L1178">  }</span>
+
+  private synchronized void classifierTrainingComplete(BatchClassifierEvent ce) {
+    // check the output queues if we have an incoming test set connection
+<span class="nc bnc" id="L1182" title="All 2 branches missed.">    if (m_listenees.containsKey(&quot;testSet&quot;)) {</span>
+<span class="nc" id="L1183">      String msg = Messages.getInstance().getString(</span>
+<span class="nc" id="L1184">          &quot;Classifier_AcceptTestSet_Msg_Text_First&quot;)</span>
+<span class="nc" id="L1185">          + statusMessagePrefix()</span>
+<span class="nc" id="L1186">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L1187">              &quot;Classifier_AcceptTestSet_Msg_Text_Second&quot;)</span>
+<span class="nc" id="L1188">          + ce.getRunNumber()</span>
+<span class="nc" id="L1189">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L1190">              &quot;Classifier_AcceptTestSet_Msg_Text_Third&quot;) + ce.getSetNumber();</span>
+<span class="nc bnc" id="L1191" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L1192">        m_log.logMessage(msg);</span>
+      } else {
+<span class="nc" id="L1194">        System.err.println(msg);</span>
+      }
+
+<span class="nc bnc" id="L1197" title="All 2 branches missed.">      if (m_outputQueues[ce.getRunNumber() - 1][ce.getSetNumber() - 1] == null) {</span>
+        // store the event - test data filled in later
+<span class="nc" id="L1199">        m_outputQueues[ce.getRunNumber() - 1][ce.getSetNumber() - 1] = ce;</span>
+      } else {
+        // there is a test set here waiting for a model and training set
+<span class="nc" id="L1202">        m_outputQueues[ce.getRunNumber() - 1][ce.getSetNumber() - 1]</span>
+<span class="nc" id="L1203">            .setClassifier(ce.getClassifier());</span>
+<span class="nc" id="L1204">        m_outputQueues[ce.getRunNumber() - 1][ce.getSetNumber() - 1]</span>
+<span class="nc" id="L1205">            .setTrainSet(ce.getTrainSet());</span>
+
+      }
+<span class="nc" id="L1208">      checkCompletedRun(ce.getRunNumber(), ce.getMaxRunNumber(),</span>
+<span class="nc" id="L1209">          ce.getMaxSetNumber());</span>
+    }
+<span class="nc" id="L1211">  }</span>
+
+  private synchronized void checkCompletedRun(int runNum, int maxRunNum,
+      int maxSets) {
+    // look to see if there are any completed classifiers that we can pass
+    // on for evaluation
+<span class="nc bnc" id="L1217" title="All 2 branches missed.">    for (int i = 0; i &lt; maxSets; i++) {</span>
+<span class="nc bnc" id="L1218" title="All 2 branches missed.">      if (m_outputQueues[runNum - 1][i] != null) {</span>
+<span class="nc bnc" id="L1219" title="All 2 branches missed.">        if (m_outputQueues[runNum - 1][i].getClassifier() != null</span>
+<span class="nc bnc" id="L1220" title="All 2 branches missed.">            &amp;&amp; m_outputQueues[runNum - 1][i].getTestSet() != null) {</span>
+<span class="nc" id="L1221">          String msg = Messages.getInstance().getString(</span>
+<span class="nc" id="L1222">              &quot;Classifier_AcceptTestSet_Msg_Text_Fourth&quot;)</span>
+<span class="nc" id="L1223">              + statusMessagePrefix()</span>
+<span class="nc" id="L1224">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L1225">                  &quot;Classifier_AcceptTestSet_Msg_Text_Fifth&quot;)</span>
+<span class="nc" id="L1226">              + runNum</span>
+<span class="nc" id="L1227">              + &quot;/&quot;</span>
+<span class="nc" id="L1228">              + (i + 1)</span>
+<span class="nc" id="L1229">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L1230">                  &quot;Classifier_AcceptTestSet_Msg_Text_Sixth&quot;);</span>
+<span class="nc bnc" id="L1231" title="All 2 branches missed.">          if (m_log != null) {</span>
+<span class="nc" id="L1232">            m_log.logMessage(msg);</span>
+          } else {
+<span class="nc" id="L1234">            System.err.println(msg);</span>
+          }
+
+          // dispatch this one
+<span class="nc" id="L1238">          m_outputQueues[runNum - 1][i]</span>
+<span class="nc" id="L1239">              .setGroupIdentifier(m_currentBatchIdentifier.getTime());</span>
+<span class="nc" id="L1240">          notifyBatchClassifierListeners(m_outputQueues[runNum - 1][i]);</span>
+          // save memory
+<span class="nc" id="L1242">          m_outputQueues[runNum - 1][i] = null;</span>
+          // mark as done
+<span class="nc" id="L1244">          m_completedSets[runNum - 1][i] = true;</span>
+        }
+      }
+    }
+
+    // scan for completion
+<span class="nc" id="L1250">    boolean done = true;</span>
+<span class="nc bnc" id="L1251" title="All 2 branches missed.">    for (int i = 0; i &lt; maxRunNum; i++) {</span>
+<span class="nc bnc" id="L1252" title="All 2 branches missed.">      for (int j = 0; j &lt; maxSets; j++) {</span>
+<span class="nc bnc" id="L1253" title="All 2 branches missed.">        if (!m_completedSets[i][j]) {</span>
+<span class="nc" id="L1254">          done = false;</span>
+<span class="nc" id="L1255">          break;</span>
+        }
+      }
+<span class="nc bnc" id="L1258" title="All 2 branches missed.">      if (!done) {</span>
+<span class="nc" id="L1259">        break;</span>
+      }
+    }
+
+<span class="nc bnc" id="L1263" title="All 2 branches missed.">    if (done) {</span>
+<span class="nc" id="L1264">      String msg = Messages.getInstance().getString(</span>
+<span class="nc" id="L1265">          &quot;Classifier_AcceptTestSet_Msg_Text_Seventh&quot;)</span>
+<span class="nc" id="L1266">          + statusMessagePrefix()</span>
+<span class="nc" id="L1267">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L1268">              &quot;Classifier_AcceptTestSet_Msg_Text_Eighth&quot;);</span>
+
+<span class="nc bnc" id="L1270" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L1271">        m_log.logMessage(msg);</span>
+      } else {
+<span class="nc" id="L1273">        System.err.println(msg);</span>
+      }
+      // m_visual.setText(m_oldText);
+
+<span class="nc bnc" id="L1277" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L1278">        m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L1279">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L1280">                &quot;Classifier_AcceptTestSet_StatusMessage_Text_Second&quot;));</span>
+      }
+      // m_outputQueues = null; // free memory
+
+<span class="nc" id="L1284">      m_batchStarted = false;</span>
+<span class="nc" id="L1285">      block(false);</span>
+<span class="nc" id="L1286">      m_block = false;</span>
+<span class="nc" id="L1287">      m_state = IDLE;</span>
+    }
+<span class="nc" id="L1289">  }</span>
+
+  /*
+   * private synchronized void checkCompletedRun(int runNum, int maxRunNum, int
+   * maxSets) { boolean runOK = true; for (int i = 0; i &lt; maxSets; i++) { if
+   * (m_outputQueues[runNum - 1][i] == null) { runOK = false; break; } else if
+   * (m_outputQueues[runNum - 1][i].getClassifier() == null ||
+   * m_outputQueues[runNum - 1][i].getTestSet() == null) { runOK = false; break;
+   * } }
+   * 
+   * if (runOK) { String msg = &quot;[Classifier] &quot; + statusMessagePrefix() +
+   * &quot; dispatching run &quot; + runNum + &quot; to listeners.&quot;; if (m_log != null) {
+   * m_log.logMessage(msg); } else { System.err.println(msg); } // dispatch this
+   * run to listeners for (int i = 0; i &lt; maxSets; i++) {
+   * notifyBatchClassifierListeners(m_outputQueues[runNum - 1][i]); // save
+   * memory m_outputQueues[runNum - 1][i] = null; }
+   * 
+   * if (runNum == maxRunNum) { // unblock msg = &quot;[Classifier] &quot; +
+   * statusMessagePrefix() + &quot; last classifier unblocking...&quot;;
+   * System.err.println(msg); if (m_log != null) { m_log.logMessage(msg); } else
+   * { System.err.println(msg); } //m_visual.setText(m_oldText);
+   * 
+   * if (m_log != null) { m_log.statusMessage(statusMessagePrefix() +
+   * &quot;Finished.&quot;); } // m_outputQueues = null; // free memory m_block = false;
+   * // block(false); m_state = IDLE; } } }
+   */
+
+  /**
+   * Sets the visual appearance of this wrapper bean
+   * 
+   * @param newVisual a &lt;code&gt;BeanVisual&lt;/code&gt; value
+   */
+  public void setVisual(BeanVisual newVisual) {
+<span class="nc" id="L1322">    m_visual = newVisual;</span>
+<span class="nc" id="L1323">  }</span>
+
+  /**
+   * Gets the visual appearance of this wrapper bean
+   */
+  public BeanVisual getVisual() {
+<span class="nc" id="L1329">    return m_visual;</span>
+  }
+
+  /**
+   * Use the default visual appearance for this bean
+   */
+  public void useDefaultVisual() {
+    // try to get a default for this package of classifiers
+<span class="nc" id="L1337">    String name = m_ClassifierTemplate.getClass().toString();</span>
+<span class="nc" id="L1338">    String packageName = name.substring(0, name.lastIndexOf('.'));</span>
+<span class="nc" id="L1339">    packageName = packageName.substring(packageName.lastIndexOf('.') + 1,</span>
+<span class="nc" id="L1340">        packageName.length());</span>
+<span class="nc bnc" id="L1341" title="All 2 branches missed.">    if (!m_visual.loadIcons(BeanVisual.ICON_PATH + &quot;Default_&quot; + packageName</span>
+<span class="nc" id="L1342">        + &quot;Classifier.gif&quot;, BeanVisual.ICON_PATH + &quot;Default_&quot; + packageName</span>
+<span class="nc" id="L1343">        + &quot;Classifier_animated.gif&quot;)) {</span>
+<span class="nc" id="L1344">      m_visual.loadIcons(BeanVisual.ICON_PATH + &quot;DefaultClassifier.gif&quot;,</span>
+<span class="nc" id="L1345">          BeanVisual.ICON_PATH + &quot;DefaultClassifier_animated.gif&quot;);</span>
+    }
+<span class="nc" id="L1347">  }</span>
+
+  /**
+   * Add a batch classifier listener
+   * 
+   * @param cl a &lt;code&gt;BatchClassifierListener&lt;/code&gt; value
+   */
+  public synchronized void addBatchClassifierListener(BatchClassifierListener cl) {
+<span class="nc" id="L1355">    m_batchClassifierListeners.addElement(cl);</span>
+<span class="nc" id="L1356">  }</span>
+
+  /**
+   * Remove a batch classifier listener
+   * 
+   * @param cl a &lt;code&gt;BatchClassifierListener&lt;/code&gt; value
+   */
+  public synchronized void removeBatchClassifierListener(
+      BatchClassifierListener cl) {
+<span class="nc" id="L1365">    m_batchClassifierListeners.remove(cl);</span>
+<span class="nc" id="L1366">  }</span>
+
+  /**
+   * Notify all batch classifier listeners of a batch classifier event
+   * 
+   * @param ce a &lt;code&gt;BatchClassifierEvent&lt;/code&gt; value
+   */
+  private void notifyBatchClassifierListeners(BatchClassifierEvent ce) {
+    // don't do anything if the thread that we've been running in has been
+    // interrupted
+<span class="nc bnc" id="L1376" title="All 2 branches missed.">    if (Thread.currentThread().isInterrupted()) {</span>
+<span class="nc" id="L1377">      return;</span>
+    }
+
+    Vector l;
+<span class="nc" id="L1381">    synchronized (this) {</span>
+<span class="nc" id="L1382">      l = (Vector) m_batchClassifierListeners.clone();</span>
+    }
+<span class="nc bnc" id="L1384" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L1385" title="All 2 branches missed.">      for (int i = 0; i &lt; l.size(); i++) {</span>
+<span class="nc" id="L1386">        ((BatchClassifierListener) l.elementAt(i)).acceptClassifier(ce);</span>
+      }
+    }
+<span class="nc" id="L1389">  }</span>
+
+  /**
+   * Add a graph listener
+   * 
+   * @param cl a &lt;code&gt;GraphListener&lt;/code&gt; value
+   */
+  public synchronized void addGraphListener(GraphListener cl) {
+<span class="nc" id="L1397">    m_graphListeners.addElement(cl);</span>
+<span class="nc" id="L1398">  }</span>
+
+  /**
+   * Remove a graph listener
+   * 
+   * @param cl a &lt;code&gt;GraphListener&lt;/code&gt; value
+   */
+  public synchronized void removeGraphListener(GraphListener cl) {
+<span class="nc" id="L1406">    m_graphListeners.remove(cl);</span>
+<span class="nc" id="L1407">  }</span>
+
+  /**
+   * Notify all graph listeners of a graph event
+   * 
+   * @param ge a &lt;code&gt;GraphEvent&lt;/code&gt; value
+   */
+  private void notifyGraphListeners(GraphEvent ge) {
+    Vector l;
+<span class="nc" id="L1416">    synchronized (this) {</span>
+<span class="nc" id="L1417">      l = (Vector) m_graphListeners.clone();</span>
+    }
+<span class="nc bnc" id="L1419" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L1420" title="All 2 branches missed.">      for (int i = 0; i &lt; l.size(); i++) {</span>
+<span class="nc" id="L1421">        ((GraphListener) l.elementAt(i)).acceptGraph(ge);</span>
+      }
+    }
+<span class="nc" id="L1424">  }</span>
+
+  /**
+   * Add a text listener
+   * 
+   * @param cl a &lt;code&gt;TextListener&lt;/code&gt; value
+   */
+  public synchronized void addTextListener(TextListener cl) {
+<span class="nc" id="L1432">    m_textListeners.addElement(cl);</span>
+<span class="nc" id="L1433">  }</span>
+
+  /**
+   * Remove a text listener
+   * 
+   * @param cl a &lt;code&gt;TextListener&lt;/code&gt; value
+   */
+  public synchronized void removeTextListener(TextListener cl) {
+<span class="nc" id="L1441">    m_textListeners.remove(cl);</span>
+<span class="nc" id="L1442">  }</span>
+
+  /**
+   * Notify all text listeners of a text event
+   * 
+   * @param ge a &lt;code&gt;TextEvent&lt;/code&gt; value
+   */
+  private void notifyTextListeners(TextEvent ge) {
+    Vector l;
+<span class="nc" id="L1451">    synchronized (this) {</span>
+<span class="nc" id="L1452">      l = (Vector) m_textListeners.clone();</span>
+    }
+<span class="nc bnc" id="L1454" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L1455" title="All 2 branches missed.">      for (int i = 0; i &lt; l.size(); i++) {</span>
+<span class="nc" id="L1456">        ((TextListener) l.elementAt(i)).acceptText(ge);</span>
+      }
+    }
+<span class="nc" id="L1459">  }</span>
+
+  /**
+   * Add an incremental classifier listener
+   * 
+   * @param cl an &lt;code&gt;IncrementalClassifierListener&lt;/code&gt; value
+   */
+  public synchronized void addIncrementalClassifierListener(
+      IncrementalClassifierListener cl) {
+<span class="nc" id="L1468">    m_incrementalClassifierListeners.add(cl);</span>
+<span class="nc" id="L1469">  }</span>
+
+  /**
+   * Remove an incremental classifier listener
+   * 
+   * @param cl an &lt;code&gt;IncrementalClassifierListener&lt;/code&gt; value
+   */
+  public synchronized void removeIncrementalClassifierListener(
+      IncrementalClassifierListener cl) {
+<span class="nc" id="L1478">    m_incrementalClassifierListeners.remove(cl);</span>
+<span class="nc" id="L1479">  }</span>
+
+  /**
+   * Notify all incremental classifier listeners of an incremental classifier
+   * event
+   * 
+   * @param ce an &lt;code&gt;IncrementalClassifierEvent&lt;/code&gt; value
+   */
+  private void notifyIncrementalClassifierListeners(
+      IncrementalClassifierEvent ce) {
+    // don't do anything if the thread that we've been running in has been
+    // interrupted
+<span class="nc bnc" id="L1491" title="All 2 branches missed.">    if (Thread.currentThread().isInterrupted()) {</span>
+<span class="nc" id="L1492">      return;</span>
+    }
+
+    Vector l;
+<span class="nc" id="L1496">    synchronized (this) {</span>
+<span class="nc" id="L1497">      l = (Vector) m_incrementalClassifierListeners.clone();</span>
+    }
+<span class="nc bnc" id="L1499" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L1500" title="All 2 branches missed.">      for (int i = 0; i &lt; l.size(); i++) {</span>
+<span class="nc" id="L1501">        ((IncrementalClassifierListener) l.elementAt(i)).acceptClassifier(ce);</span>
+      }
+    }
+<span class="nc" id="L1504">  }</span>
+
+  /**
+   * Returns true if, at this time, the object will accept a connection with
+   * respect to the named event
+   * 
+   * @param eventName the event
+   * @return true if the object will accept a connection
+   */
+  public boolean connectionAllowed(String eventName) {
+    /*
+     * if (eventName.compareTo(&quot;instance&quot;) == 0) { if (!(m_Classifier instanceof
+     * weka.classifiers.UpdateableClassifier)) { return false; } }
+     */
+<span class="nc bnc" id="L1518" title="All 2 branches missed.">    if (m_listenees.containsKey(eventName)) {</span>
+<span class="nc" id="L1519">      return false;</span>
+    }
+<span class="nc" id="L1521">    return true;</span>
+  }
+
+  /**
+   * Returns true if, at this time, the object will accept a connection
+   * according to the supplied EventSetDescriptor
+   * 
+   * @param esd the EventSetDescriptor
+   * @return true if the object will accept a connection
+   */
+  public boolean connectionAllowed(EventSetDescriptor esd) {
+<span class="nc" id="L1532">    return connectionAllowed(esd.getName());</span>
+  }
+
+  /**
+   * Notify this object that it has been registered as a listener with a source
+   * with respect to the named event
+   * 
+   * @param eventName the event
+   * @param source the source with which this object has been registered as a
+   *          listener
+   */
+  public synchronized void connectionNotification(String eventName,
+      Object source) {
+<span class="nc bnc" id="L1545" title="All 2 branches missed.">    if (eventName.compareTo(&quot;instance&quot;) == 0) {</span>
+<span class="nc bnc" id="L1546" title="All 2 branches missed.">      if (!(m_ClassifierTemplate instanceof weka.classifiers.UpdateableClassifier)) {</span>
+<span class="nc bnc" id="L1547" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L1548">          String msg = statusMessagePrefix()</span>
+<span class="nc" id="L1549">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L1550">                  &quot;Classifier_ConnectionNotification_Msg_Text_First&quot;)</span>
+<span class="nc" id="L1551">              + m_ClassifierTemplate.getClass().getName()</span>
+<span class="nc" id="L1552">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L1553">                  &quot;Classifier_ConnectionNotification_Msg_Text_Second&quot;);</span>
+<span class="nc" id="L1554">          m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L1555">              &quot;Classifier_ConnectionNotification_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L1556">              + msg);</span>
+<span class="nc" id="L1557">          m_log.statusMessage(msg);</span>
+        }
+      }
+    }
+
+<span class="nc bnc" id="L1562" title="All 2 branches missed.">    if (connectionAllowed(eventName)) {</span>
+<span class="nc" id="L1563">      m_listenees.put(eventName, source);</span>
+      /*
+       * if (eventName.compareTo(&quot;instance&quot;) == 0) { startIncrementalHandler();
+       * }
+       */
+    }
+<span class="nc" id="L1569">  }</span>
+
+  /**
+   * Notify this object that it has been deregistered as a listener with a
+   * source with respect to the supplied event name
+   * 
+   * @param eventName the event
+   * @param source the source with which this object has been registered as a
+   *          listener
+   */
+  public synchronized void disconnectionNotification(String eventName,
+      Object source) {
+<span class="nc" id="L1581">    m_listenees.remove(eventName);</span>
+<span class="nc bnc" id="L1582" title="All 2 branches missed.">    if (eventName.compareTo(&quot;instance&quot;) == 0) {</span>
+<span class="nc" id="L1583">      stop(); // kill the incremental handler thread if it is running</span>
+    }
+<span class="nc" id="L1585">  }</span>
+
+  /**
+   * Function used to stop code that calls acceptTrainingSet. This is needed as
+   * classifier construction is performed inside a separate thread of execution.
+   * 
+   * @param tf a &lt;code&gt;boolean&lt;/code&gt; value
+   */
+  private synchronized void block(boolean tf) {
+
+<span class="nc bnc" id="L1595" title="All 2 branches missed.">    if (tf) {</span>
+      try {
+        // only block if thread is still doing something useful!
+<span class="nc bnc" id="L1598" title="All 2 branches missed.">        if (m_state != IDLE) {</span>
+<span class="nc" id="L1599">          wait();</span>
+        }
+<span class="nc" id="L1601">      } catch (InterruptedException ex) {</span>
+      }
+    } else {
+<span class="nc" id="L1604">      notifyAll();</span>
+    }
+<span class="nc" id="L1606">  }</span>
+
+  /**
+   * Stop any classifier action
+   */
+  public void stop() {
+    // tell all listenees (upstream beans) to stop
+<span class="nc" id="L1613">    Enumeration en = m_listenees.keys();</span>
+<span class="nc bnc" id="L1614" title="All 2 branches missed.">    while (en.hasMoreElements()) {</span>
+<span class="nc" id="L1615">      Object tempO = m_listenees.get(en.nextElement());</span>
+<span class="nc bnc" id="L1616" title="All 2 branches missed.">      if (tempO instanceof BeanCommon) {</span>
+<span class="nc" id="L1617">        ((BeanCommon) tempO).stop();</span>
+      }
+    }
+
+    // shutdown the executor pool and reclaim storage
+<span class="nc bnc" id="L1622" title="All 2 branches missed.">    if (m_executorPool != null) {</span>
+<span class="nc" id="L1623">      m_executorPool.shutdownNow();</span>
+<span class="nc" id="L1624">      m_executorPool.purge();</span>
+<span class="nc" id="L1625">      m_executorPool = null;</span>
+    }
+<span class="nc" id="L1627">    m_block = false;</span>
+<span class="nc" id="L1628">    m_batchStarted = false;</span>
+<span class="nc" id="L1629">    m_visual.setStatic();</span>
+<span class="nc" id="L1630">    if (m_oldText.length() &gt; 0) {</span>
+      // m_visual.setText(m_oldText);
+    }
+
+    // stop the build thread
+    /*
+     * if (m_buildThread != null) { m_buildThread.interrupt();
+     * m_buildThread.stop(); m_buildThread = null; m_visual.setStatic(); }
+     */
+<span class="nc" id="L1639">  }</span>
+
+  public void loadModel() {
+    try {
+<span class="nc bnc" id="L1643" title="All 2 branches missed.">      if (m_fileChooser == null) {</span>
+        // i.e. after de-serialization
+<span class="nc" id="L1645">        setupFileChooser();</span>
+      }
+<span class="nc" id="L1647">      int returnVal = m_fileChooser.showOpenDialog(this);</span>
+<span class="nc bnc" id="L1648" title="All 2 branches missed.">      if (returnVal == JFileChooser.APPROVE_OPTION) {</span>
+<span class="nc" id="L1649">        File loadFrom = m_fileChooser.getSelectedFile();</span>
+
+        // add extension if necessary
+<span class="nc bnc" id="L1652" title="All 2 branches missed.">        if (m_fileChooser.getFileFilter() == m_binaryFilter) {</span>
+<span class="nc bnc" id="L1653" title="All 2 branches missed.">          if (!loadFrom.getName().toLowerCase().endsWith(&quot;.&quot; + FILE_EXTENSION)) {</span>
+<span class="nc" id="L1654">            loadFrom = new File(loadFrom.getParent(), loadFrom.getName() + &quot;.&quot;</span>
+<span class="nc" id="L1655">                + FILE_EXTENSION);</span>
+          }
+<span class="nc bnc" id="L1657" title="All 2 branches missed.">        } else if (m_fileChooser.getFileFilter() == m_KOMLFilter) {</span>
+<span class="nc" id="L1658">          if (!loadFrom.getName().toLowerCase()</span>
+<span class="nc bnc" id="L1659" title="All 2 branches missed.">              .endsWith(KOML.FILE_EXTENSION + FILE_EXTENSION)) {</span>
+<span class="nc" id="L1660">            loadFrom = new File(loadFrom.getParent(), loadFrom.getName()</span>
+<span class="nc" id="L1661">                + KOML.FILE_EXTENSION + FILE_EXTENSION);</span>
+          }
+<span class="nc bnc" id="L1663" title="All 2 branches missed.">        } else if (m_fileChooser.getFileFilter() == m_XStreamFilter) {</span>
+<span class="nc" id="L1664">          if (!loadFrom.getName().toLowerCase()</span>
+<span class="nc bnc" id="L1665" title="All 2 branches missed.">              .endsWith(XStream.FILE_EXTENSION + FILE_EXTENSION)) {</span>
+<span class="nc" id="L1666">            loadFrom = new File(loadFrom.getParent(), loadFrom.getName()</span>
+<span class="nc" id="L1667">                + XStream.FILE_EXTENSION + FILE_EXTENSION);</span>
+          }
+        }
+
+<span class="nc" id="L1671">        weka.classifiers.Classifier temp = null;</span>
+<span class="nc" id="L1672">        Instances tempHeader = null;</span>
+        // KOML ?
+<span class="nc bnc" id="L1674" title="All 2 branches missed.">        if ((KOML.isPresent())</span>
+<span class="nc" id="L1675">            &amp;&amp; (loadFrom.getAbsolutePath().toLowerCase()</span>
+<span class="nc bnc" id="L1676" title="All 2 branches missed.">                .endsWith(KOML.FILE_EXTENSION + FILE_EXTENSION))) {</span>
+<span class="nc" id="L1677">          Vector v = (Vector) KOML.read(loadFrom.getAbsolutePath());</span>
+<span class="nc" id="L1678">          temp = (weka.classifiers.Classifier) v.elementAt(0);</span>
+<span class="nc bnc" id="L1679" title="All 2 branches missed.">          if (v.size() == 2) {</span>
+            // try and grab the header
+<span class="nc" id="L1681">            tempHeader = (Instances) v.elementAt(1);</span>
+          }
+<span class="nc bnc" id="L1683" title="All 2 branches missed.">        } /* XStream */else if ((XStream.isPresent())</span>
+<span class="nc" id="L1684">            &amp;&amp; (loadFrom.getAbsolutePath().toLowerCase()</span>
+<span class="nc bnc" id="L1685" title="All 2 branches missed.">                .endsWith(XStream.FILE_EXTENSION + FILE_EXTENSION))) {</span>
+<span class="nc" id="L1686">          Vector v = (Vector) XStream.read(loadFrom.getAbsolutePath());</span>
+<span class="nc" id="L1687">          temp = (weka.classifiers.Classifier) v.elementAt(0);</span>
+<span class="nc bnc" id="L1688" title="All 2 branches missed.">          if (v.size() == 2) {</span>
+            // try and grab the header
+<span class="nc" id="L1690">            tempHeader = (Instances) v.elementAt(1);</span>
+          }
+        } /* binary */else {
+
+<span class="nc" id="L1694">          ObjectInputStream is = new ObjectInputStream(new BufferedInputStream(</span>
+<span class="nc" id="L1695">              new FileInputStream(loadFrom)));</span>
+          // try and read the model
+<span class="nc" id="L1697">          temp = (weka.classifiers.Classifier) is.readObject();</span>
+          // try and read the header (if present)
+          try {
+<span class="nc" id="L1700">            tempHeader = (Instances) is.readObject();</span>
+<span class="nc" id="L1701">          } catch (Exception ex) {</span>
+            // System.err.println(&quot;No header...&quot;);
+            // quietly ignore
+          }
+<span class="nc" id="L1705">          is.close();</span>
+        }
+
+        // Update name and icon
+<span class="nc" id="L1709">        setTrainedClassifier(temp);</span>
+        // restore header
+<span class="nc" id="L1711">        m_trainingSet = tempHeader;</span>
+
+<span class="nc bnc" id="L1713" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L1714">          m_log</span>
+<span class="nc" id="L1715">              .statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L1716">                  + Messages</span>
+<span class="nc" id="L1717">                      .getInstance()</span>
+<span class="nc" id="L1718">                      .getString(</span>
+<span class="nc" id="L1719">                          &quot;Classifier_ConnectionNotification_StatusMessage_Text_First&quot;));</span>
+<span class="nc" id="L1720">          m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L1721">              &quot;Classifier_ConnectionNotification_LogMessage_Text_Second&quot;)</span>
+<span class="nc" id="L1722">              + statusMessagePrefix()</span>
+<span class="nc" id="L1723">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L1724">                  &quot;Classifier_ConnectionNotification_LogMessage_Text_Third&quot;)</span>
+<span class="nc" id="L1725">              + m_Classifier.getClass().toString());</span>
+        }
+      }
+<span class="nc" id="L1728">    } catch (Exception ex) {</span>
+      JOptionPane
+<span class="nc" id="L1730">          .showMessageDialog(</span>
+<span class="nc" id="L1731">              Classifier.this,</span>
+              Messages
+<span class="nc" id="L1733">                  .getInstance()</span>
+<span class="nc" id="L1734">                  .getString(</span>
+<span class="nc" id="L1735">                      &quot;Classifier_ConnectionNotification_JOptionPane_ShowMessageDialog_Text_First&quot;),</span>
+              Messages
+<span class="nc" id="L1737">                  .getInstance()</span>
+<span class="nc" id="L1738">                  .getString(</span>
+<span class="nc" id="L1739">                      &quot;Classifier_ConnectionNotification_JOptionPane_ShowMessageDialog_Text_Second&quot;),</span>
+<span class="nc" id="L1740">              JOptionPane.ERROR_MESSAGE);</span>
+<span class="nc bnc" id="L1741" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L1742">        m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L1743">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L1744">                &quot;Classifier_ConnectionNotification_StatusMessage_Text_Second&quot;));</span>
+<span class="nc" id="L1745">        m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L1746">            &quot;Classifier_ConnectionNotification_LogMessage_Text_Fourth&quot;)</span>
+<span class="nc" id="L1747">            + statusMessagePrefix()</span>
+<span class="nc" id="L1748">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L1749">                &quot;Classifier_ConnectionNotification_LogMessage_Text_Fifth&quot;)</span>
+<span class="nc" id="L1750">            + ex.getMessage());</span>
+      }
+    }
+<span class="nc" id="L1753">  }</span>
+
+  public void saveModel() {
+    try {
+<span class="nc bnc" id="L1757" title="All 2 branches missed.">      if (m_fileChooser == null) {</span>
+        // i.e. after de-serialization
+<span class="nc" id="L1759">        setupFileChooser();</span>
+      }
+<span class="nc" id="L1761">      int returnVal = m_fileChooser.showSaveDialog(this);</span>
+<span class="nc bnc" id="L1762" title="All 2 branches missed.">      if (returnVal == JFileChooser.APPROVE_OPTION) {</span>
+<span class="nc" id="L1763">        File saveTo = m_fileChooser.getSelectedFile();</span>
+<span class="nc" id="L1764">        String fn = saveTo.getAbsolutePath();</span>
+<span class="nc bnc" id="L1765" title="All 2 branches missed.">        if (m_fileChooser.getFileFilter() == m_binaryFilter) {</span>
+<span class="nc bnc" id="L1766" title="All 2 branches missed.">          if (!fn.toLowerCase().endsWith(&quot;.&quot; + FILE_EXTENSION)) {</span>
+<span class="nc" id="L1767">            fn += &quot;.&quot; + FILE_EXTENSION;</span>
+          }
+<span class="nc bnc" id="L1769" title="All 2 branches missed.">        } else if (m_fileChooser.getFileFilter() == m_KOMLFilter) {</span>
+<span class="nc bnc" id="L1770" title="All 2 branches missed.">          if (!fn.toLowerCase().endsWith(KOML.FILE_EXTENSION + FILE_EXTENSION)) {</span>
+<span class="nc" id="L1771">            fn += KOML.FILE_EXTENSION + FILE_EXTENSION;</span>
+          }
+<span class="nc bnc" id="L1773" title="All 2 branches missed.">        } else if (m_fileChooser.getFileFilter() == m_XStreamFilter) {</span>
+<span class="nc bnc" id="L1774" title="All 2 branches missed.">          if (!fn.toLowerCase().endsWith(</span>
+<span class="nc" id="L1775">              XStream.FILE_EXTENSION + FILE_EXTENSION)) {</span>
+<span class="nc" id="L1776">            fn += XStream.FILE_EXTENSION + FILE_EXTENSION;</span>
+          }
+        }
+<span class="nc" id="L1779">        saveTo = new File(fn);</span>
+
+        // now serialize model
+        // KOML?
+<span class="nc bnc" id="L1783" title="All 2 branches missed.">        if ((KOML.isPresent())</span>
+<span class="nc" id="L1784">            &amp;&amp; saveTo.getAbsolutePath().toLowerCase()</span>
+<span class="nc bnc" id="L1785" title="All 2 branches missed.">                .endsWith(KOML.FILE_EXTENSION + FILE_EXTENSION)) {</span>
+<span class="nc" id="L1786">          SerializedModelSaver.saveKOML(saveTo, m_Classifier,</span>
+<span class="nc bnc" id="L1787" title="All 2 branches missed.">              (m_trainingSet != null) ? new Instances(m_trainingSet, 0) : null);</span>
+          /*
+           * Vector v = new Vector(); v.add(m_Classifier); if (m_trainingSet !=
+           * null) { v.add(new Instances(m_trainingSet, 0)); } v.trimToSize();
+           * KOML.write(saveTo.getAbsolutePath(), v);
+           */
+<span class="nc bnc" id="L1793" title="All 2 branches missed.">        } /* XStream */else if ((XStream.isPresent())</span>
+<span class="nc" id="L1794">            &amp;&amp; saveTo.getAbsolutePath().toLowerCase()</span>
+<span class="nc bnc" id="L1795" title="All 2 branches missed.">                .endsWith(XStream.FILE_EXTENSION + FILE_EXTENSION)) {</span>
+
+<span class="nc" id="L1797">          SerializedModelSaver.saveXStream(saveTo, m_Classifier,</span>
+<span class="nc bnc" id="L1798" title="All 2 branches missed.">              (m_trainingSet != null) ? new Instances(m_trainingSet, 0) : null);</span>
+          /*
+           * Vector v = new Vector(); v.add(m_Classifier); if (m_trainingSet !=
+           * null) { v.add(new Instances(m_trainingSet, 0)); } v.trimToSize();
+           * XStream.write(saveTo.getAbsolutePath(), v);
+           */
+        } else /* binary */{
+<span class="nc" id="L1805">          ObjectOutputStream os = new ObjectOutputStream(</span>
+<span class="nc" id="L1806">              new BufferedOutputStream(new FileOutputStream(saveTo)));</span>
+<span class="nc" id="L1807">          os.writeObject(m_Classifier);</span>
+<span class="nc bnc" id="L1808" title="All 2 branches missed.">          if (m_trainingSet != null) {</span>
+<span class="nc" id="L1809">            Instances header = new Instances(m_trainingSet, 0);</span>
+<span class="nc" id="L1810">            os.writeObject(header);</span>
+          }
+<span class="nc" id="L1812">          os.close();</span>
+        }
+<span class="nc bnc" id="L1814" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L1815">          m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L1816">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L1817">                  &quot;Classifier_SaveModel_StatusMessage_Text_First&quot;));</span>
+<span class="nc" id="L1818">          m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L1819">              &quot;Classifier_SaveModel_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L1820">              + statusMessagePrefix()</span>
+<span class="nc" id="L1821">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L1822">                  &quot;Classifier_SaveModel_LogMessage_Text_Second&quot;)</span>
+<span class="nc" id="L1823">              + getCustomName());</span>
+        }
+      }
+<span class="nc" id="L1826">    } catch (Exception ex) {</span>
+      JOptionPane
+<span class="nc" id="L1828">          .showMessageDialog(</span>
+<span class="nc" id="L1829">              Classifier.this,</span>
+              Messages
+<span class="nc" id="L1831">                  .getInstance()</span>
+<span class="nc" id="L1832">                  .getString(</span>
+<span class="nc" id="L1833">                      &quot;Classifier_SaveModel_JOptionPane_ShowMessageDialog_Text_First&quot;),</span>
+              Messages
+<span class="nc" id="L1835">                  .getInstance()</span>
+<span class="nc" id="L1836">                  .getString(</span>
+<span class="nc" id="L1837">                      &quot;Classifier_SaveModel_JOptionPane_ShowMessageDialog_Text_Second&quot;),</span>
+<span class="nc" id="L1838">              JOptionPane.ERROR_MESSAGE);</span>
+<span class="nc bnc" id="L1839" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L1840">        m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L1841">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L1842">                &quot;Classifier_SaveModel_StatusMessage_Text_Second&quot;));</span>
+<span class="nc" id="L1843">        m_log.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L1844">            &quot;Classifier_SaveModel_LogMessage_Text_Third&quot;)</span>
+<span class="nc" id="L1845">            + statusMessagePrefix()</span>
+<span class="nc" id="L1846">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L1847">                &quot;Classifier_SaveModel_LogMessage_Text_Fourth&quot;)</span>
+<span class="nc" id="L1848">            + getCustomName() + ex.getMessage());</span>
+      }
+    }
+<span class="nc" id="L1851">  }</span>
+
+  /**
+   * Set a logger
+   * 
+   * @param logger a &lt;code&gt;Logger&lt;/code&gt; value
+   */
+  public void setLog(Logger logger) {
+<span class="nc" id="L1859">    m_log = logger;</span>
+<span class="nc" id="L1860">  }</span>
+
+  /**
+   * Return an enumeration of requests that can be made by the user
+   * 
+   * @return an &lt;code&gt;Enumeration&lt;/code&gt; value
+   */
+  public Enumeration enumerateRequests() {
+<span class="nc" id="L1868">    Vector newVector = new Vector(0);</span>
+<span class="nc bnc" id="L1869" title="All 2 branches missed.">    if (m_executorPool != null</span>
+<span class="nc bnc" id="L1870" title="All 2 branches missed.">        &amp;&amp; (m_executorPool.getQueue().size() &gt; 0 || m_executorPool</span>
+<span class="nc bnc" id="L1871" title="All 2 branches missed.">            .getActiveCount() &gt; 0)) {</span>
+<span class="nc" id="L1872">      newVector.addElement(&quot;Stop&quot;);</span>
+    }
+
+<span class="nc bnc" id="L1875" title="All 4 branches missed.">    if ((m_executorPool == null || (m_executorPool.getQueue().size() == 0 &amp;&amp; m_executorPool</span>
+<span class="nc bnc" id="L1876" title="All 4 branches missed.">        .getActiveCount() == 0)) &amp;&amp; m_Classifier != null) {</span>
+<span class="nc" id="L1877">      newVector.addElement(&quot;Save model&quot;);</span>
+    }
+
+<span class="nc bnc" id="L1880" title="All 2 branches missed.">    if (m_executorPool == null</span>
+<span class="nc bnc" id="L1881" title="All 2 branches missed.">        || (m_executorPool.getQueue().size() == 0 &amp;&amp; m_executorPool</span>
+<span class="nc bnc" id="L1882" title="All 2 branches missed.">            .getActiveCount() == 0)) {</span>
+<span class="nc" id="L1883">      newVector.addElement(&quot;Load model&quot;);</span>
+    }
+<span class="nc" id="L1885">    return newVector.elements();</span>
+  }
+
+  /**
+   * Perform a particular request
+   * 
+   * @param request the request to perform
+   * @exception IllegalArgumentException if an error occurs
+   */
+  public void performRequest(String request) {
+<span class="nc bnc" id="L1895" title="All 2 branches missed.">    if (request.compareTo(&quot;Stop&quot;) == 0) {</span>
+<span class="nc" id="L1896">      stop();</span>
+<span class="nc bnc" id="L1897" title="All 2 branches missed.">    } else if (request.compareTo(&quot;Save model&quot;) == 0) {</span>
+<span class="nc" id="L1898">      saveModel();</span>
+<span class="nc bnc" id="L1899" title="All 2 branches missed.">    } else if (request.compareTo(&quot;Load model&quot;) == 0) {</span>
+<span class="nc" id="L1900">      loadModel();</span>
+    } else {
+<span class="nc" id="L1902">      throw new IllegalArgumentException(request</span>
+<span class="nc" id="L1903">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L1904">              &quot;Classifier_PerformRequest_IllegalArgumentException_Text&quot;));</span>
+    }
+<span class="nc" id="L1906">  }</span>
+
+  /**
+   * Returns true, if at the current time, the event described by the supplied
+   * event descriptor could be generated.
+   * 
+   * @param esd an &lt;code&gt;EventSetDescriptor&lt;/code&gt; value
+   * @return a &lt;code&gt;boolean&lt;/code&gt; value
+   */
+  public boolean eventGeneratable(EventSetDescriptor esd) {
+<span class="nc" id="L1916">    String eventName = esd.getName();</span>
+<span class="nc" id="L1917">    return eventGeneratable(eventName);</span>
+  }
+
+  /**
+   * @param name of the event to check
+   * @return true if eventName is one of the possible events that this component
+   *         can generate
+   */
+  private boolean generatableEvent(String eventName) {
+<span class="nc bnc" id="L1926" title="All 4 branches missed.">    if (eventName.compareTo(&quot;graph&quot;) == 0 || eventName.compareTo(&quot;text&quot;) == 0</span>
+<span class="nc bnc" id="L1927" title="All 2 branches missed.">        || eventName.compareTo(&quot;batchClassifier&quot;) == 0</span>
+<span class="nc bnc" id="L1928" title="All 2 branches missed.">        || eventName.compareTo(&quot;incrementalClassifier&quot;) == 0) {</span>
+<span class="nc" id="L1929">      return true;</span>
+    }
+<span class="nc" id="L1931">    return false;</span>
+  }
+
+  /**
+   * Returns true, if at the current time, the named event could be generated.
+   * Assumes that the supplied event name is an event that could be generated by
+   * this bean
+   * 
+   * @param eventName the name of the event in question
+   * @return true if the named event could be generated at this point in time
+   */
+  public boolean eventGeneratable(String eventName) {
+<span class="nc bnc" id="L1943" title="All 2 branches missed.">    if (!generatableEvent(eventName)) {</span>
+<span class="nc" id="L1944">      return false;</span>
+    }
+<span class="nc bnc" id="L1946" title="All 2 branches missed.">    if (eventName.compareTo(&quot;graph&quot;) == 0) {</span>
+      // can't generate a GraphEvent if classifier is not drawable
+<span class="nc bnc" id="L1948" title="All 2 branches missed.">      if (!(m_ClassifierTemplate instanceof weka.core.Drawable)) {</span>
+<span class="nc" id="L1949">        return false;</span>
+      }
+      // need to have a training set before the classifier
+      // can generate a graph!
+<span class="nc bnc" id="L1953" title="All 2 branches missed.">      if (!m_listenees.containsKey(&quot;trainingSet&quot;)) {</span>
+<span class="nc" id="L1954">        return false;</span>
+      }
+      // Source needs to be able to generate a trainingSet
+      // before we can generate a graph
+<span class="nc" id="L1958">      Object source = m_listenees.get(&quot;trainingSet&quot;);</span>
+<span class="nc bnc" id="L1959" title="All 2 branches missed.">      if (source instanceof EventConstraints) {</span>
+<span class="nc bnc" id="L1960" title="All 2 branches missed.">        if (!((EventConstraints) source).eventGeneratable(&quot;trainingSet&quot;)) {</span>
+<span class="nc" id="L1961">          return false;</span>
+        }
+      }
+    }
+
+<span class="nc bnc" id="L1966" title="All 2 branches missed.">    if (eventName.compareTo(&quot;batchClassifier&quot;) == 0) {</span>
+      /*
+       * if (!m_listenees.containsKey(&quot;testSet&quot;)) { return false; } if
+       * (!m_listenees.containsKey(&quot;trainingSet&quot;) &amp;&amp; m_trainingSet == null) {
+       * return false; }
+       */
+<span class="nc bnc" id="L1972" title="All 2 branches missed.">      if (!m_listenees.containsKey(&quot;testSet&quot;)</span>
+<span class="nc bnc" id="L1973" title="All 2 branches missed.">          &amp;&amp; !m_listenees.containsKey(&quot;trainingSet&quot;)) {</span>
+<span class="nc" id="L1974">        return false;</span>
+      }
+<span class="nc" id="L1976">      Object source = m_listenees.get(&quot;testSet&quot;);</span>
+<span class="nc bnc" id="L1977" title="All 2 branches missed.">      if (source instanceof EventConstraints) {</span>
+<span class="nc bnc" id="L1978" title="All 2 branches missed.">        if (!((EventConstraints) source).eventGeneratable(&quot;testSet&quot;)) {</span>
+<span class="nc" id="L1979">          return false;</span>
+        }
+      }
+      /*
+       * source = m_listenees.get(&quot;trainingSet&quot;); if (source instanceof
+       * EventConstraints) { if
+       * (!((EventConstraints)source).eventGeneratable(&quot;trainingSet&quot;)) { return
+       * false; } }
+       */
+    }
+
+<span class="nc bnc" id="L1990" title="All 2 branches missed.">    if (eventName.compareTo(&quot;text&quot;) == 0) {</span>
+<span class="nc bnc" id="L1991" title="All 2 branches missed.">      if (!m_listenees.containsKey(&quot;trainingSet&quot;)</span>
+<span class="nc bnc" id="L1992" title="All 2 branches missed.">          &amp;&amp; !m_listenees.containsKey(&quot;instance&quot;)) {</span>
+<span class="nc" id="L1993">        return false;</span>
+      }
+<span class="nc" id="L1995">      Object source = m_listenees.get(&quot;trainingSet&quot;);</span>
+<span class="nc bnc" id="L1996" title="All 4 branches missed.">      if (source != null &amp;&amp; source instanceof EventConstraints) {</span>
+<span class="nc bnc" id="L1997" title="All 2 branches missed.">        if (!((EventConstraints) source).eventGeneratable(&quot;trainingSet&quot;)) {</span>
+<span class="nc" id="L1998">          return false;</span>
+        }
+      }
+<span class="nc" id="L2001">      source = m_listenees.get(&quot;instance&quot;);</span>
+<span class="nc bnc" id="L2002" title="All 4 branches missed.">      if (source != null &amp;&amp; source instanceof EventConstraints) {</span>
+<span class="nc bnc" id="L2003" title="All 2 branches missed.">        if (!((EventConstraints) source).eventGeneratable(&quot;instance&quot;)) {</span>
+<span class="nc" id="L2004">          return false;</span>
+        }
+      }
+    }
+
+<span class="nc bnc" id="L2009" title="All 2 branches missed.">    if (eventName.compareTo(&quot;incrementalClassifier&quot;) == 0) {</span>
+      /*
+       * if (!(m_Classifier instanceof weka.classifiers.UpdateableClassifier)) {
+       * return false; }
+       */
+<span class="nc bnc" id="L2014" title="All 2 branches missed.">      if (!m_listenees.containsKey(&quot;instance&quot;)) {</span>
+<span class="nc" id="L2015">        return false;</span>
+      }
+<span class="nc" id="L2017">      Object source = m_listenees.get(&quot;instance&quot;);</span>
+<span class="nc bnc" id="L2018" title="All 2 branches missed.">      if (source instanceof EventConstraints) {</span>
+<span class="nc bnc" id="L2019" title="All 2 branches missed.">        if (!((EventConstraints) source).eventGeneratable(&quot;instance&quot;)) {</span>
+<span class="nc" id="L2020">          return false;</span>
+        }
+      }
+    }
+<span class="nc" id="L2024">    return true;</span>
+  }
+
+  /**
+   * Returns true if. at this time, the bean is busy with some (i.e. perhaps a
+   * worker thread is performing some calculation).
+   * 
+   * @return true if the bean is busy.
+   */
+  public boolean isBusy() {
+<span class="nc bnc" id="L2034" title="All 2 branches missed.">    if (m_executorPool == null</span>
+<span class="nc bnc" id="L2035" title="All 2 branches missed.">        || (m_executorPool.getQueue().size() == 0 &amp;&amp; m_executorPool</span>
+<span class="nc bnc" id="L2036" title="All 4 branches missed.">            .getActiveCount() == 0) &amp;&amp; m_state == IDLE) {</span>
+<span class="nc" id="L2037">      return false;</span>
+    }
+    /*
+     * System.err.println(&quot;isBusy() Q:&quot; + m_executorPool.getQueue().size()
+     * +&quot; A:&quot; + m_executorPool.getActiveCount());
+     */
+<span class="nc" id="L2043">    return true;</span>
+  }
+
+  private String statusMessagePrefix() {
+<span class="nc" id="L2047">    return getCustomName()</span>
+<span class="nc" id="L2048">        + &quot;$&quot;</span>
+<span class="nc" id="L2049">        + hashCode()</span>
+<span class="nc" id="L2050">        + &quot;|&quot;</span>
+<span class="nc bnc" id="L2051" title="All 2 branches missed.">        + ((m_Classifier instanceof OptionHandler &amp;&amp; Utils.joinOptions(</span>
+<span class="nc bnc" id="L2052" title="All 2 branches missed.">            ((OptionHandler) m_ClassifierTemplate).getOptions()).length() &gt; 0) ? Utils</span>
+<span class="nc" id="L2053">            .joinOptions(((OptionHandler) m_ClassifierTemplate).getOptions())</span>
+<span class="nc" id="L2054">            + &quot;|&quot; : &quot;&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

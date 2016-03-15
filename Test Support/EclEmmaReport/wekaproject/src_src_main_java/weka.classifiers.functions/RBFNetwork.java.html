@@ -1,0 +1,531 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RBFNetwork.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.functions</a> &gt; <span class="el_source">RBFNetwork.java</span></div><h1>RBFNetwork.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+
+/*
+ *    RBFNetwork.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+package weka.classifiers.functions;
+
+import weka.classifiers.Classifier;
+import weka.clusterers.MakeDensityBasedClusterer;
+import weka.clusterers.SimpleKMeans;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Utils;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.ClusterMembership;
+import weka.filters.unsupervised.attribute.Standardize;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class that implements a normalized Gaussian radial basisbasis function network.&lt;br/&gt;
+ * It uses the k-means clustering algorithm to provide the basis functions and learns either a logistic regression (discrete class problems) or linear regression (numeric class problems) on top of that. Symmetric multivariate Gaussians are fit to the data from each cluster. If the class is nominal it uses the given number of clusters per class.It standardizes all numeric attributes to zero mean and unit variance.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;number&amp;gt;
+ *  Set the number of clusters (basis functions) to generate. (default = 2).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;seed&amp;gt;
+ *  Set the random seed to be used by K-means. (default = 1).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;ridge&amp;gt;
+ *  Set the ridge value for the logistic or linear regression.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;number&amp;gt;
+ *  Set the maximum number of iterations for the logistic regression. (default -1, until convergence).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;number&amp;gt;
+ *  Set the minimum standard deviation for the clusters. (default 0.1).&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Mark Hall
+ * @author Eibe Frank
+ * @version $Revision: 1.10 $
+ */
+<span class="fc" id="L74">public class RBFNetwork extends Classifier implements OptionHandler {</span>
+
+  /** for serialization */
+  static final long serialVersionUID = -3669814959712675720L;
+  
+  /** The logistic regression for classification problems */
+  private Logistic m_logistic;
+
+  /** The linear regression for numeric problems */
+  private LinearRegression m_linear;
+
+  /** The filter for producing the meta data */
+  private ClusterMembership m_basisFilter;
+
+  /** Filter used for normalizing the data */
+  private Standardize m_standardize;
+
+  /** The number of clusters (basis functions to generate) */
+<span class="fc" id="L92">  private int m_numClusters = 2;</span>
+
+  /** The ridge parameter for the logistic regression. */
+<span class="fc" id="L95">  protected double m_ridge = 1e-8;</span>
+
+  /** The maximum number of iterations for logistic regression. */
+<span class="fc" id="L98">  private int m_maxIts = -1;</span>
+
+  /** The seed to pass on to K-means */
+<span class="fc" id="L101">  private int m_clusteringSeed = 1;</span>
+
+  /** The minimum standard deviation */
+<span class="fc" id="L104">  private double m_minStdDev = 0.1;</span>
+
+  /** a ZeroR model in case no model can be built from the data */
+  private Classifier m_ZeroR;
+    
+  /**
+   * Returns a string describing this classifier
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L115">    return &quot;Class that implements a normalized Gaussian radial basis&quot; </span>
+      + &quot;basis function network.\n&quot;
+      + &quot;It uses the k-means clustering algorithm to provide the basis &quot;
+      + &quot;functions and learns either a logistic regression (discrete &quot;
+      + &quot;class problems) or linear regression (numeric class problems) &quot;
+      + &quot;on top of that. Symmetric multivariate Gaussians are fit to &quot;
+      + &quot;the data from each cluster. If the class is &quot;
+      + &quot;nominal it uses the given number of clusters per class.&quot;
+      + &quot;It standardizes all numeric &quot;
+      + &quot;attributes to zero mean and unit variance.&quot; ;
+  }
+
+  /**
+   * Returns default capabilities of the classifier, i.e.,  and &quot;or&quot; of
+   * Logistic and LinearRegression.
+   *
+   * @return      the capabilities of this classifier
+   * @see         Logistic
+   * @see         LinearRegression
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L136">    Capabilities result = new Logistic().getCapabilities();</span>
+<span class="fc" id="L137">    result.or(new LinearRegression().getCapabilities());</span>
+<span class="fc" id="L138">    Capabilities classes = result.getClassCapabilities();</span>
+<span class="fc" id="L139">    result.and(new SimpleKMeans().getCapabilities());</span>
+<span class="fc" id="L140">    result.or(classes);</span>
+<span class="fc" id="L141">    return result;</span>
+  }
+
+  /**
+   * Builds the classifier
+   *
+   * @param instances the training data
+   * @throws Exception if the classifier could not be built successfully
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L153">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L156">    instances = new Instances(instances);</span>
+<span class="fc" id="L157">    instances.deleteWithMissingClass();</span>
+    
+    // only class? -&gt; build ZeroR model
+<span class="fc bfc" id="L160" title="All 2 branches covered.">    if (instances.numAttributes() == 1) {</span>
+<span class="fc" id="L161">      System.err.println(</span>
+<span class="fc" id="L162">	  &quot;Cannot build model (only class attribute present in data!), &quot;</span>
+	  + &quot;using ZeroR model instead!&quot;);
+<span class="fc" id="L164">      m_ZeroR = new weka.classifiers.rules.ZeroR();</span>
+<span class="fc" id="L165">      m_ZeroR.buildClassifier(instances);</span>
+<span class="fc" id="L166">      return;</span>
+    }
+    else {
+<span class="fc" id="L169">      m_ZeroR = null;</span>
+    }
+    
+<span class="fc" id="L172">    m_standardize = new Standardize();</span>
+<span class="fc" id="L173">    m_standardize.setInputFormat(instances);</span>
+<span class="fc" id="L174">    instances = Filter.useFilter(instances, m_standardize);</span>
+
+<span class="fc" id="L176">    SimpleKMeans sk = new SimpleKMeans();</span>
+<span class="fc" id="L177">    sk.setNumClusters(m_numClusters);</span>
+<span class="fc" id="L178">    sk.setSeed(m_clusteringSeed);</span>
+<span class="fc" id="L179">    MakeDensityBasedClusterer dc = new MakeDensityBasedClusterer();</span>
+<span class="fc" id="L180">    dc.setClusterer(sk);</span>
+<span class="fc" id="L181">    dc.setMinStdDev(m_minStdDev);</span>
+<span class="fc" id="L182">    m_basisFilter = new ClusterMembership();</span>
+<span class="fc" id="L183">    m_basisFilter.setDensityBasedClusterer(dc);</span>
+<span class="fc" id="L184">    m_basisFilter.setInputFormat(instances);</span>
+<span class="fc" id="L185">    Instances transformed = Filter.useFilter(instances, m_basisFilter);</span>
+
+<span class="fc bfc" id="L187" title="All 2 branches covered.">    if (instances.classAttribute().isNominal()) {</span>
+<span class="fc" id="L188">      m_linear = null;</span>
+<span class="fc" id="L189">      m_logistic = new Logistic();</span>
+<span class="fc" id="L190">      m_logistic.setRidge(m_ridge);</span>
+<span class="fc" id="L191">      m_logistic.setMaxIts(m_maxIts);</span>
+<span class="fc" id="L192">      m_logistic.buildClassifier(transformed);</span>
+    } else {
+<span class="fc" id="L194">      m_logistic = null;</span>
+<span class="fc" id="L195">      m_linear = new LinearRegression();</span>
+<span class="fc" id="L196">      m_linear.setAttributeSelectionMethod(new SelectedTag(LinearRegression.SELECTION_NONE,</span>
+<span class="fc" id="L197">							   LinearRegression.TAGS_SELECTION));</span>
+<span class="fc" id="L198">      m_linear.setRidge(m_ridge);</span>
+<span class="fc" id="L199">      m_linear.buildClassifier(transformed);</span>
+    }
+<span class="fc" id="L201">  }</span>
+
+  /**
+   * Computes the distribution for a given instance
+   *
+   * @param instance the instance for which distribution is computed
+   * @return the distribution
+   * @throws Exception if the distribution can't be computed successfully
+   */
+  public double [] distributionForInstance(Instance instance) 
+    throws Exception {
+
+    // default model?
+<span class="fc bfc" id="L214" title="All 2 branches covered.">    if (m_ZeroR != null) {</span>
+<span class="fc" id="L215">      return m_ZeroR.distributionForInstance(instance);</span>
+    }
+    
+<span class="fc" id="L218">    m_standardize.input(instance);</span>
+<span class="fc" id="L219">    m_basisFilter.input(m_standardize.output());</span>
+<span class="fc" id="L220">    Instance transformed = m_basisFilter.output();</span>
+    
+<span class="fc bfc" id="L222" title="All 2 branches covered.">    return ((instance.classAttribute().isNominal()</span>
+<span class="fc" id="L223">	     ? m_logistic.distributionForInstance(transformed)</span>
+<span class="fc" id="L224">	     : m_linear.distributionForInstance(transformed)));</span>
+  }
+  
+  /**
+   * Returns a description of this classifier as a String
+   *
+   * @return a description of this classifier
+   */
+  public String toString() {
+
+    // only ZeroR model?
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">    if (m_ZeroR != null) {</span>
+<span class="nc" id="L236">      StringBuffer buf = new StringBuffer();</span>
+<span class="nc" id="L237">      buf.append(this.getClass().getName().replaceAll(&quot;.*\\.&quot;, &quot;&quot;) + &quot;\n&quot;);</span>
+<span class="nc" id="L238">      buf.append(this.getClass().getName().replaceAll(&quot;.*\\.&quot;, &quot;&quot;).replaceAll(&quot;.&quot;, &quot;=&quot;) + &quot;\n\n&quot;);</span>
+<span class="nc" id="L239">      buf.append(&quot;Warning: No model could be built, hence ZeroR model is used:\n\n&quot;);</span>
+<span class="nc" id="L240">      buf.append(m_ZeroR.toString());</span>
+<span class="nc" id="L241">      return buf.toString();</span>
+    }
+    
+<span class="pc bpc" id="L244" title="1 of 2 branches missed.">    if (m_basisFilter == null) {</span>
+<span class="fc" id="L245">      return &quot;No classifier built yet!&quot;;</span>
+    }
+
+<span class="nc" id="L248">    StringBuffer sb = new StringBuffer();</span>
+<span class="nc" id="L249">    sb.append(&quot;Radial basis function network\n&quot;);</span>
+<span class="nc bnc" id="L250" title="All 2 branches missed.">    sb.append((m_linear == null) </span>
+<span class="nc" id="L251">	      ? &quot;(Logistic regression &quot;</span>
+<span class="nc" id="L252">	      : &quot;(Linear regression &quot;);</span>
+<span class="nc" id="L253">    sb.append(&quot;applied to K-means clusters as basis functions):\n\n&quot;);</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">    sb.append((m_linear == null)</span>
+<span class="nc" id="L255">	      ? m_logistic.toString()</span>
+<span class="nc" id="L256">	      : m_linear.toString());</span>
+<span class="nc" id="L257">    return sb.toString();</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String maxItsTipText() {
+<span class="nc" id="L266">    return &quot;Maximum number of iterations for the logistic regression to perform. &quot;</span>
+      +&quot;Only applied to discrete class problems.&quot;;
+  }
+
+  /**
+   * Get the value of MaxIts.
+   *
+   * @return Value of MaxIts.
+   */
+  public int getMaxIts() {
+	
+<span class="nc" id="L277">    return m_maxIts;</span>
+  }
+    
+  /**
+   * Set the value of MaxIts.
+   *
+   * @param newMaxIts Value to assign to MaxIts.
+   */
+  public void setMaxIts(int newMaxIts) {
+	
+<span class="nc" id="L287">    m_maxIts = newMaxIts;</span>
+<span class="nc" id="L288">  }    </span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String ridgeTipText() {
+<span class="nc" id="L296">    return &quot;Set the Ridge value for the logistic or linear regression.&quot;;</span>
+  }
+
+  /**
+   * Sets the ridge value for logistic or linear regression.
+   *
+   * @param ridge the ridge
+   */
+  public void setRidge(double ridge) {
+<span class="nc" id="L305">    m_ridge = ridge;</span>
+<span class="nc" id="L306">  }</span>
+    
+  /**
+   * Gets the ridge value.
+   *
+   * @return the ridge
+   */
+  public double getRidge() {
+<span class="nc" id="L314">    return m_ridge;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numClustersTipText() {
+<span class="nc" id="L323">    return &quot;The number of clusters for K-Means to generate.&quot;;</span>
+  }
+
+  /**
+   * Set the number of clusters for K-means to generate.
+   *
+   * @param numClusters the number of clusters to generate.
+   */
+  public void setNumClusters(int numClusters) {
+<span class="pc bpc" id="L332" title="1 of 2 branches missed.">    if (numClusters &gt; 0) {</span>
+<span class="fc" id="L333">      m_numClusters = numClusters;</span>
+    }
+<span class="fc" id="L335">  }</span>
+
+  /**
+   * Return the number of clusters to generate.
+   *
+   * @return the number of clusters to generate.
+   */
+  public int getNumClusters() {
+<span class="nc" id="L343">    return m_numClusters;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String clusteringSeedTipText() {
+<span class="nc" id="L352">    return &quot;The random seed to pass on to K-means.&quot;;</span>
+  }
+  
+  /**
+   * Set the random seed to be passed on to K-means.
+   *
+   * @param seed a seed value.
+   */
+  public void setClusteringSeed(int seed) {
+<span class="fc" id="L361">    m_clusteringSeed = seed;</span>
+<span class="fc" id="L362">  }</span>
+
+  /**
+   * Get the random seed used by K-means.
+   *
+   * @return the seed value.
+   */
+  public int getClusteringSeed() {
+<span class="nc" id="L370">    return m_clusteringSeed;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String minStdDevTipText() {
+<span class="nc" id="L379">    return &quot;Sets the minimum standard deviation for the clusters.&quot;;</span>
+  }
+
+  /**
+   * Get the MinStdDev value.
+   * @return the MinStdDev value.
+   */
+  public double getMinStdDev() {
+<span class="nc" id="L387">    return m_minStdDev;</span>
+  }
+
+  /**
+   * Set the MinStdDev value.
+   * @param newMinStdDev The new MinStdDev value.
+   */
+  public void setMinStdDev(double newMinStdDev) {
+<span class="fc" id="L395">    m_minStdDev = newMinStdDev;</span>
+<span class="fc" id="L396">  }</span>
+
+  
+  /**
+   * Returns an enumeration describing the available options
+   *
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+<span class="fc" id="L405">    Vector newVector = new Vector(4);</span>
+
+<span class="fc" id="L407">    newVector.addElement(new Option(&quot;\tSet the number of clusters (basis functions) &quot;</span>
+				    +&quot;to generate. (default = 2).&quot;,
+<span class="fc" id="L409">				    &quot;B&quot;, 1, &quot;-B &lt;number&gt;&quot;));</span>
+<span class="fc" id="L410">    newVector.addElement(new Option(&quot;\tSet the random seed to be used by K-means. &quot;</span>
+				    +&quot;(default = 1).&quot;,
+<span class="fc" id="L412">				    &quot;S&quot;, 1, &quot;-S &lt;seed&gt;&quot;));</span>
+<span class="fc" id="L413">    newVector.addElement(new Option(&quot;\tSet the ridge value for the logistic or &quot;</span>
+				    +&quot;linear regression.&quot;,
+<span class="fc" id="L415">				    &quot;R&quot;, 1, &quot;-R &lt;ridge&gt;&quot;));</span>
+<span class="fc" id="L416">    newVector.addElement(new Option(&quot;\tSet the maximum number of iterations &quot;</span>
+				    +&quot;for the logistic regression.&quot;
+				    + &quot; (default -1, until convergence).&quot;,
+<span class="fc" id="L419">				    &quot;M&quot;, 1, &quot;-M &lt;number&gt;&quot;));</span>
+<span class="fc" id="L420">    newVector.addElement(new Option(&quot;\tSet the minimum standard &quot;</span>
+				    +&quot;deviation for the clusters.&quot;
+				    + &quot; (default 0.1).&quot;,
+<span class="fc" id="L423">				    &quot;W&quot;, 1, &quot;-W &lt;number&gt;&quot;));</span>
+<span class="fc" id="L424">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -B &amp;lt;number&amp;gt;
+   *  Set the number of clusters (basis functions) to generate. (default = 2).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;seed&amp;gt;
+   *  Set the random seed to be used by K-means. (default = 1).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;ridge&amp;gt;
+   *  Set the ridge value for the logistic or linear regression.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;number&amp;gt;
+   *  Set the maximum number of iterations for the logistic regression. (default -1, until convergence).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;number&amp;gt;
+   *  Set the minimum standard deviation for the clusters. (default 0.1).&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="fc" id="L454">    setDebug(Utils.getFlag('D', options));</span>
+
+<span class="fc" id="L456">    String ridgeString = Utils.getOption('R', options);</span>
+<span class="fc bfc" id="L457" title="All 2 branches covered.">    if (ridgeString.length() != 0) {</span>
+<span class="fc" id="L458">      m_ridge = Double.parseDouble(ridgeString);</span>
+    } else {
+<span class="fc" id="L460">      m_ridge = 1.0e-8;</span>
+    }
+	
+<span class="fc" id="L463">    String maxItsString = Utils.getOption('M', options);</span>
+<span class="fc bfc" id="L464" title="All 2 branches covered.">    if (maxItsString.length() != 0) {</span>
+<span class="fc" id="L465">      m_maxIts = Integer.parseInt(maxItsString);</span>
+    } else {
+<span class="fc" id="L467">      m_maxIts = -1;</span>
+    }
+
+<span class="fc" id="L470">    String numClustersString = Utils.getOption('B', options);</span>
+<span class="fc bfc" id="L471" title="All 2 branches covered.">    if (numClustersString.length() != 0) {</span>
+<span class="fc" id="L472">      setNumClusters(Integer.parseInt(numClustersString));</span>
+    }
+
+<span class="fc" id="L475">    String seedString = Utils.getOption('S', options);</span>
+<span class="fc bfc" id="L476" title="All 2 branches covered.">    if (seedString.length() != 0) {</span>
+<span class="fc" id="L477">      setClusteringSeed(Integer.parseInt(seedString));</span>
+    }
+<span class="fc" id="L479">    String stdString = Utils.getOption('W', options);</span>
+<span class="fc bfc" id="L480" title="All 2 branches covered.">    if (stdString.length() != 0) {</span>
+<span class="fc" id="L481">      setMinStdDev(Double.parseDouble(stdString));</span>
+    }
+<span class="fc" id="L483">    Utils.checkForRemainingOptions(options);</span>
+<span class="fc" id="L484">  }</span>
+
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+	
+<span class="fc" id="L493">    String [] options = new String [10];</span>
+<span class="fc" id="L494">    int current = 0;</span>
+    
+<span class="fc" id="L496">    options[current++] = &quot;-B&quot;;</span>
+<span class="fc" id="L497">    options[current++] = &quot;&quot; + m_numClusters;</span>
+<span class="fc" id="L498">    options[current++] = &quot;-S&quot;;</span>
+<span class="fc" id="L499">    options[current++] = &quot;&quot; + m_clusteringSeed;</span>
+<span class="fc" id="L500">    options[current++] = &quot;-R&quot;;</span>
+<span class="fc" id="L501">    options[current++] = &quot;&quot;+m_ridge;	</span>
+<span class="fc" id="L502">    options[current++] = &quot;-M&quot;;</span>
+<span class="fc" id="L503">    options[current++] = &quot;&quot;+m_maxIts;</span>
+<span class="fc" id="L504">    options[current++] = &quot;-W&quot;;</span>
+<span class="fc" id="L505">    options[current++] = &quot;&quot;+m_minStdDev;</span>
+
+<span class="pc bpc" id="L507" title="1 of 2 branches missed.">    while (current &lt; options.length) </span>
+<span class="nc" id="L508">      options[current++] = &quot;&quot;;</span>
+<span class="fc" id="L509">    return options;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L518">    return RevisionUtils.extract(&quot;$Revision: 1.10 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain the command line arguments to the
+   * scheme (see Evaluation)
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L528">    runClassifier(new RBFNetwork(), argv);</span>
+<span class="nc" id="L529">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

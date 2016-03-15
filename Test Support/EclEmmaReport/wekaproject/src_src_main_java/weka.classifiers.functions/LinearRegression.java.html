@@ -1,0 +1,919 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>LinearRegression.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.functions</a> &gt; <span class="el_source">LinearRegression.java</span></div><h1>LinearRegression.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    LinearRegression.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.functions;
+
+import weka.classifiers.Classifier;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.matrix.Matrix;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.filters.Filter;
+import weka.filters.supervised.attribute.NominalToBinary;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class for using linear regression for prediction. Uses the Akaike criterion for model selection, and is able to deal with weighted instances.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Produce debugging output.
+ *  (default no debugging output)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;number of selection method&amp;gt;
+ *  Set the attribute selection method to use. 1 = None, 2 = Greedy.
+ *  (default 0 = M5' method)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C
+ *  Do not try to eliminate colinear attributes.
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;double&amp;gt;
+ *  Set ridge parameter (default 1.0e-8).
+ * &lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 9770 $
+ */
+<span class="fc" id="L76">public class LinearRegression extends Classifier implements OptionHandler,</span>
+  WeightedInstancesHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = -3364580862046573747L;
+
+  /** Array for storing coefficients of linear regression. */
+  private double[] m_Coefficients;
+
+  /** Which attributes are relevant? */
+  private boolean[] m_SelectedAttributes;
+
+  /** Variable for storing transformed training data. */
+  private Instances m_TransformedData;
+
+  /** The filter for removing missing values. */
+  private ReplaceMissingValues m_MissingFilter;
+
+  /** The filter storing the transformation from nominal to 
+      binary attributes. */
+  private NominalToBinary m_TransformFilter;
+
+  /** The standard deviations of the class attribute */
+  private double m_ClassStdDev;
+
+  /** The mean of the class attribute */
+  private double m_ClassMean;
+
+  /** The index of the class attribute */
+  private int m_ClassIndex;
+
+  /** The attributes means */
+  private double[] m_Means;
+
+  /** The attribute standard deviations */
+  private double[] m_StdDevs;
+
+  /** True if debug output will be printed */
+  private boolean b_Debug;
+
+  /** The current attribute selection method */
+  private int m_AttributeSelection;
+
+  /** Attribute selection method: M5 method */
+  public static final int SELECTION_M5 = 0;
+  /** Attribute selection method: No attribute selection */
+  public static final int SELECTION_NONE = 1;
+  /** Attribute selection method: Greedy method */
+  public static final int SELECTION_GREEDY = 2;
+  /** Attribute selection methods */
+<span class="fc" id="L126">  public static final Tag [] TAGS_SELECTION = {</span>
+<span class="fc" id="L127">    new Tag(SELECTION_NONE, &quot;No attribute selection&quot;),</span>
+<span class="fc" id="L128">    new Tag(SELECTION_M5, &quot;M5 method&quot;),</span>
+<span class="fc" id="L129">    new Tag(SELECTION_GREEDY, &quot;Greedy method&quot;)</span>
+  };
+
+  /** Try to eliminate correlated attributes? */
+<span class="fc" id="L133">  private boolean m_EliminateColinearAttributes = true;</span>
+
+  /** Turn off all checks and conversions? */
+<span class="fc" id="L136">  private boolean m_checksTurnedOff = false;</span>
+
+  /** The ridge parameter */
+<span class="fc" id="L139">  private double m_Ridge = 1.0e-8;</span>
+
+  /**
+   * Turns off checks for missing values, etc. Use with caution.
+   * Also turns off scaling.
+   */
+  public void turnChecksOff() {
+
+<span class="nc" id="L147">    m_checksTurnedOff = true;</span>
+<span class="nc" id="L148">  }</span>
+
+  /**
+   * Turns on checks for missing values, etc. Also turns
+   * on scaling.
+   */
+  public void turnChecksOn() {
+
+<span class="nc" id="L156">    m_checksTurnedOff = false;</span>
+<span class="nc" id="L157">  }</span>
+
+  /**
+   * Returns a string describing this classifier
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L165">    return &quot;Class for using linear regression for prediction. Uses the Akaike &quot;</span>
+      +&quot;criterion for model selection, and is able to deal with weighted &quot;
+      +&quot;instances.&quot;;
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L176">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L177">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L180">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L181">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L182">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L183">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L186">    result.enable(Capability.NUMERIC_CLASS);</span>
+<span class="fc" id="L187">    result.enable(Capability.DATE_CLASS);</span>
+<span class="fc" id="L188">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="fc" id="L190">    return result;</span>
+  }
+
+  /**
+   * Builds a regression model for the given data.
+   *
+   * @param data the training data to be used for generating the
+   * linear regression function
+   * @throws Exception if the classifier could not be built successfully
+   */
+  public void buildClassifier(Instances data) throws Exception {
+  
+<span class="pc bpc" id="L202" title="1 of 2 branches missed.">    if (!m_checksTurnedOff) {</span>
+      // can classifier handle the data?
+<span class="fc" id="L204">      getCapabilities().testWithFail(data);</span>
+
+      // remove instances with missing class
+<span class="fc" id="L207">      data = new Instances(data);</span>
+<span class="fc" id="L208">      data.deleteWithMissingClass();</span>
+    }
+
+    // Preprocess instances
+<span class="pc bpc" id="L212" title="1 of 2 branches missed.">    if (!m_checksTurnedOff) {</span>
+<span class="fc" id="L213">      m_TransformFilter = new NominalToBinary();</span>
+<span class="fc" id="L214">      m_TransformFilter.setInputFormat(data);</span>
+<span class="fc" id="L215">      data = Filter.useFilter(data, m_TransformFilter);</span>
+<span class="fc" id="L216">      m_MissingFilter = new ReplaceMissingValues();</span>
+<span class="fc" id="L217">      m_MissingFilter.setInputFormat(data);</span>
+<span class="fc" id="L218">      data = Filter.useFilter(data, m_MissingFilter);</span>
+<span class="fc" id="L219">      data.deleteWithMissingClass();</span>
+    } else {
+<span class="nc" id="L221">      m_TransformFilter = null;</span>
+<span class="nc" id="L222">      m_MissingFilter = null;</span>
+    }
+
+<span class="fc" id="L225">    m_ClassIndex = data.classIndex();</span>
+<span class="fc" id="L226">    m_TransformedData = data;</span>
+
+    // Turn all attributes on for a start
+<span class="fc" id="L229">    m_SelectedAttributes = new boolean[data.numAttributes()];</span>
+<span class="fc bfc" id="L230" title="All 2 branches covered.">    for (int i = 0; i &lt; data.numAttributes(); i++) {</span>
+<span class="fc bfc" id="L231" title="All 2 branches covered.">      if (i != m_ClassIndex) {</span>
+<span class="fc" id="L232">	m_SelectedAttributes[i] = true;</span>
+      }
+    }
+<span class="fc" id="L235">    m_Coefficients = null;</span>
+
+    // Compute means and standard deviations
+<span class="fc" id="L238">    m_Means = new double[data.numAttributes()];</span>
+<span class="fc" id="L239">    m_StdDevs = new double[data.numAttributes()];</span>
+<span class="fc bfc" id="L240" title="All 2 branches covered.">    for (int j = 0; j &lt; data.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L241" title="All 2 branches covered.">      if (j != data.classIndex()) {</span>
+<span class="fc" id="L242">	m_Means[j] = data.meanOrMode(j);</span>
+<span class="fc" id="L243">	m_StdDevs[j] = Math.sqrt(data.variance(j));</span>
+<span class="fc bfc" id="L244" title="All 2 branches covered.">	if (m_StdDevs[j] == 0) {</span>
+<span class="fc" id="L245">	  m_SelectedAttributes[j] = false;</span>
+	} 
+      }
+    }
+
+<span class="fc" id="L250">    m_ClassStdDev = Math.sqrt(data.variance(m_TransformedData.classIndex()));</span>
+<span class="fc" id="L251">    m_ClassMean = data.meanOrMode(m_TransformedData.classIndex());</span>
+
+    // Perform the regression
+<span class="fc" id="L254">    findBestModel();</span>
+
+    // Save memory
+<span class="fc" id="L257">    m_TransformedData = new Instances(data, 0);</span>
+<span class="fc" id="L258">  }</span>
+
+  /**
+   * Classifies the given instance using the linear regression function.
+   *
+   * @param instance the test instance
+   * @return the classification
+   * @throws Exception if classification can't be done successfully
+   */
+  public double classifyInstance(Instance instance) throws Exception {
+
+    // Transform the input instance
+<span class="fc" id="L270">    Instance transformedInstance = instance;</span>
+<span class="pc bpc" id="L271" title="1 of 2 branches missed.">    if (!m_checksTurnedOff) {</span>
+<span class="fc" id="L272">      m_TransformFilter.input(transformedInstance);</span>
+<span class="fc" id="L273">      m_TransformFilter.batchFinished();</span>
+<span class="fc" id="L274">      transformedInstance = m_TransformFilter.output();</span>
+<span class="fc" id="L275">      m_MissingFilter.input(transformedInstance);</span>
+<span class="fc" id="L276">      m_MissingFilter.batchFinished();</span>
+<span class="fc" id="L277">      transformedInstance = m_MissingFilter.output();</span>
+    }
+
+    // Calculate the dependent variable from the regression model
+<span class="fc" id="L281">    return regressionPrediction(transformedInstance,</span>
+<span class="fc" id="L282">				m_SelectedAttributes,</span>
+<span class="fc" id="L283">				m_Coefficients);</span>
+  }
+
+  /**
+   * Outputs the linear regression model as a string.
+   * 
+   * @return the model as string
+   */
+  public String toString() {
+
+<span class="pc bpc" id="L293" title="1 of 2 branches missed.">    if (m_TransformedData == null) {</span>
+<span class="fc" id="L294">      return &quot;Linear Regression: No model built yet.&quot;;</span>
+    }
+    try {
+<span class="nc" id="L297">      StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L298">      int column = 0;</span>
+<span class="nc" id="L299">      boolean first = true;</span>
+      
+<span class="nc" id="L301">      text.append(&quot;\nLinear Regression Model\n\n&quot;);</span>
+      
+<span class="nc" id="L303">      text.append(m_TransformedData.classAttribute().name()+&quot; =\n\n&quot;);</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">      for (int i = 0; i &lt; m_TransformedData.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">	if ((i != m_ClassIndex) </span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">	    &amp;&amp; (m_SelectedAttributes[i])) {</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">	  if (!first) </span>
+<span class="nc" id="L308">	    text.append(&quot; +\n&quot;);</span>
+	  else
+<span class="nc" id="L310">	    first = false;</span>
+<span class="nc" id="L311">	  text.append(Utils.doubleToString(m_Coefficients[column], 12, 4)</span>
+<span class="nc" id="L312">		      + &quot; * &quot;);</span>
+<span class="nc" id="L313">	  text.append(m_TransformedData.attribute(i).name());</span>
+<span class="nc" id="L314">	  column++;</span>
+	}
+      }
+<span class="nc" id="L317">      text.append(&quot; +\n&quot; + </span>
+<span class="nc" id="L318">		  Utils.doubleToString(m_Coefficients[column], 12, 4));</span>
+<span class="nc" id="L319">      return text.toString();</span>
+<span class="nc" id="L320">    } catch (Exception e) {</span>
+<span class="nc" id="L321">      return &quot;Can't print Linear Regression!&quot;;</span>
+    }
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+    
+<span class="fc" id="L332">    Vector newVector = new Vector(4);</span>
+<span class="fc" id="L333">    newVector.addElement(new Option(&quot;\tProduce debugging output.\n&quot;</span>
+				    + &quot;\t(default no debugging output)&quot;,
+<span class="fc" id="L335">				    &quot;D&quot;, 0, &quot;-D&quot;));</span>
+<span class="fc" id="L336">    newVector.addElement(new Option(&quot;\tSet the attribute selection method&quot;</span>
+				    + &quot; to use. 1 = None, 2 = Greedy.\n&quot;
+				    + &quot;\t(default 0 = M5' method)&quot;,
+<span class="fc" id="L339">				    &quot;S&quot;, 1, &quot;-S &lt;number of selection method&gt;&quot;));</span>
+<span class="fc" id="L340">    newVector.addElement(new Option(&quot;\tDo not try to eliminate colinear&quot;</span>
+				    + &quot; attributes.\n&quot;,
+<span class="fc" id="L342">				    &quot;C&quot;, 0, &quot;-C&quot;));</span>
+<span class="fc" id="L343">    newVector.addElement(new Option(&quot;\tSet ridge parameter (default 1.0e-8).\n&quot;,</span>
+<span class="fc" id="L344">				    &quot;R&quot;, 1, &quot;-R &lt;double&gt;&quot;));</span>
+<span class="fc" id="L345">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Produce debugging output.
+   *  (default no debugging output)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;number of selection method&amp;gt;
+   *  Set the attribute selection method to use. 1 = None, 2 = Greedy.
+   *  (default 0 = M5' method)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C
+   *  Do not try to eliminate colinear attributes.
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;double&amp;gt;
+   *  Set ridge parameter (default 1.0e-8).
+   * &lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="fc" id="L377">    String selectionString = Utils.getOption('S', options);</span>
+<span class="fc bfc" id="L378" title="All 2 branches covered.">    if (selectionString.length() != 0) {</span>
+<span class="fc" id="L379">      setAttributeSelectionMethod(new SelectedTag(Integer</span>
+<span class="fc" id="L380">						  .parseInt(selectionString),</span>
+<span class="fc" id="L381">						  TAGS_SELECTION));</span>
+    } else {
+<span class="fc" id="L383">      setAttributeSelectionMethod(new SelectedTag(SELECTION_M5,</span>
+<span class="fc" id="L384">						  TAGS_SELECTION));</span>
+    }
+<span class="fc" id="L386">    String ridgeString = Utils.getOption('R', options);</span>
+<span class="fc bfc" id="L387" title="All 2 branches covered.">    if (ridgeString.length() != 0) {</span>
+<span class="fc" id="L388">      setRidge(new Double(ridgeString).doubleValue());</span>
+    } else {
+<span class="fc" id="L390">      setRidge(1.0e-8);</span>
+    }
+<span class="fc" id="L392">    setDebug(Utils.getFlag('D', options));</span>
+<span class="fc bfc" id="L393" title="All 2 branches covered.">    setEliminateColinearAttributes(!Utils.getFlag('C', options));</span>
+<span class="fc" id="L394">  }</span>
+
+  /**
+   * Returns the coefficients for this linear model.
+   * 
+   * @return the coefficients for this linear model
+   */
+  public double[] coefficients() {
+
+<span class="fc" id="L403">    double[] coefficients = new double[m_SelectedAttributes.length + 1];</span>
+<span class="fc" id="L404">    int counter = 0;</span>
+<span class="fc bfc" id="L405" title="All 2 branches covered.">    for (int i = 0; i &lt; m_SelectedAttributes.length; i++) {</span>
+<span class="pc bpc" id="L406" title="1 of 4 branches missed.">      if ((m_SelectedAttributes[i]) &amp;&amp; ((i != m_ClassIndex))) {</span>
+<span class="fc" id="L407">	coefficients[i] = m_Coefficients[counter++];</span>
+      }
+    }
+<span class="fc" id="L410">    coefficients[m_SelectedAttributes.length] = m_Coefficients[counter];</span>
+<span class="fc" id="L411">    return coefficients;</span>
+  }
+
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+
+<span class="fc" id="L421">    String [] options = new String [6];</span>
+<span class="fc" id="L422">    int current = 0;</span>
+
+<span class="fc" id="L424">    options[current++] = &quot;-S&quot;;</span>
+<span class="fc" id="L425">    options[current++] = &quot;&quot; + getAttributeSelectionMethod()</span>
+<span class="fc" id="L426">      .getSelectedTag().getID();</span>
+<span class="pc bpc" id="L427" title="1 of 2 branches missed.">    if (getDebug()) {</span>
+<span class="nc" id="L428">      options[current++] = &quot;-D&quot;;</span>
+    }
+<span class="fc bfc" id="L430" title="All 2 branches covered.">    if (!getEliminateColinearAttributes()) {</span>
+<span class="fc" id="L431">      options[current++] = &quot;-C&quot;;</span>
+    }
+<span class="fc" id="L433">    options[current++] = &quot;-R&quot;;</span>
+<span class="fc" id="L434">    options[current++] = &quot;&quot; + getRidge();</span>
+
+<span class="fc bfc" id="L436" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc" id="L437">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="fc" id="L439">    return options;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String ridgeTipText() {
+<span class="nc" id="L448">    return &quot;The value of the Ridge parameter.&quot;;</span>
+  }
+
+  /**
+   * Get the value of Ridge.
+   *
+   * @return Value of Ridge.
+   */
+  public double getRidge() {
+    
+<span class="fc" id="L458">    return m_Ridge;</span>
+  }
+  
+  /**
+   * Set the value of Ridge.
+   *
+   * @param newRidge Value to assign to Ridge.
+   */
+  public void setRidge(double newRidge) {
+    
+<span class="fc" id="L468">    m_Ridge = newRidge;</span>
+<span class="fc" id="L469">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String eliminateColinearAttributesTipText() {
+<span class="nc" id="L477">    return &quot;Eliminate colinear attributes.&quot;;</span>
+  }
+
+  /**
+   * Get the value of EliminateColinearAttributes.
+   *
+   * @return Value of EliminateColinearAttributes.
+   */
+  public boolean getEliminateColinearAttributes() {
+    
+<span class="fc" id="L487">    return m_EliminateColinearAttributes;</span>
+  }
+  
+  /**
+   * Set the value of EliminateColinearAttributes.
+   *
+   * @param newEliminateColinearAttributes Value to assign to EliminateColinearAttributes.
+   */
+  public void setEliminateColinearAttributes(boolean newEliminateColinearAttributes) {
+    
+<span class="fc" id="L497">    m_EliminateColinearAttributes = newEliminateColinearAttributes;</span>
+<span class="fc" id="L498">  }</span>
+  
+  /**
+   * Get the number of coefficients used in the model
+   *
+   * @return the number of coefficients
+   */
+  public int numParameters()
+  {
+<span class="nc" id="L507">    return m_Coefficients.length-1;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String attributeSelectionMethodTipText() {
+<span class="nc" id="L516">    return &quot;Set the method used to select attributes for use in the linear &quot;</span>
+      +&quot;regression. Available methods are: no attribute selection, attribute &quot;
+      +&quot;selection using M5's method (step through the attributes removing the one &quot;
+      +&quot;with the smallest standardised coefficient until no improvement is observed &quot;
+      +&quot;in the estimate of the error given by the Akaike &quot;
+      +&quot;information criterion), and a greedy selection using the Akaike information &quot;
+      +&quot;metric.&quot;;
+  }
+
+  /**
+   * Sets the method used to select attributes for use in the
+   * linear regression. 
+   *
+   * @param method the attribute selection method to use.
+   */
+  public void setAttributeSelectionMethod(SelectedTag method) {
+    
+<span class="pc bpc" id="L533" title="1 of 2 branches missed.">    if (method.getTags() == TAGS_SELECTION) {</span>
+<span class="fc" id="L534">      m_AttributeSelection = method.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L536">  }</span>
+
+  /**
+   * Gets the method used to select attributes for use in the
+   * linear regression. 
+   *
+   * @return the method to use.
+   */
+  public SelectedTag getAttributeSelectionMethod() {
+    
+<span class="fc" id="L546">    return new SelectedTag(m_AttributeSelection, TAGS_SELECTION);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String debugTipText() {
+<span class="nc" id="L555">    return &quot;Outputs debug information to the console.&quot;;</span>
+  }
+
+  /**
+   * Controls whether debugging output will be printed
+   *
+   * @param debug true if debugging output should be printed
+   */
+  public void setDebug(boolean debug) {
+
+<span class="fc" id="L565">    b_Debug = debug;</span>
+<span class="fc" id="L566">  }</span>
+
+  /**
+   * Controls whether debugging output will be printed
+   *
+   * @return true if debugging output is printed
+   */
+  public boolean getDebug() {
+
+<span class="fc" id="L575">    return b_Debug;</span>
+  }
+
+  /**
+   * Removes the attribute with the highest standardised coefficient
+   * greater than 1.5 from the selected attributes.
+   *
+   * @param selectedAttributes an array of flags indicating which 
+   * attributes are included in the regression model
+   * @param coefficients an array of coefficients for the regression
+   * model
+   * @return true if an attribute was removed
+   */
+  private boolean deselectColinearAttributes(boolean [] selectedAttributes,
+					     double [] coefficients) {
+
+<span class="fc" id="L591">    double maxSC = 1.5;</span>
+<span class="fc" id="L592">    int maxAttr = -1, coeff = 0;</span>
+<span class="fc bfc" id="L593" title="All 2 branches covered.">    for (int i = 0; i &lt; selectedAttributes.length; i++) {</span>
+<span class="fc bfc" id="L594" title="All 2 branches covered.">      if (selectedAttributes[i]) {</span>
+<span class="fc" id="L595">	double SC = Math.abs(coefficients[coeff] * m_StdDevs[i] </span>
+<span class="fc" id="L596">			     / m_ClassStdDev);</span>
+<span class="fc bfc" id="L597" title="All 2 branches covered.">	if (SC &gt; maxSC) {</span>
+<span class="fc" id="L598">	  maxSC = SC;</span>
+<span class="fc" id="L599">	  maxAttr = i;</span>
+	}
+<span class="fc" id="L601">	coeff++;</span>
+      }
+    }
+<span class="fc bfc" id="L604" title="All 2 branches covered.">    if (maxAttr &gt;= 0) {</span>
+<span class="fc" id="L605">      selectedAttributes[maxAttr] = false;</span>
+<span class="pc bpc" id="L606" title="1 of 2 branches missed.">      if (b_Debug) {</span>
+<span class="nc" id="L607">	System.out.println(&quot;Deselected colinear attribute:&quot; + (maxAttr + 1)</span>
+<span class="nc" id="L608">			   + &quot; with standardised coefficient: &quot; + maxSC);</span>
+      }
+<span class="fc" id="L610">      return true;</span>
+    }
+<span class="fc" id="L612">    return false;</span>
+  }
+
+  /**
+   * Performs a greedy search for the best regression model using
+   * Akaike's criterion.
+   *
+   * @throws Exception if regression can't be done
+   */
+  private void findBestModel() throws Exception {
+
+    // For the weighted case we still use numInstances in
+    // the calculation of the Akaike criterion. 
+<span class="fc" id="L625">    int numInstances = m_TransformedData.numInstances();</span>
+
+<span class="pc bpc" id="L627" title="1 of 2 branches missed.">    if (b_Debug) {</span>
+<span class="nc" id="L628">      System.out.println((new Instances(m_TransformedData, 0)).toString());</span>
+    }
+
+    // Perform a regression for the full model, and remove colinear attributes
+<span class="fc bfc" id="L632" title="All 2 branches covered.">    do {</span>
+<span class="fc" id="L633">      m_Coefficients = doRegression(m_SelectedAttributes);</span>
+<span class="pc bpc" id="L634" title="1 of 2 branches missed.">    } while (m_EliminateColinearAttributes &amp;&amp; </span>
+<span class="fc" id="L635">	     deselectColinearAttributes(m_SelectedAttributes, m_Coefficients));</span>
+
+    // Figure out current number of attributes + 1. (We treat this model
+    // as the full model for the Akaike-based methods.)
+<span class="fc" id="L639">    int numAttributes = 1;</span>
+<span class="fc bfc" id="L640" title="All 2 branches covered.">    for (int i = 0; i &lt; m_SelectedAttributes.length; i++) {</span>
+<span class="fc bfc" id="L641" title="All 2 branches covered.">      if (m_SelectedAttributes[i]) {</span>
+<span class="fc" id="L642">	numAttributes++;</span>
+      }
+    }
+
+<span class="fc" id="L646">    double fullMSE = calculateSE(m_SelectedAttributes, m_Coefficients);</span>
+<span class="fc" id="L647">    double akaike = (numInstances - numAttributes) + 2 * numAttributes;</span>
+<span class="pc bpc" id="L648" title="1 of 2 branches missed.">    if (b_Debug) {</span>
+<span class="nc" id="L649">      System.out.println(&quot;Initial Akaike value: &quot; + akaike);</span>
+    }
+
+    boolean improved;
+<span class="fc" id="L653">    int currentNumAttributes = numAttributes;</span>
+<span class="pc bpc" id="L654" title="1 of 3 branches missed.">    switch (m_AttributeSelection) {</span>
+
+    case SELECTION_GREEDY:
+
+      // Greedy attribute removal
+<span class="nc bnc" id="L659" title="All 2 branches missed.">      do {</span>
+<span class="nc" id="L660">	boolean [] currentSelected = (boolean []) m_SelectedAttributes.clone();</span>
+<span class="nc" id="L661">	improved = false;</span>
+<span class="nc" id="L662">	currentNumAttributes--;</span>
+
+<span class="nc bnc" id="L664" title="All 2 branches missed.">	for (int i = 0; i &lt; m_SelectedAttributes.length; i++) {</span>
+<span class="nc bnc" id="L665" title="All 2 branches missed.">	  if (currentSelected[i]) {</span>
+
+	    // Calculate the akaike rating without this attribute
+<span class="nc" id="L668">	    currentSelected[i] = false;</span>
+<span class="nc" id="L669">	    double [] currentCoeffs = doRegression(currentSelected);</span>
+<span class="nc" id="L670">	    double currentMSE = calculateSE(currentSelected, currentCoeffs);</span>
+<span class="nc" id="L671">	    double currentAkaike = currentMSE / fullMSE </span>
+<span class="nc" id="L672">	      * (numInstances - numAttributes)</span>
+<span class="nc" id="L673">	      + 2 * currentNumAttributes;</span>
+<span class="nc bnc" id="L674" title="All 2 branches missed.">	    if (b_Debug) {</span>
+<span class="nc" id="L675">	      System.out.println(&quot;(akaike: &quot; + currentAkaike);</span>
+	    }
+
+	    // If it is better than the current best
+<span class="nc bnc" id="L679" title="All 2 branches missed.">	    if (currentAkaike &lt; akaike) {</span>
+<span class="nc bnc" id="L680" title="All 2 branches missed.">	      if (b_Debug) {</span>
+<span class="nc" id="L681">		System.err.println(&quot;Removing attribute &quot; + (i + 1)</span>
+<span class="nc" id="L682">				   + &quot; improved Akaike: &quot; + currentAkaike);</span>
+	      }
+<span class="nc" id="L684">	      improved = true;</span>
+<span class="nc" id="L685">	      akaike = currentAkaike;</span>
+<span class="nc" id="L686">	      System.arraycopy(currentSelected, 0,</span>
+<span class="nc" id="L687">			       m_SelectedAttributes, 0,</span>
+<span class="nc" id="L688">			       m_SelectedAttributes.length);</span>
+<span class="nc" id="L689">	      m_Coefficients = currentCoeffs;</span>
+	    }
+<span class="nc" id="L691">	    currentSelected[i] = true;</span>
+	  }
+	}
+<span class="nc" id="L694">      } while (improved);</span>
+<span class="nc" id="L695">      break;</span>
+
+    case SELECTION_M5:
+
+      // Step through the attributes removing the one with the smallest 
+      // standardised coefficient until no improvement in Akaike
+<span class="fc bfc" id="L701" title="All 2 branches covered.">      do {</span>
+<span class="fc" id="L702">	improved = false;</span>
+<span class="fc" id="L703">	currentNumAttributes--;</span>
+
+	// Find attribute with smallest SC
+<span class="fc" id="L706">	double minSC = 0;</span>
+<span class="fc" id="L707">	int minAttr = -1, coeff = 0;</span>
+<span class="fc bfc" id="L708" title="All 2 branches covered.">	for (int i = 0; i &lt; m_SelectedAttributes.length; i++) {</span>
+<span class="fc bfc" id="L709" title="All 2 branches covered.">	  if (m_SelectedAttributes[i]) {</span>
+<span class="fc" id="L710">	    double SC = Math.abs(m_Coefficients[coeff] * m_StdDevs[i] </span>
+<span class="fc" id="L711">				 / m_ClassStdDev);</span>
+<span class="fc bfc" id="L712" title="All 4 branches covered.">	    if ((coeff == 0) || (SC &lt; minSC)) {</span>
+<span class="fc" id="L713">	      minSC = SC;</span>
+<span class="fc" id="L714">	      minAttr = i;</span>
+	    }
+<span class="fc" id="L716">	    coeff++;</span>
+	  }
+	}
+
+	// See whether removing it improves the Akaike score
+<span class="fc bfc" id="L721" title="All 2 branches covered.">	if (minAttr &gt;= 0) {</span>
+<span class="fc" id="L722">	  m_SelectedAttributes[minAttr] = false;</span>
+<span class="fc" id="L723">	  double [] currentCoeffs = doRegression(m_SelectedAttributes);</span>
+<span class="fc" id="L724">	  double currentMSE = calculateSE(m_SelectedAttributes, currentCoeffs);</span>
+<span class="fc" id="L725">	  double currentAkaike = currentMSE / fullMSE </span>
+<span class="fc" id="L726">	    * (numInstances - numAttributes)</span>
+<span class="fc" id="L727">	    + 2 * currentNumAttributes;</span>
+<span class="pc bpc" id="L728" title="1 of 2 branches missed.">	  if (b_Debug) {</span>
+<span class="nc" id="L729">	    System.out.println(&quot;(akaike: &quot; + currentAkaike);</span>
+	  }
+
+	  // If it is better than the current best
+<span class="fc bfc" id="L733" title="All 2 branches covered.">	  if (currentAkaike &lt; akaike) {</span>
+<span class="pc bpc" id="L734" title="1 of 2 branches missed.">	    if (b_Debug) {</span>
+<span class="nc" id="L735">	      System.err.println(&quot;Removing attribute &quot; + (minAttr + 1)</span>
+<span class="nc" id="L736">				 + &quot; improved Akaike: &quot; + currentAkaike);</span>
+	    }
+<span class="fc" id="L738">	    improved = true;</span>
+<span class="fc" id="L739">	    akaike = currentAkaike;</span>
+<span class="fc" id="L740">	    m_Coefficients = currentCoeffs;</span>
+	  } else {
+<span class="fc" id="L742">	    m_SelectedAttributes[minAttr] = true;</span>
+	  }
+	}
+<span class="fc" id="L745">      } while (improved);</span>
+<span class="fc" id="L746">      break;</span>
+
+    case SELECTION_NONE:
+      break;
+    }
+<span class="fc" id="L751">  }</span>
+
+  /**
+   * Calculate the squared error of a regression model on the 
+   * training data
+   *
+   * @param selectedAttributes an array of flags indicating which 
+   * attributes are included in the regression model
+   * @param coefficients an array of coefficients for the regression
+   * model
+   * @return the mean squared error on the training data
+   * @throws Exception if there is a missing class value in the training
+   * data
+   */
+  private double calculateSE(boolean [] selectedAttributes, 
+			      double [] coefficients) throws Exception {
+
+<span class="fc" id="L768">    double mse = 0;</span>
+<span class="fc bfc" id="L769" title="All 2 branches covered.">    for (int i = 0; i &lt; m_TransformedData.numInstances(); i++) {</span>
+<span class="fc" id="L770">      double prediction = regressionPrediction(m_TransformedData.instance(i),</span>
+<span class="fc" id="L771">					       selectedAttributes,</span>
+<span class="fc" id="L772">					       coefficients);</span>
+<span class="fc" id="L773">      double error = prediction - m_TransformedData.instance(i).classValue();</span>
+<span class="fc" id="L774">      mse += error * error;</span>
+    }
+<span class="fc" id="L776">    return mse;</span>
+  }
+
+  /**
+   * Calculate the dependent value for a given instance for a
+   * given regression model.
+   *
+   * @param transformedInstance the input instance
+   * @param selectedAttributes an array of flags indicating which 
+   * attributes are included in the regression model
+   * @param coefficients an array of coefficients for the regression
+   * model
+   * @return the regression value for the instance.
+   * @throws Exception if the class attribute of the input instance
+   * is not assigned
+   */
+  private double regressionPrediction(Instance transformedInstance,
+				      boolean [] selectedAttributes,
+				      double [] coefficients) 
+  throws Exception {
+    
+<span class="fc" id="L797">    double result = 0;</span>
+<span class="fc" id="L798">    int column = 0;</span>
+<span class="fc bfc" id="L799" title="All 2 branches covered.">    for (int j = 0; j &lt; transformedInstance.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L800" title="All 2 branches covered.">      if ((m_ClassIndex != j) </span>
+<span class="fc bfc" id="L801" title="All 2 branches covered.">	  &amp;&amp; (selectedAttributes[j])) {</span>
+<span class="fc" id="L802">	result += coefficients[column] * transformedInstance.value(j);</span>
+<span class="fc" id="L803">	column++;</span>
+      }
+    }
+<span class="fc" id="L806">    result += coefficients[column];</span>
+    
+<span class="fc" id="L808">    return result;</span>
+  }
+
+  /**
+   * Calculate a linear regression using the selected attributes
+   *
+   * @param selectedAttributes an array of booleans where each element
+   * is true if the corresponding attribute should be included in the
+   * regression.
+   * @return an array of coefficients for the linear regression model.
+   * @throws Exception if an error occurred during the regression.
+   */
+  private double [] doRegression(boolean [] selectedAttributes) 
+  throws Exception {
+
+<span class="pc bpc" id="L823" title="1 of 2 branches missed.">    if (b_Debug) {</span>
+<span class="nc" id="L824">      System.out.print(&quot;doRegression(&quot;);</span>
+<span class="nc bnc" id="L825" title="All 2 branches missed.">      for (int i = 0; i &lt; selectedAttributes.length; i++) {</span>
+<span class="nc" id="L826">	System.out.print(&quot; &quot; + selectedAttributes[i]);</span>
+      }
+<span class="nc" id="L828">      System.out.println(&quot; )&quot;);</span>
+    }
+<span class="fc" id="L830">    int numAttributes = 0;</span>
+<span class="fc bfc" id="L831" title="All 2 branches covered.">    for (int i = 0; i &lt; selectedAttributes.length; i++) {</span>
+<span class="fc bfc" id="L832" title="All 2 branches covered.">      if (selectedAttributes[i]) {</span>
+<span class="fc" id="L833">	numAttributes++;</span>
+      }
+    }
+
+    // Check whether there are still attributes left
+<span class="fc" id="L838">    Matrix independent = null, dependent = null;</span>
+<span class="fc bfc" id="L839" title="All 2 branches covered.">    if (numAttributes &gt; 0) {</span>
+<span class="fc" id="L840">      independent = new Matrix(m_TransformedData.numInstances(), </span>
+<span class="fc" id="L841">			       numAttributes);</span>
+<span class="fc" id="L842">      dependent = new Matrix(m_TransformedData.numInstances(), 1);</span>
+<span class="fc bfc" id="L843" title="All 2 branches covered.">      for (int i = 0; i &lt; m_TransformedData.numInstances(); i ++) {</span>
+<span class="fc" id="L844">	Instance inst = m_TransformedData.instance(i);</span>
+<span class="fc" id="L845">	double sqrt_weight = Math.sqrt(inst.weight());</span>
+<span class="fc" id="L846">	int column = 0;</span>
+<span class="fc bfc" id="L847" title="All 2 branches covered.">	for (int j = 0; j &lt; m_TransformedData.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L848" title="All 2 branches covered.">	  if (j == m_ClassIndex) {</span>
+<span class="fc" id="L849">	    dependent.set(i, 0, inst.classValue() * sqrt_weight);</span>
+	  } else {
+<span class="fc bfc" id="L851" title="All 2 branches covered.">	    if (selectedAttributes[j]) {</span>
+<span class="fc" id="L852">	      double value = inst.value(j) - m_Means[j];</span>
+	      
+	      // We only need to do this if we want to
+	      // scale the input
+<span class="pc bpc" id="L856" title="1 of 2 branches missed.">	      if (!m_checksTurnedOff) {</span>
+<span class="fc" id="L857">		value /= m_StdDevs[j];</span>
+	      }
+<span class="fc" id="L859">	      independent.set(i, column, value * sqrt_weight);</span>
+<span class="fc" id="L860">	      column++;</span>
+	    }
+	  }
+	}
+      }      
+    }
+
+    // Compute coefficients (note that we have to treat the
+    // intercept separately so that it doesn't get affected
+    // by the ridge constant.)
+<span class="fc" id="L870">    double[] coefficients = new double[numAttributes + 1];</span>
+<span class="fc bfc" id="L871" title="All 2 branches covered.">    if (numAttributes &gt; 0) {</span>
+<span class="fc" id="L872">      double[] coeffsWithoutIntercept  =	</span>
+<span class="fc" id="L873">        independent.regression(dependent, m_Ridge).getCoefficients();</span>
+<span class="fc" id="L874">      System.arraycopy(coeffsWithoutIntercept, 0, coefficients, 0,</span>
+<span class="fc" id="L875">		       numAttributes);</span>
+    }
+<span class="fc" id="L877">    coefficients[numAttributes] = m_ClassMean;</span>
+	   
+    // Convert coefficients into original scale
+<span class="fc" id="L880">    int column = 0;</span>
+<span class="fc bfc" id="L881" title="All 2 branches covered.">    for(int i = 0; i &lt; m_TransformedData.numAttributes(); i++) {</span>
+<span class="fc bfc" id="L882" title="All 2 branches covered.">      if ((i != m_TransformedData.classIndex()) &amp;&amp;</span>
+<span class="fc bfc" id="L883" title="All 2 branches covered.">	  (selectedAttributes[i])) {</span>
+
+	// We only need to do this if we have scaled the
+	// input.
+<span class="pc bpc" id="L887" title="1 of 2 branches missed.">	if (!m_checksTurnedOff) {</span>
+<span class="fc" id="L888">	  coefficients[column] /= m_StdDevs[i];</span>
+	}
+
+	// We have centred the input
+<span class="fc" id="L892">	coefficients[coefficients.length - 1] -= </span>
+<span class="fc" id="L893">	  coefficients[column] * m_Means[i];</span>
+<span class="fc" id="L894">	column++;</span>
+      }
+    }
+
+<span class="fc" id="L898">    return coefficients;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L907">    return RevisionUtils.extract(&quot;$Revision: 9770 $&quot;);</span>
+  }
+ 
+  /**
+   * Generates a linear regression function predictor.
+   *
+   * @param argv the options
+   */
+  public static void main(String argv[]) {
+<span class="nc" id="L916">    runClassifier(new LinearRegression(), argv);</span>
+<span class="nc" id="L917">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

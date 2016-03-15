@@ -1,0 +1,1499 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>ADTree.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees</a> &gt; <span class="el_source">ADTree.java</span></div><h1>ADTree.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    ADTree.java
+ *    Copyright (C) 2001 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.trees;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.IterativeClassifier;
+import weka.classifiers.trees.adtree.PredictionNode;
+import weka.classifiers.trees.adtree.ReferenceInstances;
+import weka.classifiers.trees.adtree.Splitter;
+import weka.classifiers.trees.adtree.TwoWayNominalSplit;
+import weka.classifiers.trees.adtree.TwoWayNumericSplit;
+import weka.core.AdditionalMeasureProducer;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.Drawable;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.SerializedObject;
+import weka.core.Tag;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class for generating an alternating decision tree. The basic algorithm is based on:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Freund, Y., Mason, L.: The alternating decision tree learning algorithm. In: Proceeding of the Sixteenth International Conference on Machine Learning, Bled, Slovenia, 124-133, 1999.&lt;br/&gt;
+ * &lt;br/&gt;
+ * This version currently only supports two-class problems. The number of boosting iterations needs to be manually tuned to suit the dataset and the desired complexity/accuracy tradeoff. Induction of the trees has been optimized, and heuristic search methods have been introduced to speed learning.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Freund1999,
+ *    address = {Bled, Slovenia},
+ *    author = {Freund, Y. and Mason, L.},
+ *    booktitle = {Proceeding of the Sixteenth International Conference on Machine Learning},
+ *    pages = {124-133},
+ *    title = {The alternating decision tree learning algorithm},
+ *    year = {1999}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;number of boosting iterations&amp;gt;
+ *  Number of boosting iterations.
+ *  (Default = 10)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -E &amp;lt;-3|-2|-1|&amp;gt;=0&amp;gt;
+ *  Expand nodes: -3(all), -2(weight), -1(z_pure), &amp;gt;=0 seed for random walk
+ *  (Default = -3)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Save the instance data with the model&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Richard Kirkby (rkirkby@cs.waikato.ac.nz)
+ * @author Bernhard Pfahringer (bernhard@cs.waikato.ac.nz)
+ * @version $Revision: 5535 $
+ */
+<span class="fc" id="L102">public class ADTree</span>
+  extends Classifier 
+  implements OptionHandler, Drawable, AdditionalMeasureProducer,
+             WeightedInstancesHandler, IterativeClassifier, 
+             TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -1532264837167690683L;
+  
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L118">    return  &quot;Class for generating an alternating decision tree. The basic &quot;</span>
+      + &quot;algorithm is based on:\n\n&quot;
+<span class="nc" id="L120">      + getTechnicalInformation().toString() + &quot;\n\n&quot;</span>
+<span class="nc" id="L121">      + &quot;This version currently only supports two-class problems. The number of boosting &quot;</span>
+<span class="nc" id="L122">      + &quot;iterations needs to be manually tuned to suit the dataset and the desired &quot;</span>
+<span class="nc" id="L123">      + &quot;complexity/accuracy tradeoff. Induction of the trees has been optimized, and heuristic &quot;</span>
+<span class="nc" id="L124">      + &quot;search methods have been introduced to speed learning.&quot;;</span>
+  }
+
+  /** search mode: Expand all paths */
+  public static final int SEARCHPATH_ALL = 0;
+  /** search mode: Expand the heaviest path */
+  public static final int SEARCHPATH_HEAVIEST = 1;
+  /** search mode: Expand the best z-pure path */
+  public static final int SEARCHPATH_ZPURE = 2;
+  /** search mode: Expand a random path */
+  public static final int SEARCHPATH_RANDOM = 3;
+  /** The search modes */
+<span class="fc" id="L136">  public static final Tag [] TAGS_SEARCHPATH = {</span>
+<span class="fc" id="L137">    new Tag(SEARCHPATH_ALL, &quot;Expand all paths&quot;),</span>
+<span class="fc" id="L138">    new Tag(SEARCHPATH_HEAVIEST, &quot;Expand the heaviest path&quot;),</span>
+<span class="fc" id="L139">    new Tag(SEARCHPATH_ZPURE, &quot;Expand the best z-pure path&quot;),</span>
+<span class="fc" id="L140">    new Tag(SEARCHPATH_RANDOM, &quot;Expand a random path&quot;)</span>
+  };
+
+  /** The instances used to train the tree */
+  protected Instances m_trainInstances;
+
+  /** The root of the tree */
+<span class="fc" id="L147">  protected PredictionNode m_root = null;</span>
+
+  /** The random number generator - used for the random search heuristic */
+<span class="fc" id="L150">  protected Random m_random = null; </span>
+
+  /** The number of the last splitter added to the tree */
+<span class="fc" id="L153">  protected int m_lastAddedSplitNum = 0;</span>
+
+  /** An array containing the inidices to the numeric attributes in the data */
+  protected int[] m_numericAttIndices;
+
+  /** An array containing the inidices to the nominal attributes in the data */
+  protected int[] m_nominalAttIndices;
+
+  /** The total weight of the instances - used to speed Z calculations */
+  protected double m_trainTotalWeight;
+
+  /** The training instances with positive class - referencing the training dataset */
+  protected ReferenceInstances m_posTrainInstances;
+
+  /** The training instances with negative class - referencing the training dataset */
+  protected ReferenceInstances m_negTrainInstances;
+
+  /** The best node to insert under, as found so far by the latest search */
+  protected PredictionNode m_search_bestInsertionNode;
+
+  /** The best splitter to insert, as found so far by the latest search */
+  protected Splitter m_search_bestSplitter;
+
+  /** The smallest Z value found so far by the latest search */
+  protected double m_search_smallestZ;
+
+  /** The positive instances that apply to the best path found so far */
+  protected Instances m_search_bestPathPosInstances;
+
+  /** The negative instances that apply to the best path found so far */
+  protected Instances m_search_bestPathNegInstances;
+
+  /** Statistics - the number of prediction nodes investigated during search */
+<span class="fc" id="L186">  protected int m_nodesExpanded = 0;</span>
+
+  /** Statistics - the number of instances processed during search */
+<span class="fc" id="L189">  protected int m_examplesCounted = 0;</span>
+
+  /** Option - the number of boosting iterations o perform */
+<span class="fc" id="L192">  protected int m_boostingIterations = 10;</span>
+
+  /** Option - the search mode */
+<span class="fc" id="L195">  protected int m_searchPath = 0;</span>
+
+  /** Option - the seed to use for a random search */
+<span class="fc" id="L198">  protected int m_randomSeed = 0; </span>
+
+  /** Option - whether the tree should remember the instance data */
+<span class="fc" id="L201">  protected boolean m_saveInstanceData = false; </span>
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L213">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L214">    result.setValue(Field.AUTHOR, &quot;Freund, Y. and Mason, L.&quot;);</span>
+<span class="nc" id="L215">    result.setValue(Field.YEAR, &quot;1999&quot;);</span>
+<span class="nc" id="L216">    result.setValue(Field.TITLE, &quot;The alternating decision tree learning algorithm&quot;);</span>
+<span class="nc" id="L217">    result.setValue(Field.BOOKTITLE, &quot;Proceeding of the Sixteenth International Conference on Machine Learning&quot;);</span>
+<span class="nc" id="L218">    result.setValue(Field.ADDRESS, &quot;Bled, Slovenia&quot;);</span>
+<span class="nc" id="L219">    result.setValue(Field.PAGES, &quot;124-133&quot;);</span>
+    
+<span class="nc" id="L221">    return result;</span>
+  }
+
+  /**
+   * Sets up the tree ready to be trained, using two-class optimized method.
+   *
+   * @param instances the instances to train the tree with
+   * @exception Exception if training data is unsuitable
+   */
+  public void initClassifier(Instances instances) throws Exception {
+
+    // clear stats
+<span class="fc" id="L233">    m_nodesExpanded = 0;</span>
+<span class="fc" id="L234">    m_examplesCounted = 0;</span>
+<span class="fc" id="L235">    m_lastAddedSplitNum = 0;</span>
+
+    // prepare the random generator
+<span class="fc" id="L238">    m_random = new Random(m_randomSeed);</span>
+
+    // create training set
+<span class="fc" id="L241">    m_trainInstances = new Instances(instances);</span>
+
+    // create positive/negative subsets
+<span class="fc" id="L244">    m_posTrainInstances = new ReferenceInstances(m_trainInstances,</span>
+<span class="fc" id="L245">						 m_trainInstances.numInstances());</span>
+<span class="fc" id="L246">    m_negTrainInstances = new ReferenceInstances(m_trainInstances,</span>
+<span class="fc" id="L247">						 m_trainInstances.numInstances());</span>
+<span class="fc bfc" id="L248" title="All 2 branches covered.">    for (Enumeration e = m_trainInstances.enumerateInstances(); e.hasMoreElements(); ) {</span>
+<span class="fc" id="L249">      Instance inst = (Instance) e.nextElement();</span>
+<span class="fc bfc" id="L250" title="All 2 branches covered.">      if ((int) inst.classValue() == 0)</span>
+<span class="fc" id="L251">	m_negTrainInstances.addReference(inst); // belongs in negative class</span>
+      else
+<span class="fc" id="L253">	m_posTrainInstances.addReference(inst); // belongs in positive class</span>
+    }
+<span class="fc" id="L255">    m_posTrainInstances.compactify();</span>
+<span class="fc" id="L256">    m_negTrainInstances.compactify();</span>
+
+    // create the root prediction node
+<span class="fc" id="L259">    double rootPredictionValue = calcPredictionValue(m_posTrainInstances,</span>
+<span class="fc" id="L260">						     m_negTrainInstances);</span>
+<span class="fc" id="L261">    m_root = new PredictionNode(rootPredictionValue);</span>
+
+    // pre-adjust weights
+<span class="fc" id="L264">    updateWeights(m_posTrainInstances, m_negTrainInstances, rootPredictionValue);</span>
+    
+    // pre-calculate what we can
+<span class="fc" id="L267">    generateAttributeIndicesSingle();</span>
+<span class="fc" id="L268">  }</span>
+
+  /**
+   * Performs one iteration.
+   * 
+   * @param iteration the index of the current iteration (0-based)
+   * @exception Exception if this iteration fails 
+   */  
+  public void next(int iteration) throws Exception {
+
+<span class="nc" id="L278">    boost();</span>
+<span class="nc" id="L279">  }</span>
+
+  /**
+   * Performs a single boosting iteration, using two-class optimized method.
+   * Will add a new splitter node and two prediction nodes to the tree
+   * (unless merging takes place).
+   *
+   * @exception Exception if try to boost without setting up tree first or there are no 
+   * instances to train with
+   */
+  public void boost() throws Exception {
+
+<span class="pc bpc" id="L291" title="2 of 4 branches missed.">    if (m_trainInstances == null || m_trainInstances.numInstances() == 0)</span>
+<span class="nc" id="L292">      throw new Exception(&quot;Trying to boost with no training data&quot;);</span>
+
+    // perform the search
+<span class="fc" id="L295">    searchForBestTestSingle();</span>
+
+<span class="fc bfc" id="L297" title="All 2 branches covered.">    if (m_search_bestSplitter == null) return; // handle empty instances</span>
+
+    // create the new nodes for the tree, updating the weights
+<span class="fc bfc" id="L300" title="All 2 branches covered.">    for (int i=0; i&lt;2; i++) {</span>
+<span class="fc" id="L301">      Instances posInstances =</span>
+<span class="fc" id="L302">	m_search_bestSplitter.instancesDownBranch(i, m_search_bestPathPosInstances);</span>
+<span class="fc" id="L303">      Instances negInstances =</span>
+<span class="fc" id="L304">	m_search_bestSplitter.instancesDownBranch(i, m_search_bestPathNegInstances);</span>
+<span class="fc" id="L305">      double predictionValue = calcPredictionValue(posInstances, negInstances);</span>
+<span class="fc" id="L306">      PredictionNode newPredictor = new PredictionNode(predictionValue);</span>
+<span class="fc" id="L307">      updateWeights(posInstances, negInstances, predictionValue);</span>
+<span class="fc" id="L308">      m_search_bestSplitter.setChildForBranch(i, newPredictor);</span>
+    }
+
+    // insert the new nodes
+<span class="fc" id="L312">    m_search_bestInsertionNode.addChild((Splitter) m_search_bestSplitter, this);</span>
+
+    // free memory
+<span class="fc" id="L315">    m_search_bestPathPosInstances = null;</span>
+<span class="fc" id="L316">    m_search_bestPathNegInstances = null;</span>
+<span class="fc" id="L317">    m_search_bestSplitter = null;</span>
+<span class="fc" id="L318">  }</span>
+
+  /**
+   * Generates the m_nominalAttIndices and m_numericAttIndices arrays to index
+   * the respective attribute types in the training data.
+   *
+   */
+  private void generateAttributeIndicesSingle() {
+
+    // insert indices into vectors
+<span class="fc" id="L328">    FastVector nominalIndices = new FastVector();</span>
+<span class="fc" id="L329">    FastVector numericIndices = new FastVector();</span>
+
+<span class="fc bfc" id="L331" title="All 2 branches covered.">    for (int i=0; i&lt;m_trainInstances.numAttributes(); i++) {</span>
+<span class="fc bfc" id="L332" title="All 2 branches covered.">      if (i != m_trainInstances.classIndex()) {</span>
+<span class="fc bfc" id="L333" title="All 2 branches covered.">	if (m_trainInstances.attribute(i).isNumeric())</span>
+<span class="fc" id="L334">	  numericIndices.addElement(new Integer(i));</span>
+	else
+<span class="fc" id="L336">	  nominalIndices.addElement(new Integer(i));</span>
+      }
+    }
+
+    // create nominal array
+<span class="fc" id="L341">    m_nominalAttIndices = new int[nominalIndices.size()];</span>
+<span class="fc bfc" id="L342" title="All 2 branches covered.">    for (int i=0; i&lt;nominalIndices.size(); i++)</span>
+<span class="fc" id="L343">      m_nominalAttIndices[i] = ((Integer)nominalIndices.elementAt(i)).intValue();</span>
+    
+    // create numeric array
+<span class="fc" id="L346">    m_numericAttIndices = new int[numericIndices.size()];</span>
+<span class="fc bfc" id="L347" title="All 2 branches covered.">    for (int i=0; i&lt;numericIndices.size(); i++)</span>
+<span class="fc" id="L348">      m_numericAttIndices[i] = ((Integer)numericIndices.elementAt(i)).intValue();</span>
+<span class="fc" id="L349">  }</span>
+
+  /**
+   * Performs a search for the best test (splitter) to add to the tree, by aiming to
+   * minimize the Z value.
+   *
+   * @exception Exception if search fails
+   */
+  private void searchForBestTestSingle() throws Exception {
+
+    // keep track of total weight for efficient wRemainder calculations
+<span class="fc" id="L360">    m_trainTotalWeight = m_trainInstances.sumOfWeights();</span>
+    
+<span class="fc" id="L362">    m_search_smallestZ = Double.POSITIVE_INFINITY;</span>
+<span class="fc" id="L363">    searchForBestTestSingle(m_root, m_posTrainInstances, m_negTrainInstances);</span>
+<span class="fc" id="L364">  }</span>
+
+  /**
+   * Recursive function that carries out search for the best test (splitter) to add to
+   * this part of the tree, by aiming to minimize the Z value. Performs Z-pure cutoff to
+   * reduce search space.
+   *
+   * @param currentNode the root of the subtree to be searched, and the current node 
+   * being considered as parent of a new split
+   * @param posInstances the positive-class instances that apply at this node
+   * @param negInstances the negative-class instances that apply at this node
+   * @exception Exception if search fails
+   */
+  private void searchForBestTestSingle(PredictionNode currentNode,
+				       Instances posInstances, Instances negInstances)
+    throws Exception {
+
+    // don't investigate pure or empty nodes any further
+<span class="fc bfc" id="L382" title="All 4 branches covered.">    if (posInstances.numInstances() == 0 || negInstances.numInstances() == 0) return;</span>
+
+    // do z-pure cutoff
+<span class="fc bfc" id="L385" title="All 2 branches covered.">    if (calcZpure(posInstances, negInstances) &gt;= m_search_smallestZ) return;</span>
+
+    // keep stats
+<span class="fc" id="L388">    m_nodesExpanded++;</span>
+<span class="fc" id="L389">    m_examplesCounted += posInstances.numInstances() + negInstances.numInstances();</span>
+
+    // evaluate static splitters (nominal)
+<span class="fc bfc" id="L392" title="All 2 branches covered.">    for (int i=0; i&lt;m_nominalAttIndices.length; i++)</span>
+<span class="fc" id="L393">      evaluateNominalSplitSingle(m_nominalAttIndices[i], currentNode,</span>
+<span class="fc" id="L394">				 posInstances, negInstances);</span>
+
+    // evaluate dynamic splitters (numeric)
+<span class="fc bfc" id="L397" title="All 2 branches covered.">    if (m_numericAttIndices.length &gt; 0) {</span>
+
+      // merge the two sets of instances into one
+<span class="fc" id="L400">      Instances allInstances = new Instances(posInstances);</span>
+<span class="fc bfc" id="L401" title="All 2 branches covered.">      for (Enumeration e = negInstances.enumerateInstances(); e.hasMoreElements(); )</span>
+<span class="fc" id="L402">	allInstances.add((Instance) e.nextElement());</span>
+    
+      // use method of finding the optimal Z split-point
+<span class="fc bfc" id="L405" title="All 2 branches covered.">      for (int i=0; i&lt;m_numericAttIndices.length; i++)</span>
+<span class="fc" id="L406">	evaluateNumericSplitSingle(m_numericAttIndices[i], currentNode,</span>
+<span class="fc" id="L407">				   posInstances, negInstances, allInstances);</span>
+    }
+
+<span class="fc bfc" id="L410" title="All 2 branches covered.">    if (currentNode.getChildren().size() == 0) return;</span>
+
+    // keep searching
+<span class="pc bpc" id="L413" title="4 of 5 branches missed.">    switch (m_searchPath) {</span>
+    case SEARCHPATH_ALL:
+<span class="fc" id="L415">      goDownAllPathsSingle(currentNode, posInstances, negInstances);</span>
+<span class="fc" id="L416">      break;</span>
+    case SEARCHPATH_HEAVIEST: 
+<span class="nc" id="L418">      goDownHeaviestPathSingle(currentNode, posInstances, negInstances);</span>
+<span class="nc" id="L419">      break;</span>
+    case SEARCHPATH_ZPURE: 
+<span class="nc" id="L421">      goDownZpurePathSingle(currentNode, posInstances, negInstances);</span>
+<span class="nc" id="L422">      break;</span>
+    case SEARCHPATH_RANDOM: 
+<span class="nc" id="L424">      goDownRandomPathSingle(currentNode, posInstances, negInstances);</span>
+      break;
+    }
+<span class="fc" id="L427">  }</span>
+
+  /**
+   * Continues single (two-class optimized) search by investigating every node in the
+   * subtree under currentNode.
+   *
+   * @param currentNode the root of the subtree to be searched
+   * @param posInstances the positive-class instances that apply at this node
+   * @param negInstances the negative-class instances that apply at this node
+   * @exception Exception if search fails
+   */
+  private void goDownAllPathsSingle(PredictionNode currentNode,
+				    Instances posInstances, Instances negInstances)
+    throws Exception {
+
+<span class="fc bfc" id="L442" title="All 2 branches covered.">    for (Enumeration e = currentNode.children(); e.hasMoreElements(); ) {</span>
+<span class="fc" id="L443">      Splitter split = (Splitter) e.nextElement();</span>
+<span class="fc bfc" id="L444" title="All 2 branches covered.">      for (int i=0; i&lt;split.getNumOfBranches(); i++)</span>
+<span class="fc" id="L445">	searchForBestTestSingle(split.getChildForBranch(i),</span>
+<span class="fc" id="L446">				split.instancesDownBranch(i, posInstances),</span>
+<span class="fc" id="L447">				split.instancesDownBranch(i, negInstances));</span>
+    }
+<span class="fc" id="L449">  }</span>
+
+  /**
+   * Continues single (two-class optimized) search by investigating only the path
+   * with the most heavily weighted instances.
+   *
+   * @param currentNode the root of the subtree to be searched
+   * @param posInstances the positive-class instances that apply at this node
+   * @param negInstances the negative-class instances that apply at this node
+   * @exception Exception if search fails
+   */
+  private void goDownHeaviestPathSingle(PredictionNode currentNode,
+					Instances posInstances, Instances negInstances)
+    throws Exception {
+
+<span class="nc" id="L464">    Splitter heaviestSplit = null;</span>
+<span class="nc" id="L465">    int heaviestBranch = 0;</span>
+<span class="nc" id="L466">    double largestWeight = 0.0;</span>
+<span class="nc bnc" id="L467" title="All 2 branches missed.">    for (Enumeration e = currentNode.children(); e.hasMoreElements(); ) {</span>
+<span class="nc" id="L468">      Splitter split = (Splitter) e.nextElement();</span>
+<span class="nc bnc" id="L469" title="All 2 branches missed.">      for (int i=0; i&lt;split.getNumOfBranches(); i++) {</span>
+<span class="nc" id="L470">	double weight =</span>
+<span class="nc" id="L471">	  split.instancesDownBranch(i, posInstances).sumOfWeights() +</span>
+<span class="nc" id="L472">	  split.instancesDownBranch(i, negInstances).sumOfWeights();</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">	if (weight &gt; largestWeight) {</span>
+<span class="nc" id="L474">	  heaviestSplit = split;</span>
+<span class="nc" id="L475">	  heaviestBranch = i;</span>
+<span class="nc" id="L476">	  largestWeight = weight;</span>
+	}
+      }
+    }
+<span class="nc bnc" id="L480" title="All 2 branches missed.">    if (heaviestSplit != null)</span>
+<span class="nc" id="L481">      searchForBestTestSingle(heaviestSplit.getChildForBranch(heaviestBranch),</span>
+<span class="nc" id="L482">			      heaviestSplit.instancesDownBranch(heaviestBranch,</span>
+<span class="nc" id="L483">								posInstances),</span>
+<span class="nc" id="L484">			      heaviestSplit.instancesDownBranch(heaviestBranch,</span>
+<span class="nc" id="L485">								negInstances));</span>
+<span class="nc" id="L486">  }</span>
+
+  /**
+   * Continues single (two-class optimized) search by investigating only the path
+   * with the best Z-pure value at each branch.
+   *
+   * @param currentNode the root of the subtree to be searched
+   * @param posInstances the positive-class instances that apply at this node
+   * @param negInstances the negative-class instances that apply at this node
+   * @exception Exception if search fails
+   */
+  private void goDownZpurePathSingle(PredictionNode currentNode,
+				     Instances posInstances, Instances negInstances)
+    throws Exception {
+
+<span class="nc" id="L501">    double lowestZpure = m_search_smallestZ; // do z-pure cutoff</span>
+<span class="nc" id="L502">    PredictionNode bestPath = null;</span>
+<span class="nc" id="L503">    Instances bestPosSplit = null, bestNegSplit = null;</span>
+
+    // search for branch with lowest Z-pure
+<span class="nc bnc" id="L506" title="All 2 branches missed.">    for (Enumeration e = currentNode.children(); e.hasMoreElements(); ) {</span>
+<span class="nc" id="L507">      Splitter split = (Splitter) e.nextElement();</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">      for (int i=0; i&lt;split.getNumOfBranches(); i++) {</span>
+<span class="nc" id="L509">	Instances posSplit = split.instancesDownBranch(i, posInstances);</span>
+<span class="nc" id="L510">	Instances negSplit = split.instancesDownBranch(i, negInstances);</span>
+<span class="nc" id="L511">	double newZpure = calcZpure(posSplit, negSplit);</span>
+<span class="nc bnc" id="L512" title="All 2 branches missed.">	if (newZpure &lt; lowestZpure) {</span>
+<span class="nc" id="L513">	  lowestZpure = newZpure;</span>
+<span class="nc" id="L514">	  bestPath = split.getChildForBranch(i);</span>
+<span class="nc" id="L515">	  bestPosSplit = posSplit;</span>
+<span class="nc" id="L516">	  bestNegSplit = negSplit;</span>
+	}
+      }
+    }
+
+<span class="nc bnc" id="L521" title="All 2 branches missed.">    if (bestPath != null)</span>
+<span class="nc" id="L522">      searchForBestTestSingle(bestPath, bestPosSplit, bestNegSplit);</span>
+<span class="nc" id="L523">  }</span>
+
+  /**
+   * Continues single (two-class optimized) search by investigating a random path.
+   *
+   * @param currentNode the root of the subtree to be searched
+   * @param posInstances the positive-class instances that apply at this node
+   * @param negInstances the negative-class instances that apply at this node
+   * @exception Exception if search fails
+   */
+  private void goDownRandomPathSingle(PredictionNode currentNode,
+				      Instances posInstances, Instances negInstances)
+    throws Exception {
+
+<span class="nc" id="L537">    FastVector children = currentNode.getChildren();</span>
+<span class="nc" id="L538">    Splitter split = (Splitter) children.elementAt(getRandom(children.size()));</span>
+<span class="nc" id="L539">    int branch = getRandom(split.getNumOfBranches());</span>
+<span class="nc" id="L540">    searchForBestTestSingle(split.getChildForBranch(branch),</span>
+<span class="nc" id="L541">			    split.instancesDownBranch(branch, posInstances),</span>
+<span class="nc" id="L542">			    split.instancesDownBranch(branch, negInstances));</span>
+<span class="nc" id="L543">  }</span>
+
+  /**
+   * Investigates the option of introducing a nominal split under currentNode. If it
+   * finds a split that has a Z-value lower than has already been found it will
+   * update the search information to record this as the best option so far. 
+   *
+   * @param attIndex index of a nominal attribute to create a split from
+   * @param currentNode the parent under which a split is to be considered
+   * @param posInstances the positive-class instances that apply at this node
+   * @param negInstances the negative-class instances that apply at this node
+   */
+  private void evaluateNominalSplitSingle(int attIndex, PredictionNode currentNode,
+					  Instances posInstances, Instances negInstances)
+  {
+    
+<span class="fc" id="L559">    double[] indexAndZ = findLowestZNominalSplit(posInstances, negInstances, attIndex);</span>
+
+<span class="fc bfc" id="L561" title="All 2 branches covered.">    if (indexAndZ[1] &lt; m_search_smallestZ) {</span>
+<span class="fc" id="L562">      m_search_smallestZ = indexAndZ[1];</span>
+<span class="fc" id="L563">      m_search_bestInsertionNode = currentNode;</span>
+<span class="fc" id="L564">      m_search_bestSplitter = new TwoWayNominalSplit(attIndex, (int) indexAndZ[0]);</span>
+<span class="fc" id="L565">      m_search_bestPathPosInstances = posInstances;</span>
+<span class="fc" id="L566">      m_search_bestPathNegInstances = negInstances;</span>
+    }
+<span class="fc" id="L568">  }</span>
+
+  /**
+   * Investigates the option of introducing a two-way numeric split under currentNode.
+   * If it finds a split that has a Z-value lower than has already been found it will
+   * update the search information to record this as the best option so far. 
+   *
+   * @param attIndex index of a numeric attribute to create a split from
+   * @param currentNode the parent under which a split is to be considered
+   * @param posInstances the positive-class instances that apply at this node
+   * @param negInstances the negative-class instances that apply at this node
+   * @param allInstances all of the instances the apply at this node (pos+neg combined)
+   * @throws Exception in case of an error
+   */
+  private void evaluateNumericSplitSingle(int attIndex, PredictionNode currentNode,
+					  Instances posInstances, Instances negInstances,
+					  Instances allInstances)
+    throws Exception {
+    
+<span class="fc" id="L587">    double[] splitAndZ = findLowestZNumericSplit(allInstances, attIndex);</span>
+
+<span class="fc bfc" id="L589" title="All 2 branches covered.">    if (splitAndZ[1] &lt; m_search_smallestZ) {</span>
+<span class="fc" id="L590">      m_search_smallestZ = splitAndZ[1];</span>
+<span class="fc" id="L591">      m_search_bestInsertionNode = currentNode;</span>
+<span class="fc" id="L592">      m_search_bestSplitter = new TwoWayNumericSplit(attIndex, splitAndZ[0]);</span>
+<span class="fc" id="L593">      m_search_bestPathPosInstances = posInstances;</span>
+<span class="fc" id="L594">      m_search_bestPathNegInstances = negInstances;</span>
+    }
+<span class="fc" id="L596">  }</span>
+
+  /**
+   * Calculates the prediction value used for a particular set of instances.
+   *
+   * @param posInstances the positive-class instances
+   * @param negInstances the negative-class instances
+   * @return the prediction value
+   */
+  private double calcPredictionValue(Instances posInstances, Instances negInstances) {
+    
+<span class="fc" id="L607">    return 0.5 * Math.log( (posInstances.sumOfWeights() + 1.0)</span>
+<span class="fc" id="L608">			  / (negInstances.sumOfWeights() + 1.0) );</span>
+  }
+
+  /**
+   * Calculates the Z-pure value for a particular set of instances.
+   *
+   * @param posInstances the positive-class instances
+   * @param negInstances the negative-class instances
+   * @return the Z-pure value
+   */
+  private double calcZpure(Instances posInstances, Instances negInstances) {
+    
+<span class="fc" id="L620">    double posWeight = posInstances.sumOfWeights();</span>
+<span class="fc" id="L621">    double negWeight = negInstances.sumOfWeights();</span>
+<span class="fc" id="L622">    return (2.0 * (Math.sqrt(posWeight+1.0) + Math.sqrt(negWeight+1.0))) + </span>
+<span class="fc" id="L623">      (m_trainTotalWeight - (posWeight + negWeight));</span>
+  }
+
+  /**
+   * Updates the weights of instances that are influenced by a new prediction value.
+   *
+   * @param posInstances positive-class instances to which the prediction value applies
+   * @param negInstances negative-class instances to which the prediction value applies
+   * @param predictionValue the new prediction value
+   */
+  private void updateWeights(Instances posInstances, Instances negInstances,
+			     double predictionValue) {
+    
+    // do positives
+<span class="fc" id="L637">    double weightMultiplier = Math.pow(Math.E, -predictionValue);</span>
+<span class="fc bfc" id="L638" title="All 2 branches covered.">    for (Enumeration e = posInstances.enumerateInstances(); e.hasMoreElements(); ) {</span>
+<span class="fc" id="L639">      Instance inst = (Instance) e.nextElement();</span>
+<span class="fc" id="L640">      inst.setWeight(inst.weight() * weightMultiplier);</span>
+    }
+    // do negatives
+<span class="fc" id="L643">    weightMultiplier = Math.pow(Math.E, predictionValue);</span>
+<span class="fc bfc" id="L644" title="All 2 branches covered.">    for (Enumeration e = negInstances.enumerateInstances(); e.hasMoreElements(); ) {</span>
+<span class="fc" id="L645">      Instance inst = (Instance) e.nextElement();</span>
+<span class="fc" id="L646">      inst.setWeight(inst.weight() * weightMultiplier);</span>
+    }
+<span class="fc" id="L648">  }</span>
+
+  /**
+   * Finds the nominal attribute value to split on that results in the lowest Z-value.
+   *
+   * @param posInstances the positive-class instances to split
+   * @param negInstances the negative-class instances to split
+   * @param attIndex the index of the nominal attribute to find a split for
+   * @return a double array, index[0] contains the value to split on, index[1] contains
+   * the Z-value of the split
+   */
+  private double[] findLowestZNominalSplit(Instances posInstances, Instances negInstances,
+					   int attIndex)
+  {
+    
+<span class="fc" id="L663">    double lowestZ = Double.MAX_VALUE;</span>
+<span class="fc" id="L664">    int bestIndex = 0;</span>
+
+    // set up arrays
+<span class="fc" id="L667">    double[] posWeights = attributeValueWeights(posInstances, attIndex);</span>
+<span class="fc" id="L668">    double[] negWeights = attributeValueWeights(negInstances, attIndex);</span>
+<span class="fc" id="L669">    double posWeight = Utils.sum(posWeights);</span>
+<span class="fc" id="L670">    double negWeight = Utils.sum(negWeights);</span>
+
+<span class="fc" id="L672">    int maxIndex = posWeights.length;</span>
+<span class="pc bpc" id="L673" title="1 of 2 branches missed.">    if (maxIndex == 2) maxIndex = 1; // avoid repeating due to 2-way symmetry</span>
+
+<span class="fc bfc" id="L675" title="All 2 branches covered.">    for (int i = 0; i &lt; maxIndex; i++) {</span>
+      // calculate Z
+<span class="fc" id="L677">      double w1 = posWeights[i] + 1.0;</span>
+<span class="fc" id="L678">      double w2 = negWeights[i] + 1.0;</span>
+<span class="fc" id="L679">      double w3 = posWeight - w1 + 2.0;</span>
+<span class="fc" id="L680">      double w4 = negWeight - w2 + 2.0;</span>
+<span class="fc" id="L681">      double wRemainder = m_trainTotalWeight + 4.0 - (w1 + w2 + w3 + w4);</span>
+<span class="fc" id="L682">      double newZ = (2.0 * (Math.sqrt(w1 * w2) + Math.sqrt(w3 * w4))) + wRemainder;</span>
+
+      // record best option
+<span class="pc bpc" id="L685" title="1 of 2 branches missed.">      if (newZ &lt; lowestZ) { </span>
+<span class="fc" id="L686">	lowestZ = newZ;</span>
+<span class="fc" id="L687">	bestIndex = i;</span>
+      }
+    }
+
+    // return result
+<span class="fc" id="L692">    double[] indexAndZ = new double[2];</span>
+<span class="fc" id="L693">    indexAndZ[0] = (double) bestIndex;</span>
+<span class="fc" id="L694">    indexAndZ[1] = lowestZ;</span>
+<span class="fc" id="L695">    return indexAndZ; </span>
+  }
+
+  /**
+   * Simultanously sum the weights of all attribute values for all instances.
+   *
+   * @param instances the instances to get the weights from 
+   * @param attIndex index of the attribute to be evaluated
+   * @return a double array containing the weight of each attribute value
+   */    
+  private double[] attributeValueWeights(Instances instances, int attIndex)
+  {
+    
+<span class="fc" id="L708">    double[] weights = new double[instances.attribute(attIndex).numValues()];</span>
+<span class="fc bfc" id="L709" title="All 2 branches covered.">    for(int i = 0; i &lt; weights.length; i++) weights[i] = 0.0;</span>
+
+<span class="fc bfc" id="L711" title="All 2 branches covered.">    for (Enumeration e = instances.enumerateInstances(); e.hasMoreElements(); ) {</span>
+<span class="fc" id="L712">      Instance inst = (Instance) e.nextElement();</span>
+<span class="fc bfc" id="L713" title="All 2 branches covered.">      if (!inst.isMissing(attIndex)) weights[(int)inst.value(attIndex)] += inst.weight();</span>
+    }
+<span class="fc" id="L715">    return weights;</span>
+  }
+
+  /**
+   * Finds the numeric split-point that results in the lowest Z-value.
+   *
+   * @param instances the instances to find a split for
+   * @param attIndex the index of the numeric attribute to find a split for
+   * @return a double array, index[0] contains the split-point, index[1] contains the
+   * Z-value of the split
+   * @throws Exception in case of an error
+   */
+  private double[] findLowestZNumericSplit(Instances instances, int attIndex)
+    throws Exception {
+    
+<span class="fc" id="L730">    double splitPoint = 0.0;</span>
+<span class="fc" id="L731">    double bestVal = Double.MAX_VALUE, currVal, currCutPoint;</span>
+<span class="fc" id="L732">    int numMissing = 0;</span>
+<span class="fc" id="L733">    double[][] distribution = new double[3][instances.numClasses()];   </span>
+
+    // compute counts for all the values
+<span class="fc bfc" id="L736" title="All 2 branches covered.">    for (int i = 0; i &lt; instances.numInstances(); i++) {</span>
+<span class="fc" id="L737">      Instance inst = instances.instance(i);</span>
+<span class="fc bfc" id="L738" title="All 2 branches covered.">      if (!inst.isMissing(attIndex)) {</span>
+<span class="fc" id="L739">	distribution[1][(int)inst.classValue()] += inst.weight();</span>
+      } else {
+<span class="fc" id="L741">	distribution[2][(int)inst.classValue()] += inst.weight();</span>
+<span class="fc" id="L742">	numMissing++;</span>
+      }
+    }
+
+    // sort instances
+<span class="fc" id="L747">    instances.sort(attIndex);</span>
+    
+    // make split counts for each possible split and evaluate
+<span class="fc bfc" id="L750" title="All 2 branches covered.">    for (int i = 0; i &lt; instances.numInstances() - (numMissing + 1); i++) {</span>
+<span class="fc" id="L751">      Instance inst = instances.instance(i);</span>
+<span class="fc" id="L752">      Instance instPlusOne = instances.instance(i + 1);</span>
+<span class="fc" id="L753">      distribution[0][(int)inst.classValue()] += inst.weight();</span>
+<span class="fc" id="L754">      distribution[1][(int)inst.classValue()] -= inst.weight();</span>
+<span class="fc bfc" id="L755" title="All 2 branches covered.">      if (Utils.sm(inst.value(attIndex), instPlusOne.value(attIndex))) {</span>
+<span class="fc" id="L756">	currCutPoint = (inst.value(attIndex) + instPlusOne.value(attIndex)) / 2.0;</span>
+<span class="fc" id="L757">	currVal = conditionedZOnRows(distribution);</span>
+<span class="fc bfc" id="L758" title="All 2 branches covered.">	if (currVal &lt; bestVal) {</span>
+<span class="fc" id="L759">	  splitPoint = currCutPoint;</span>
+<span class="fc" id="L760">	  bestVal = currVal;</span>
+	}
+      }
+    }
+	
+<span class="fc" id="L765">    double[] splitAndZ = new double[2];</span>
+<span class="fc" id="L766">    splitAndZ[0] = splitPoint;</span>
+<span class="fc" id="L767">    splitAndZ[1] = bestVal;</span>
+<span class="fc" id="L768">    return splitAndZ;</span>
+  }
+
+  /**
+   * Calculates the Z-value from the rows of a weight distribution array.
+   *
+   * @param distribution the weight distribution
+   * @return the Z-value
+   */
+  private double conditionedZOnRows(double [][] distribution) {
+    
+<span class="fc" id="L779">    double w1 = distribution[0][0] + 1.0;</span>
+<span class="fc" id="L780">    double w2 = distribution[0][1] + 1.0;</span>
+<span class="fc" id="L781">    double w3 = distribution[1][0] + 1.0; </span>
+<span class="fc" id="L782">    double w4 = distribution[1][1] + 1.0;</span>
+<span class="fc" id="L783">    double wRemainder = m_trainTotalWeight + 4.0 - (w1 + w2 + w3 + w4);</span>
+<span class="fc" id="L784">    return (2.0 * (Math.sqrt(w1 * w2) + Math.sqrt(w3 * w4))) + wRemainder;</span>
+  }
+
+  /**
+   * Returns the class probability distribution for an instance.
+   *
+   * @param instance the instance to be classified
+   * @return the distribution the tree generates for the instance
+   */
+  public double[] distributionForInstance(Instance instance) {
+    
+<span class="fc" id="L795">    double predVal = predictionValueForInstance(instance, m_root, 0.0);</span>
+    
+<span class="fc" id="L797">    double[] distribution = new double[2];</span>
+<span class="fc" id="L798">    distribution[0] = 1.0 / (1.0 + Math.pow(Math.E, predVal));</span>
+<span class="fc" id="L799">    distribution[1] = 1.0 / (1.0 + Math.pow(Math.E, -predVal));</span>
+
+<span class="fc" id="L801">    return distribution;</span>
+  }
+
+  /**
+   * Returns the class prediction value (vote) for an instance.
+   *
+   * @param inst the instance
+   * @param currentNode the root of the tree to get the values from
+   * @param currentValue the current value before adding the value contained in the
+   * subtree
+   * @return the class prediction value (vote)
+   */
+  protected double predictionValueForInstance(Instance inst, PredictionNode currentNode,
+					    double currentValue) {
+    
+<span class="fc" id="L816">    currentValue += currentNode.getValue();</span>
+<span class="fc bfc" id="L817" title="All 2 branches covered.">    for (Enumeration e = currentNode.children(); e.hasMoreElements(); ) {</span>
+<span class="fc" id="L818">      Splitter split = (Splitter) e.nextElement();</span>
+<span class="fc" id="L819">      int branch = split.branchInstanceGoesDown(inst);</span>
+<span class="fc bfc" id="L820" title="All 2 branches covered.">      if (branch &gt;= 0)</span>
+<span class="fc" id="L821">	currentValue = predictionValueForInstance(inst, split.getChildForBranch(branch),</span>
+<span class="fc" id="L822">						  currentValue);</span>
+    }
+<span class="fc" id="L824">    return currentValue;</span>
+  }
+
+  /**
+   * Returns a description of the classifier.
+   *
+   * @return a string containing a description of the classifier
+   */
+  public String toString() {
+    
+<span class="pc bpc" id="L834" title="1 of 2 branches missed.">    if (m_root == null)</span>
+<span class="fc" id="L835">      return (&quot;ADTree not built yet&quot;);</span>
+    else {
+<span class="nc" id="L837">      return (&quot;Alternating decision tree:\n\n&quot; + toString(m_root, 1) +</span>
+<span class="nc" id="L838">	      &quot;\nLegend: &quot; + legend() +</span>
+<span class="nc" id="L839">	      &quot;\nTree size (total number of nodes): &quot; + numOfAllNodes(m_root) + </span>
+<span class="nc" id="L840">	      &quot;\nLeaves (number of predictor nodes): &quot; + numOfPredictionNodes(m_root)</span>
+	      );
+    }
+  }
+
+  /**
+   * Traverses the tree, forming a string that describes it.
+   *
+   * @param currentNode the current node under investigation
+   * @param level the current level in the tree
+   * @return the string describing the subtree
+   */      
+  protected String toString(PredictionNode currentNode, int level) {
+    
+<span class="nc" id="L854">    StringBuffer text = new StringBuffer();</span>
+    
+<span class="nc" id="L856">    text.append(&quot;: &quot; + Utils.doubleToString(currentNode.getValue(),3));</span>
+    
+<span class="nc bnc" id="L858" title="All 2 branches missed.">    for (Enumeration e = currentNode.children(); e.hasMoreElements(); ) {</span>
+<span class="nc" id="L859">      Splitter split = (Splitter) e.nextElement();</span>
+	    
+<span class="nc bnc" id="L861" title="All 2 branches missed.">      for (int j=0; j&lt;split.getNumOfBranches(); j++) {</span>
+<span class="nc" id="L862">	PredictionNode child = split.getChildForBranch(j);</span>
+<span class="nc bnc" id="L863" title="All 2 branches missed.">	if (child != null) {</span>
+<span class="nc" id="L864">	  text.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L865" title="All 2 branches missed.">	  for (int k = 0; k &lt; level; k++) {</span>
+<span class="nc" id="L866">	    text.append(&quot;|  &quot;);</span>
+	  }
+<span class="nc" id="L868">	  text.append(&quot;(&quot; + split.orderAdded + &quot;)&quot;);</span>
+<span class="nc" id="L869">	  text.append(split.attributeString(m_trainInstances) + &quot; &quot;</span>
+<span class="nc" id="L870">		      + split.comparisonString(j, m_trainInstances));</span>
+<span class="nc" id="L871">	  text.append(toString(child, level + 1));</span>
+	}
+      }
+    }
+<span class="nc" id="L875">    return text.toString();</span>
+  }
+
+  /**
+   *  Returns the type of graph this classifier
+   *  represents.
+   *  @return Drawable.TREE
+   */   
+  public int graphType() {
+<span class="nc" id="L884">      return Drawable.TREE;</span>
+  }
+
+  /**
+   * Returns graph describing the tree.
+   *
+   * @return the graph of the tree in dotty format
+   * @exception Exception if something goes wrong
+   */
+  public String graph() throws Exception {
+    
+<span class="nc" id="L895">    StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L896">    text.append(&quot;digraph ADTree {\n&quot;);</span>
+<span class="nc" id="L897">    graphTraverse(m_root, text, 0, 0, m_trainInstances);</span>
+<span class="nc" id="L898">    return text.toString() +&quot;}\n&quot;;</span>
+  }
+
+  /**
+   * Traverses the tree, graphing each node.
+   *
+   * @param currentNode the currentNode under investigation
+   * @param text the string built so far
+   * @param splitOrder the order the parent splitter was added to the tree
+   * @param predOrder the order this predictor was added to the split
+   * @param instances the data to work on
+   * @exception Exception if something goes wrong
+   */       
+  protected void graphTraverse(PredictionNode currentNode, StringBuffer text,
+			       int splitOrder, int predOrder, Instances instances)
+    throws Exception {
+    
+<span class="nc" id="L915">    text.append(&quot;S&quot; + splitOrder + &quot;P&quot; + predOrder + &quot; [label=\&quot;&quot;);</span>
+<span class="nc" id="L916">    text.append(Utils.doubleToString(currentNode.getValue(),3));</span>
+<span class="nc bnc" id="L917" title="All 2 branches missed.">    if (splitOrder == 0) // show legend in root</span>
+<span class="nc" id="L918">      text.append(&quot; (&quot; + legend() + &quot;)&quot;);</span>
+<span class="nc" id="L919">    text.append(&quot;\&quot; shape=box style=filled&quot;);</span>
+<span class="nc bnc" id="L920" title="All 2 branches missed.">    if (instances.numInstances() &gt; 0) text.append(&quot; data=\n&quot; + instances + &quot;\n,\n&quot;);</span>
+<span class="nc" id="L921">    text.append(&quot;]\n&quot;);</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">    for (Enumeration e = currentNode.children(); e.hasMoreElements(); ) {</span>
+<span class="nc" id="L923">      Splitter split = (Splitter) e.nextElement();</span>
+<span class="nc" id="L924">      text.append(&quot;S&quot; + splitOrder + &quot;P&quot; + predOrder + &quot;-&gt;&quot; + &quot;S&quot; + split.orderAdded +</span>
+<span class="nc" id="L925">		  &quot; [style=dotted]\n&quot;);</span>
+<span class="nc" id="L926">      text.append(&quot;S&quot; + split.orderAdded + &quot; [label=\&quot;&quot; + split.orderAdded + &quot;: &quot; +</span>
+<span class="nc" id="L927">		  split.attributeString(m_trainInstances) + &quot;\&quot;]\n&quot;);</span>
+
+<span class="nc bnc" id="L929" title="All 2 branches missed.">      for (int i=0; i&lt;split.getNumOfBranches(); i++) {</span>
+<span class="nc" id="L930">	PredictionNode child = split.getChildForBranch(i);</span>
+<span class="nc bnc" id="L931" title="All 2 branches missed.">	if (child != null) {</span>
+<span class="nc" id="L932">	  text.append(&quot;S&quot; + split.orderAdded + &quot;-&gt;&quot; + &quot;S&quot; + split.orderAdded + &quot;P&quot; + i +</span>
+<span class="nc" id="L933">		      &quot; [label=\&quot;&quot; + split.comparisonString(i, m_trainInstances) + &quot;\&quot;]\n&quot;);</span>
+<span class="nc" id="L934">	  graphTraverse(child, text, split.orderAdded, i,</span>
+<span class="nc" id="L935">			split.instancesDownBranch(i, instances));</span>
+	}
+      }
+    }  
+<span class="nc" id="L939">  }</span>
+
+  /**
+   * Returns the legend of the tree, describing how results are to be interpreted.
+   *
+   * @return a string containing the legend of the classifier
+   */
+  public String legend() {
+    
+<span class="nc" id="L948">    Attribute classAttribute = null;</span>
+<span class="nc bnc" id="L949" title="All 2 branches missed.">    if (m_trainInstances == null) return &quot;&quot;;</span>
+<span class="nc" id="L950">    try {classAttribute = m_trainInstances.classAttribute();} catch (Exception x){};</span>
+<span class="nc" id="L951">    return (&quot;-ve = &quot; + classAttribute.value(0) +</span>
+<span class="nc" id="L952">	    &quot;, +ve = &quot; + classAttribute.value(1));</span>
+  }
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numOfBoostingIterationsTipText() {
+
+<span class="nc" id="L961">    return &quot;Sets the number of boosting iterations to perform. You will need to manually &quot;</span>
+      + &quot;tune this parameter to suit the dataset and the desired complexity/accuracy &quot;
+      + &quot;tradeoff. More boosting iterations will result in larger (potentially more &quot;
+      + &quot; accurate) trees, but will make learning slower. Each iteration will add 3 nodes &quot;
+      + &quot;(1 split + 2 prediction) to the tree unless merging occurs.&quot;;
+  }
+
+  /**
+   * Gets the number of boosting iterations.
+   *
+   * @return the number of boosting iterations
+   */
+  public int getNumOfBoostingIterations() {
+    
+<span class="fc" id="L975">    return m_boostingIterations;</span>
+  }
+
+  /**
+   * Sets the number of boosting iterations.
+   *
+   * @param b the number of boosting iterations to use
+   */
+  public void setNumOfBoostingIterations(int b) {
+    
+<span class="fc" id="L985">    m_boostingIterations = b; </span>
+<span class="fc" id="L986">  }</span>
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String searchPathTipText() {
+
+<span class="nc" id="L994">    return &quot;Sets the type of search to perform when building the tree. The default option&quot;</span>
+      + &quot; (Expand all paths) will do an exhaustive search. The other search methods are&quot;
+      + &quot; heuristic, so they are not guaranteed to find an optimal solution but they are&quot;
+      + &quot; much faster. Expand the heaviest path: searches the path with the most heavily&quot;
+      + &quot; weighted instances. Expand the best z-pure path: searches the path determined&quot;
+      + &quot; by the best z-pure estimate. Expand a random path: the fastest method, simply&quot;
+      + &quot; searches down a single random path on each iteration.&quot;;
+  }
+
+  /**
+   * Gets the method of searching the tree for a new insertion. Will be one of
+   * SEARCHPATH_ALL, SEARCHPATH_HEAVIEST, SEARCHPATH_ZPURE, SEARCHPATH_RANDOM.
+   *
+   * @return the tree searching mode
+   */
+  public SelectedTag getSearchPath() {
+
+<span class="nc" id="L1011">    return new SelectedTag(m_searchPath, TAGS_SEARCHPATH);</span>
+  }
+  
+  /**
+   * Sets the method of searching the tree for a new insertion. Will be one of
+   * SEARCHPATH_ALL, SEARCHPATH_HEAVIEST, SEARCHPATH_ZPURE, SEARCHPATH_RANDOM.
+   *
+   * @param newMethod the new tree searching mode
+   */
+  public void setSearchPath(SelectedTag newMethod) {
+    
+<span class="pc bpc" id="L1022" title="1 of 2 branches missed.">    if (newMethod.getTags() == TAGS_SEARCHPATH) {</span>
+<span class="fc" id="L1023">      m_searchPath = newMethod.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L1025">  }</span>
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String randomSeedTipText() {
+
+<span class="nc" id="L1033">    return &quot;Sets the random seed to use for a random search.&quot;;</span>
+  }
+
+  /**
+   * Gets random seed for a random walk.
+   *
+   * @return the random seed
+   */
+  public int getRandomSeed() {
+    
+<span class="nc" id="L1043">    return m_randomSeed;</span>
+  }
+
+  /**
+   * Sets random seed for a random walk.
+   *
+   * @param seed the random seed
+   */
+  public void setRandomSeed(int seed) {
+    
+    // the actual random object is created when the tree is initialized
+<span class="nc" id="L1054">    m_randomSeed = seed; </span>
+<span class="nc" id="L1055">  }  </span>
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String saveInstanceDataTipText() {
+
+<span class="nc" id="L1063">    return &quot;Sets whether the tree is to save instance data - the model will take up more&quot;</span>
+      + &quot; memory if it does. If enabled you will be able to visualize the instances at&quot;
+      + &quot; the prediction nodes when visualizing the tree.&quot;;
+  }
+
+  /**
+   * Gets whether the tree is to save instance data.
+   *
+   * @return the random seed
+   */
+  public boolean getSaveInstanceData() {
+    
+<span class="fc" id="L1075">    return m_saveInstanceData;</span>
+  }
+
+  /**
+   * Sets whether the tree is to save instance data.
+   * 
+   * @param v true then the tree saves instance data
+   */
+  public void setSaveInstanceData(boolean v) {
+    
+<span class="fc" id="L1085">    m_saveInstanceData = v;</span>
+<span class="fc" id="L1086">  }</span>
+
+  /**
+   * Returns an enumeration describing the available options..
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+    
+<span class="fc" id="L1095">    Vector newVector = new Vector(3);</span>
+<span class="fc" id="L1096">    newVector.addElement(new Option(</span>
+<span class="fc" id="L1097">				    &quot;\tNumber of boosting iterations.\n&quot;</span>
+				    +&quot;\t(Default = 10)&quot;,
+<span class="fc" id="L1099">				    &quot;B&quot;, 1,&quot;-B &lt;number of boosting iterations&gt;&quot;));</span>
+<span class="fc" id="L1100">    newVector.addElement(new Option(</span>
+<span class="fc" id="L1101">				    &quot;\tExpand nodes: -3(all), -2(weight), -1(z_pure), &quot;</span>
+				    +&quot;&gt;=0 seed for random walk\n&quot;
+				    +&quot;\t(Default = -3)&quot;,
+<span class="fc" id="L1104">				    &quot;E&quot;, 1,&quot;-E &lt;-3|-2|-1|&gt;=0&gt;&quot;));</span>
+<span class="fc" id="L1105">    newVector.addElement(new Option(</span>
+<span class="fc" id="L1106">				    &quot;\tSave the instance data with the model&quot;,</span>
+<span class="fc" id="L1107">				    &quot;D&quot;, 0,&quot;-D&quot;));</span>
+<span class="fc" id="L1108">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. Valid options are:&lt;p&gt;
+   *
+   * -B num &lt;br&gt;
+   * Set the number of boosting iterations
+   * (default 10) &lt;p&gt;
+   *
+   * -E num &lt;br&gt;
+   * Set the nodes to expand: -3(all), -2(weight), -1(z_pure), &gt;=0 seed for random walk
+   * (default -3) &lt;p&gt;
+   *
+   * -D &lt;br&gt;
+   * Save the instance data with the model &lt;p&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @exception Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    
+<span class="fc" id="L1130">    String bString = Utils.getOption('B', options);</span>
+<span class="fc bfc" id="L1131" title="All 2 branches covered.">    if (bString.length() != 0) setNumOfBoostingIterations(Integer.parseInt(bString));</span>
+
+<span class="fc" id="L1133">    String eString = Utils.getOption('E', options);</span>
+<span class="fc bfc" id="L1134" title="All 2 branches covered.">    if (eString.length() != 0) {</span>
+<span class="fc" id="L1135">      int value = Integer.parseInt(eString);</span>
+<span class="pc bpc" id="L1136" title="1 of 2 branches missed.">      if (value &gt;= 0) {</span>
+<span class="nc" id="L1137">	setSearchPath(new SelectedTag(SEARCHPATH_RANDOM, TAGS_SEARCHPATH));</span>
+<span class="nc" id="L1138">	setRandomSeed(value);</span>
+<span class="fc" id="L1139">      } else setSearchPath(new SelectedTag(value + 3, TAGS_SEARCHPATH));</span>
+    }
+
+<span class="fc" id="L1142">    setSaveInstanceData(Utils.getFlag('D', options));</span>
+
+<span class="fc" id="L1144">    Utils.checkForRemainingOptions(options);</span>
+<span class="fc" id="L1145">  }</span>
+
+  /**
+   * Gets the current settings of ADTree.
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions() {
+    
+<span class="fc" id="L1154">    String[] options = new String[6];</span>
+<span class="fc" id="L1155">    int current = 0;</span>
+<span class="fc" id="L1156">    options[current++] = &quot;-B&quot;; options[current++] = &quot;&quot; + getNumOfBoostingIterations();</span>
+<span class="fc" id="L1157">    options[current++] = &quot;-E&quot;; options[current++] = &quot;&quot; +</span>
+<span class="pc bpc" id="L1158" title="1 of 2 branches missed.">				 (m_searchPath == SEARCHPATH_RANDOM ?</span>
+<span class="pc" id="L1159">				  m_randomSeed : m_searchPath - 3);</span>
+<span class="pc bpc" id="L1160" title="1 of 2 branches missed.">    if (getSaveInstanceData()) options[current++] = &quot;-D&quot;;</span>
+<span class="pc bfc" id="L1161" title="All 2 branches covered.">    while (current &lt; options.length) options[current++] = &quot;&quot;;</span>
+<span class="fc" id="L1162">    return options;</span>
+  }
+
+  /**
+   * Calls measure function for tree size - the total number of nodes.
+   *
+   * @return the tree size
+   */
+  public double measureTreeSize() {
+    
+<span class="nc" id="L1172">    return numOfAllNodes(m_root);</span>
+  }
+
+  /**
+   * Calls measure function for leaf size - the number of prediction nodes.
+   *
+   * @return the leaf size
+   */
+  public double measureNumLeaves() {
+    
+<span class="nc" id="L1182">    return numOfPredictionNodes(m_root);</span>
+  }
+
+  /**
+   * Calls measure function for prediction leaf size - the number of 
+   * prediction nodes without children.
+   *
+   * @return the leaf size
+   */
+  public double measureNumPredictionLeaves() {
+    
+<span class="nc" id="L1193">    return numOfPredictionLeafNodes(m_root);</span>
+  }
+
+  /**
+   * Returns the number of nodes expanded.
+   *
+   * @return the number of nodes expanded during search
+   */
+  public double measureNodesExpanded() {
+    
+<span class="nc" id="L1203">    return m_nodesExpanded;</span>
+  }
+
+  /**
+   * Returns the number of examples &quot;counted&quot;.
+   *
+   * @return the number of nodes processed during search
+   */
+
+  public double measureExamplesProcessed() {
+    
+<span class="nc" id="L1214">    return m_examplesCounted;</span>
+  }
+
+  /**
+   * Returns an enumeration of the additional measure names.
+   *
+   * @return an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+    
+<span class="nc" id="L1224">    Vector newVector = new Vector(4);</span>
+<span class="nc" id="L1225">    newVector.addElement(&quot;measureTreeSize&quot;);</span>
+<span class="nc" id="L1226">    newVector.addElement(&quot;measureNumLeaves&quot;);</span>
+<span class="nc" id="L1227">    newVector.addElement(&quot;measureNumPredictionLeaves&quot;);</span>
+<span class="nc" id="L1228">    newVector.addElement(&quot;measureNodesExpanded&quot;);</span>
+<span class="nc" id="L1229">    newVector.addElement(&quot;measureExamplesProcessed&quot;);</span>
+<span class="nc" id="L1230">    return newVector.elements();</span>
+  }
+ 
+  /**
+   * Returns the value of the named measure.
+   *
+   * @param additionalMeasureName the name of the measure to query for its value
+   * @return the value of the named measure
+   * @exception IllegalArgumentException if the named measure is not supported
+   */
+  public double getMeasure(String additionalMeasureName) {
+    
+<span class="nc bnc" id="L1242" title="All 2 branches missed.">    if (additionalMeasureName.equalsIgnoreCase(&quot;measureTreeSize&quot;)) {</span>
+<span class="nc" id="L1243">      return measureTreeSize();</span>
+    }
+<span class="nc bnc" id="L1245" title="All 2 branches missed.">    else if (additionalMeasureName.equalsIgnoreCase(&quot;measureNumLeaves&quot;)) {</span>
+<span class="nc" id="L1246">      return measureNumLeaves();</span>
+    }
+<span class="nc bnc" id="L1248" title="All 2 branches missed.">    else if (additionalMeasureName.equalsIgnoreCase(&quot;measureNumPredictionLeaves&quot;)) {</span>
+<span class="nc" id="L1249">      return measureNumPredictionLeaves();</span>
+    }
+<span class="nc bnc" id="L1251" title="All 2 branches missed.">    else if (additionalMeasureName.equalsIgnoreCase(&quot;measureNodesExpanded&quot;)) {</span>
+<span class="nc" id="L1252">      return measureNodesExpanded();</span>
+    }
+<span class="nc bnc" id="L1254" title="All 2 branches missed.">    else if (additionalMeasureName.equalsIgnoreCase(&quot;measureExamplesProcessed&quot;)) {</span>
+<span class="nc" id="L1255">      return measureExamplesProcessed();</span>
+    }
+<span class="nc" id="L1257">    else {throw new IllegalArgumentException(additionalMeasureName </span>
+<span class="nc" id="L1258">			      + &quot; not supported (ADTree)&quot;);</span>
+    }
+  }
+
+  /**
+   * Returns the total number of nodes in a tree.
+   *
+   * @param root the root of the tree being measured
+   * @return tree size in number of splitter + prediction nodes
+   */       
+  protected int numOfAllNodes(PredictionNode root) {
+    
+<span class="nc" id="L1270">    int numSoFar = 0;</span>
+<span class="nc bnc" id="L1271" title="All 2 branches missed.">    if (root != null) {</span>
+<span class="nc" id="L1272">      numSoFar++;</span>
+<span class="nc bnc" id="L1273" title="All 2 branches missed.">      for (Enumeration e = root.children(); e.hasMoreElements(); ) {</span>
+<span class="nc" id="L1274">	numSoFar++;</span>
+<span class="nc" id="L1275">	Splitter split = (Splitter) e.nextElement();</span>
+<span class="nc bnc" id="L1276" title="All 2 branches missed.">	for (int i=0; i&lt;split.getNumOfBranches(); i++)</span>
+<span class="nc" id="L1277">	    numSoFar += numOfAllNodes(split.getChildForBranch(i));</span>
+      }
+    }
+<span class="nc" id="L1280">    return numSoFar;</span>
+  }
+
+  /**
+   * Returns the number of prediction nodes in a tree.
+   *
+   * @param root the root of the tree being measured
+   * @return tree size in number of prediction nodes
+   */       
+  protected int numOfPredictionNodes(PredictionNode root) {
+    
+<span class="nc" id="L1291">    int numSoFar = 0;</span>
+<span class="nc bnc" id="L1292" title="All 2 branches missed.">    if (root != null) {</span>
+<span class="nc" id="L1293">      numSoFar++;</span>
+<span class="nc bnc" id="L1294" title="All 2 branches missed.">      for (Enumeration e = root.children(); e.hasMoreElements(); ) {</span>
+<span class="nc" id="L1295">	Splitter split = (Splitter) e.nextElement();</span>
+<span class="nc bnc" id="L1296" title="All 2 branches missed.">	for (int i=0; i&lt;split.getNumOfBranches(); i++)</span>
+<span class="nc" id="L1297">	    numSoFar += numOfPredictionNodes(split.getChildForBranch(i));</span>
+      }
+    }
+<span class="nc" id="L1300">    return numSoFar;</span>
+  }
+
+  /**
+   * Returns the number of leaf nodes in a tree - prediction nodes without
+   * children.
+   *
+   * @param root the root of the tree being measured
+   * @return tree leaf size in number of prediction nodes
+   */       
+  protected int numOfPredictionLeafNodes(PredictionNode root) {
+    
+<span class="nc" id="L1312">    int numSoFar = 0;</span>
+<span class="nc bnc" id="L1313" title="All 2 branches missed.">    if (root.getChildren().size() &gt; 0) {</span>
+<span class="nc bnc" id="L1314" title="All 2 branches missed.">      for (Enumeration e = root.children(); e.hasMoreElements(); ) {</span>
+<span class="nc" id="L1315">	Splitter split = (Splitter) e.nextElement();</span>
+<span class="nc bnc" id="L1316" title="All 2 branches missed.">	for (int i=0; i&lt;split.getNumOfBranches(); i++)</span>
+<span class="nc" id="L1317">	    numSoFar += numOfPredictionLeafNodes(split.getChildForBranch(i));</span>
+      }
+<span class="nc" id="L1319">    } else numSoFar = 1;</span>
+<span class="nc" id="L1320">    return numSoFar;</span>
+  }
+
+  /**
+   * Gets the next random value.
+   *
+   * @param max the maximum value (+1) to be returned
+   * @return the next random value (between 0 and max-1)
+   */
+  protected int getRandom(int max) {
+    
+<span class="nc" id="L1331">    return m_random.nextInt(max);</span>
+  }
+
+  /**
+   * Returns the next number in the order that splitter nodes have been added to
+   * the tree, and records that a new splitter has been added.
+   *
+   * @return the next number in the order
+   */
+  public int nextSplitAddedOrder() {
+
+<span class="fc" id="L1342">    return ++m_lastAddedSplitNum;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L1351">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L1352">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L1355">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L1356">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L1357">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L1358">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L1361">    result.enable(Capability.BINARY_CLASS);</span>
+<span class="fc" id="L1362">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="fc" id="L1364">    return result;</span>
+  }
+
+  /**
+   * Builds a classifier for a set of instances.
+   *
+   * @param instances the instances to train the classifier with
+   * @exception Exception if something goes wrong
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L1376">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L1379">    instances = new Instances(instances);</span>
+<span class="fc" id="L1380">    instances.deleteWithMissingClass();</span>
+
+    // set up the tree
+<span class="fc" id="L1383">    initClassifier(instances);</span>
+
+    // build the tree
+<span class="fc bfc" id="L1386" title="All 2 branches covered.">    for (int T = 0; T &lt; m_boostingIterations; T++) boost();</span>
+
+    // clean up if desired
+<span class="pc bpc" id="L1389" title="1 of 2 branches missed.">    if (!m_saveInstanceData) done();</span>
+<span class="fc" id="L1390">  }</span>
+
+  /**
+   * Frees memory that is no longer needed for a final model - will no longer be able
+   * to increment the classifier after calling this.
+   *
+   */
+  public void done() {
+
+<span class="fc" id="L1399">    m_trainInstances = new Instances(m_trainInstances, 0);</span>
+<span class="fc" id="L1400">    m_random = null; </span>
+<span class="fc" id="L1401">    m_numericAttIndices = null;</span>
+<span class="fc" id="L1402">    m_nominalAttIndices = null;</span>
+<span class="fc" id="L1403">    m_posTrainInstances = null;</span>
+<span class="fc" id="L1404">    m_negTrainInstances = null;</span>
+<span class="fc" id="L1405">  }</span>
+
+  /**
+   * Creates a clone that is identical to the current tree, but is independent.
+   * Deep copies the essential elements such as the tree nodes, and the instances
+   * (because the weights change.) Reference copies several elements such as the
+   * potential splitter sets, assuming that such elements should never differ between
+   * clones.
+   *
+   * @return the clone
+   */
+  public Object clone() {
+    
+<span class="nc" id="L1418">    ADTree clone = new ADTree();</span>
+
+<span class="nc bnc" id="L1420" title="All 2 branches missed.">    if (m_root != null) { // check for initialization first</span>
+<span class="nc" id="L1421">      clone.m_root = (PredictionNode) m_root.clone(); // deep copy the tree</span>
+
+<span class="nc" id="L1423">      clone.m_trainInstances = new Instances(m_trainInstances); // copy training instances</span>
+      
+      // deep copy the random object
+<span class="nc bnc" id="L1426" title="All 2 branches missed.">      if (m_random != null) { </span>
+<span class="nc" id="L1427">	SerializedObject randomSerial = null;</span>
+	try {
+<span class="nc" id="L1429">	  randomSerial = new SerializedObject(m_random);</span>
+<span class="nc" id="L1430">	} catch (Exception ignored) {} // we know that Random is serializable</span>
+<span class="nc" id="L1431">	clone.m_random = (Random) randomSerial.getObject();</span>
+      }
+
+<span class="nc" id="L1434">      clone.m_lastAddedSplitNum = m_lastAddedSplitNum;</span>
+<span class="nc" id="L1435">      clone.m_numericAttIndices = m_numericAttIndices;</span>
+<span class="nc" id="L1436">      clone.m_nominalAttIndices = m_nominalAttIndices;</span>
+<span class="nc" id="L1437">      clone.m_trainTotalWeight = m_trainTotalWeight;</span>
+
+      // reconstruct pos/negTrainInstances references
+<span class="nc bnc" id="L1440" title="All 2 branches missed.">      if (m_posTrainInstances != null) { </span>
+<span class="nc" id="L1441">	clone.m_posTrainInstances =</span>
+<span class="nc" id="L1442">	  new ReferenceInstances(m_trainInstances, m_posTrainInstances.numInstances());</span>
+<span class="nc" id="L1443">	clone.m_negTrainInstances =</span>
+<span class="nc" id="L1444">	  new ReferenceInstances(m_trainInstances, m_negTrainInstances.numInstances());</span>
+<span class="nc bnc" id="L1445" title="All 2 branches missed.">	for (Enumeration e = clone.m_trainInstances.enumerateInstances();</span>
+<span class="nc" id="L1446">	     e.hasMoreElements(); ) {</span>
+<span class="nc" id="L1447">	  Instance inst = (Instance) e.nextElement();</span>
+	  try { // ignore classValue() exception
+<span class="nc bnc" id="L1449" title="All 2 branches missed.">	    if ((int) inst.classValue() == 0)</span>
+<span class="nc" id="L1450">	      clone.m_negTrainInstances.addReference(inst); // belongs in negative class</span>
+	    else
+<span class="nc" id="L1452">	      clone.m_posTrainInstances.addReference(inst); // belongs in positive class</span>
+<span class="nc" id="L1453">	  } catch (Exception ignored) {} </span>
+	}
+      }
+    }
+<span class="nc" id="L1457">    clone.m_nodesExpanded = m_nodesExpanded;</span>
+<span class="nc" id="L1458">    clone.m_examplesCounted = m_examplesCounted;</span>
+<span class="nc" id="L1459">    clone.m_boostingIterations = m_boostingIterations;</span>
+<span class="nc" id="L1460">    clone.m_searchPath = m_searchPath;</span>
+<span class="nc" id="L1461">    clone.m_randomSeed = m_randomSeed;</span>
+
+<span class="nc" id="L1463">    return clone;</span>
+  }
+
+  /**
+   * Merges two trees together. Modifies the tree being acted on, leaving tree passed
+   * as a parameter untouched (cloned). Does not check to see whether training instances
+   * are compatible - strange things could occur if they are not.
+   *
+   * @param mergeWith the tree to merge with
+   * @exception Exception if merge could not be performed
+   */
+  public void merge(ADTree mergeWith) throws Exception {
+    
+<span class="nc bnc" id="L1476" title="All 4 branches missed.">    if (m_root == null || mergeWith.m_root == null)</span>
+<span class="nc" id="L1477">      throw new Exception(&quot;Trying to merge an uninitialized tree&quot;);</span>
+<span class="nc" id="L1478">    m_root.merge(mergeWith.m_root, this);</span>
+<span class="nc" id="L1479">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1487">    return RevisionUtils.extract(&quot;$Revision: 5535 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L1496">    runClassifier(new ADTree(), argv);</span>
+<span class="nc" id="L1497">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

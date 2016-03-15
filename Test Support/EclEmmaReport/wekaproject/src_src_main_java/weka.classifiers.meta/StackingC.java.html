@@ -1,0 +1,335 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>StackingC.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.meta</a> &gt; <span class="el_source">StackingC.java</span></div><h1>StackingC.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    StackingC.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.meta;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.functions.LinearRegression;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.MakeIndicator;
+import weka.filters.unsupervised.attribute.Remove;
+
+import java.util.Random;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Implements StackingC (more efficient version of stacking).&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see&lt;br/&gt;
+ * &lt;br/&gt;
+ * A.K. Seewald: How to Make Stacking Better and Faster While Also Taking Care of an Unknown Weakness. In: Nineteenth International Conference on Machine Learning, 554-561, 2002.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Note: requires meta classifier to be a numeric prediction scheme.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Seewald2002,
+ *    author = {A.K. Seewald},
+ *    booktitle = {Nineteenth International Conference on Machine Learning},
+ *    editor = {C. Sammut and A. Hoffmann},
+ *    pages = {554-561},
+ *    publisher = {Morgan Kaufmann Publishers},
+ *    title = {How to Make Stacking Better and Faster While Also Taking Care of an Unknown Weakness},
+ *    year = {2002}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;scheme specification&amp;gt;
+ *  Full name of meta classifier, followed by options.
+ *  Must be a numeric prediction scheme. Default: Linear Regression.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -X &amp;lt;number of folds&amp;gt;
+ *  Sets the number of cross-validation folds.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;classifier specification&amp;gt;
+ *  Full class name of classifier to include, followed
+ *  by scheme options. May be specified multiple times.
+ *  (default: &quot;weka.classifiers.rules.ZeroR&quot;)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Alexander K. Seewald (alex@seewald.at)
+ * @version $Revision: 1.15 $ 
+ */
+public class StackingC 
+  extends Stacking 
+  implements OptionHandler, TechnicalInformationHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = -6717545616603725198L;
+  
+  /** The meta classifiers (one for each class, like in ClassificationViaRegression) */
+<span class="fc" id="L107">  protected Classifier [] m_MetaClassifiers = null;</span>
+  
+  /** Filter to transform metaData - Remove */
+<span class="fc" id="L110">  protected Remove m_attrFilter = null;</span>
+  /** Filter to transform metaData - MakeIndicator */
+<span class="fc" id="L112">  protected MakeIndicator m_makeIndicatorFilter = null;</span>
+
+  /**
+   * The constructor.
+   */
+<span class="fc" id="L117">  public StackingC() {</span>
+<span class="fc" id="L118">    m_MetaClassifier = new weka.classifiers.functions.LinearRegression();</span>
+<span class="fc" id="L119">    ((LinearRegression)(getMetaClassifier())).</span>
+<span class="fc" id="L120">      setAttributeSelectionMethod(new </span>
+<span class="fc" id="L121">	weka.core.SelectedTag(1, LinearRegression.TAGS_SELECTION));</span>
+<span class="fc" id="L122">  }  </span>
+      
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L131">    return  &quot;Implements StackingC (more efficient version of stacking).\n\n&quot;</span>
+      + &quot;For more information, see\n\n&quot;
+<span class="nc" id="L133">      + getTechnicalInformation().toString() + &quot;\n\n&quot;</span>
+<span class="nc" id="L134">      + &quot;Note: requires meta classifier to be a numeric prediction scheme.&quot;;</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L147">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L148">    result.setValue(Field.AUTHOR, &quot;A.K. Seewald&quot;);</span>
+<span class="nc" id="L149">    result.setValue(Field.TITLE, &quot;How to Make Stacking Better and Faster While Also Taking Care of an Unknown Weakness&quot;);</span>
+<span class="nc" id="L150">    result.setValue(Field.BOOKTITLE, &quot;Nineteenth International Conference on Machine Learning&quot;);</span>
+<span class="nc" id="L151">    result.setValue(Field.EDITOR, &quot;C. Sammut and A. Hoffmann&quot;);</span>
+<span class="nc" id="L152">    result.setValue(Field.YEAR, &quot;2002&quot;);</span>
+<span class="nc" id="L153">    result.setValue(Field.PAGES, &quot;554-561&quot;);</span>
+<span class="nc" id="L154">    result.setValue(Field.PUBLISHER, &quot;Morgan Kaufmann Publishers&quot;);</span>
+    
+<span class="nc" id="L156">    return result;</span>
+  }
+
+  /**
+   * String describing option for setting meta classifier
+   * 
+   * @return string describing the option
+   */
+  protected String metaOption() {
+
+<span class="fc" id="L166">    return &quot;\tFull name of meta classifier, followed by options.\n&quot;</span>
+      + &quot;\tMust be a numeric prediction scheme. Default: Linear Regression.&quot;;
+  }
+
+  /**
+   * Process options setting meta classifier.
+   * 
+   * @param options the meta options to parse
+   * @throws Exception if parsing fails
+   */
+  protected void processMetaOptions(String[] options) throws Exception {
+
+<span class="fc" id="L178">    String classifierString = Utils.getOption('M', options);</span>
+<span class="fc" id="L179">    String [] classifierSpec = Utils.splitOptions(classifierString);</span>
+<span class="fc bfc" id="L180" title="All 2 branches covered.">    if (classifierSpec.length != 0) {</span>
+<span class="fc" id="L181">      String classifierName = classifierSpec[0];</span>
+<span class="fc" id="L182">      classifierSpec[0] = &quot;&quot;;</span>
+<span class="fc" id="L183">      setMetaClassifier(Classifier.forName(classifierName, classifierSpec));</span>
+    } else {
+<span class="fc" id="L185">        ((LinearRegression)(getMetaClassifier())).</span>
+<span class="fc" id="L186">	  setAttributeSelectionMethod(new </span>
+<span class="fc" id="L187">	    weka.core.SelectedTag(1,LinearRegression.TAGS_SELECTION));</span>
+    }
+<span class="fc" id="L189">  }</span>
+
+  /**
+   * Method that builds meta level.
+   * 
+   * @param newData the data to work with
+   * @param random the random number generator to use for cross-validation
+   * @throws Exception if generation fails
+   */
+  protected void generateMetaLevel(Instances newData, Random random) 
+    throws Exception {
+
+<span class="fc" id="L201">    Instances metaData = metaFormat(newData);</span>
+<span class="fc" id="L202">    m_MetaFormat = new Instances(metaData, 0);</span>
+<span class="fc bfc" id="L203" title="All 2 branches covered.">    for (int j = 0; j &lt; m_NumFolds; j++) {</span>
+<span class="fc" id="L204">      Instances train = newData.trainCV(m_NumFolds, j, random);</span>
+
+      // Build base classifiers
+<span class="fc bfc" id="L207" title="All 2 branches covered.">      for (int i = 0; i &lt; m_Classifiers.length; i++) {</span>
+<span class="fc" id="L208">	getClassifier(i).buildClassifier(train);</span>
+      }
+
+      // Classify test instances and add to meta data
+<span class="fc" id="L212">      Instances test = newData.testCV(m_NumFolds, j);</span>
+<span class="fc bfc" id="L213" title="All 2 branches covered.">      for (int i = 0; i &lt; test.numInstances(); i++) {</span>
+<span class="fc" id="L214">	metaData.add(metaInstance(test.instance(i)));</span>
+      }
+    }
+    
+<span class="fc" id="L218">    m_MetaClassifiers = Classifier.makeCopies(m_MetaClassifier,</span>
+<span class="fc" id="L219">					      m_BaseFormat.numClasses());</span>
+    
+<span class="fc" id="L221">    int [] arrIdc = new int[m_Classifiers.length + 1];</span>
+<span class="fc" id="L222">    arrIdc[m_Classifiers.length] = metaData.numAttributes() - 1;</span>
+    Instances newInsts;
+<span class="fc bfc" id="L224" title="All 2 branches covered.">    for (int i = 0; i &lt; m_MetaClassifiers.length; i++) {</span>
+<span class="fc bfc" id="L225" title="All 2 branches covered.">      for (int j = 0; j &lt; m_Classifiers.length; j++) {</span>
+<span class="fc" id="L226">	arrIdc[j] = m_BaseFormat.numClasses() * j + i;</span>
+      }
+<span class="fc" id="L228">      m_makeIndicatorFilter = new weka.filters.unsupervised.attribute.MakeIndicator();</span>
+<span class="fc" id="L229">      m_makeIndicatorFilter.setAttributeIndex(&quot;&quot; + (metaData.classIndex() + 1));</span>
+<span class="fc" id="L230">      m_makeIndicatorFilter.setNumeric(true);</span>
+<span class="fc" id="L231">      m_makeIndicatorFilter.setValueIndex(i);</span>
+<span class="fc" id="L232">      m_makeIndicatorFilter.setInputFormat(metaData);</span>
+<span class="fc" id="L233">      newInsts = Filter.useFilter(metaData,m_makeIndicatorFilter);</span>
+      
+<span class="fc" id="L235">      m_attrFilter = new weka.filters.unsupervised.attribute.Remove();</span>
+<span class="fc" id="L236">      m_attrFilter.setInvertSelection(true);</span>
+<span class="fc" id="L237">      m_attrFilter.setAttributeIndicesArray(arrIdc);</span>
+<span class="fc" id="L238">      m_attrFilter.setInputFormat(m_makeIndicatorFilter.getOutputFormat());</span>
+<span class="fc" id="L239">      newInsts = Filter.useFilter(newInsts,m_attrFilter);</span>
+      
+<span class="fc" id="L241">      newInsts.setClassIndex(newInsts.numAttributes()-1);</span>
+      
+<span class="fc" id="L243">      m_MetaClassifiers[i].buildClassifier(newInsts);</span>
+    }
+<span class="fc" id="L245">  }</span>
+
+  /**
+   * Classifies a given instance using the stacked classifier.
+   *
+   * @param instance the instance to be classified
+   * @return the distribution
+   * @throws Exception if instance could not be classified
+   * successfully
+   */
+  public double[] distributionForInstance(Instance instance) throws Exception {
+
+<span class="fc" id="L257">    int [] arrIdc = new int[m_Classifiers.length+1];</span>
+<span class="fc" id="L258">    arrIdc[m_Classifiers.length] = m_MetaFormat.numAttributes() - 1;</span>
+<span class="fc" id="L259">    double [] classProbs = new double[m_BaseFormat.numClasses()];</span>
+    Instance newInst;
+<span class="fc" id="L261">    double sum = 0;</span>
+
+<span class="fc bfc" id="L263" title="All 2 branches covered.">    for (int i = 0; i &lt; m_MetaClassifiers.length; i++) {</span>
+<span class="fc bfc" id="L264" title="All 2 branches covered.">      for (int j = 0; j &lt; m_Classifiers.length; j++) {</span>
+<span class="fc" id="L265">          arrIdc[j] = m_BaseFormat.numClasses() * j + i;</span>
+      }
+<span class="fc" id="L267">      m_makeIndicatorFilter.setAttributeIndex(&quot;&quot; + (m_MetaFormat.classIndex() + 1));</span>
+<span class="fc" id="L268">      m_makeIndicatorFilter.setNumeric(true);</span>
+<span class="fc" id="L269">      m_makeIndicatorFilter.setValueIndex(i);</span>
+<span class="fc" id="L270">      m_makeIndicatorFilter.setInputFormat(m_MetaFormat);</span>
+<span class="fc" id="L271">      m_makeIndicatorFilter.input(metaInstance(instance));</span>
+<span class="fc" id="L272">      m_makeIndicatorFilter.batchFinished();</span>
+<span class="fc" id="L273">      newInst = m_makeIndicatorFilter.output();</span>
+
+<span class="fc" id="L275">      m_attrFilter.setAttributeIndicesArray(arrIdc);</span>
+<span class="fc" id="L276">      m_attrFilter.setInvertSelection(true);</span>
+<span class="fc" id="L277">      m_attrFilter.setInputFormat(m_makeIndicatorFilter.getOutputFormat());</span>
+<span class="fc" id="L278">      m_attrFilter.input(newInst);</span>
+<span class="fc" id="L279">      m_attrFilter.batchFinished();</span>
+<span class="fc" id="L280">      newInst = m_attrFilter.output();</span>
+
+<span class="fc" id="L282">      classProbs[i]=m_MetaClassifiers[i].classifyInstance(newInst);</span>
+<span class="pc bpc" id="L283" title="1 of 2 branches missed.">      if (classProbs[i] &gt; 1) { classProbs[i] = 1; }</span>
+<span class="pc bpc" id="L284" title="1 of 2 branches missed.">      if (classProbs[i] &lt; 0) { classProbs[i] = 0; }</span>
+<span class="fc" id="L285">      sum += classProbs[i];</span>
+    }
+
+<span class="pc bpc" id="L288" title="1 of 2 branches missed.">    if (sum!=0) Utils.normalize(classProbs,sum);</span>
+
+<span class="fc" id="L290">    return classProbs;</span>
+  }
+
+  /**
+   * Output a representation of this classifier
+   * 
+   * @return a string representation of the classifier
+   */
+  public String toString() {
+
+<span class="pc bpc" id="L300" title="1 of 2 branches missed.">    if (m_MetaFormat == null) {</span>
+<span class="fc" id="L301">      return &quot;StackingC: No model built yet.&quot;;</span>
+    }
+<span class="nc" id="L303">    String result = &quot;StackingC\n\nBase classifiers\n\n&quot;;</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">    for (int i = 0; i &lt; m_Classifiers.length; i++) {</span>
+<span class="nc" id="L305">      result += getClassifier(i).toString() +&quot;\n\n&quot;;</span>
+    }
+   
+<span class="nc" id="L308">    result += &quot;\n\nMeta classifiers (one for each class)\n\n&quot;;</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">    for (int i = 0; i&lt; m_MetaClassifiers.length; i++) {</span>
+<span class="nc" id="L310">      result += m_MetaClassifiers[i].toString() +&quot;\n\n&quot;;</span>
+    }
+
+<span class="nc" id="L313">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L322">    return RevisionUtils.extract(&quot;$Revision: 1.15 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain the following arguments:
+   * -t training file [-T test file] [-c class index]
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L332">    runClassifier(new StackingC(), argv);</span>
+<span class="nc" id="L333">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

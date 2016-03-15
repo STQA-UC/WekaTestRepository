@@ -1,0 +1,1274 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Cobweb.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.clusterers</a> &gt; <span class="el_source">Cobweb.java</span></div><h1>Cobweb.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Cobweb.java
+ *    Copyright (C) 2001 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.clusterers;
+
+import weka.core.AttributeStats;
+import weka.core.Capabilities;
+import weka.core.Drawable;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.experiment.Stats;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Add;
+
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class implementing the Cobweb and Classit clustering algorithms.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Note: the application of node operators (merging, splitting etc.) in terms of ordering and priority differs (and is somewhat ambiguous) between the original Cobweb and Classit papers. This algorithm always compares the best host, adding a new leaf, merging the two best hosts, and splitting the best host when considering where to place a new instance.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * D. Fisher (1987). Knowledge acquisition via incremental conceptual clustering. Machine Learning. 2(2):139-172.&lt;br/&gt;
+ * &lt;br/&gt;
+ * J. H. Gennari, P. Langley, D. Fisher (1990). Models of incremental concept formation. Artificial Intelligence. 40:11-61.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;article{Fisher1987,
+ *    author = {D. Fisher},
+ *    journal = {Machine Learning},
+ *    number = {2},
+ *    pages = {139-172},
+ *    title = {Knowledge acquisition via incremental conceptual clustering},
+ *    volume = {2},
+ *    year = {1987}
+ * }
+ * 
+ * &amp;#64;article{Gennari1990,
+ *    author = {J. H. Gennari and P. Langley and D. Fisher},
+ *    journal = {Artificial Intelligence},
+ *    pages = {11-61},
+ *    title = {Models of incremental concept formation},
+ *    volume = {40},
+ *    year = {1990}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -A &amp;lt;acuity&amp;gt;
+ *  Acuity.
+ *  (default=1.0)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;cutoff&amp;gt;
+ *  Cutoff.
+ *  (default=0.002)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 42)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author &lt;a href=&quot;mailto:mhall@cs.waikato.ac.nz&quot;&gt;Mark Hall&lt;/a&gt;
+ * @version $Revision: 6790 $
+ * @see RandomizableClusterer
+ * @see Drawable
+ */
+<span class="fc" id="L110">public class Cobweb </span>
+  extends RandomizableClusterer
+  implements Drawable, TechnicalInformationHandler, UpdateableClusterer {
+
+  /** for serialization */
+  static final long serialVersionUID = 928406656495092318L;
+  
+  /**
+   * Inner class handling node operations for Cobweb.
+   *
+   * @see Serializable
+   */
+  private class CNode 
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    static final long serialVersionUID = 3452097436933325631L;    
+    /**
+     * Within cluster attribute statistics
+     */
+    private AttributeStats[] m_attStats;
+
+    /**
+     * Number of attributes
+     */
+    private int m_numAttributes;
+    
+    /**
+     * Instances at this node
+     */
+<span class="nc" id="L140">    protected Instances m_clusterInstances = null;</span>
+
+    /**
+     * Children of this node
+     */
+<span class="nc" id="L145">    private FastVector m_children = null;</span>
+
+    /**
+     * Total instances at this node
+     */
+<span class="nc" id="L150">    private double m_totalInstances = 0.0;</span>
+
+    /**
+     * Cluster number of this node
+     */
+<span class="nc" id="L155">    private int m_clusterNum = -1;</span>
+
+    /**
+     * Creates an empty &lt;code&gt;CNode&lt;/code&gt; instance.
+     *
+     * @param numAttributes the number of attributes in the data
+     */
+<span class="nc" id="L162">    public CNode(int numAttributes) {      </span>
+<span class="nc" id="L163">      m_numAttributes = numAttributes;</span>
+<span class="nc" id="L164">    }</span>
+
+    /**
+     * Creates a new leaf &lt;code&gt;CNode&lt;/code&gt; instance.
+     *
+     * @param numAttributes the number of attributes in the data
+     * @param leafInstance the instance to store at this leaf
+     */
+    public CNode(int numAttributes, Instance leafInstance) {
+<span class="nc" id="L173">      this(numAttributes);</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">      if (m_clusterInstances == null) {</span>
+<span class="nc" id="L175">	m_clusterInstances = new Instances(leafInstance.dataset(), 1);</span>
+      }
+<span class="nc" id="L177">      m_clusterInstances.add(leafInstance);</span>
+<span class="nc" id="L178">      updateStats(leafInstance, false);</span>
+<span class="nc" id="L179">    }</span>
+    
+    /**
+     * Adds an instance to this cluster.
+     *
+     * @param newInstance the instance to add
+     * @throws Exception if an error occurs
+     */
+    protected void addInstance(Instance newInstance) throws Exception {
+      // Add the instance to this cluster
+
+<span class="nc bnc" id="L190" title="All 2 branches missed.">      if (m_clusterInstances == null) {</span>
+<span class="nc" id="L191">	m_clusterInstances = new Instances(newInstance.dataset(), 1);</span>
+<span class="nc" id="L192">	m_clusterInstances.add(newInstance);</span>
+<span class="nc" id="L193">	updateStats(newInstance, false);</span>
+<span class="nc" id="L194">	return;</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">      } else if (m_children == null) {</span>
+	/* we are a leaf, so make our existing instance(s) into a child
+	   and then add the new instance as a child */
+<span class="nc" id="L198">	m_children = new FastVector();</span>
+<span class="nc" id="L199">	CNode tempSubCluster = new CNode(m_numAttributes, </span>
+<span class="nc" id="L200">					 m_clusterInstances.instance(0)); </span>
+
+	//	System.out.println(&quot;Dumping &quot;+m_clusterInstances.numInstances());
+<span class="nc bnc" id="L203" title="All 2 branches missed.">	for (int i = 1; i &lt; m_clusterInstances.numInstances(); i++) {</span>
+<span class="nc" id="L204">	  tempSubCluster.m_clusterInstances.</span>
+<span class="nc" id="L205">	    add(m_clusterInstances.instance(i));</span>
+<span class="nc" id="L206">	  tempSubCluster.updateStats(m_clusterInstances.instance(i), false);</span>
+	}
+<span class="nc" id="L208">	m_children = new FastVector();</span>
+<span class="nc" id="L209">	m_children.addElement(tempSubCluster);</span>
+<span class="nc" id="L210">	m_children.addElement(new CNode(m_numAttributes, newInstance));</span>
+	
+<span class="nc" id="L212">	m_clusterInstances.add(newInstance);</span>
+<span class="nc" id="L213">	updateStats(newInstance, false);</span>
+
+	// here is where we check against cutoff (also check cutoff
+	// in findHost)
+<span class="nc bnc" id="L217" title="All 2 branches missed.">	if (categoryUtility() &lt; m_cutoff) {</span>
+	  //	  System.out.println(&quot;Cutting (leaf add) &quot;);
+<span class="nc" id="L219">	  m_children = null;</span>
+	}
+<span class="nc" id="L221">	return;</span>
+      }
+      
+      // otherwise, find the best host for this instance
+<span class="nc" id="L225">      CNode bestHost = findHost(newInstance, false);</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">      if (bestHost != null) {	</span>
+	// now add to the best host
+<span class="nc" id="L228">	bestHost.addInstance(newInstance);</span>
+      }
+<span class="nc" id="L230">    }</span>
+
+    /**
+     * Temporarily adds a new instance to each of this nodes children
+     * in turn and computes the category utility.
+     *
+     * @param newInstance the new instance to evaluate
+     * @return an array of category utility values---the result of considering
+     * each child in turn as a host for the new instance
+     * @throws Exception if an error occurs
+     */
+    private double[] cuScoresForChildren(Instance newInstance) 
+      throws Exception {
+      // look for a host in existing children
+<span class="nc" id="L244">      double[] categoryUtils = new double [m_children.size()];</span>
+      
+      // look for a home for this instance in the existing children
+<span class="nc bnc" id="L247" title="All 2 branches missed.">      for (int i = 0; i &lt; m_children.size(); i++) {</span>
+<span class="nc" id="L248">	CNode temp = (CNode) m_children.elementAt(i);</span>
+	// tentitively add the new instance to this child
+<span class="nc" id="L250">	temp.updateStats(newInstance, false);</span>
+<span class="nc" id="L251">	categoryUtils[i] = categoryUtility();</span>
+	
+	// remove the new instance from this child
+<span class="nc" id="L254">	temp.updateStats(newInstance, true);</span>
+      }
+<span class="nc" id="L256">      return categoryUtils;</span>
+    }
+
+    private double cuScoreForBestTwoMerged(CNode merged, 
+					   CNode a, CNode b,
+					   Instance newInstance) 
+      throws Exception {
+
+<span class="nc" id="L264">      double mergedCU = -Double.MAX_VALUE;</span>
+      // consider merging the best and second
+      // best.
+<span class="nc" id="L267">      merged.m_clusterInstances = new Instances(m_clusterInstances, 1);</span>
+      
+<span class="nc" id="L269">      merged.addChildNode(a);</span>
+<span class="nc" id="L270">      merged.addChildNode(b);</span>
+<span class="nc" id="L271">      merged.updateStats(newInstance, false); // add new instance to stats</span>
+      // remove the best and second best nodes
+<span class="nc" id="L273">      m_children.removeElementAt(m_children.indexOf(a));</span>
+<span class="nc" id="L274">      m_children.removeElementAt(m_children.indexOf(b));	</span>
+<span class="nc" id="L275">      m_children.addElement(merged);</span>
+<span class="nc" id="L276">      mergedCU = categoryUtility();</span>
+      // restore the status quo
+<span class="nc" id="L278">      merged.updateStats(newInstance, true);</span>
+<span class="nc" id="L279">      m_children.removeElementAt(m_children.indexOf(merged));</span>
+<span class="nc" id="L280">      m_children.addElement(a);</span>
+<span class="nc" id="L281">      m_children.addElement(b);</span>
+<span class="nc" id="L282">      return mergedCU;</span>
+    }
+
+    /**
+     * Finds a host for the new instance in this nodes children. Also
+     * considers merging the two best hosts and splitting the best host.
+     *
+     * @param newInstance the instance to find a host for
+     * @param structureFrozen true if the instance is not to be added to
+     * the tree and instead the best potential host is to be returned
+     * @return the best host
+     * @throws Exception if an error occurs
+     */
+    private CNode findHost(Instance newInstance, 
+			   boolean structureFrozen) throws Exception {
+
+<span class="nc bnc" id="L298" title="All 2 branches missed.">      if (!structureFrozen) {</span>
+<span class="nc" id="L299">	updateStats(newInstance, false);</span>
+      }
+      
+      // look for a host in existing children and also consider as a new leaf
+<span class="nc" id="L303">      double[] categoryUtils = cuScoresForChildren(newInstance);</span>
+      
+      // make a temporary new leaf for this instance and get CU
+<span class="nc" id="L306">      CNode newLeaf = new CNode(m_numAttributes, newInstance);</span>
+<span class="nc" id="L307">      m_children.addElement(newLeaf);</span>
+<span class="nc" id="L308">      double bestHostCU = categoryUtility();</span>
+<span class="nc" id="L309">      CNode finalBestHost = newLeaf;</span>
+      
+      // remove new leaf when seaching for best and second best nodes to
+      // consider for merging and splitting
+<span class="nc" id="L313">      m_children.removeElementAt(m_children.size()-1);</span>
+
+      // now determine the best host (and the second best)
+<span class="nc" id="L316">      int best = 0;</span>
+<span class="nc" id="L317">      int secondBest = 0;</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">      for (int i = 0; i &lt; categoryUtils.length; i++) {</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">	if (categoryUtils[i] &gt; categoryUtils[secondBest]) {</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">	  if (categoryUtils[i] &gt; categoryUtils[best]) {</span>
+<span class="nc" id="L321">	    secondBest = best;</span>
+<span class="nc" id="L322">	    best = i;</span>
+	  } else {
+<span class="nc" id="L324">	    secondBest = i;</span>
+	  }
+	} 
+      }
+      
+<span class="nc" id="L329">      CNode a = (CNode) m_children.elementAt(best);</span>
+<span class="nc" id="L330">      CNode b = (CNode) m_children.elementAt(secondBest);</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">      if (categoryUtils[best] &gt; bestHostCU) {</span>
+<span class="nc" id="L332">	bestHostCU = categoryUtils[best];</span>
+<span class="nc" id="L333">	finalBestHost = a;</span>
+	//	System.out.println(&quot;Node is best&quot;);
+      }
+
+<span class="nc bnc" id="L337" title="All 2 branches missed.">      if (structureFrozen) {</span>
+<span class="nc bnc" id="L338" title="All 2 branches missed.">	if (finalBestHost == newLeaf) {</span>
+<span class="nc" id="L339">	  return null; // *this* node is the best host</span>
+	} else {
+<span class="nc" id="L341">	  return finalBestHost;</span>
+	}
+      }
+
+<span class="nc" id="L345">      double mergedCU = -Double.MAX_VALUE;</span>
+<span class="nc" id="L346">      CNode merged = new CNode(m_numAttributes);</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">      if (a != b) {</span>
+<span class="nc" id="L348">	mergedCU = cuScoreForBestTwoMerged(merged, a, b, newInstance);</span>
+
+<span class="nc bnc" id="L350" title="All 2 branches missed.">	if (mergedCU &gt; bestHostCU) {</span>
+<span class="nc" id="L351">	  bestHostCU = mergedCU;</span>
+<span class="nc" id="L352">	  finalBestHost = merged;</span>
+	}
+      }
+
+      // Consider splitting the best
+<span class="nc" id="L357">      double splitCU = -Double.MAX_VALUE;</span>
+<span class="nc" id="L358">      double splitBestChildCU = -Double.MAX_VALUE;</span>
+<span class="nc" id="L359">      double splitPlusNewLeafCU = -Double.MAX_VALUE;</span>
+<span class="nc" id="L360">      double splitPlusMergeBestTwoCU = -Double.MAX_VALUE;</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">      if (a.m_children != null) {</span>
+<span class="nc" id="L362">	FastVector tempChildren = new FastVector();</span>
+
+<span class="nc bnc" id="L364" title="All 2 branches missed.">	for (int i = 0; i &lt; m_children.size(); i++) {</span>
+<span class="nc" id="L365">	  CNode existingChild = (CNode)m_children.elementAt(i);</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">	  if (existingChild != a) {</span>
+<span class="nc" id="L367">	    tempChildren.addElement(existingChild);</span>
+	  }
+	}
+<span class="nc bnc" id="L370" title="All 2 branches missed.">	for (int i = 0; i &lt; a.m_children.size(); i++) {</span>
+<span class="nc" id="L371">	  CNode promotedChild = (CNode)a.m_children.elementAt(i);</span>
+<span class="nc" id="L372">	  tempChildren.addElement(promotedChild);</span>
+	}
+	// also add the new leaf
+<span class="nc" id="L375">	tempChildren.addElement(newLeaf);</span>
+
+<span class="nc" id="L377">	FastVector saveStatusQuo = m_children;</span>
+<span class="nc" id="L378">	m_children = tempChildren;</span>
+<span class="nc" id="L379">	splitPlusNewLeafCU = categoryUtility(); // split + new leaf</span>
+	// remove the new leaf
+<span class="nc" id="L381">	tempChildren.removeElementAt(tempChildren.size()-1);</span>
+	// now look for best and second best
+<span class="nc" id="L383">	categoryUtils = cuScoresForChildren(newInstance);</span>
+
+	// now determine the best host (and the second best)
+<span class="nc" id="L386">	best = 0;</span>
+<span class="nc" id="L387">	secondBest = 0;</span>
+<span class="nc bnc" id="L388" title="All 2 branches missed.">	for (int i = 0; i &lt; categoryUtils.length; i++) {</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">	  if (categoryUtils[i] &gt; categoryUtils[secondBest]) {</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">	    if (categoryUtils[i] &gt; categoryUtils[best]) {</span>
+<span class="nc" id="L391">	      secondBest = best;</span>
+<span class="nc" id="L392">	      best = i;</span>
+	    } else {
+<span class="nc" id="L394">	      secondBest = i;</span>
+	    }
+	  } 
+	}
+<span class="nc" id="L398">	CNode sa = (CNode) m_children.elementAt(best);</span>
+<span class="nc" id="L399">	CNode sb = (CNode) m_children.elementAt(secondBest);</span>
+<span class="nc" id="L400">	splitBestChildCU = categoryUtils[best];</span>
+
+	// now merge best and second best
+<span class="nc" id="L403">	CNode mergedSplitChildren = new CNode(m_numAttributes);</span>
+<span class="nc bnc" id="L404" title="All 2 branches missed.">	if (sa != sb) {</span>
+<span class="nc" id="L405">	  splitPlusMergeBestTwoCU = </span>
+<span class="nc" id="L406">	    cuScoreForBestTwoMerged(mergedSplitChildren, sa, sb, newInstance);</span>
+	}
+<span class="nc bnc" id="L408" title="All 2 branches missed.">	splitCU = (splitBestChildCU &gt; splitPlusNewLeafCU) ?</span>
+<span class="nc" id="L409">	  splitBestChildCU : splitPlusNewLeafCU;</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">	splitCU = (splitCU &gt; splitPlusMergeBestTwoCU) ? </span>
+<span class="nc" id="L411">	  splitCU : splitPlusMergeBestTwoCU;</span>
+
+<span class="nc bnc" id="L413" title="All 2 branches missed.">	if (splitCU &gt; bestHostCU) {</span>
+<span class="nc" id="L414">	  bestHostCU = splitCU;</span>
+<span class="nc" id="L415">	  finalBestHost = this;</span>
+	  //	  tempChildren.removeElementAt(tempChildren.size()-1);
+	} else {
+	  // restore the status quo
+<span class="nc" id="L419">	  m_children = saveStatusQuo;</span>
+	}
+      }
+
+<span class="nc bnc" id="L423" title="All 2 branches missed.">      if (finalBestHost != this) {</span>
+	// can commit the instance to the set of instances at this node
+<span class="nc" id="L425">	m_clusterInstances.add(newInstance);</span>
+      } else {
+<span class="nc" id="L427">	m_numberSplits++;</span>
+      }
+
+<span class="nc bnc" id="L430" title="All 2 branches missed.">      if (finalBestHost == merged) {</span>
+<span class="nc" id="L431">	m_numberMerges++;</span>
+<span class="nc" id="L432">	m_children.removeElementAt(m_children.indexOf(a));</span>
+<span class="nc" id="L433">	m_children.removeElementAt(m_children.indexOf(b));	</span>
+<span class="nc" id="L434">	m_children.addElement(merged);</span>
+      }
+
+<span class="nc bnc" id="L437" title="All 2 branches missed.">      if (finalBestHost == newLeaf) {</span>
+<span class="nc" id="L438">	finalBestHost = new CNode(m_numAttributes);</span>
+<span class="nc" id="L439">	m_children.addElement(finalBestHost);</span>
+      }
+
+<span class="nc bnc" id="L442" title="All 2 branches missed.">      if (bestHostCU &lt; m_cutoff) {</span>
+<span class="nc bnc" id="L443" title="All 2 branches missed.">	if (finalBestHost == this) {</span>
+	  // splitting was the best, but since we are cutting all children
+	  // recursion is aborted and we still need to add the instance
+	  // to the set of instances at this node
+<span class="nc" id="L447">	  m_clusterInstances.add(newInstance);</span>
+	}
+<span class="nc" id="L449">	m_children = null;</span>
+<span class="nc" id="L450">	finalBestHost = null;</span>
+      }
+
+<span class="nc bnc" id="L453" title="All 2 branches missed.">      if (finalBestHost == this) {</span>
+	// splitting is still the best, so downdate the stats as 
+	// we'll be recursively calling on this node
+<span class="nc" id="L456">	updateStats(newInstance, true);</span>
+      }
+
+<span class="nc" id="L459">      return finalBestHost;</span>
+    }
+    
+    /**
+     * Adds the supplied node as a child of this node. All of the child's
+     * instances are added to this nodes instances
+     *
+     * @param child the child to add
+     */
+    protected void addChildNode(CNode child) {
+<span class="nc bnc" id="L469" title="All 2 branches missed.">      for (int i = 0; i &lt; child.m_clusterInstances.numInstances(); i++) {</span>
+<span class="nc" id="L470">	Instance temp = child.m_clusterInstances.instance(i);</span>
+<span class="nc" id="L471">	m_clusterInstances.add(temp);</span>
+<span class="nc" id="L472">	updateStats(temp, false);</span>
+      }
+
+<span class="nc bnc" id="L475" title="All 2 branches missed.">      if (m_children == null) {</span>
+<span class="nc" id="L476">	m_children = new FastVector();</span>
+      }
+<span class="nc" id="L478">      m_children.addElement(child);</span>
+<span class="nc" id="L479">    }</span>
+
+    /**
+     * Computes the utility of all children with respect to this node
+     *
+     * @return the category utility of the children with respect to this node.
+     * @throws Exception if there are no children
+     */
+    protected double categoryUtility() throws Exception {
+      
+<span class="nc bnc" id="L489" title="All 2 branches missed.">      if (m_children == null) {</span>
+<span class="nc" id="L490">	throw new Exception(&quot;categoryUtility: No children!&quot;);</span>
+      }
+
+<span class="nc" id="L493">      double totalCU = 0;</span>
+     
+<span class="nc bnc" id="L495" title="All 2 branches missed.">      for (int i = 0; i &lt; m_children.size(); i++) {</span>
+<span class="nc" id="L496">	CNode child = (CNode) m_children.elementAt(i);</span>
+<span class="nc" id="L497">	totalCU += categoryUtilityChild(child);</span>
+      }
+
+<span class="nc" id="L500">      totalCU /= (double)m_children.size();</span>
+<span class="nc" id="L501">      return totalCU;</span>
+    }
+
+    /**
+     * Computes the utility of a single child with respect to this node
+     *
+     * @param child the child for which to compute the utility
+     * @return the utility of the child with respect to this node
+     * @throws Exception if something goes wrong
+     */
+    protected double categoryUtilityChild(CNode child) throws Exception {
+      
+<span class="nc" id="L513">      double sum = 0;</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">	if (m_clusterInstances.attribute(i).isNominal()) {</span>
+<span class="nc" id="L516">	  for (int j = 0; </span>
+<span class="nc bnc" id="L517" title="All 2 branches missed.">	       j &lt; m_clusterInstances.attribute(i).numValues(); j++) {</span>
+<span class="nc" id="L518">	    double x = child.getProbability(i, j);</span>
+<span class="nc" id="L519">	    double y = getProbability(i, j);</span>
+<span class="nc" id="L520">	    sum += (x * x) - (y * y);</span>
+	  }
+	} else {
+	  // numeric attribute
+<span class="nc" id="L524">	  sum += ((m_normal / child.getStandardDev(i)) - </span>
+<span class="nc" id="L525">		  (m_normal / getStandardDev(i)));</span>
+	  
+	}
+      }
+<span class="nc" id="L529">      return (child.m_totalInstances / m_totalInstances) * sum;</span>
+    }
+
+    /**
+     * Returns the probability of a value of a nominal attribute in this node
+     *
+     * @param attIndex the index of the attribute
+     * @param valueIndex the index of the value of the attribute
+     * @return the probability
+     * @throws Exception if the requested attribute is not nominal
+     */
+    protected double getProbability(int attIndex, int valueIndex) 
+      throws Exception {
+      
+<span class="nc bnc" id="L543" title="All 2 branches missed.">      if (!m_clusterInstances.attribute(attIndex).isNominal()) {</span>
+<span class="nc" id="L544">	throw new Exception(&quot;getProbability: attribute is not nominal&quot;);</span>
+      }
+
+<span class="nc bnc" id="L547" title="All 2 branches missed.">      if (m_attStats[attIndex].totalCount &lt;= 0) {</span>
+<span class="nc" id="L548">	return 0;</span>
+      }
+
+<span class="nc" id="L551">      return (double) m_attStats[attIndex].nominalCounts[valueIndex] / </span>
+<span class="nc" id="L552">	(double) m_attStats[attIndex].totalCount;</span>
+    }
+
+    /**
+     * Returns the standard deviation of a numeric attribute
+     *
+     * @param attIndex the index of the attribute
+     * @return the standard deviation
+     * @throws Exception if an error occurs
+     */
+    protected double getStandardDev(int attIndex) throws Exception {
+<span class="nc bnc" id="L563" title="All 2 branches missed.">      if (!m_clusterInstances.attribute(attIndex).isNumeric()) {</span>
+<span class="nc" id="L564">	throw new Exception(&quot;getStandardDev: attribute is not numeric&quot;);</span>
+      }
+
+<span class="nc" id="L567">      m_attStats[attIndex].numericStats.calculateDerived();</span>
+<span class="nc" id="L568">      double stdDev = m_attStats[attIndex].numericStats.stdDev;</span>
+<span class="nc bnc" id="L569" title="All 4 branches missed.">      if (Double.isNaN(stdDev) || Double.isInfinite(stdDev)) {</span>
+<span class="nc" id="L570">	return m_acuity;</span>
+      }
+
+<span class="nc" id="L573">      return Math.max(m_acuity, stdDev);</span>
+    }
+
+    /**
+     * Update attribute stats using the supplied instance. 
+     *
+     * @param updateInstance the instance for updating
+     * @param delete true if the values of the supplied instance are
+     * to be removed from the statistics
+     */
+    protected void updateStats(Instance updateInstance, 
+			       boolean delete) {
+
+<span class="nc bnc" id="L586" title="All 2 branches missed.">      if (m_attStats == null) {</span>
+<span class="nc" id="L587">	m_attStats = new AttributeStats[m_numAttributes];</span>
+<span class="nc bnc" id="L588" title="All 2 branches missed.">	for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc" id="L589">	  m_attStats[i] = new AttributeStats();</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">	  if (m_clusterInstances.attribute(i).isNominal()) {</span>
+<span class="nc" id="L591">	    m_attStats[i].nominalCounts = </span>
+<span class="nc" id="L592">	      new int [m_clusterInstances.attribute(i).numValues()];</span>
+	  } else {
+<span class="nc" id="L594">	    m_attStats[i].numericStats = new Stats();</span>
+	  }
+	}
+      }
+<span class="nc bnc" id="L598" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc bnc" id="L599" title="All 2 branches missed.">	if (!updateInstance.isMissing(i)) {</span>
+<span class="nc" id="L600">	  double value = updateInstance.value(i);</span>
+<span class="nc bnc" id="L601" title="All 2 branches missed.">	  if (m_clusterInstances.attribute(i).isNominal()) {</span>
+<span class="nc bnc" id="L602" title="All 2 branches missed.">	    m_attStats[i].nominalCounts[(int)value] += (delete) ? </span>
+<span class="nc" id="L603">	      (-1.0 * updateInstance.weight()) : </span>
+<span class="nc" id="L604">	      updateInstance.weight();</span>
+<span class="nc bnc" id="L605" title="All 2 branches missed.">	    m_attStats[i].totalCount += (delete) ?</span>
+<span class="nc" id="L606">	      (-1.0 * updateInstance.weight()) :</span>
+<span class="nc" id="L607">	      updateInstance.weight();</span>
+	  } else {
+<span class="nc bnc" id="L609" title="All 2 branches missed.">	    if (delete) {</span>
+<span class="nc" id="L610">	      m_attStats[i].numericStats.subtract(value, </span>
+<span class="nc" id="L611">						  updateInstance.weight());</span>
+	    } else {
+<span class="nc" id="L613">	      m_attStats[i].numericStats.add(value, updateInstance.weight());</span>
+	    }
+	  }
+	}
+      }
+<span class="nc bnc" id="L618" title="All 2 branches missed.">      m_totalInstances += (delete) </span>
+<span class="nc" id="L619">	? (-1.0 * updateInstance.weight()) </span>
+<span class="nc" id="L620">	: (updateInstance.weight());</span>
+<span class="nc" id="L621">    }</span>
+
+    /**
+     * Recursively assigns numbers to the nodes in the tree.
+     *
+     * @param cl_num an &lt;code&gt;int[]&lt;/code&gt; value
+     * @throws Exception if an error occurs
+     */
+    private void assignClusterNums(int[] cl_num) throws Exception {
+<span class="nc bnc" id="L630" title="All 4 branches missed.">      if (m_children != null &amp;&amp; m_children.size() &lt; 2) {</span>
+<span class="nc" id="L631">	throw new Exception(&quot;assignClusterNums: tree not built correctly!&quot;);</span>
+      }
+      
+<span class="nc" id="L634">      m_clusterNum = cl_num[0];</span>
+<span class="nc" id="L635">      cl_num[0]++;</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">      if (m_children != null) {</span>
+<span class="nc bnc" id="L637" title="All 2 branches missed.">	for (int i = 0; i &lt; m_children.size(); i++) {</span>
+<span class="nc" id="L638">	  CNode child = (CNode) m_children.elementAt(i);</span>
+<span class="nc" id="L639">	  child.assignClusterNums(cl_num);</span>
+	}
+      }
+<span class="nc" id="L642">    }</span>
+
+    /**
+     * Recursively build a string representation of the Cobweb tree
+     *
+     * @param depth depth of this node in the tree
+     * @param text holds the string representation
+     */
+    protected void dumpTree(int depth, StringBuffer text) {
+
+<span class="nc bnc" id="L652" title="All 2 branches missed.">      if (depth == 0)</span>
+<span class="nc" id="L653">	determineNumberOfClusters();</span>
+      
+<span class="nc bnc" id="L655" title="All 2 branches missed.">      if (m_children == null) {</span>
+<span class="nc" id="L656">	text.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L657" title="All 2 branches missed.">	for (int j = 0; j &lt; depth; j++) {</span>
+<span class="nc" id="L658">	  text.append(&quot;|   &quot;);</span>
+	}
+<span class="nc" id="L660">	text.append(&quot;leaf &quot;+m_clusterNum+&quot; [&quot;</span>
+<span class="nc" id="L661">		    +m_clusterInstances.numInstances()+&quot;]&quot;);</span>
+      } else {
+<span class="nc bnc" id="L663" title="All 2 branches missed.">	for (int i = 0; i &lt; m_children.size(); i++) {</span>
+<span class="nc" id="L664">	  text.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L665" title="All 2 branches missed.">	  for (int j = 0; j &lt; depth; j++) {</span>
+<span class="nc" id="L666">	    text.append(&quot;|   &quot;);</span>
+	  }
+<span class="nc" id="L668">	  text.append(&quot;node &quot;+m_clusterNum+&quot; [&quot;</span>
+<span class="nc" id="L669">		      +m_clusterInstances.numInstances()</span>
+<span class="nc" id="L670">		      +&quot;]&quot;);</span>
+<span class="nc" id="L671">	  ((CNode) m_children.elementAt(i)).dumpTree(depth+1, text);</span>
+	}
+      }
+<span class="nc" id="L674">    }</span>
+
+    /**
+     * Returns the instances at this node as a string. Appends the cluster
+     * number of the child that each instance belongs to.
+     *
+     * @return a &lt;code&gt;String&lt;/code&gt; value
+     * @throws Exception if an error occurs
+     */
+    protected String dumpData() throws Exception {
+<span class="nc bnc" id="L684" title="All 2 branches missed.">      if (m_children == null) {</span>
+<span class="nc" id="L685">	return m_clusterInstances.toString();</span>
+      }
+
+      // construct instances string with cluster numbers attached
+<span class="nc" id="L689">      CNode tempNode = new CNode(m_numAttributes);</span>
+<span class="nc" id="L690">      tempNode.m_clusterInstances = new Instances(m_clusterInstances, 1);</span>
+<span class="nc bnc" id="L691" title="All 2 branches missed.">      for (int i = 0; i &lt; m_children.size(); i++) {</span>
+<span class="nc" id="L692">	tempNode.addChildNode((CNode)m_children.elementAt(i));</span>
+      }
+<span class="nc" id="L694">      Instances tempInst = tempNode.m_clusterInstances;</span>
+<span class="nc" id="L695">      tempNode = null;</span>
+
+<span class="nc" id="L697">      Add af = new Add();</span>
+<span class="nc" id="L698">      af.setAttributeName(&quot;Cluster&quot;);</span>
+<span class="nc" id="L699">      String labels = &quot;&quot;;</span>
+<span class="nc bnc" id="L700" title="All 2 branches missed.">      for (int i = 0; i &lt; m_children.size(); i++) {</span>
+<span class="nc" id="L701">	CNode temp = (CNode)m_children.elementAt(i);</span>
+<span class="nc" id="L702">	labels += (&quot;C&quot;+temp.m_clusterNum);</span>
+<span class="nc bnc" id="L703" title="All 2 branches missed.">	if (i &lt; m_children.size()-1) {</span>
+<span class="nc" id="L704">	  labels+=&quot;,&quot;;</span>
+	}
+      }
+<span class="nc" id="L707">      af.setNominalLabels(labels);</span>
+<span class="nc" id="L708">      af.setInputFormat(tempInst);</span>
+<span class="nc" id="L709">      tempInst = Filter.useFilter(tempInst, af);</span>
+<span class="nc" id="L710">      tempInst.setRelationName(&quot;Cluster &quot;+m_clusterNum);</span>
+      
+<span class="nc" id="L712">      int z = 0;</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">      for (int i = 0; i &lt; m_children.size(); i++) {</span>
+<span class="nc" id="L714">	CNode temp = (CNode)m_children.elementAt(i);</span>
+<span class="nc bnc" id="L715" title="All 2 branches missed.">	for (int j = 0; j &lt; temp.m_clusterInstances.numInstances(); j++) {</span>
+<span class="nc" id="L716">	  tempInst.instance(z).setValue(m_numAttributes, (double)i);</span>
+<span class="nc" id="L717">	  z++;</span>
+	}
+      }
+<span class="nc" id="L720">      return tempInst.toString();</span>
+    }
+
+    /**
+     * Recursively generate the graph string for the Cobweb tree.
+     *
+     * @param text holds the graph string
+     * @throws Exception if generation fails
+     */
+    protected void graphTree(StringBuffer text) throws Exception {
+      
+<span class="nc" id="L731">      text.append(&quot;N&quot;+m_clusterNum</span>
+<span class="nc bnc" id="L732" title="All 2 branches missed.">		  + &quot; [label=\&quot;&quot;+((m_children == null) </span>
+<span class="nc" id="L733">				  ? &quot;leaf &quot; : &quot;node &quot;)</span>
+<span class="nc" id="L734">		  +m_clusterNum+&quot; &quot;</span>
+<span class="nc" id="L735">		  +&quot; (&quot;+m_clusterInstances.numInstances()</span>
+<span class="nc" id="L736">		  +&quot;)\&quot; &quot;</span>
+<span class="nc bnc" id="L737" title="All 2 branches missed.">		  +((m_children == null) </span>
+<span class="nc" id="L738">		    ? &quot;shape=box style=filled &quot; : &quot;&quot;)</span>
+<span class="nc bnc" id="L739" title="All 2 branches missed.">		  +(m_saveInstances </span>
+<span class="nc" id="L740">		    ? &quot;data =\n&quot;+dumpData() +&quot;\n,\n&quot;</span>
+<span class="nc" id="L741">		    : &quot;&quot;)</span>
+<span class="nc" id="L742">		  + &quot;]\n&quot;);</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">      if (m_children != null) {</span>
+<span class="nc bnc" id="L744" title="All 2 branches missed.">	for (int i = 0; i &lt; m_children.size(); i++) {</span>
+<span class="nc" id="L745">	  CNode temp = (CNode)m_children.elementAt(i);</span>
+<span class="nc" id="L746">	  text.append(&quot;N&quot;+m_clusterNum</span>
+<span class="nc" id="L747">		      +&quot;-&gt;&quot;</span>
+<span class="nc" id="L748">		      +&quot;N&quot; + temp.m_clusterNum</span>
+<span class="nc" id="L749">		      + &quot;\n&quot;);</span>
+	}
+
+<span class="nc bnc" id="L752" title="All 2 branches missed.">	for (int i = 0; i &lt; m_children.size(); i++) {</span>
+<span class="nc" id="L753">	  CNode temp = (CNode)m_children.elementAt(i);</span>
+<span class="nc" id="L754">	  temp.graphTree(text);</span>
+	}
+      }
+<span class="nc" id="L757">    }</span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L765">      return RevisionUtils.extract(&quot;$Revision: 6790 $&quot;);</span>
+    }
+  }
+
+  /**
+   * Normal constant.
+   */
+<span class="fc" id="L772">  protected static final double m_normal = 1.0/(2 * Math.sqrt(Math.PI));</span>
+
+  /**
+   * Acuity (minimum standard deviation).
+   */
+<span class="nc" id="L777">  protected double m_acuity = 1.0;</span>
+
+  /**
+   * Cutoff (minimum category utility).
+   */
+<span class="nc" id="L782">  protected double m_cutoff = 0.01 * Cobweb.m_normal;</span>
+
+  /**
+   * Holds the root of the Cobweb tree.
+   */
+<span class="nc" id="L787">  protected CNode m_cobwebTree = null;</span>
+
+  /**
+   * Number of clusters (nodes in the tree). Must never be queried directly, 
+   * only via the method numberOfClusters(). Otherwise it's not guaranteed that 
+   * it contains the correct value.
+   * 
+   * @see #numberOfClusters()
+   * @see #m_numberOfClustersDetermined
+   */
+<span class="nc" id="L797">  protected int m_numberOfClusters = -1;</span>
+  
+  /** whether the number of clusters was already determined */
+<span class="nc" id="L800">  protected boolean m_numberOfClustersDetermined = false;</span>
+  
+  /** the number of splits that happened */
+  protected int m_numberSplits;
+  
+  /** the number of merges that happened */
+  protected int m_numberMerges;
+
+  /**
+   * Output instances in graph representation of Cobweb tree (Allows
+   * instances at nodes in the tree to be visualized in the Explorer).
+   */
+<span class="nc" id="L812">  protected boolean m_saveInstances = false;</span>
+
+  /**
+   * default constructor
+   */
+  public Cobweb() {
+<span class="nc" id="L818">    super();</span>
+    
+<span class="nc" id="L820">    m_SeedDefault = 42;</span>
+<span class="nc" id="L821">    setSeed(m_SeedDefault);</span>
+<span class="nc" id="L822">  }</span>
+  
+  /**
+   * Returns a string describing this clusterer
+   * @return a description of the evaluator suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L830">    return </span>
+<span class="nc" id="L831">        &quot;Class implementing the Cobweb and Classit clustering algorithms.\n\n&quot;</span>
+      + &quot;Note: the application of node operators (merging, splitting etc.) in &quot;
+      + &quot;terms of ordering and priority differs (and is somewhat ambiguous) &quot;
+      + &quot;between the original Cobweb and Classit papers. This algorithm always &quot;
+      + &quot;compares the best host, adding a new leaf, merging the two best hosts, &quot;
+      + &quot;and splitting the best host when considering where to place a new &quot;
+      + &quot;instance.\n\n&quot;
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L839">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    TechnicalInformation 	additional;
+    
+<span class="nc" id="L853">    result = new TechnicalInformation(Type.ARTICLE);</span>
+<span class="nc" id="L854">    result.setValue(Field.AUTHOR, &quot;D. Fisher&quot;);</span>
+<span class="nc" id="L855">    result.setValue(Field.YEAR, &quot;1987&quot;);</span>
+<span class="nc" id="L856">    result.setValue(Field.TITLE, &quot;Knowledge acquisition via incremental conceptual clustering&quot;);</span>
+<span class="nc" id="L857">    result.setValue(Field.JOURNAL, &quot;Machine Learning&quot;);</span>
+<span class="nc" id="L858">    result.setValue(Field.VOLUME, &quot;2&quot;);</span>
+<span class="nc" id="L859">    result.setValue(Field.NUMBER, &quot;2&quot;);</span>
+<span class="nc" id="L860">    result.setValue(Field.PAGES, &quot;139-172&quot;);</span>
+    
+<span class="nc" id="L862">    additional = result.add(Type.ARTICLE);</span>
+<span class="nc" id="L863">    additional.setValue(Field.AUTHOR, &quot;J. H. Gennari and P. Langley and D. Fisher&quot;);</span>
+<span class="nc" id="L864">    additional.setValue(Field.YEAR, &quot;1990&quot;);</span>
+<span class="nc" id="L865">    additional.setValue(Field.TITLE, &quot;Models of incremental concept formation&quot;);</span>
+<span class="nc" id="L866">    additional.setValue(Field.JOURNAL, &quot;Artificial Intelligence&quot;);</span>
+<span class="nc" id="L867">    additional.setValue(Field.VOLUME, &quot;40&quot;);</span>
+<span class="nc" id="L868">    additional.setValue(Field.PAGES, &quot;11-61&quot;);</span>
+    
+<span class="nc" id="L870">    return result;</span>
+  }
+
+  /**
+   * Returns default capabilities of the clusterer.
+   *
+   * @return      the capabilities of this clusterer
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L879">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L880">    result.disableAll();</span>
+<span class="nc" id="L881">    result.enable(Capability.NO_CLASS);</span>
+
+    // attributes
+<span class="nc" id="L884">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L885">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L886">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="nc" id="L887">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // other
+<span class="nc" id="L890">    result.setMinimumNumberInstances(0);</span>
+    
+<span class="nc" id="L892">    return result;</span>
+  }
+
+  /**
+   * Builds the clusterer.
+   *
+   * @param data the training instances.
+   * @throws Exception if something goes wrong.
+   */
+  public void buildClusterer(Instances data) throws Exception {
+<span class="nc" id="L902">    m_numberOfClusters = -1;</span>
+<span class="nc" id="L903">    m_cobwebTree = null;</span>
+<span class="nc" id="L904">    m_numberSplits = 0;</span>
+<span class="nc" id="L905">    m_numberMerges = 0;</span>
+
+    // can clusterer handle the data?
+<span class="nc" id="L908">    getCapabilities().testWithFail(data);</span>
+
+    // randomize the instances
+<span class="nc" id="L911">    data = new Instances(data);</span>
+    
+<span class="nc bnc" id="L913" title="All 2 branches missed.">    if (getSeed() &gt;= 0) {</span>
+<span class="nc" id="L914">      data.randomize(new Random(getSeed()));</span>
+    }
+
+<span class="nc bnc" id="L917" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="nc" id="L918">      updateClusterer(data.instance(i));</span>
+    }
+    
+<span class="nc" id="L921">    updateFinished();</span>
+<span class="nc" id="L922">  }</span>
+
+  /**
+   * Singals the end of the updating.
+   */
+  public void updateFinished() {
+<span class="nc" id="L928">    determineNumberOfClusters();</span>
+<span class="nc" id="L929">  }</span>
+
+  /**
+   * Classifies a given instance.
+   *
+   * @param instance the instance to be assigned to a cluster
+   * @return the number of the assigned cluster as an interger
+   * if the class is enumerated, otherwise the predicted value
+   * @throws Exception if instance could not be classified
+   * successfully
+   */
+  public int clusterInstance(Instance instance) throws Exception {
+<span class="nc" id="L941">    CNode host = m_cobwebTree;</span>
+<span class="nc" id="L942">    CNode temp = null;</span>
+    
+<span class="nc" id="L944">    determineNumberOfClusters();</span>
+    
+    do {
+<span class="nc bnc" id="L947" title="All 2 branches missed.">      if (host.m_children == null) {</span>
+<span class="nc" id="L948">	temp = null;</span>
+<span class="nc" id="L949">	break;</span>
+      }
+
+      //host.updateStats(instance, false);
+<span class="nc" id="L953">      temp = host.findHost(instance, true);</span>
+      // host.updateStats(instance, true);
+      
+<span class="nc bnc" id="L956" title="All 2 branches missed.">      if (temp != null) {</span>
+<span class="nc" id="L957">	host = temp;</span>
+      }
+<span class="nc bnc" id="L959" title="All 2 branches missed.">    } while (temp != null);</span>
+    
+<span class="nc" id="L961">    return host.m_clusterNum;</span>
+  }
+
+  /**
+   * determines the number of clusters if necessary
+   * 
+   * @see #m_numberOfClusters
+   * @see #m_numberOfClustersDetermined
+   */
+  protected void determineNumberOfClusters() {
+<span class="nc bnc" id="L971" title="All 2 branches missed.">    if (    !m_numberOfClustersDetermined </span>
+<span class="nc bnc" id="L972" title="All 2 branches missed.">	 &amp;&amp; (m_cobwebTree != null) ) {</span>
+<span class="nc" id="L973">      int[] numClusts = new int [1];</span>
+<span class="nc" id="L974">      numClusts[0] = 0;</span>
+      try {
+<span class="nc" id="L976">	m_cobwebTree.assignClusterNums(numClusts);</span>
+      }
+<span class="nc" id="L978">      catch (Exception e) {</span>
+<span class="nc" id="L979">	e.printStackTrace();</span>
+<span class="nc" id="L980">	numClusts[0] = 0;</span>
+      }
+<span class="nc" id="L982">      m_numberOfClusters = numClusts[0];</span>
+
+<span class="nc" id="L984">      m_numberOfClustersDetermined = true;</span>
+    }
+<span class="nc" id="L986">  }</span>
+  
+  /**
+   * Returns the number of clusters.
+   *
+   * @return the number of clusters
+   */
+  public int numberOfClusters() {
+<span class="nc" id="L994">    determineNumberOfClusters();</span>
+<span class="nc" id="L995">    return m_numberOfClusters;</span>
+  }
+
+  /**
+   * Adds an instance to the clusterer.
+   *
+   * @param newInstance the instance to be added
+   * @throws Exception 	if something goes wrong
+   */
+  public void updateClusterer(Instance newInstance) throws Exception {
+<span class="nc" id="L1005">    m_numberOfClustersDetermined = false;</span>
+    
+<span class="nc bnc" id="L1007" title="All 2 branches missed.">    if (m_cobwebTree == null) {</span>
+<span class="nc" id="L1008">      m_cobwebTree = new CNode(newInstance.numAttributes(), newInstance);</span>
+    } else {
+<span class="nc" id="L1010">      m_cobwebTree.addInstance(newInstance);</span>
+    }
+<span class="nc" id="L1012">  }</span>
+  
+  /**
+   * Adds an instance to the Cobweb tree.
+   *
+   * @param newInstance the instance to be added
+   * @throws Exception if something goes wrong
+   * @deprecated updateClusterer(Instance) should be used instead
+   * @see #updateClusterer(Instance)
+   */
+  public void addInstance(Instance newInstance) throws Exception {
+<span class="nc" id="L1023">    updateClusterer(newInstance);</span>
+<span class="nc" id="L1024">  }</span>
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   **/
+  public Enumeration listOptions() {
+<span class="nc" id="L1032">    Vector result = new Vector();</span>
+    
+<span class="nc" id="L1034">    result.addElement(new Option(</span>
+<span class="nc" id="L1035">	&quot;\tAcuity.\n&quot;</span>
+	+&quot;\t(default=1.0)&quot;,
+<span class="nc" id="L1037">	&quot;A&quot;, 1,&quot;-A &lt;acuity&gt;&quot;));</span>
+    
+<span class="nc" id="L1039">    result.addElement(new Option(</span>
+<span class="nc" id="L1040">	&quot;\tCutoff.\n&quot;</span>
+	+&quot;\t(default=0.002)&quot;,
+<span class="nc" id="L1042">	&quot;C&quot;, 1,&quot;-C &lt;cutoff&gt;&quot;));</span>
+
+<span class="nc" id="L1044">    Enumeration en = super.listOptions();</span>
+<span class="nc bnc" id="L1045" title="All 2 branches missed.">    while (en.hasMoreElements())</span>
+<span class="nc" id="L1046">      result.addElement(en.nextElement());</span>
+    
+<span class="nc" id="L1048">    return result.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -A &amp;lt;acuity&amp;gt;
+   *  Acuity.
+   *  (default=1.0)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;cutoff&amp;gt;
+   *  Cutoff.
+   *  (default=0.002)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 42)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    String optionString;
+
+<span class="nc" id="L1077">    optionString = Utils.getOption('A', options); </span>
+<span class="nc bnc" id="L1078" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L1079">      Double temp = new Double(optionString);</span>
+<span class="nc" id="L1080">      setAcuity(temp.doubleValue());</span>
+    }
+    else {
+<span class="nc" id="L1083">      m_acuity = 1.0;</span>
+    }
+<span class="nc" id="L1085">    optionString = Utils.getOption('C', options); </span>
+<span class="nc bnc" id="L1086" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L1087">      Double temp = new Double(optionString);</span>
+<span class="nc" id="L1088">      setCutoff(temp.doubleValue());</span>
+    }
+    else {
+<span class="nc" id="L1091">      m_cutoff = 0.01 * Cobweb.m_normal;</span>
+    }
+    
+<span class="nc" id="L1094">    super.setOptions(options);</span>
+<span class="nc" id="L1095">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String acuityTipText() {
+<span class="nc" id="L1103">    return &quot;set the minimum standard deviation for numeric attributes&quot;;</span>
+  }
+
+  /**
+   * set the acuity.
+   * @param a the acuity value
+   */
+  public void setAcuity(double a) {
+<span class="nc" id="L1111">    m_acuity = a;</span>
+<span class="nc" id="L1112">  }</span>
+
+  /**
+   * get the acuity value
+   * @return the acuity
+   */
+  public double getAcuity() {
+<span class="nc" id="L1119">    return m_acuity;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String cutoffTipText() {
+<span class="nc" id="L1128">    return &quot;set the category utility threshold by which to prune nodes&quot;;</span>
+  }
+
+  /**
+   * set the cutoff
+   * @param c the cutof
+   */
+  public void setCutoff(double c) {
+<span class="nc" id="L1136">    m_cutoff = c;</span>
+<span class="nc" id="L1137">  }</span>
+
+  /**
+   * get the cutoff
+   * @return the cutoff
+   */
+  public double getCutoff() {
+<span class="nc" id="L1144">    return m_cutoff;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String saveInstanceDataTipText() {
+<span class="nc" id="L1153">    return &quot;save instance information for visualization purposes&quot;;</span>
+  }
+
+  /**
+   * Get the value of saveInstances.
+   *
+   * @return Value of saveInstances.
+   */
+  public boolean getSaveInstanceData() {
+    
+<span class="nc" id="L1163">    return m_saveInstances;</span>
+  }
+  
+  /**
+   * Set the value of saveInstances.
+   *
+   * @param newsaveInstances Value to assign to saveInstances.
+   */
+  public void setSaveInstanceData(boolean newsaveInstances) {
+    
+<span class="nc" id="L1173">    m_saveInstances = newsaveInstances;</span>
+<span class="nc" id="L1174">  }</span>
+
+  /**
+   * Gets the current settings of Cobweb.
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions() {
+    int       		i;
+    Vector&lt;String&gt;    	result;
+    String[]  		options;
+
+<span class="nc" id="L1186">    result = new Vector&lt;String&gt;();</span>
+
+<span class="nc" id="L1188">    result.add(&quot;-A&quot;); </span>
+<span class="nc" id="L1189">    result.add(&quot;&quot; + m_acuity);</span>
+<span class="nc" id="L1190">    result.add(&quot;-C&quot;); </span>
+<span class="nc" id="L1191">    result.add(&quot;&quot; + m_cutoff);</span>
+
+<span class="nc" id="L1193">    options = super.getOptions();</span>
+<span class="nc bnc" id="L1194" title="All 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L1195">      result.add(options[i]);</span>
+
+<span class="nc" id="L1197">    return result.toArray(new String[result.size()]);	  </span>
+  }
+
+  /**
+   * Returns a description of the clusterer as a string.
+   *
+   * @return a string describing the clusterer.
+   */
+  public String toString() { 
+<span class="nc" id="L1206">    StringBuffer text = new StringBuffer();</span>
+<span class="nc bnc" id="L1207" title="All 2 branches missed.">    if (m_cobwebTree == null) {</span>
+<span class="nc" id="L1208">      return &quot;Cobweb hasn't been built yet!&quot;;</span>
+    }
+    else {
+<span class="nc" id="L1211">      m_cobwebTree.dumpTree(0, text); </span>
+<span class="nc" id="L1212">      return &quot;Number of merges: &quot;</span>
+<span class="nc" id="L1213">	+ m_numberMerges+&quot;\nNumber of splits: &quot;</span>
+<span class="nc" id="L1214">	+ m_numberSplits+&quot;\nNumber of clusters: &quot;</span>
+<span class="nc" id="L1215">	+ numberOfClusters() +&quot;\n&quot;+text.toString()+&quot;\n\n&quot;;</span>
+     
+    }
+  }
+    
+  /**
+   *  Returns the type of graphs this class
+   *  represents
+   *  @return Drawable.TREE
+   */   
+  public int graphType() {
+<span class="nc" id="L1226">      return Drawable.TREE;</span>
+  }
+
+  /**
+   * Generates the graph string of the Cobweb tree
+   *
+   * @return a &lt;code&gt;String&lt;/code&gt; value
+   * @throws Exception if an error occurs
+   */
+  public String graph() throws Exception {
+<span class="nc" id="L1236">    StringBuffer text = new StringBuffer();</span>
+    
+<span class="nc" id="L1238">    text.append(&quot;digraph CobwebTree {\n&quot;);</span>
+<span class="nc" id="L1239">    m_cobwebTree.graphTree(text);</span>
+<span class="nc" id="L1240">    text.append(&quot;}\n&quot;);</span>
+<span class="nc" id="L1241">    return text.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1250">    return RevisionUtils.extract(&quot;$Revision: 6790 $&quot;);</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return            tip text for this property suitable for
+   *                    displaying in the explorer/experimenter gui
+   */
+  public String seedTipText() {
+<span class="nc" id="L1260">    String result = super.seedTipText() + &quot; Use -1 for no randomization.&quot;;</span>
+    
+<span class="nc" id="L1262">    return result;</span>
+  }
+
+  /** 
+   * Main method.
+   * 
+   * @param argv the commandline options
+   */
+  public static void main(String[] argv) {
+<span class="nc" id="L1271">    runClusterer(new Cobweb(), argv);</span>
+<span class="nc" id="L1272">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

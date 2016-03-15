@@ -1,0 +1,804 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>LMT.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees</a> &gt; <span class="el_source">LMT.java</span></div><h1>LMT.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    LMT.java
+ *    Copyright (C) 2003 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.trees;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.trees.j48.C45ModelSelection;
+import weka.classifiers.trees.j48.ModelSelection;
+import weka.classifiers.trees.lmt.LMTNode;
+import weka.classifiers.trees.lmt.ResidualModelSelection;
+import weka.core.AdditionalMeasureProducer;
+import weka.core.Capabilities;
+import weka.core.Drawable;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.supervised.attribute.NominalToBinary;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Classifier for building 'logistic model trees', which are classification trees with logistic regression functions at the leaves. The algorithm can deal with binary and multi-class target variables, numeric and nominal attributes and missing values.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see: &lt;br/&gt;
+ * &lt;br/&gt;
+ * Niels Landwehr, Mark Hall, Eibe Frank (2005). Logistic Model Trees. Machine Learning. 95(1-2):161-205.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Marc Sumner, Eibe Frank, Mark Hall: Speeding up Logistic Model Tree Induction. In: 9th European Conference on Principles and Practice of Knowledge Discovery in Databases, 675-683, 2005.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;article{Landwehr2005,
+ *    author = {Niels Landwehr and Mark Hall and Eibe Frank},
+ *    journal = {Machine Learning},
+ *    number = {1-2},
+ *    pages = {161-205},
+ *    title = {Logistic Model Trees},
+ *    volume = {95},
+ *    year = {2005}
+ * }
+ * 
+ * &amp;#64;inproceedings{Sumner2005,
+ *    author = {Marc Sumner and Eibe Frank and Mark Hall},
+ *    booktitle = {9th European Conference on Principles and Practice of Knowledge Discovery in Databases},
+ *    pages = {675-683},
+ *    publisher = {Springer},
+ *    title = {Speeding up Logistic Model Tree Induction},
+ *    year = {2005}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -B
+ *  Binary splits (convert nominal attributes to binary ones)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R
+ *  Split on residuals instead of class values&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C
+ *  Use cross-validation for boosting at all nodes (i.e., disable heuristic)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P
+ *  Use error on probabilities instead of misclassification error for stopping criterion of LogitBoost.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;numIterations&amp;gt;
+ *  Set fixed number of iterations for LogitBoost (instead of using cross-validation)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;numInstances&amp;gt;
+ *  Set minimum number of instances at which a node can be split (default 15)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;beta&amp;gt;
+ *  Set beta for weight trimming for LogitBoost. Set to 0 (default) for no weight trimming.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A
+ *  The AIC is used to choose the best iteration.&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Niels Landwehr 
+ * @author Marc Sumner 
+ * @version $Revision: 5535 $
+ */
+public class LMT 
+  extends Classifier 
+  implements OptionHandler, AdditionalMeasureProducer, Drawable,
+             TechnicalInformationHandler {
+    
+  /** for serialization */
+  static final long serialVersionUID = -1113212459618104943L;
+  
+  /** Filter to replace missing values*/
+  protected ReplaceMissingValues m_replaceMissing;
+    
+  /** Filter to replace nominal attributes*/
+  protected NominalToBinary m_nominalToBinary;
+    
+  /** root of the logistic model tree*/
+  protected LMTNode m_tree;
+    
+  /** use heuristic that determines the number of LogitBoost iterations only once in the beginning?*/
+  protected boolean m_fastRegression;
+
+  /** convert nominal attributes to binary ?*/
+  protected boolean m_convertNominal;
+
+  /** split on residuals?*/
+  protected boolean m_splitOnResiduals;
+    
+  /**use error on probabilties instead of misclassification for stopping criterion of LogitBoost?*/
+  protected boolean m_errorOnProbabilities;
+
+  /**minimum number of instances at which a node is considered for splitting*/
+  protected int m_minNumInstances;
+
+  /**if non-zero, use fixed number of iterations for LogitBoost*/
+  protected int m_numBoostingIterations;
+    
+  /**Threshold for trimming weights. Instances with a weight lower than this (as a percentage
+   * of total weights) are not included in the regression fit.
+   **/
+  protected double m_weightTrimBeta;
+  
+  /** If true, the AIC is used to choose the best LogitBoost iteration*/
+<span class="fc" id="L162">  private boolean m_useAIC = false;</span>
+  
+  /**
+   * Creates an instance of LMT with standard options
+   */
+<span class="fc" id="L167">  public LMT() {</span>
+<span class="fc" id="L168">    m_fastRegression = true;</span>
+<span class="fc" id="L169">    m_numBoostingIterations = -1;</span>
+<span class="fc" id="L170">    m_minNumInstances = 15;</span>
+<span class="fc" id="L171">    m_weightTrimBeta = 0;</span>
+<span class="fc" id="L172">    m_useAIC = false;</span>
+<span class="fc" id="L173">  }    </span>
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L181">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L182">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L185">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L186">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L187">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L188">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L191">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L192">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="fc" id="L194">    return result;</span>
+  }
+
+  /**
+   * Builds the classifier.
+   *
+   * @param data the data to train with
+   * @throws Exception if classifier can't be built successfully
+   */
+  public void buildClassifier(Instances data) throws Exception{
+	
+    // can classifier handle the data?
+<span class="fc" id="L206">    getCapabilities().testWithFail(data);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L209">    Instances filteredData = new Instances(data);</span>
+<span class="fc" id="L210">    filteredData.deleteWithMissingClass();</span>
+    
+    //replace missing values
+<span class="fc" id="L213">    m_replaceMissing = new ReplaceMissingValues();</span>
+<span class="fc" id="L214">    m_replaceMissing.setInputFormat(filteredData);	</span>
+<span class="fc" id="L215">    filteredData = Filter.useFilter(filteredData, m_replaceMissing);	</span>
+	
+    //possibly convert nominal attributes globally
+<span class="pc bpc" id="L218" title="1 of 2 branches missed.">    if (m_convertNominal) {	    </span>
+<span class="nc" id="L219">      m_nominalToBinary = new NominalToBinary();</span>
+<span class="nc" id="L220">      m_nominalToBinary.setInputFormat(filteredData);	</span>
+<span class="nc" id="L221">      filteredData = Filter.useFilter(filteredData, m_nominalToBinary);</span>
+    }
+
+<span class="fc" id="L224">    int minNumInstances = 2;</span>
+	
+    //create ModelSelection object, either for splits on the residuals or for splits on the class value 
+    ModelSelection modSelection;	
+<span class="pc bpc" id="L228" title="1 of 2 branches missed.">    if (m_splitOnResiduals) {</span>
+<span class="nc" id="L229">      modSelection = new ResidualModelSelection(minNumInstances);</span>
+    } else {
+<span class="fc" id="L231">      modSelection = new C45ModelSelection(minNumInstances, filteredData);</span>
+    }
+	
+    //create tree root
+<span class="fc" id="L235">    m_tree = new LMTNode(modSelection, m_numBoostingIterations, m_fastRegression, </span>
+<span class="fc" id="L236">			 m_errorOnProbabilities, m_minNumInstances, m_weightTrimBeta, m_useAIC);</span>
+    //build tree
+<span class="fc" id="L238">    m_tree.buildClassifier(filteredData);</span>
+
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">    if (modSelection instanceof C45ModelSelection) ((C45ModelSelection)modSelection).cleanup();</span>
+<span class="fc" id="L241">  }</span>
+
+  /** 
+   * Returns class probabilities for an instance.
+   *
+   * @param instance the instance to compute the distribution for
+   * @return the class probabilities
+   * @throws Exception if distribution can't be computed successfully
+   */
+  public double [] distributionForInstance(Instance instance) throws Exception {
+	
+    //replace missing values
+<span class="fc" id="L253">    m_replaceMissing.input(instance);</span>
+<span class="fc" id="L254">    instance = m_replaceMissing.output();	</span>
+	
+    //possibly convert nominal attributes
+<span class="pc bpc" id="L257" title="1 of 2 branches missed.">    if (m_convertNominal) {</span>
+<span class="nc" id="L258">      m_nominalToBinary.input(instance);</span>
+<span class="nc" id="L259">      instance = m_nominalToBinary.output();</span>
+    }
+	
+<span class="fc" id="L262">    return m_tree.distributionForInstance(instance);</span>
+  }
+
+  /**
+   * Classifies an instance.
+   *
+   * @param instance the instance to classify
+   * @return the classification
+   * @throws Exception if instance can't be classified successfully
+   */
+  public double classifyInstance(Instance instance) throws Exception {
+
+<span class="nc" id="L274">    double maxProb = -1;</span>
+<span class="nc" id="L275">    int maxIndex = 0;</span>
+      
+    //classify by maximum probability
+<span class="nc" id="L278">    double[] probs = distributionForInstance(instance);       </span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">    for (int j = 0; j &lt; instance.numClasses(); j++) {</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">      if (Utils.gr(probs[j], maxProb)) {</span>
+<span class="nc" id="L281">	maxIndex = j;</span>
+<span class="nc" id="L282">	maxProb = probs[j];</span>
+      }
+    }     
+<span class="nc" id="L285">    return (double)maxIndex;      </span>
+  }    
+     
+  /**
+   * Returns a description of the classifier.
+   * 
+   * @return a string representation of the classifier
+   */
+  public String toString() {
+<span class="pc bpc" id="L294" title="1 of 2 branches missed.">    if (m_tree!=null) {</span>
+<span class="nc" id="L295">      return &quot;Logistic model tree \n------------------\n&quot; + m_tree.toString();</span>
+    } else {
+<span class="fc" id="L297">      return &quot;No tree build&quot;;</span>
+    }
+  }    
+    
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="fc" id="L307">    Vector newVector = new Vector(8);</span>
+    
+<span class="fc" id="L309">    newVector.addElement(new Option(&quot;\tBinary splits (convert nominal attributes to binary ones)&quot;,</span>
+<span class="fc" id="L310">                                    &quot;B&quot;, 0, &quot;-B&quot;));</span>
+    
+<span class="fc" id="L312">    newVector.addElement(new Option(&quot;\tSplit on residuals instead of class values&quot;,</span>
+<span class="fc" id="L313">                                    &quot;R&quot;, 0, &quot;-R&quot;));</span>
+    
+<span class="fc" id="L315">    newVector.addElement(new Option(&quot;\tUse cross-validation for boosting at all nodes (i.e., disable heuristic)&quot;,</span>
+<span class="fc" id="L316">                                    &quot;C&quot;, 0, &quot;-C&quot;));</span>
+    
+<span class="fc" id="L318">    newVector.addElement(new Option(&quot;\tUse error on probabilities instead of misclassification error &quot;+</span>
+                                    &quot;for stopping criterion of LogitBoost.&quot;,
+<span class="fc" id="L320">                                    &quot;P&quot;, 0, &quot;-P&quot;));</span>
+    
+<span class="fc" id="L322">    newVector.addElement(new Option(&quot;\tSet fixed number of iterations for LogitBoost (instead of using &quot;+</span>
+                                    &quot;cross-validation)&quot;,
+<span class="fc" id="L324">                                    &quot;I&quot;,1,&quot;-I &lt;numIterations&gt;&quot;));</span>
+    
+<span class="fc" id="L326">    newVector.addElement(new Option(&quot;\tSet minimum number of instances at which a node can be split (default 15)&quot;,</span>
+<span class="fc" id="L327">                                    &quot;M&quot;,1,&quot;-M &lt;numInstances&gt;&quot;));</span>
+    
+<span class="fc" id="L329">    newVector.addElement(new Option(&quot;\tSet beta for weight trimming for LogitBoost. Set to 0 (default) for no weight trimming.&quot;,</span>
+<span class="fc" id="L330">                                    &quot;W&quot;,1,&quot;-W &lt;beta&gt;&quot;));</span>
+    
+<span class="fc" id="L332">    newVector.addElement(new Option(&quot;\tThe AIC is used to choose the best iteration.&quot;,</span>
+<span class="fc" id="L333">                                    &quot;A&quot;, 0, &quot;-A&quot;));</span>
+    
+<span class="fc" id="L335">    return newVector.elements();</span>
+  }
+    
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -B
+   *  Binary splits (convert nominal attributes to binary ones)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R
+   *  Split on residuals instead of class values&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C
+   *  Use cross-validation for boosting at all nodes (i.e., disable heuristic)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P
+   *  Use error on probabilities instead of misclassification error for stopping criterion of LogitBoost.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -I &amp;lt;numIterations&amp;gt;
+   *  Set fixed number of iterations for LogitBoost (instead of using cross-validation)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;numInstances&amp;gt;
+   *  Set minimum number of instances at which a node can be split (default 15)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;beta&amp;gt;
+   *  Set beta for weight trimming for LogitBoost. Set to 0 (default) for no weight trimming.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -A
+   *  The AIC is used to choose the best iteration.&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="fc" id="L375">    setConvertNominal(Utils.getFlag('B', options));</span>
+<span class="fc" id="L376">    setSplitOnResiduals(Utils.getFlag('R', options));</span>
+<span class="pc bpc" id="L377" title="1 of 2 branches missed.">    setFastRegression(!Utils.getFlag('C', options));</span>
+<span class="fc" id="L378">    setErrorOnProbabilities(Utils.getFlag('P', options));</span>
+
+<span class="fc" id="L380">    String optionString = Utils.getOption('I', options);</span>
+<span class="fc bfc" id="L381" title="All 2 branches covered.">    if (optionString.length() != 0) {</span>
+<span class="fc" id="L382">      setNumBoostingIterations((new Integer(optionString)).intValue());</span>
+    }
+	
+<span class="fc" id="L385">    optionString = Utils.getOption('M', options);</span>
+<span class="fc bfc" id="L386" title="All 2 branches covered.">    if (optionString.length() != 0) {</span>
+<span class="fc" id="L387">      setMinNumInstances((new Integer(optionString)).intValue());</span>
+    }
+
+<span class="fc" id="L390">    optionString = Utils.getOption('W', options);</span>
+<span class="fc bfc" id="L391" title="All 2 branches covered.">    if (optionString.length() != 0) {</span>
+<span class="fc" id="L392">      setWeightTrimBeta((new Double(optionString)).doubleValue());</span>
+    }
+    
+<span class="fc" id="L395">    setUseAIC(Utils.getFlag('A', options));        </span>
+    
+<span class="fc" id="L397">    Utils.checkForRemainingOptions(options);</span>
+	
+<span class="fc" id="L399">  } </span>
+    
+  /**
+   * Gets the current settings of the Classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+<span class="fc" id="L407">    String[] options = new String[11];</span>
+<span class="fc" id="L408">    int current = 0;</span>
+
+<span class="pc bpc" id="L410" title="1 of 2 branches missed.">    if (getConvertNominal()) {</span>
+<span class="nc" id="L411">      options[current++] = &quot;-B&quot;;</span>
+    } 
+
+<span class="pc bpc" id="L414" title="1 of 2 branches missed.">    if (getSplitOnResiduals()) {</span>
+<span class="nc" id="L415">      options[current++] = &quot;-R&quot;;</span>
+    }
+
+<span class="pc bpc" id="L418" title="1 of 2 branches missed.">    if (!getFastRegression()) {</span>
+<span class="nc" id="L419">      options[current++] = &quot;-C&quot;;</span>
+    } 
+	
+<span class="pc bpc" id="L422" title="1 of 2 branches missed.">    if (getErrorOnProbabilities()) {</span>
+<span class="nc" id="L423">      options[current++] = &quot;-P&quot;;</span>
+    } 
+	
+<span class="fc" id="L426">    options[current++] = &quot;-I&quot;; </span>
+<span class="fc" id="L427">    options[current++] = &quot;&quot;+getNumBoostingIterations();</span>
+
+<span class="fc" id="L429">    options[current++] = &quot;-M&quot;; </span>
+<span class="fc" id="L430">    options[current++] = &quot;&quot;+getMinNumInstances();</span>
+        
+<span class="fc" id="L432">    options[current++] = &quot;-W&quot;;</span>
+<span class="fc" id="L433">    options[current++] = &quot;&quot;+getWeightTrimBeta();</span>
+    
+<span class="pc bpc" id="L435" title="1 of 2 branches missed.">    if (getUseAIC()) {</span>
+<span class="nc" id="L436">      options[current++] = &quot;-A&quot;;</span>
+    }
+    
+<span class="pc bfc" id="L439" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc" id="L440">      options[current++] = &quot;&quot;;</span>
+    } 
+<span class="fc" id="L442">    return options;</span>
+  } 
+
+  /**
+   * Get the value of weightTrimBeta.
+   */
+  public double getWeightTrimBeta(){
+<span class="fc" id="L449">    return m_weightTrimBeta;</span>
+  }
+  
+  /**
+   * Get the value of useAIC.
+   *
+   * @return Value of useAIC.
+   */
+  public boolean getUseAIC(){
+<span class="fc" id="L458">    return m_useAIC;</span>
+  }
+    
+  /**
+   * Set the value of weightTrimBeta.
+   */
+  public void setWeightTrimBeta(double n){
+<span class="fc" id="L465">    m_weightTrimBeta = n;</span>
+<span class="fc" id="L466">  }</span>
+  
+  /**
+   * Set the value of useAIC.
+   *
+   * @param c Value to assign to useAIC.
+   */
+  public void setUseAIC(boolean c){
+<span class="fc" id="L474">    m_useAIC = c;</span>
+<span class="fc" id="L475">  }</span>
+  
+  /**
+   * Get the value of convertNominal.
+   *
+   * @return Value of convertNominal.
+   */
+  public boolean getConvertNominal(){
+<span class="fc" id="L483">    return m_convertNominal;</span>
+  }
+
+  /**
+   * Get the value of splitOnResiduals.
+   *
+   * @return Value of splitOnResiduals.
+   */
+  public boolean getSplitOnResiduals(){
+<span class="fc" id="L492">    return m_splitOnResiduals;</span>
+  }
+
+  /**
+   * Get the value of fastRegression.
+   *
+   * @return Value of fastRegression.
+   */
+  public boolean getFastRegression(){
+<span class="fc" id="L501">    return m_fastRegression;</span>
+  }
+    
+  /**
+   * Get the value of errorOnProbabilities.
+   *
+   * @return Value of errorOnProbabilities.
+   */
+  public boolean getErrorOnProbabilities(){
+<span class="fc" id="L510">    return m_errorOnProbabilities;</span>
+  }
+
+  /**
+   * Get the value of numBoostingIterations.
+   *
+   * @return Value of numBoostingIterations.
+   */
+  public int getNumBoostingIterations(){
+<span class="fc" id="L519">    return m_numBoostingIterations;</span>
+  }
+    
+  /**
+   * Get the value of minNumInstances.
+   *
+   * @return Value of minNumInstances.
+   */
+  public int getMinNumInstances(){
+<span class="fc" id="L528">    return m_minNumInstances;</span>
+  }
+    
+  /**
+   * Set the value of convertNominal.
+   *
+   * @param c Value to assign to convertNominal.
+   */
+  public void setConvertNominal(boolean c){
+<span class="fc" id="L537">    m_convertNominal = c;</span>
+<span class="fc" id="L538">  }</span>
+
+  /**
+   * Set the value of splitOnResiduals.
+   *
+   * @param c Value to assign to splitOnResiduals.
+   */
+  public void setSplitOnResiduals(boolean c){
+<span class="fc" id="L546">    m_splitOnResiduals = c;</span>
+<span class="fc" id="L547">  }</span>
+
+  /**
+   * Set the value of fastRegression.
+   *
+   * @param c Value to assign to fastRegression.
+   */
+  public void setFastRegression(boolean c){
+<span class="fc" id="L555">    m_fastRegression = c;</span>
+<span class="fc" id="L556">  }</span>
+
+  /**
+   * Set the value of errorOnProbabilities.
+   *
+   * @param c Value to assign to errorOnProbabilities.
+   */
+  public void setErrorOnProbabilities(boolean c){
+<span class="fc" id="L564">    m_errorOnProbabilities = c;</span>
+<span class="fc" id="L565">  }</span>
+
+  /**
+   * Set the value of numBoostingIterations.
+   *
+   * @param c Value to assign to numBoostingIterations.
+   */
+  public void setNumBoostingIterations(int c){
+<span class="fc" id="L573">    m_numBoostingIterations = c;</span>
+<span class="fc" id="L574">  } </span>
+
+  /**
+   * Set the value of minNumInstances.
+   *
+   * @param c Value to assign to minNumInstances.
+   */
+  public void setMinNumInstances(int c){
+<span class="fc" id="L582">    m_minNumInstances = c;</span>
+<span class="fc" id="L583">  }</span>
+    
+  /**
+   *  Returns the type of graph this classifier
+   *  represents.
+   *  @return Drawable.TREE
+   */   
+  public int graphType() {
+<span class="nc" id="L591">    return Drawable.TREE;</span>
+  }
+
+  /**
+   * Returns graph describing the tree.
+   *
+   * @return the graph describing the tree
+   * @throws Exception if graph can't be computed
+   */
+  public String graph() throws Exception {
+
+<span class="nc" id="L602">    return m_tree.graph();</span>
+  }
+
+  /**
+   * Returns the size of the tree
+   * @return the size of the tree
+   */
+  public int measureTreeSize(){
+<span class="nc" id="L610">    return m_tree.numNodes();</span>
+  }
+    
+  /**
+   * Returns the number of leaves in the tree
+   * @return the number of leaves in the tree
+   */
+  public int measureNumLeaves(){
+<span class="nc" id="L618">    return m_tree.numLeaves();</span>
+  }
+     
+  /**
+   * Returns an enumeration of the additional measure names
+   * @return an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+<span class="nc" id="L626">    Vector newVector = new Vector(2);</span>
+<span class="nc" id="L627">    newVector.addElement(&quot;measureTreeSize&quot;);</span>
+<span class="nc" id="L628">    newVector.addElement(&quot;measureNumLeaves&quot;);</span>
+	
+<span class="nc" id="L630">    return newVector.elements();</span>
+  }
+    
+
+  /**
+   * Returns the value of the named measure
+   * @param additionalMeasureName the name of the measure to query for its value
+   * @return the value of the named measure
+   * @throws IllegalArgumentException if the named measure is not supported
+   */
+  public double getMeasure(String additionalMeasureName) {
+<span class="nc bnc" id="L641" title="All 2 branches missed.">    if (additionalMeasureName.compareToIgnoreCase(&quot;measureTreeSize&quot;) == 0) {</span>
+<span class="nc" id="L642">      return measureTreeSize();</span>
+<span class="nc bnc" id="L643" title="All 2 branches missed.">    } else if (additionalMeasureName.compareToIgnoreCase(&quot;measureNumLeaves&quot;) == 0) {</span>
+<span class="nc" id="L644">      return measureNumLeaves();</span>
+    } else {
+<span class="nc" id="L646">      throw new IllegalArgumentException(additionalMeasureName </span>
+<span class="nc" id="L647">					 + &quot; not supported (LMT)&quot;);</span>
+    }
+  }    
+    
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L657">    return &quot;Classifier for building 'logistic model trees', which are classification trees with &quot;</span>
+      +&quot;logistic regression functions at the leaves. The algorithm can deal with binary and multi-class &quot;
+      +&quot;target variables, numeric and nominal attributes and missing values.\n\n&quot;
+      +&quot;For more information see: \n\n&quot;
+<span class="nc" id="L661">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    TechnicalInformation 	additional;
+      
+<span class="nc" id="L675">    result = new TechnicalInformation(Type.ARTICLE);</span>
+<span class="nc" id="L676">    result.setValue(Field.AUTHOR, &quot;Niels Landwehr and Mark Hall and Eibe Frank&quot;);</span>
+<span class="nc" id="L677">    result.setValue(Field.TITLE, &quot;Logistic Model Trees&quot;);</span>
+<span class="nc" id="L678">    result.setValue(Field.JOURNAL, &quot;Machine Learning&quot;);</span>
+<span class="nc" id="L679">    result.setValue(Field.YEAR, &quot;2005&quot;);</span>
+<span class="nc" id="L680">    result.setValue(Field.VOLUME, &quot;95&quot;);</span>
+<span class="nc" id="L681">    result.setValue(Field.PAGES, &quot;161-205&quot;);</span>
+<span class="nc" id="L682">    result.setValue(Field.NUMBER, &quot;1-2&quot;);</span>
+    
+<span class="nc" id="L684">    additional = result.add(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L685">    additional.setValue(Field.AUTHOR, &quot;Marc Sumner and Eibe Frank and Mark Hall&quot;);</span>
+<span class="nc" id="L686">    additional.setValue(Field.TITLE, &quot;Speeding up Logistic Model Tree Induction&quot;);</span>
+<span class="nc" id="L687">    additional.setValue(Field.BOOKTITLE, &quot;9th European Conference on Principles and Practice of Knowledge Discovery in Databases&quot;);</span>
+<span class="nc" id="L688">    additional.setValue(Field.YEAR, &quot;2005&quot;);</span>
+<span class="nc" id="L689">    additional.setValue(Field.PAGES, &quot;675-683&quot;);</span>
+<span class="nc" id="L690">    additional.setValue(Field.PUBLISHER, &quot;Springer&quot;);</span>
+    
+<span class="nc" id="L692">    return result;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String convertNominalTipText() {
+<span class="nc" id="L701">    return &quot;Convert all nominal attributes to binary ones before building the tree. &quot;</span>
+      +&quot;This means that all splits in the final tree will be binary.&quot;;
+  }
+    
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String splitOnResidualsTipText() {
+<span class="nc" id="L711">    return &quot;Set splitting criterion based on the residuals of LogitBoost. &quot;</span>
+      +&quot;There are two possible splitting criteria for LMT: the default is to use the C4.5 &quot;
+      +&quot;splitting criterion that uses information gain on the class variable. The other splitting &quot;
+      +&quot;criterion tries to improve the purity in the residuals produces when fitting the logistic &quot;
+      +&quot;regression functions. The choice of the splitting criterion does not usually affect classification &quot;
+      +&quot;accuracy much, but can produce different trees.&quot;;
+  }  
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String fastRegressionTipText() {
+<span class="nc" id="L725">    return &quot;Use heuristic that avoids cross-validating the number of Logit-Boost iterations at every node. &quot;</span>
+      +&quot;When fitting the logistic regression functions at a node, LMT has to determine the number of LogitBoost &quot;
+      +&quot;iterations to run. Originally, this number was cross-validated at every node in the tree. &quot;
+      +&quot;To save time, this heuristic cross-validates the number only once and then uses that number at every &quot;
+      +&quot;node in the tree. Usually this does not decrease accuracy but improves runtime considerably.&quot;;
+  }  
+
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String errorOnProbabilitiesTipText() {
+<span class="nc" id="L739">    return &quot;Minimize error on probabilities instead of misclassification error when cross-validating the number &quot;</span>
+      +&quot;of LogitBoost iterations. When set, the number of LogitBoost iterations is chosen that minimizes &quot;
+      +&quot;the root mean squared error instead of the misclassification error.&quot;;	   
+  }  
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numBoostingIterationsTipText() {
+<span class="nc" id="L750">    return &quot;Set a fixed number of iterations for LogitBoost. If &gt;= 0, this sets a fixed number of LogitBoost &quot;</span>
+      +&quot;iterations that is used everywhere in the tree. If &lt; 0, the number is cross-validated.&quot;;
+  }  
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String minNumInstancesTipText() {
+<span class="nc" id="L760">    return &quot;Set the minimum number of instances at which a node is considered for splitting. &quot;</span>
+      +&quot;The default value is 15.&quot;;
+  }  
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String weightTrimBetaTipText() {
+<span class="nc" id="L770">    return &quot;Set the beta value used for weight trimming in LogitBoost. &quot;</span>
+    +&quot;Only instances carrying (1 - beta)% of the weight from previous iteration &quot;
+    +&quot;are used in the next iteration. Set to 0 for no weight trimming. &quot;
+    +&quot;The default value is 0.&quot;;
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String useAICTipText() {
+<span class="nc" id="L782">    return &quot;The AIC is used to determine when to stop LogitBoost iterations. &quot;</span>
+    +&quot;The default is not to use AIC.&quot;;
+  }
+
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L792">    return RevisionUtils.extract(&quot;$Revision: 5535 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class
+   *
+   * @param argv the commandline options 
+   */
+  public static void main (String [] argv) {	
+<span class="nc" id="L801">    runClassifier(new LMT(), argv);</span>
+<span class="nc" id="L802">  }  </span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

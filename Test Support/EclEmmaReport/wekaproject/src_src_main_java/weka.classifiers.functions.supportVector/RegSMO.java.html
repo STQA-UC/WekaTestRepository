@@ -1,0 +1,883 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RegSMO.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.functions.supportVector</a> &gt; <span class="el_source">RegSMO.java</span></div><h1>RegSMO.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RegSMO.java
+ *    Copyright (C) 2006 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.functions.supportVector;
+
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Implementation of SMO for support vector regression as described in :&lt;br/&gt;
+ * &lt;br/&gt;
+ * A.J. Smola, B. Schoelkopf (1998). A tutorial on support vector regression.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;misc{Smola1998,
+ *    author = {A.J. Smola and B. Schoelkopf},
+ *    note = {NeuroCOLT2 Technical Report NC2-TR-1998-030},
+ *    title = {A tutorial on support vector regression},
+ *    year = {1998}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;double&amp;gt;
+ *  The epsilon for round-off error.
+ *  (default 1.0e-12)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -L &amp;lt;double&amp;gt;
+ *  The epsilon parameter in epsilon-insensitive loss function.
+ *  (default 1.0e-3)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;double&amp;gt;
+ *  The random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author  Remco Bouckaert (remco@cs.waikato.ac.nz,rrb@xm.co.nz)
+ * @version $Revision: 1.4 $
+ */
+public class RegSMO 
+  extends RegOptimizer
+  implements TechnicalInformationHandler {
+  
+  /** for serialization */
+  private static final long serialVersionUID = -7504070793279598638L;
+
+  /** tolerance parameter, smaller changes on alpha in inner loop will be ignored **/
+<span class="fc" id="L86">  protected double m_eps = 1.0e-12;</span>
+  
+  /** Precision constant for updating sets */
+  protected final static double m_Del = 1e-10; //1000 * Double.MIN_VALUE;
+  
+  /** error cache containing m_error[i] = SVMOutput(i) - m_target[i] - m_b &lt;br/&gt;
+   * note, we don't need m_b in the cache, since if we do, we need to maintain 
+   * it when m_b is updated */
+  double[] m_error;
+  
+  /** alpha value for first candidate **/  
+  protected double m_alpha1;
+  
+  /** alpha* value for first candidate **/  
+  protected double m_alpha1Star;
+
+  /** alpha value for second candidate **/  
+  protected double m_alpha2;
+  
+  /** alpha* value for second candidate **/
+  protected double m_alpha2Star;
+  
+  /**
+   * default constructor
+   */
+  public RegSMO() {
+<span class="fc" id="L112">    super();</span>
+<span class="fc" id="L113">  }</span>
+  
+  /**
+   * Returns a string describing classifier
+   * 
+   * @return 		a description suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L122">    return</span>
+<span class="nc" id="L123">        &quot;Implementation of SMO for support vector regression as described &quot;</span>
+      + &quot;in :\n\n&quot;
+<span class="nc" id="L125">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return 		the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L138">    result = new TechnicalInformation(Type.MISC);</span>
+<span class="nc" id="L139">    result.setValue(Field.AUTHOR, &quot;A.J. Smola and B. Schoelkopf&quot;);</span>
+<span class="nc" id="L140">    result.setValue(Field.TITLE, &quot;A tutorial on support vector regression&quot;);</span>
+<span class="nc" id="L141">    result.setValue(Field.NOTE, &quot;NeuroCOLT2 Technical Report NC2-TR-1998-030&quot;);</span>
+<span class="nc" id="L142">    result.setValue(Field.YEAR, &quot;1998&quot;);</span>
+    
+<span class="nc" id="L144">    return result;</span>
+  }
+  
+  /**
+   * Returns an enumeration describing the available options
+   * 
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+<span class="fc" id="L153">    Vector result = new Vector();</span>
+    
+<span class="fc" id="L155">    result.addElement(new Option(</span>
+<span class="fc" id="L156">	&quot;\tThe epsilon for round-off error.\n&quot; </span>
+	+ &quot;\t(default 1.0e-12)&quot;, 
+<span class="fc" id="L158">	&quot;P&quot;, 1, &quot;-P &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L160">    Enumeration enm = super.listOptions();</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">    while (enm.hasMoreElements()) {</span>
+<span class="fc" id="L162">      result.addElement(enm.nextElement());</span>
+    }
+    
+<span class="fc" id="L165">    return result.elements();</span>
+  }
+  
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;double&amp;gt;
+   *  The epsilon for round-off error.
+   *  (default 1.0e-12)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -L &amp;lt;double&amp;gt;
+   *  The epsilon parameter in epsilon-insensitive loss function.
+   *  (default 1.0e-3)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;double&amp;gt;
+   *  The random number seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported 
+   */
+  public void setOptions(String[] options) throws Exception {
+    String	tmpStr;
+    
+<span class="fc" id="L194">    tmpStr = Utils.getOption('P', options);</span>
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">    if (tmpStr.length() != 0) {</span>
+<span class="fc" id="L196">      setEpsilon(Double.parseDouble(tmpStr));</span>
+    } else {
+<span class="nc" id="L198">      setEpsilon(1.0e-12);</span>
+    }
+    
+<span class="fc" id="L201">    super.setOptions(options);</span>
+<span class="fc" id="L202">  }</span>
+  
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    int       	i;
+    Vector    	result;
+    String[]  	options;
+
+<span class="fc" id="L214">    result = new Vector();</span>
+
+<span class="fc" id="L216">    options = super.getOptions();</span>
+<span class="fc bfc" id="L217" title="All 2 branches covered.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="fc" id="L218">      result.add(options[i]);</span>
+    
+<span class="fc" id="L220">    result.add(&quot;-P&quot;);</span>
+<span class="fc" id="L221">    result.add(&quot;&quot; + getEpsilon());</span>
+
+<span class="fc" id="L223">    return (String[]) result.toArray(new String[result.size()]);	  </span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String epsilonTipText() {
+<span class="nc" id="L233">    return &quot;The epsilon for round-off error (shouldn't be changed).&quot;;</span>
+  }
+  
+  /**
+   * Get the value of epsilon.
+   * 
+   * @return 		Value of epsilon.
+   */
+  public double getEpsilon() {
+<span class="fc" id="L242">    return m_eps;</span>
+  }
+  
+  /**
+   * Set the value of epsilon.
+   * 
+   * @param v  		Value to assign to epsilon.
+   */
+  public void setEpsilon(double v) {
+<span class="fc" id="L251">    m_eps = v;</span>
+<span class="fc" id="L252">  }</span>
+  
+  /** initialize various variables before starting the actual optimizer 
+   * 
+   * @param data 	data set used for learning
+   * @throws Exception	if something goes wrong
+   */
+  protected void init(Instances data) throws Exception {
+<span class="fc" id="L260">    super.init(data);</span>
+    
+    //init error cache
+<span class="fc" id="L263">    m_error = new double[m_nInstances];</span>
+<span class="fc bfc" id="L264" title="All 2 branches covered.">    for (int i = 0; i &lt; m_nInstances; i++) {</span>
+<span class="fc" id="L265">      m_error[i] = -m_target[i];</span>
+    }
+<span class="fc" id="L267">  }</span>
+  
+  /** 
+   * wrap up various variables to save memeory and do some housekeeping after optimization
+   * has finished.
+   *
+   * @throws Exception 	if something goes wrong
+   */
+  protected void wrapUp() throws Exception {
+<span class="fc" id="L276">    m_error = null;</span>
+<span class="fc" id="L277">    super.wrapUp();</span>
+<span class="fc" id="L278">  }</span>
+
+  /** 
+   * Finds optimal point on line constrained by first (i1) and second (i2) 
+   * candidate. Parameters correspond to pseudocode (see technicalinformation)
+   * 
+   * @param i1
+   * @param alpha1
+   * @param alpha1Star
+   * @param C1
+   * @param i2
+   * @param alpha2
+   * @param alpha2Star
+   * @param C2
+   * @param gamma
+   * @param eta
+   * @param deltaPhi
+   * @return
+   */
+  protected boolean findOptimalPointOnLine(int i1, double alpha1, double alpha1Star, double C1, 
+      int i2, double alpha2, double alpha2Star, double C2, 
+      double gamma, double eta, double deltaPhi) {
+<span class="fc bfc" id="L300" title="All 2 branches covered.">    if (eta &lt;= 0) {</span>
+      // this may happen due to numeric instability
+      // due to Mercer's condition, this should not happen, hence we give up
+<span class="fc" id="L303">      return false;</span>
+    }
+    
+<span class="fc" id="L306">    boolean case1 = false;</span>
+<span class="fc" id="L307">    boolean case2 = false;</span>
+<span class="fc" id="L308">    boolean case3 = false;</span>
+<span class="fc" id="L309">    boolean case4 = false;</span>
+<span class="fc" id="L310">    boolean finished = false;</span>
+    
+    //		while !finished 
+    //		% this loop is passed at most three times 
+    //		% case variables needed to avoid attempting small changes twice 
+<span class="fc bfc" id="L315" title="All 2 branches covered.">    while (!finished) {</span>
+      //			if (case1 == 0) &amp;&amp; 
+      //				(alpha1 &gt; 0 || (alpha1* == 0 &amp;&amp; deltaPhi &gt; 0)) &amp;&amp; 
+      //				(alpha2 &gt; 0 || (alpha2* == 0 &amp;&amp; deltaPhi &lt; 0)) 
+      //				compute L, H (wrt. alpha1, alpha2) 
+      //				if L &lt; H 
+      //					a2 = alpha2 ? - deltaPhi/eta 
+      //					a2 = min(a2, H) 
+      //					a2 = max(L, a2) 
+      //					a1 = alpha1 ? - (a2 ? alpha2) 
+      //					update alpha1, alpha2 if change is larger than some eps 
+      //				else 
+      //					finished = 1 
+      //				endif 
+      //				case1 = 1; 
+      
+<span class="fc bfc" id="L331" title="All 2 branches covered.">      if ((case1 == false) &amp;&amp; </span>
+<span class="fc bfc" id="L332" title="All 6 branches covered.">	  (alpha1 &gt; 0 || (alpha1Star == 0 &amp;&amp; deltaPhi &gt; 0)) &amp;&amp; </span>
+<span class="fc bfc" id="L333" title="All 6 branches covered.">	  (alpha2 &gt; 0 || (alpha2Star == 0 &amp;&amp; deltaPhi &lt; 0))) {</span>
+	// compute L, H (wrt. alpha1, alpha2) 
+<span class="fc" id="L335">	double L = Math.max(0, gamma - C1);</span>
+<span class="fc" id="L336">	double H = Math.min(C2, gamma);</span>
+<span class="pc bpc" id="L337" title="1 of 2 branches missed.">	if (L &lt; H) {</span>
+<span class="fc" id="L338">	  double a2 = alpha2 - deltaPhi / eta;</span>
+<span class="fc" id="L339">	  a2 = Math.min(a2, H);</span>
+<span class="fc" id="L340">	  a2 = Math.max(L, a2);</span>
+	  // To prevent precision problems
+<span class="fc bfc" id="L342" title="All 2 branches covered.">	  if (a2 &gt; C2 - m_Del * C2) {</span>
+<span class="fc" id="L343">	    a2 = C2;</span>
+<span class="fc bfc" id="L344" title="All 2 branches covered.">	  } else if (a2 &lt;= m_Del * C2) {</span>
+<span class="fc" id="L345">	    a2 = 0;</span>
+	  }
+<span class="fc" id="L347">	  double a1 = alpha1 - (a2 - alpha2);</span>
+<span class="fc bfc" id="L348" title="All 2 branches covered.">	  if (a1 &gt; C1 - m_Del * C1) {</span>
+<span class="fc" id="L349">	    a1 = C1;</span>
+<span class="fc bfc" id="L350" title="All 2 branches covered.">	  } else if (a1 &lt;= m_Del * C1) {</span>
+<span class="fc" id="L351">	    a1 = 0;</span>
+	  }
+	  // update alpha1, alpha2 if change is larger than some eps
+<span class="pc bpc" id="L354" title="1 of 2 branches missed.">	  if (Math.abs(alpha1 - a1) &gt; m_eps) {</span>
+<span class="fc" id="L355">	    deltaPhi += eta * (a2 - alpha2);</span>
+<span class="fc" id="L356">	    alpha1 = a1;</span>
+<span class="fc" id="L357">	    alpha2 = a2;</span>
+	  }
+	} else {
+<span class="nc" id="L360">	  finished = true;</span>
+	}
+<span class="fc" id="L362">	case1 = true;</span>
+      }
+      
+      //			elseif (case2 == 0) &amp;&amp; 
+      //				(alpha1 &gt; 0 || (alpha1* == 0 &amp;&amp; deltaPhi &gt; 2 epsilon)) &amp;&amp; 
+      //				(alpha2* &gt; 0 || (alpha2 == 0 &amp;&amp; deltaPhi &gt; 2 epsilon)) 
+      //				compute L, H (wrt. alpha1, alpha2*) 
+      //				if L &lt; H 
+      //					a2 = alpha2* + (deltaPhi ?- 2 epsilon)/eta 
+      //					a2 = min(a2, H) 
+      //					a2 = max(L, a2) 
+      //					a1 = alpha1 + (a2 ? alpha2*) 
+      //					update alpha1, alpha2* if change is larger than some eps 
+      //				else 
+      //					finished = 1 
+      //				endif 
+      //				case2 = 1; 
+      
+      else if (
+<span class="fc bfc" id="L381" title="All 2 branches covered.">	  (case2 == false)</span>
+<span class="fc bfc" id="L382" title="All 6 branches covered.">	  &amp;&amp; (alpha1 &gt; 0 || (alpha1Star == 0 &amp;&amp; deltaPhi &gt; 2 * m_epsilon))</span>
+<span class="fc bfc" id="L383" title="All 6 branches covered.">	  &amp;&amp; (alpha2Star &gt; 0 || (alpha2 == 0 &amp;&amp; deltaPhi &gt; 2 * m_epsilon))) {</span>
+	// compute L, H (wrt. alpha1, alpha2*) 
+<span class="fc" id="L385">	double L = Math.max(0, -gamma);</span>
+<span class="fc" id="L386">	double H = Math.min(C2, -gamma + C1);</span>
+<span class="pc bpc" id="L387" title="1 of 2 branches missed.">	if (L &lt; H) {</span>
+<span class="fc" id="L388">	  double a2 = alpha2Star + (deltaPhi - 2 * m_epsilon) / eta;</span>
+<span class="fc" id="L389">	  a2 = Math.min(a2, H);</span>
+<span class="fc" id="L390">	  a2 = Math.max(L, a2);</span>
+	  // To prevent precision problems
+<span class="fc bfc" id="L392" title="All 2 branches covered.">	  if (a2 &gt; C2 - m_Del * C2) {</span>
+<span class="fc" id="L393">	    a2 = C2;</span>
+<span class="fc bfc" id="L394" title="All 2 branches covered.">	  } else if (a2 &lt;= m_Del * C2) {</span>
+<span class="fc" id="L395">	    a2 = 0;</span>
+	  }
+<span class="fc" id="L397">	  double a1 = alpha1 + (a2 - alpha2Star);</span>
+<span class="fc bfc" id="L398" title="All 2 branches covered.">	  if (a1 &gt; C1 - m_Del * C1) {</span>
+<span class="fc" id="L399">	    a1 = C1;</span>
+<span class="fc bfc" id="L400" title="All 2 branches covered.">	  } else if (a1 &lt;= m_Del * C1) {</span>
+<span class="fc" id="L401">	    a1 = 0;</span>
+	  }
+	  // update alpha1, alpha2* if change is larger than some eps 
+<span class="pc bpc" id="L404" title="1 of 2 branches missed.">	  if (Math.abs(alpha1 - a1) &gt; m_eps) {</span>
+<span class="fc" id="L405">	    deltaPhi += eta * (-a2 + alpha2Star);</span>
+<span class="fc" id="L406">	    alpha1 = a1;</span>
+<span class="fc" id="L407">	    alpha2Star = a2;</span>
+	  }
+	} else {
+<span class="nc" id="L410">	  finished = true;</span>
+	}
+<span class="fc" id="L412">	case2 = true;</span>
+      }
+      
+      //			elseif (case3 == 0) &amp;&amp; 
+      //				(alpha1* &gt; 0 || (alpha1 == 0 &amp;&amp; deltaPhi &lt; -2 epsilon)) &amp;&amp; 
+      //				(alpha2 &gt; 0 || (alpha2* == 0 &amp;&amp; deltaPhi &lt; -2 epsilon)) 
+      //				compute L, H (wrt. alpha1*, alpha2) 
+      //				if L &lt; H 
+      //					a2 = alpha2 ?- (deltaPhi ?+ 2 epsilon)/eta 
+      //					a2 = min(a2, H) 
+      //					a2 = max(L, a2) 
+      //					a1 = alpha1* + (a2 ? alpha2) 
+      //					update alpha1*, alpha2 if change is larger than some eps 
+      //				else 
+      //					finished = 1 
+      //				endif 
+      //				case3 = 1; 
+      
+      else if (
+<span class="fc bfc" id="L431" title="All 2 branches covered.">	  (case3 == false)</span>
+<span class="fc bfc" id="L432" title="All 6 branches covered.">	  &amp;&amp; (alpha1Star &gt; 0 || (alpha1 == 0 &amp;&amp; deltaPhi &lt; - 2 * m_epsilon))</span>
+<span class="fc bfc" id="L433" title="All 6 branches covered.">	  &amp;&amp; (alpha2 &gt; 0 || (alpha2Star == 0 &amp;&amp; deltaPhi &lt; - 2 * m_epsilon))) {</span>
+	// compute L, H (wrt. alpha1*, alpha2)
+<span class="fc" id="L435">	double L = Math.max(0, gamma);</span>
+<span class="fc" id="L436">	double H = Math.min(C2, C1 + gamma);</span>
+<span class="fc bfc" id="L437" title="All 2 branches covered.">	if (L &lt; H) {</span>
+	  // note Smola's psuedocode has a minus, where there should be a plus in the following line, Keerthi's is correct
+<span class="fc" id="L439">	  double a2 = alpha2 - (deltaPhi + 2 * m_epsilon) / eta;</span>
+<span class="fc" id="L440">	  a2 = Math.min(a2, H);</span>
+<span class="fc" id="L441">	  a2 = Math.max(L, a2);</span>
+	  // To prevent precision problems
+<span class="fc bfc" id="L443" title="All 2 branches covered.">	  if (a2 &gt; C2 - m_Del * C2) {</span>
+<span class="fc" id="L444">	    a2 = C2;</span>
+<span class="fc bfc" id="L445" title="All 2 branches covered.">	  } else if (a2 &lt;= m_Del * C2) {</span>
+<span class="fc" id="L446">	    a2 = 0;</span>
+	  }
+<span class="fc" id="L448">	  double a1 = alpha1Star + (a2 - alpha2);</span>
+<span class="fc bfc" id="L449" title="All 2 branches covered.">	  if (a1 &gt; C1 - m_Del * C1) {</span>
+<span class="fc" id="L450">	    a1 = C1;</span>
+<span class="fc bfc" id="L451" title="All 2 branches covered.">	  } else if (a1 &lt;= m_Del * C1) {</span>
+<span class="fc" id="L452">	    a1 = 0;</span>
+	  }
+	  // update alpha1*, alpha2 if change is larger than some eps 
+<span class="pc bpc" id="L455" title="1 of 2 branches missed.">	  if (Math.abs(alpha1Star - a1) &gt; m_eps) {</span>
+<span class="fc" id="L456">	    deltaPhi += eta * (a2 - alpha2);</span>
+<span class="fc" id="L457">	    alpha1Star = a1;</span>
+<span class="fc" id="L458">	    alpha2 = a2;</span>
+	  }
+	} else {
+<span class="fc" id="L461">	  finished = true;</span>
+	}
+<span class="fc" id="L463">	case3 = true;</span>
+      }
+      
+      //			elseif (case4 == 0) &amp;&amp; 
+      //				(alpha1* &gt; 0 || (alpha1 == 0 &amp;&amp; deltaPhi &lt; 0)) &amp;&amp; 
+      //				(alpha2* &gt; 0 || (alpha2 == 0 &amp;&amp; deltaPhi &gt; 0)) 
+      //				compute L, H (wrt. alpha1*, alpha2*) 
+      //				if L &lt; H 
+      //					a2 = alpha2* + deltaPhi/eta 
+      //					a2 = min(a2, H) 
+      //					a2 = max(L, a2) 
+      //					a1 = alpha1* ? (a2 ? alpha2*) 
+      //					update alpha1*, alpha2* if change is larger than some eps 
+      //				else 
+      //					finished = 1 
+      //				endif 
+      //				case4 = 1; 
+      //			else 
+      //				finished = 1 
+      //			endif 
+      
+<span class="fc bfc" id="L484" title="All 2 branches covered.">      else if ((case4 == false) &amp;&amp; </span>
+<span class="fc bfc" id="L485" title="All 6 branches covered.">	  (alpha1Star &gt; 0 || (alpha1 == 0 &amp;&amp; deltaPhi &lt; 0)) &amp;&amp; </span>
+<span class="fc bfc" id="L486" title="All 6 branches covered.">	  (alpha2Star &gt; 0 || (alpha2 == 0 &amp;&amp; deltaPhi &gt; 0))) {</span>
+	// compute L, H (wrt. alpha1*, alpha2*) 
+<span class="fc" id="L488">	double L = Math.max(0, -gamma - C1);</span>
+<span class="fc" id="L489">	double H = Math.min(C2, -gamma);</span>
+<span class="pc bpc" id="L490" title="1 of 2 branches missed.">	if (L &lt; H) {</span>
+<span class="fc" id="L491">	  double a2 = alpha2Star + deltaPhi / eta;</span>
+<span class="fc" id="L492">	  a2 = Math.min(a2, H);</span>
+<span class="fc" id="L493">	  a2 = Math.max(L, a2);</span>
+	  // To prevent precision problems
+<span class="fc bfc" id="L495" title="All 2 branches covered.">	  if (a2 &gt; C2 - m_Del * C2) {</span>
+<span class="fc" id="L496">	    a2 = C2;</span>
+<span class="fc bfc" id="L497" title="All 2 branches covered.">	  } else if (a2 &lt;= m_Del * C2) {</span>
+<span class="fc" id="L498">	    a2 = 0;</span>
+	  }
+<span class="fc" id="L500">	  double a1 = alpha1Star - (a2 - alpha2Star);</span>
+<span class="fc bfc" id="L501" title="All 2 branches covered.">	  if (a1 &gt; C1 - m_Del * C1) {</span>
+<span class="fc" id="L502">	    a1 = C1;</span>
+<span class="fc bfc" id="L503" title="All 2 branches covered.">	  } else if (a1 &lt;= m_Del * C1) {</span>
+<span class="fc" id="L504">	    a1 = 0;</span>
+	  }
+	  // update alpha1*, alpha2* if change is larger than some eps 
+<span class="pc bpc" id="L507" title="1 of 2 branches missed.">	  if (Math.abs(alpha1Star - a1) &gt; m_eps) {</span>
+<span class="fc" id="L508">	    deltaPhi += eta * (-a2 + alpha2Star);</span>
+	    
+<span class="fc" id="L510">	    alpha1Star = a1;</span>
+<span class="fc" id="L511">	    alpha2Star = a2;</span>
+	  }
+	} else {
+<span class="nc" id="L514">	  finished = true;</span>
+	}
+<span class="fc" id="L516">	case4 = true;</span>
+      } else {
+<span class="fc" id="L518">	finished = true;</span>
+      }
+      
+      //			update deltaPhi
+      // using 4.36 from Smola's thesis:
+      // deltaPhi = deltaPhi - eta * ((alpha1New-alpha1StarNew)-(alpha1-alpha1Star));
+      // the update is done inside the loop, saving us to remember old values of alpha1(*)
+      //deltaPhi += eta * ((alpha2 - alpha2Star) - dAlpha2Old);
+      //dAlpha2Old = (alpha2 - alpha2Star);
+      
+      //		endwhile 
+      
+    }
+    
+<span class="fc bfc" id="L532" title="All 2 branches covered.">    if (Math.abs(alpha1 - m_alpha[i1]) &gt; m_eps</span>
+<span class="pc bpc" id="L533" title="1 of 2 branches missed.">	|| Math.abs(alpha1Star - m_alphaStar[i1]) &gt; m_eps</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">	|| Math.abs(alpha2 - m_alpha[i2]) &gt; m_eps</span>
+<span class="nc bnc" id="L535" title="All 2 branches missed.">	|| Math.abs(alpha2Star - m_alphaStar[i2]) &gt; m_eps) {</span>
+      
+<span class="fc bfc" id="L537" title="All 2 branches covered.">      if (alpha1 &gt; C1 - m_Del * C1) {</span>
+<span class="fc" id="L538">	alpha1 = C1;</span>
+<span class="fc bfc" id="L539" title="All 2 branches covered.">      } else if (alpha1 &lt;= m_Del * C1) {</span>
+<span class="fc" id="L540">	alpha1 = 0;</span>
+      }
+<span class="fc bfc" id="L542" title="All 2 branches covered.">      if (alpha1Star &gt; C1 - m_Del * C1) {</span>
+<span class="fc" id="L543">	alpha1Star = C1;</span>
+<span class="fc bfc" id="L544" title="All 2 branches covered.">      } else if (alpha1Star &lt;= m_Del * C1) {</span>
+<span class="fc" id="L545">	alpha1Star = 0;</span>
+      }
+<span class="fc bfc" id="L547" title="All 2 branches covered.">      if (alpha2 &gt; C2 - m_Del * C2) {</span>
+<span class="fc" id="L548">	alpha2 = C2;</span>
+<span class="fc bfc" id="L549" title="All 2 branches covered.">      } else if (alpha2 &lt;= m_Del * C2) {</span>
+<span class="fc" id="L550">	alpha2 = 0;</span>
+      }
+<span class="fc bfc" id="L552" title="All 2 branches covered.">      if (alpha2Star &gt; C2 - m_Del * C2) {</span>
+<span class="fc" id="L553">	alpha2Star = C2;</span>
+<span class="fc bfc" id="L554" title="All 2 branches covered.">      } else if (alpha2Star &lt;= m_Del * C2) {</span>
+<span class="fc" id="L555">	alpha2Star = 0;</span>
+      }
+      
+      // store new alpha's
+<span class="fc" id="L559">      m_alpha[i1] = alpha1;</span>
+<span class="fc" id="L560">      m_alphaStar[i1] = alpha1Star;</span>
+<span class="fc" id="L561">      m_alpha[i2] = alpha2;</span>
+<span class="fc" id="L562">      m_alphaStar[i2] = alpha2Star;</span>
+      
+      // update supportvector set
+<span class="fc bfc" id="L565" title="All 4 branches covered.">      if (alpha1 != 0 || alpha1Star != 0){</span>
+<span class="fc bfc" id="L566" title="All 2 branches covered.">	if (!m_supportVectors.contains(i1)) {</span>
+<span class="fc" id="L567">	  m_supportVectors.insert(i1);	</span>
+	}
+      } else {
+<span class="fc" id="L570">	m_supportVectors.delete(i1);</span>
+      }
+<span class="fc bfc" id="L572" title="All 4 branches covered.">      if (alpha2 != 0 || alpha2Star != 0){</span>
+<span class="fc bfc" id="L573" title="All 2 branches covered.">	if (!m_supportVectors.contains(i2)) {</span>
+<span class="fc" id="L574">	  m_supportVectors.insert(i2);</span>
+	}
+      } else {
+<span class="fc" id="L577">	m_supportVectors.delete(i2);</span>
+      }
+<span class="fc" id="L579">      return true;</span>
+    }
+    
+<span class="nc" id="L582">    return false;</span>
+  }
+
+  /** 
+   * takeStep method from pseudocode.
+   * Parameters correspond to pseudocode (see technicalinformation)
+   * 
+   * @param i1
+   * @param i2
+   * @param alpha2
+   * @param alpha2Star
+   * @param phi2
+   * @return
+   * @throws Exception
+   */
+  protected int takeStep(int i1, int i2, double alpha2, double alpha2Star, double phi2) throws Exception {
+    //		if (i1 == i2) return 0 
+<span class="nc bnc" id="L599" title="All 2 branches missed.">    if (i1 == i2) {</span>
+<span class="nc" id="L600">      return 0;</span>
+    }
+<span class="nc" id="L602">    double C1 = m_C * m_data.instance(i1).weight();</span>
+<span class="nc" id="L603">    double C2 = m_C * m_data.instance(i2).weight();</span>
+    //		alpha1, alpha1* = Lagrange multipliers for i1 
+    //		y1 = target[i1] 
+    //		phi1 = SVM output on point[i1] ? y1 (in error cache) 
+<span class="nc" id="L607">    double alpha1 = m_alpha[i1];</span>
+<span class="nc" id="L608">    double alpha1Star = m_alphaStar[i1];</span>
+<span class="nc" id="L609">    double y1 = m_target[i1];</span>
+<span class="nc" id="L610">    double phi1 = m_error[i1];</span>
+    
+    //		k11 = kernel(point[i1],point[i1]) 
+    //		k12 = kernel(point[i1],point[i2]) 
+    //		k22 = kernel(point[i2],point[i2]) 
+    //		eta = 2*k12? - k11? - k22 
+    //		gamma = alpha1 ?- alpha1* + alpha2 ?- alpha2* 
+    
+<span class="nc" id="L618">    double k11 = m_kernel.eval(i1, i1, m_data.instance(i1));</span>
+<span class="nc" id="L619">    double k12 = m_kernel.eval(i1, i2, m_data.instance(i1));</span>
+<span class="nc" id="L620">    double k22 = m_kernel.eval(i2, i2, m_data.instance(i2));</span>
+<span class="nc" id="L621">    double eta = -2 * k12 + k11 + k22; // note, Smola's psuedocode has signs swapped, Keerthi's doesn't</span>
+<span class="nc bnc" id="L622" title="All 2 branches missed.">    if (eta &lt; 0) {</span>
+      // this may happen due to numeric instability
+      // due to Mercer's condition, this should not happen, hence we give up
+<span class="nc" id="L625">      return 0;</span>
+    }
+<span class="nc" id="L627">    double gamma = alpha1 - alpha1Star + alpha2 - alpha2Star;</span>
+    
+    //		% we assume eta &lt; 0. otherwise one has to repeat the complete 
+    //		% reasoning similarly (compute objective function for L and H 
+    //		% and decide which one is largest 
+    //		case1 = case2 = case3 = case4 = finished = 0 
+    //		alpha1old = alpha1, alpha1old* = alpha1* 
+    //		alpha2old = alpha2, alpha2old* = alpha2* 
+    //		deltaPhi = phi1 ?- phi2 
+    
+<span class="nc" id="L637">    double alpha1old = alpha1;</span>
+<span class="nc" id="L638">    double alpha1Starold = alpha1Star;</span>
+<span class="nc" id="L639">    double alpha2old = alpha2;</span>
+<span class="nc" id="L640">    double alpha2Starold = alpha2Star;</span>
+<span class="nc" id="L641">    double deltaPhi = phi2 - phi1;</span>
+    
+<span class="nc bnc" id="L643" title="All 2 branches missed.">    if (findOptimalPointOnLine(i1, alpha1, alpha1Star, C1, i2, alpha2, alpha2Star, C2, gamma, eta, deltaPhi)) {</span>
+<span class="nc" id="L644">      alpha1 = m_alpha[i1];</span>
+<span class="nc" id="L645">      alpha1Star = m_alphaStar[i1];</span>
+<span class="nc" id="L646">      alpha2 = m_alpha[i2];</span>
+<span class="nc" id="L647">      alpha2Star = m_alphaStar[i2];</span>
+      
+      
+      //		Update error cache using new Lagrange multipliers 
+<span class="nc" id="L651">      double dAlpha1 = alpha1 - alpha1old - (alpha1Star - alpha1Starold);</span>
+<span class="nc" id="L652">      double dAlpha2 = alpha2 - alpha2old - (alpha2Star - alpha2Starold);</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">      for (int j = 0; j &lt; m_nInstances; j++) {</span>
+<span class="nc bnc" id="L654" title="All 4 branches missed.">	if ((j != i1) &amp;&amp; (j != i2)/* &amp;&amp; m_error[j] != MAXERR*/) {</span>
+<span class="nc" id="L655">	  m_error[j] += dAlpha1 * m_kernel.eval(i1, j, m_data.instance(i1)) + dAlpha2 * m_kernel.eval(i2, j, m_data.instance(i2));</span>
+	}
+      }
+<span class="nc" id="L658">      m_error[i1] += dAlpha1 * k11 + dAlpha2 * k12;</span>
+<span class="nc" id="L659">      m_error[i2] += dAlpha1 * k12 + dAlpha2 * k22;</span>
+      
+      //		Update threshold to reflect change in Lagrange multipliers
+<span class="nc" id="L662">      double b1 = Double.MAX_VALUE;</span>
+<span class="nc" id="L663">      double b2 = Double.MAX_VALUE;</span>
+<span class="nc bnc" id="L664" title="All 16 branches missed.">      if ((0 &lt; alpha1 &amp;&amp; alpha1 &lt; C1) || (0 &lt; alpha1Star &amp;&amp; alpha1Star &lt; C1) ||(0 &lt; alpha2 &amp;&amp; alpha2 &lt; C2) || (0 &lt; alpha2Star &amp;&amp; alpha2Star &lt; C2)) {</span>
+<span class="nc bnc" id="L665" title="All 4 branches missed.">	if (0 &lt; alpha1 &amp;&amp; alpha1 &lt; C1) {</span>
+<span class="nc" id="L666">	  b1 = m_error[i1] - m_epsilon;</span>
+<span class="nc bnc" id="L667" title="All 4 branches missed.">	} else if (0 &lt; alpha1Star &amp;&amp; alpha1Star &lt; C1) {</span>
+<span class="nc" id="L668">	  b1 = m_error[i1] + m_epsilon;</span>
+	}
+<span class="nc bnc" id="L670" title="All 4 branches missed.">	if (0 &lt; alpha2 &amp;&amp; alpha2 &lt; C2) {</span>
+<span class="nc" id="L671">	  b2 = m_error[i2] - m_epsilon;</span>
+<span class="nc bnc" id="L672" title="All 4 branches missed.">	} else if (0 &lt; alpha2Star &amp;&amp; alpha2Star &lt; C2) {</span>
+<span class="nc" id="L673">	  b2 = m_error[i2] + m_epsilon;</span>
+	}
+<span class="nc bnc" id="L675" title="All 2 branches missed.">	if (b1 &lt; Double.MAX_VALUE) {</span>
+<span class="nc" id="L676">	  m_b = b1;</span>
+<span class="nc bnc" id="L677" title="All 2 branches missed.">	  if (b2 &lt; Double.MAX_VALUE) {</span>
+<span class="nc" id="L678">	    m_b = (b1 + b2) / 2.0;</span>
+	  }
+<span class="nc bnc" id="L680" title="All 2 branches missed.">	} else if (b2 &lt; Double.MAX_VALUE) {</span>
+<span class="nc" id="L681">	  m_b = b2;</span>
+	}
+<span class="nc bnc" id="L683" title="All 2 branches missed.">      } else if (m_b == 0) {</span>
+	// both alpha's are on the boundary, and m_b is not initialized
+<span class="nc" id="L685">	m_b = (m_error[i1] + m_error[i2])/2.0;</span>
+      }
+      
+      //		if changes in alpha1(*), alpha2(*) are larger than some eps 
+      //			return 1 
+      //		else 
+      //			return 0 
+      //		endif
+<span class="nc" id="L693">      return 1;</span>
+    } else {
+<span class="nc" id="L695">      return 0;</span>
+    }
+    //	endprocedure 
+  }
+  
+  /** 
+   * examineExample method from pseudocode.
+   * Parameters correspond to pseudocode (see technicalinformation)
+   * 
+   * @param i2
+   * @return
+   * @throws Exception
+   */
+  protected int examineExample(int i2) throws Exception {
+    //	procedure examineExample(i2) 
+    //		y2 = target[i2] 
+<span class="nc" id="L711">    double y2 = m_target[i2];</span>
+    //		alpha2, alpha2* = Lagrange multipliers for i2 
+<span class="nc" id="L713">    double alpha2 = m_alpha[i2];</span>
+<span class="nc" id="L714">    double alpha2Star = m_alphaStar[i2];</span>
+    //		C2, C2* = Constraints for i2 
+<span class="nc" id="L716">    double C2 = m_C;</span>
+<span class="nc" id="L717">    double C2Star = m_C;</span>
+    //		phi2 = SVM output on point[i2] ? y2 (in error cache) 
+<span class="nc" id="L719">    double phi2 = m_error[i2];</span>
+    // phi2b contains the error, taking the offset in account
+<span class="nc" id="L721">    double phi2b = phi2 - m_b;</span>
+    //		if ((phi2 &gt; epsilon &amp;&amp; alpha2* &lt; C2*) ||
+    //			(phi2 &lt; epsilon &amp;&amp; alpha2* &gt; 0 ) ||
+    //			(-?phi2 &gt; epsilon &amp;&amp; alpha2 &lt; C2 ) ||
+    //			(?-phi2 &gt; epsilon &amp;&amp; alpha2 &gt; 0 )) 
+<span class="nc bnc" id="L726" title="All 4 branches missed.">    if ((phi2b &gt; m_epsilon &amp;&amp; alpha2Star &lt; C2Star)</span>
+<span class="nc bnc" id="L727" title="All 4 branches missed.">	|| (phi2b &lt; m_epsilon &amp;&amp; alpha2Star &gt; 0)</span>
+<span class="nc bnc" id="L728" title="All 4 branches missed.">	|| (-phi2b &gt; m_epsilon &amp;&amp; alpha2 &lt; C2)</span>
+<span class="nc bnc" id="L729" title="All 4 branches missed.">	|| (-phi2b &gt; m_epsilon &amp;&amp; alpha2 &gt; 0)) {</span>
+      
+      //			if (number of non?zero &amp; non?C alpha &gt; 1) 
+      //				i1 = result of second choice heuristic 
+      //				if takeStep(i1,i2) return 1 
+      //			endif 
+<span class="nc" id="L735">      int i1 = secondChoiceHeuristic(i2);</span>
+<span class="nc bnc" id="L736" title="All 4 branches missed.">      if (i1 &gt;= 0 &amp;&amp; (takeStep(i1, i2, alpha2, alpha2Star, phi2) &gt; 0)) {</span>
+<span class="nc" id="L737">	return 1;</span>
+      }
+      //			loop over all non?zero and non?C alpha, random start 
+      //				i1 = identity of current alpha 
+      //				if takeStep(i1,i2) return 1 
+      //			endloop 
+<span class="nc bnc" id="L743" title="All 2 branches missed.">      for (i1 = 0; i1 &lt; m_target.length; i1++) {</span>
+<span class="nc bnc" id="L744" title="All 8 branches missed.">	if ((m_alpha[i1] &gt; 0 &amp;&amp; m_alpha[i1] &lt; m_C) || (m_alphaStar[i1] &gt; 0 &amp;&amp; m_alphaStar[i1] &lt; m_C)) {</span>
+<span class="nc bnc" id="L745" title="All 2 branches missed.">	  if (takeStep(i1, i2, alpha2, alpha2Star, phi2) &gt; 0) {</span>
+<span class="nc" id="L746">	    return 1;</span>
+	  }
+	}
+      }
+      //			loop over all possible i1, with random start 
+      //				i1 = loop variable 
+      //				if takeStep(i1,i2) return 1 
+      //			endloop 
+<span class="nc bnc" id="L754" title="All 2 branches missed.">      for (i1 = 0; i1 &lt; m_target.length; i1++) {</span>
+<span class="nc bnc" id="L755" title="All 2 branches missed.">	if (takeStep(i1, i2, alpha2, alpha2Star, phi2) &gt; 0) {</span>
+<span class="nc" id="L756">	  return 1;</span>
+	}
+      }
+      //		endif 
+    }
+    //		return 0 
+<span class="nc" id="L762">    return 0;</span>
+    //	endprocedure 
+  }
+  
+  /** 
+   * applies heuristic for finding candidate that is expected to lead to
+   * good gain when applying takeStep together with second candidate.
+   * 
+   * @param i2 index of second candidate
+   * @return
+   */
+  protected int secondChoiceHeuristic(int i2) {
+    // randomly select an index i1 (not equal to i2) with non?zero and non?C alpha, if any
+<span class="nc bnc" id="L775" title="All 2 branches missed.">    for (int i = 0; i &lt; 59; i++) {</span>
+<span class="nc" id="L776">      int i1 = m_random.nextInt(m_nInstances);</span>
+<span class="nc bnc" id="L777" title="All 10 branches missed.">      if ((i1 != i2) &amp;&amp; (m_alpha[i1] &gt; 0 &amp;&amp; m_alpha[i1] &lt; m_C) || (m_alphaStar[i1] &gt; 0 &amp;&amp; m_alphaStar[i1] &lt; m_C)) {</span>
+<span class="nc" id="L778">	return i1;</span>
+      }
+    }
+<span class="nc" id="L781">    return -1;</span>
+  }
+  
+  /**
+   * finds alpha and alpha* parameters that optimize the SVM target function
+   * 
+   * @throws Exception
+   */
+  public void optimize() throws Exception {
+    
+    //	main routine: 
+    //		initialize threshold to zero 
+    //		numChanged = 0 
+    //		examineAll = 1 
+    //		SigFig = -100 
+    //		LoopCounter = 0 
+<span class="nc" id="L797">    int numChanged = 0;</span>
+<span class="nc" id="L798">    int examineAll = 1;</span>
+<span class="nc" id="L799">    int sigFig = -100;</span>
+<span class="nc" id="L800">    int loopCounter = 0;</span>
+    //		while ((numChanged &gt; 0 | examineAll) | (SigFig &lt; 3)) 
+<span class="nc bnc" id="L802" title="All 8 branches missed.">    while ((numChanged &gt; 0 || (examineAll &gt; 0)) | (sigFig &lt; 3)) {</span>
+      //			LoopCounter++ 
+      //			numChanged = 0; 
+<span class="nc" id="L805">      loopCounter++;</span>
+<span class="nc" id="L806">      numChanged = 0;</span>
+      //			if (examineAll) 
+      //				loop I over all training examples 
+      //				numChanged += examineExample(I)
+      //			else 
+      //				loop I over examples where alpha is not 0 &amp; not C 
+      //				numChanged += examineExample(I) 
+      //			endif
+<span class="nc" id="L814">      int numSamples = 0;</span>
+<span class="nc bnc" id="L815" title="All 2 branches missed.">      if (examineAll &gt; 0) {</span>
+<span class="nc bnc" id="L816" title="All 2 branches missed.">	for (int i = 0; i &lt; m_nInstances; i++) {</span>
+<span class="nc" id="L817">	  numChanged += examineExample(i);</span>
+	}
+      } else {
+<span class="nc bnc" id="L820" title="All 2 branches missed.">	for (int i = 0; i &lt; m_target.length; i++) {</span>
+<span class="nc bnc" id="L821" title="All 4 branches missed.">	  if ((m_alpha[i] &gt; 0 &amp;&amp; m_alpha[i] &lt; m_C * m_data.instance(i).weight()) || </span>
+<span class="nc bnc" id="L822" title="All 4 branches missed.">	      (m_alphaStar[i] &gt; 0 &amp;&amp; m_alphaStar[i] &lt; m_C * m_data.instance(i).weight())) {</span>
+<span class="nc" id="L823">	    numSamples++;</span>
+<span class="nc" id="L824">	    numChanged += examineExample(i);</span>
+	  }
+	}
+      }
+      //	
+      //		if (mod(LoopCounter, 2) == 0) 
+      //				MinimumNumChanged = max(1, 0.1*NumSamples) 
+      //			else 
+      //				MinimumNumChanged = 1 
+      //			endif 
+<span class="nc" id="L834">      int minimumNumChanged = 1;</span>
+<span class="nc bnc" id="L835" title="All 2 branches missed.">      if (loopCounter % 2 == 0) {</span>
+<span class="nc" id="L836">	minimumNumChanged = (int) Math.max(1, 0.1 * numSamples);</span>
+      }
+      
+      //			if (examineAll == 1) 
+      //				examineAll = 0 
+      //			elseif (numChanged &lt; MinimumNumChanged) 
+      //				examineAll = 1 
+      //			endif 
+<span class="nc bnc" id="L844" title="All 2 branches missed.">      if (examineAll == 1) {</span>
+<span class="nc" id="L845">	examineAll = 0;</span>
+<span class="nc bnc" id="L846" title="All 2 branches missed.">      } else if (numChanged &lt; minimumNumChanged) {</span>
+<span class="nc" id="L847">	examineAll = 1;</span>
+      }
+      
+      //		endwhile 
+<span class="nc bnc" id="L851" title="All 2 branches missed.">      if (loopCounter == 2500) {</span>
+<span class="nc" id="L852">	break;</span>
+      }
+    }
+    //	endmain 
+<span class="nc" id="L856">  }</span>
+  
+  /** 
+   * learn SVM parameters from data using Smola's SMO algorithm.
+   * Subclasses should implement something more interesting.
+   * 
+   * @param instances	the data to learn from
+   * @throws Exception	if something goes wrong
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+    // initialize variables
+<span class="nc" id="L867">    init(instances);</span>
+    // solve optimization problem
+<span class="nc" id="L869">    optimize();</span>
+    // clean up
+<span class="nc" id="L871">    wrapUp();</span>
+<span class="nc" id="L872">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L880">    return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

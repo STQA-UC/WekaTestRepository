@@ -1,0 +1,1395 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>DatabaseUtils.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.experiment</a> &gt; <span class="el_source">DatabaseUtils.java</span></div><h1>DatabaseUtils.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    DatabaseUtils.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.experiment;
+
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+
+import java.io.Serializable;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Types;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Properties;
+import java.util.StringTokenizer;
+import java.util.Vector;
+
+/**
+ * DatabaseUtils provides utility functions for accessing the experiment
+ * database. The jdbc
+ * driver and database to be used default to &quot;jdbc.idbDriver&quot; and
+ * &quot;jdbc:idb=experiments.prp&quot;. These may be changed by creating
+ * a java properties file called DatabaseUtils.props in user.home or
+ * the current directory. eg:&lt;p&gt;
+ *
+ * &lt;code&gt;&lt;pre&gt;
+ * jdbcDriver=jdbc.idbDriver
+ * jdbcURL=jdbc:idb=experiments.prp
+ * &lt;/pre&gt;&lt;/code&gt;&lt;p&gt;
+ *
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 5240 $
+ */
+public class DatabaseUtils
+  implements Serializable, RevisionHandler {
+
+  /** for serialization. */
+  static final long serialVersionUID = -8252351994547116729L;
+  
+  /** The name of the table containing the index to experiments. */
+  public static final String EXP_INDEX_TABLE = &quot;Experiment_index&quot;;
+
+  /** The name of the column containing the experiment type (ResultProducer). */
+  public static final String EXP_TYPE_COL = &quot;Experiment_type&quot;;
+
+  /** The name of the column containing the experiment setup (parameters). */
+  public static final String EXP_SETUP_COL = &quot;Experiment_setup&quot;;
+  
+  /** The name of the column containing the results table name. */
+  public static final String EXP_RESULT_COL = &quot;Result_table&quot;;
+
+  /** The prefix for result table names. */
+  public static final String EXP_RESULT_PREFIX = &quot;Results&quot;;
+
+  /** The name of the properties file. */
+  public final static String PROPERTY_FILE = &quot;weka/experiment/DatabaseUtils.props&quot;;
+
+  /** Holds the jdbc drivers to be used (only to stop them being gc'ed). */
+<span class="fc" id="L86">  protected Vector DRIVERS = new Vector();</span>
+
+  /** keeping track of drivers that couldn't be loaded. */
+  protected static Vector DRIVERS_ERRORS;
+
+  /** Properties associated with the database connection. */
+  protected Properties PROPERTIES;
+
+  /* Type mapping used for reading experiment results */
+  /** Type mapping for STRING used for reading experiment results. */
+  public static final int STRING = 0;
+  /** Type mapping for BOOL used for reading experiment results. */
+  public static final int BOOL = 1;
+  /** Type mapping for DOUBLE used for reading experiment results. */
+  public static final int DOUBLE = 2;
+  /** Type mapping for BYTE used for reading experiment results. */
+  public static final int BYTE = 3;
+  /** Type mapping for SHORT used for reading experiment results. */
+  public static final int SHORT = 4;
+  /** Type mapping for INTEGER used for reading experiment results. */
+  public static final int INTEGER = 5;
+  /** Type mapping for LONG used for reading experiment results. */
+  public static final int LONG = 6;
+  /** Type mapping for FLOAT used for reading experiment results. */
+  public static final int FLOAT = 7;
+  /** Type mapping for DATE used for reading experiment results. */
+  public static final int DATE = 8; 
+  /** Type mapping for TEXT used for reading, e.g., text blobs. */
+  public static final int TEXT = 9; 
+  /** Type mapping for TIME used for reading TIME columns. */
+  public static final int TIME = 10; 
+  
+  /** Database URL. */
+  protected String m_DatabaseURL;
+ 
+  /** The prepared statement used for database queries. */
+  protected transient PreparedStatement m_PreparedStatement;
+   
+  /** The database connection. */
+  protected transient Connection m_Connection;
+
+  /** True if debugging output should be printed. */
+<span class="fc" id="L128">  protected boolean m_Debug = false;</span>
+  
+  /** Database username. */
+<span class="fc" id="L131">  protected String m_userName = &quot;&quot;;</span>
+
+  /** Database Password. */
+<span class="fc" id="L134">  protected String m_password = &quot;&quot;;</span>
+
+  /* mappings used for creating Tables. Can be overridden in DatabaseUtils.props*/
+  /** string type for the create table statement. */
+<span class="fc" id="L138">  protected String m_stringType = &quot;LONGVARCHAR&quot;;</span>
+  /** integer type for the create table statement. */
+<span class="fc" id="L140">  protected String m_intType = &quot;INT&quot;;</span>
+  /** double type for the create table statement. */
+<span class="fc" id="L142">  protected String m_doubleType = &quot;DOUBLE&quot;;</span>
+
+  /** For databases where Tables and Columns are created in upper case. */
+<span class="fc" id="L145">  protected boolean m_checkForUpperCaseNames = false;</span>
+
+  /** For databases where Tables and Columns are created in lower case. */
+<span class="fc" id="L148">  protected boolean m_checkForLowerCaseNames = false;</span>
+
+  /** setAutoCommit on the database? */
+<span class="fc" id="L151">  protected boolean m_setAutoCommit = true;</span>
+
+  /** create index on the database? */
+<span class="fc" id="L154">  protected boolean m_createIndex = false;</span>
+
+  /** the keywords for the current database type. */
+<span class="fc" id="L157">  protected HashSet&lt;String&gt; m_Keywords = new HashSet&lt;String&gt;();</span>
+
+  /** the character to mask SQL keywords (by appending this character). */
+<span class="fc" id="L160">  protected String m_KeywordsMaskChar = &quot;_&quot;;</span>
+  
+  /**
+   * Reads properties and sets up the database drivers.
+   *
+   * @throws Exception 	if an error occurs
+   */
+<span class="fc" id="L167">  public DatabaseUtils() throws Exception {</span>
+<span class="fc bfc" id="L168" title="All 2 branches covered.">    if (DRIVERS_ERRORS == null)</span>
+<span class="fc" id="L169">      DRIVERS_ERRORS = new Vector();</span>
+
+    try {
+<span class="fc" id="L172">      PROPERTIES = Utils.readProperties(PROPERTY_FILE);</span>
+
+      // Register the drivers in jdbc DriverManager
+<span class="fc" id="L175">      String drivers = PROPERTIES.getProperty(&quot;jdbcDriver&quot;, &quot;jdbc.idbDriver&quot;);</span>
+
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">      if (drivers == null) {</span>
+<span class="nc" id="L178">        throw new Exception(&quot;No database drivers (JDBC) specified&quot;);</span>
+      }
+      // The call to newInstance() is necessary on some platforms
+      // (with some java VM implementations)
+<span class="fc" id="L182">      StringTokenizer st = new StringTokenizer(drivers, &quot;, &quot;);</span>
+<span class="fc bfc" id="L183" title="All 2 branches covered.">      while (st.hasMoreTokens()) {</span>
+<span class="fc" id="L184">        String driver = st.nextToken();</span>
+        boolean result;
+        try {
+<span class="nc" id="L187">          Class.forName(driver);</span>
+<span class="nc" id="L188">          DRIVERS.addElement(driver);</span>
+<span class="nc" id="L189">          result = true;</span>
+        }
+<span class="fc" id="L191">        catch (Exception e) {</span>
+<span class="fc" id="L192">          result = false;</span>
+        }
+<span class="pc bpc" id="L194" title="2 of 6 branches missed.">        if (m_Debug || (!result &amp;&amp; !DRIVERS_ERRORS.contains(driver))) </span>
+<span class="fc" id="L195">          System.err.println(</span>
+<span class="fc" id="L196">              &quot;Trying to add database driver (JDBC): &quot; + driver </span>
+<span class="pc bpc" id="L197" title="1 of 2 branches missed.">              + &quot; - &quot; + (result ? &quot;Success!&quot; : &quot;Error, not in CLASSPATH?&quot;));</span>
+<span class="pc bpc" id="L198" title="1 of 2 branches missed.">        if (!result)</span>
+<span class="fc" id="L199">          DRIVERS_ERRORS.add(driver);</span>
+      }
+<span class="nc" id="L201">    } catch (Exception ex) {</span>
+<span class="nc" id="L202">      System.err.println(&quot;Problem reading properties. Fix before continuing.&quot;);</span>
+<span class="nc" id="L203">      System.err.println(ex);</span>
+    }
+
+<span class="fc" id="L206">    m_DatabaseURL = PROPERTIES.getProperty(&quot;jdbcURL&quot;, &quot;jdbc:idb=experiments.prp&quot;);</span>
+<span class="fc" id="L207">    m_stringType  = PROPERTIES.getProperty(&quot;CREATE_STRING&quot;, &quot;LONGVARCHAR&quot;);</span>
+<span class="fc" id="L208">    m_intType     = PROPERTIES.getProperty(&quot;CREATE_INT&quot;, &quot;INT&quot;);</span>
+<span class="fc" id="L209">    m_doubleType  = PROPERTIES.getProperty(&quot;CREATE_DOUBLE&quot;, &quot;DOUBLE&quot;);</span>
+<span class="fc" id="L210">    m_checkForUpperCaseNames = PROPERTIES.getProperty(</span>
+<span class="fc" id="L211">				&quot;checkUpperCaseNames&quot;, &quot;false&quot;).equals(&quot;true&quot;);</span>
+<span class="fc" id="L212">    m_checkForLowerCaseNames = PROPERTIES.getProperty(</span>
+<span class="fc" id="L213">				&quot;checkLowerCaseNames&quot;, &quot;false&quot;).equals(&quot;true&quot;);</span>
+<span class="fc" id="L214">    m_setAutoCommit = PROPERTIES.getProperty(</span>
+<span class="fc" id="L215">			&quot;setAutoCommit&quot;, &quot;false&quot;).equals(&quot;true&quot;);</span>
+<span class="fc" id="L216">    m_createIndex   = PROPERTIES.getProperty(</span>
+<span class="fc" id="L217">			&quot;createIndex&quot;, &quot;false&quot;).equals(&quot;true&quot;);</span>
+<span class="fc" id="L218">    setKeywords(PROPERTIES.getProperty(</span>
+<span class="fc" id="L219">			&quot;Keywords&quot;, &quot;AND,ASC,BY,DESC,FROM,GROUP,INSERT,ORDER,SELECT,UPDATE,WHERE&quot;));</span>
+<span class="fc" id="L220">    setKeywordsMaskChar(PROPERTIES.getProperty(&quot;KeywordsMaskChar&quot;, &quot;_&quot;));</span>
+<span class="fc" id="L221">  }</span>
+  
+  /** 
+   * returns key column headings in their original case. Used for
+   * those databases that create uppercase column names.
+   * 
+   * @param columnName	the column to retrieve the original case for
+   * @return		the original case
+   */
+  protected String attributeCaseFix(String columnName){
+<span class="nc bnc" id="L231" title="All 2 branches missed.">    if (m_checkForUpperCaseNames) {</span>
+<span class="nc" id="L232">      String ucname = columnName.toUpperCase();</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">      if (ucname.equals(EXP_TYPE_COL.toUpperCase())) {</span>
+<span class="nc" id="L234">	return EXP_TYPE_COL;</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">      } else if (ucname.equals(EXP_SETUP_COL.toUpperCase())) {</span>
+<span class="nc" id="L236">	return EXP_SETUP_COL;</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">      } else if (ucname.equals(EXP_RESULT_COL.toUpperCase())) {</span>
+<span class="nc" id="L238">	return EXP_RESULT_COL;</span>
+      } else {
+<span class="nc" id="L240">	return columnName;</span>
+      }
+    }
+<span class="nc bnc" id="L243" title="All 2 branches missed.">    else if (m_checkForLowerCaseNames) {</span>
+<span class="nc" id="L244">      String ucname = columnName.toLowerCase();</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">      if (ucname.equals(EXP_TYPE_COL.toLowerCase())) {</span>
+<span class="nc" id="L246">	return EXP_TYPE_COL;</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">      } else if (ucname.equals(EXP_SETUP_COL.toLowerCase())) {</span>
+<span class="nc" id="L248">	return EXP_SETUP_COL;</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">      } else if (ucname.equals(EXP_RESULT_COL.toLowerCase())) {</span>
+<span class="nc" id="L250">	return EXP_RESULT_COL;</span>
+      } else {
+<span class="nc" id="L252">	return columnName;</span>
+      }
+    }
+    else {
+<span class="nc" id="L256">      return columnName;</span>
+    }
+  }
+ 
+  /**
+   * translates the column data type string to an integer value that indicates
+   * which data type / get()-Method to use in order to retrieve values from the
+   * database (see DatabaseUtils.Properties, InstanceQuery()). Blanks in the type 
+   * are replaced with underscores &quot;_&quot;, since Java property names can't contain blanks.
+   * 
+   * @param type 	the column type as retrieved with 
+   * 			java.sql.MetaData.getColumnTypeName(int)
+   * @return 		an integer value that indicates
+   * 			which data type / get()-Method to use in order to 
+   * 			retrieve values from the
+   */
+  public int translateDBColumnType(String type) {
+    try {
+      // Oracle, e.g., has datatypes like &quot;DOUBLE PRECISION&quot;
+      // BUT property names can't have blanks in the name (unless escaped with
+      // a backslash), hence also check for names where the blanks are 
+      // replaced with underscores &quot;_&quot;:
+<span class="nc" id="L278">      String value = PROPERTIES.getProperty(type);</span>
+<span class="nc" id="L279">      String typeUnderscore = type.replaceAll(&quot; &quot;, &quot;_&quot;);</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">      if (value == null)</span>
+<span class="nc" id="L281">	value = PROPERTIES.getProperty(typeUnderscore);</span>
+<span class="nc" id="L282">      return Integer.parseInt(value);</span>
+<span class="nc" id="L283">    } catch (NumberFormatException e) {</span>
+<span class="nc" id="L284">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L285">	  &quot;Unknown data type: &quot; + type + &quot;. &quot;</span>
+<span class="nc" id="L286">	  + &quot;Add entry in &quot; + PROPERTY_FILE + &quot;.\n&quot;</span>
+<span class="nc" id="L287">	  + &quot;If the type contains blanks, either escape them with a backslash &quot;</span>
+<span class="nc" id="L288">	  + &quot;or use underscores instead of blanks.&quot;);</span>
+    }
+  }
+
+  /**
+   * Converts an array of objects to a string by inserting a space
+   * between each element. Null elements are printed as ?
+   *
+   * @param array 	the array of objects
+   * @return 		a value of type 'String'
+   */
+  public static String arrayToString(Object[] array) {
+<span class="nc" id="L300">    String result = &quot;&quot;;</span>
+<span class="nc bnc" id="L301" title="All 2 branches missed.">    if (array == null) {</span>
+<span class="nc" id="L302">      result = &quot;&lt;null&gt;&quot;;</span>
+    } else {
+<span class="nc bnc" id="L304" title="All 2 branches missed.">      for (int i = 0; i &lt; array.length; i++) {</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">	if (array[i] == null) {</span>
+<span class="nc" id="L306">	  result += &quot; ?&quot;;</span>
+	} else {
+<span class="nc" id="L308">	  result += &quot; &quot; + array[i];</span>
+	}
+      }
+    }
+<span class="nc" id="L312">    return result;</span>
+  }
+
+  /**
+   * Returns the name associated with a SQL type.
+   *
+   * @param type 	the SQL type
+   * @return 		the name of the type
+   */
+  public static String typeName(int type) {
+<span class="nc bnc" id="L322" title="All 22 branches missed.">    switch (type) {</span>
+      case Types.BIGINT :
+<span class="nc" id="L324">	return &quot;BIGINT &quot;;</span>
+      case Types.BINARY:
+<span class="nc" id="L326">	return &quot;BINARY&quot;;</span>
+      case Types.BIT:
+<span class="nc" id="L328">	return &quot;BIT&quot;;</span>
+      case Types.CHAR:
+<span class="nc" id="L330">	return &quot;CHAR&quot;;</span>
+      case Types.DATE:
+<span class="nc" id="L332">	return &quot;DATE&quot;;</span>
+      case Types.DECIMAL:
+<span class="nc" id="L334">	return &quot;DECIMAL&quot;;</span>
+      case Types.DOUBLE:
+<span class="nc" id="L336">	return &quot;DOUBLE&quot;;</span>
+      case Types.FLOAT:
+<span class="nc" id="L338">	return &quot;FLOAT&quot;;</span>
+      case Types.INTEGER:
+<span class="nc" id="L340">	return &quot;INTEGER&quot;;</span>
+      case Types.LONGVARBINARY:
+<span class="nc" id="L342">	return &quot;LONGVARBINARY&quot;;</span>
+      case Types.LONGVARCHAR:
+<span class="nc" id="L344">	return &quot;LONGVARCHAR&quot;;</span>
+      case Types.NULL:
+<span class="nc" id="L346">	return &quot;NULL&quot;;</span>
+      case Types.NUMERIC:
+<span class="nc" id="L348">	return &quot;NUMERIC&quot;;</span>
+      case Types.OTHER:
+<span class="nc" id="L350">	return &quot;OTHER&quot;;</span>
+      case Types.REAL:
+<span class="nc" id="L352">	return &quot;REAL&quot;;</span>
+      case Types.SMALLINT:
+<span class="nc" id="L354">	return &quot;SMALLINT&quot;;</span>
+      case Types.TIME:
+<span class="nc" id="L356">	return &quot;TIME&quot;;</span>
+      case Types.TIMESTAMP:
+<span class="nc" id="L358">	return &quot;TIMESTAMP&quot;;</span>
+      case Types.TINYINT:
+<span class="nc" id="L360">	return &quot;TINYINT&quot;;</span>
+      case Types.VARBINARY:
+<span class="nc" id="L362">	return &quot;VARBINARY&quot;;</span>
+      case Types.VARCHAR:
+<span class="nc" id="L364">	return &quot;VARCHAR&quot;;</span>
+      default:
+<span class="nc" id="L366">	return &quot;Unknown&quot;;</span>
+    }
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String databaseURLTipText() {
+<span class="nc" id="L377">    return &quot;Set the URL to the database.&quot;;</span>
+  }
+
+  /**
+   * Get the value of DatabaseURL.
+   *
+   * @return 		Value of DatabaseURL.
+   */
+  public String getDatabaseURL() {
+<span class="nc" id="L386">    return m_DatabaseURL;</span>
+  }
+  
+  /**
+   * Set the value of DatabaseURL.
+   *
+   * @param newDatabaseURL 	Value to assign to DatabaseURL.
+   */
+  public void setDatabaseURL(String newDatabaseURL) {
+<span class="nc" id="L395">    m_DatabaseURL = newDatabaseURL;</span>
+<span class="nc" id="L396">  }</span>
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String debugTipText() {
+<span class="nc" id="L405">    return &quot;Whether debug information is printed.&quot;;</span>
+  }
+  
+  /**
+   * Sets whether there should be printed some debugging output to stderr or not.
+   * 
+   * @param d 		true if output should be printed
+   */
+  public void setDebug(boolean d) {
+<span class="nc" id="L414">    m_Debug = d;</span>
+<span class="nc" id="L415">  }</span>
+
+  /**
+   * Gets whether there should be printed some debugging output to stderr or not.
+   * 
+   * @return 		true if output should be printed
+   */
+  public boolean getDebug() {
+<span class="nc" id="L423">    return m_Debug;</span>
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String usernameTipText() {
+<span class="nc" id="L433">    return &quot;The user to use for connecting to the database.&quot;;</span>
+  }
+
+  /** 
+   * Set the database username.
+   *
+   * @param username 	Username for Database.
+   */
+  public void setUsername(String username){
+<span class="nc" id="L442">    m_userName = username; </span>
+<span class="nc" id="L443">  }</span>
+  
+  /** 
+   * Get the database username.
+   *
+   * @return 		Database username
+   */
+  public String getUsername(){
+<span class="nc" id="L451">    return m_userName;</span>
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String passwordTipText() {
+<span class="nc" id="L461">    return &quot;The password to use for connecting to the database.&quot;;</span>
+  }
+
+  /** 
+   * Set the database password.
+   *
+   * @param password 	Password for Database.
+   */
+  public void setPassword(String password){
+<span class="nc" id="L470">    m_password = password;</span>
+<span class="nc" id="L471">  }</span>
+  
+  /** 
+   * Get the database password.
+   *
+   * @return  		Password for Database.
+   */
+  public String getPassword(){
+<span class="nc" id="L479">    return m_password;</span>
+  }
+
+  /**
+   * Opens a connection to the database.
+   *
+   * @throws Exception 	if an error occurs
+   */
+  public void connectToDatabase() throws Exception {
+<span class="nc bnc" id="L488" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L489">      System.err.println(&quot;Connecting to &quot; + m_DatabaseURL);</span>
+    }
+<span class="nc bnc" id="L491" title="All 2 branches missed.">    if (m_Connection == null) {</span>
+<span class="nc bnc" id="L492" title="All 2 branches missed.">      if (m_userName.equals(&quot;&quot;)) {</span>
+	try {
+<span class="nc" id="L494">	  m_Connection = DriverManager.getConnection(m_DatabaseURL);</span>
+<span class="nc" id="L495">	} catch (java.sql.SQLException e) {</span>
+	  
+	  // Try loading the drivers
+<span class="nc bnc" id="L498" title="All 2 branches missed.">	  for (int i = 0; i &lt; DRIVERS.size(); i++) {</span>
+	    try {
+<span class="nc" id="L500">	      Class.forName((String)DRIVERS.elementAt(i));</span>
+<span class="nc" id="L501">	    } catch (Exception ex) {</span>
+	      // Drop through
+	    }
+	  }
+<span class="nc" id="L505">	  m_Connection = DriverManager.getConnection(m_DatabaseURL);</span>
+	}
+      } else {
+	try {
+<span class="nc" id="L509">	  m_Connection = DriverManager.getConnection(m_DatabaseURL, m_userName,</span>
+<span class="nc" id="L510">						     m_password);</span>
+<span class="nc" id="L511">	} catch (java.sql.SQLException e) {</span>
+	  
+	  // Try loading the drivers
+<span class="nc bnc" id="L514" title="All 2 branches missed.">	  for (int i = 0; i &lt; DRIVERS.size(); i++) {</span>
+	    try {
+<span class="nc" id="L516">	      Class.forName((String)DRIVERS.elementAt(i));</span>
+<span class="nc" id="L517">	    } catch (Exception ex) {</span>
+	      // Drop through
+	    }
+	  }
+<span class="nc" id="L521">	  m_Connection = DriverManager.getConnection(m_DatabaseURL, m_userName,</span>
+<span class="nc" id="L522">						     m_password);</span>
+	}
+      }
+    }
+<span class="nc" id="L526">    m_Connection.setAutoCommit(m_setAutoCommit);</span>
+<span class="nc" id="L527">  }</span>
+
+  /**
+   * Closes the connection to the database.
+   *
+   * @throws Exception 	if an error occurs
+   */
+  public void disconnectFromDatabase() throws Exception {
+<span class="nc bnc" id="L535" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L536">      System.err.println(&quot;Disconnecting from &quot; + m_DatabaseURL);</span>
+    }
+<span class="nc bnc" id="L538" title="All 2 branches missed.">    if (m_Connection != null) {</span>
+<span class="nc" id="L539">      m_Connection.close();</span>
+<span class="nc" id="L540">      m_Connection = null;</span>
+    }
+<span class="nc" id="L542">  }</span>
+  
+  /**
+   * Returns true if a database connection is active.
+   *
+   * @return 		a value of type 'boolean'
+   */
+  public boolean isConnected() {
+<span class="nc bnc" id="L550" title="All 2 branches missed.">    return (m_Connection != null);</span>
+  }
+
+  /**
+   * Returns whether the cursors only support forward movement or are
+   * scroll sensitive (with ResultSet.CONCUR_READ_ONLY concurrency).
+   * Returns always false if not connected
+   * 
+   * @return		true if connected and the cursor is scroll-sensitive
+   * @see		ResultSet#TYPE_SCROLL_SENSITIVE
+   * @see		ResultSet#TYPE_FORWARD_ONLY
+   * @see		ResultSet#CONCUR_READ_ONLY
+   */
+  public boolean isCursorScrollSensitive() {
+    boolean	result;
+    
+<span class="nc" id="L566">    result = false;</span>
+    
+    try {
+<span class="nc bnc" id="L569" title="All 2 branches missed.">      if (isConnected())</span>
+<span class="nc" id="L570">	result = m_Connection.getMetaData().supportsResultSetConcurrency(</span>
+<span class="nc" id="L571">	    		ResultSet.TYPE_SCROLL_SENSITIVE, </span>
+<span class="nc" id="L572">	    		ResultSet.CONCUR_READ_ONLY);</span>
+    }
+<span class="nc" id="L574">    catch (Exception e) {</span>
+      // ignored
+    }
+    
+<span class="nc" id="L578">    return result;</span>
+  }
+  
+  /**
+   * Checks whether cursors are scrollable in general, false otherwise 
+   * (also if not connected).
+   * 
+   * @return		true if scrollable and connected
+   * @see		#getSupportedCursorScrollType()
+   */
+  public boolean isCursorScrollable() {
+<span class="nc bnc" id="L589" title="All 2 branches missed.">    return (getSupportedCursorScrollType() != -1);</span>
+  }
+  
+  /**
+   * Returns the type of scrolling that the cursor supports, -1 if not
+   * supported or not connected. Checks first for TYPE_SCROLL_SENSITIVE
+   * and then for TYPE_SCROLL_INSENSITIVE. In both cases CONCUR_READ_ONLY
+   * as concurrency is used.
+   * 
+   * @return		the scroll type, or -1 if not connected or no scrolling supported
+   * @see		ResultSet#TYPE_SCROLL_SENSITIVE
+   * @see		ResultSet#TYPE_SCROLL_INSENSITIVE
+   */
+  public int getSupportedCursorScrollType() {
+    int		result;
+    
+<span class="nc" id="L605">    result = -1;</span>
+    
+    try {
+<span class="nc bnc" id="L608" title="All 2 branches missed.">      if (isConnected()) {</span>
+<span class="nc bnc" id="L609" title="All 2 branches missed.">	if (m_Connection.getMetaData().supportsResultSetConcurrency(</span>
+<span class="nc" id="L610">	    		ResultSet.TYPE_SCROLL_SENSITIVE, </span>
+<span class="nc" id="L611">	    		ResultSet.CONCUR_READ_ONLY))</span>
+<span class="nc" id="L612">	  result = ResultSet.TYPE_SCROLL_SENSITIVE;</span>
+	
+<span class="nc bnc" id="L614" title="All 2 branches missed.">	if (result == -1) {</span>
+<span class="nc bnc" id="L615" title="All 2 branches missed.">	  if (m_Connection.getMetaData().supportsResultSetConcurrency(</span>
+<span class="nc" id="L616">	      		ResultSet.TYPE_SCROLL_INSENSITIVE, </span>
+<span class="nc" id="L617">	      		ResultSet.CONCUR_READ_ONLY))</span>
+<span class="nc" id="L618">	    result = ResultSet.TYPE_SCROLL_INSENSITIVE;</span>
+	}
+      }
+    }
+<span class="nc" id="L622">    catch (Exception e) {</span>
+      // ignored
+    }
+    
+<span class="nc" id="L626">    return result;</span>
+  }
+
+  /**
+   * Executes a SQL query. Caller must clean up manually with 
+   * &lt;code&gt;close()&lt;/code&gt;.
+   *
+   * @param query 	the SQL query
+   * @return 		true if the query generated results
+   * @throws SQLException if an error occurs
+   * @see #close()
+   */
+  public boolean execute(String query) throws SQLException {
+<span class="nc bnc" id="L639" title="All 2 branches missed.">    if (!isConnected())</span>
+<span class="nc" id="L640">      throw new IllegalStateException(&quot;Not connected, please connect first!&quot;);</span>
+    
+<span class="nc bnc" id="L642" title="All 2 branches missed.">    if (!isCursorScrollable())</span>
+<span class="nc" id="L643">      m_PreparedStatement = m_Connection.prepareStatement(</span>
+<span class="nc" id="L644">	  query, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);</span>
+    else
+<span class="nc" id="L646">      m_PreparedStatement = m_Connection.prepareStatement(</span>
+<span class="nc" id="L647">	  query, getSupportedCursorScrollType(), ResultSet.CONCUR_READ_ONLY);</span>
+    
+<span class="nc" id="L649">    return(m_PreparedStatement.execute());</span>
+  }
+
+  /**
+   * Gets the results generated by a previous query. Caller must clean up 
+   * manually with &lt;code&gt;close(ResultSet)&lt;/code&gt;. Returns null if object has
+   * been deserialized.
+   *
+   * @return 		the result set.
+   * @throws SQLException if an error occurs
+   * @see #close(ResultSet)
+   */
+  public ResultSet getResultSet() throws SQLException {
+<span class="nc bnc" id="L662" title="All 2 branches missed.">    if (m_PreparedStatement != null)</span>
+<span class="nc" id="L663">      return m_PreparedStatement.getResultSet();</span>
+    else
+<span class="nc" id="L665">      return null;</span>
+  }
+
+  /**
+   * Executes a SQL DDL query or an INSERT, DELETE or UPDATE.
+   *
+   * @param query 	the SQL DDL query
+   * @return 		the number of affected rows
+   * @throws SQLException if an error occurs
+   */
+  public int update(String query) throws SQLException {
+<span class="nc bnc" id="L676" title="All 2 branches missed.">    if (!isConnected())</span>
+<span class="nc" id="L677">      throw new IllegalStateException(&quot;Not connected, please connect first!&quot;);</span>
+    
+    Statement statement;
+<span class="nc bnc" id="L680" title="All 2 branches missed.">    if (!isCursorScrollable())</span>
+<span class="nc" id="L681">      statement = m_Connection.createStatement(</span>
+<span class="nc" id="L682">	  ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);</span>
+    else
+<span class="nc" id="L684">      statement = m_Connection.createStatement(</span>
+<span class="nc" id="L685">	  getSupportedCursorScrollType(), ResultSet.CONCUR_READ_ONLY);</span>
+<span class="nc" id="L686">    int result = statement.executeUpdate(query);</span>
+<span class="nc" id="L687">    statement.close();</span>
+    
+<span class="nc" id="L689">    return result;</span>
+  }
+
+  /**
+   * Executes a SQL SELECT query that returns a ResultSet. Note: the ResultSet
+   * object must be closed by the caller.
+   *
+   * @param query 	the SQL query
+   * @return 		the generated ResultSet
+   * @throws SQLException if an error occurs
+   */
+  public ResultSet select(String query) throws SQLException {
+<span class="nc bnc" id="L701" title="All 2 branches missed.">    if (!isConnected())</span>
+<span class="nc" id="L702">      throw new IllegalStateException(&quot;Not connected, please connect first!&quot;);</span>
+    
+    Statement statement;
+<span class="nc bnc" id="L705" title="All 2 branches missed.">    if (!isCursorScrollable())</span>
+<span class="nc" id="L706">      statement = m_Connection.createStatement(</span>
+<span class="nc" id="L707">	  ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);</span>
+    else
+<span class="nc" id="L709">      statement = m_Connection.createStatement(</span>
+<span class="nc" id="L710">	  getSupportedCursorScrollType(), ResultSet.CONCUR_READ_ONLY);</span>
+<span class="nc" id="L711">    ResultSet result = statement.executeQuery(query);</span>
+    
+<span class="nc" id="L713">    return result;</span>
+  }
+
+  /**
+   * closes the ResultSet and the statement that generated the ResultSet to
+   * avoid memory leaks in JDBC drivers - in contrast to the JDBC specs, a lot
+   * of JDBC drives don't clean up correctly.
+   * 
+   * @param rs		the ResultSet to clean up
+   */
+  public void close(ResultSet rs) {
+    try {
+<span class="nc" id="L725">      Statement statement = rs.getStatement();</span>
+<span class="nc" id="L726">      rs.close();</span>
+<span class="nc" id="L727">      statement.close();</span>
+<span class="nc" id="L728">      statement = null;</span>
+<span class="nc" id="L729">      rs = null;</span>
+    }
+<span class="nc" id="L731">    catch (Exception e) {</span>
+      // ignored
+    }
+<span class="nc" id="L734">  }</span>
+  
+  /**
+   * closes the m_PreparedStatement to avoid memory leaks.
+   */
+  public void close() {
+<span class="nc bnc" id="L740" title="All 2 branches missed.">    if (m_PreparedStatement != null) {</span>
+      try {
+<span class="nc" id="L742">	m_PreparedStatement.close();</span>
+<span class="nc" id="L743">	m_PreparedStatement = null;</span>
+      }
+<span class="nc" id="L745">      catch (Exception e) {</span>
+	// ignored
+      }
+    }
+<span class="nc" id="L749">  }</span>
+  
+  /**
+   * Checks that a given table exists.
+   *
+   * @param tableName 	the name of the table to look for.
+   * @return 		true if the table exists.
+   * @throws Exception 	if an error occurs.
+   */
+  public boolean tableExists(String tableName) throws Exception {
+<span class="nc bnc" id="L759" title="All 2 branches missed.">    if (!isConnected())</span>
+<span class="nc" id="L760">      throw new IllegalStateException(&quot;Not connected, please connect first!&quot;);</span>
+    
+<span class="nc bnc" id="L762" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L763">      System.err.println(&quot;Checking if table &quot; + tableName + &quot; exists...&quot;);</span>
+    }
+<span class="nc" id="L765">    DatabaseMetaData dbmd = m_Connection.getMetaData();</span>
+    ResultSet rs;
+<span class="nc bnc" id="L767" title="All 2 branches missed.">    if (m_checkForUpperCaseNames) {</span>
+<span class="nc" id="L768">      rs = dbmd.getTables (null, null, tableName.toUpperCase(), null);</span>
+<span class="nc bnc" id="L769" title="All 2 branches missed.">    } else if (m_checkForLowerCaseNames) {</span>
+<span class="nc" id="L770">      rs = dbmd.getTables (null, null, tableName.toLowerCase(), null);</span>
+    } else {
+<span class="nc" id="L772">      rs = dbmd.getTables (null, null, tableName, null);</span>
+    }
+<span class="nc" id="L774">    boolean tableExists = rs.next();</span>
+<span class="nc bnc" id="L775" title="All 2 branches missed.">    if (rs.next()) {</span>
+<span class="nc" id="L776">      throw new Exception(&quot;This table seems to exist more than once!&quot;);</span>
+    }
+<span class="nc" id="L778">    rs.close();</span>
+<span class="nc bnc" id="L779" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc bnc" id="L780" title="All 2 branches missed.">      if (tableExists) {</span>
+<span class="nc" id="L781">	System.err.println(&quot;... &quot; + tableName + &quot; exists&quot;);</span>
+      } else {
+<span class="nc" id="L783">	System.err.println(&quot;... &quot; + tableName + &quot; does not exist&quot;);</span>
+      }
+    }
+<span class="nc" id="L786">    return tableExists;</span>
+  }
+
+  /**
+   * processes the string in such a way that it can be stored in the
+   * database, i.e., it changes backslashes into slashes and doubles single 
+   * quotes.
+   * 
+   * @param s		the string to work on
+   * @return		the processed string
+   */
+  public static String processKeyString(String s) {
+<span class="nc" id="L798">    return s.replaceAll(&quot;\\\\&quot;, &quot;/&quot;).replaceAll(&quot;'&quot;, &quot;''&quot;);</span>
+  }
+  
+  /**
+   * Executes a database query to see whether a result for the supplied key
+   * is already in the database.           
+   *
+   * @param tableName 	the name of the table to search for the key in
+   * @param rp 		the ResultProducer who will generate the result if 
+   * 			required
+   * @param key 	the key for the result
+   * @return 		true if the result with that key is in the database 
+   * 			already
+   * @throws Exception 	if an error occurs
+   */
+  protected boolean isKeyInTable(String tableName,
+				 ResultProducer rp,
+				 Object[] key)
+    throws Exception {
+
+<span class="nc" id="L818">    String query = &quot;SELECT Key_Run&quot;</span>
+<span class="nc" id="L819">      + &quot; FROM &quot; + tableName;</span>
+<span class="nc" id="L820">    String [] keyNames = rp.getKeyNames();</span>
+<span class="nc bnc" id="L821" title="All 2 branches missed.">    if (keyNames.length != key.length) {</span>
+<span class="nc" id="L822">      throw new Exception(&quot;Key names and key values of different lengths&quot;);</span>
+    }
+<span class="nc" id="L824">    boolean first = true;</span>
+<span class="nc bnc" id="L825" title="All 2 branches missed.">    for (int i = 0; i &lt; key.length; i++) {</span>
+<span class="nc bnc" id="L826" title="All 2 branches missed.">      if (key[i] != null) {</span>
+<span class="nc bnc" id="L827" title="All 2 branches missed.">	if (first) {</span>
+<span class="nc" id="L828">	  query += &quot; WHERE &quot;;</span>
+<span class="nc" id="L829">	  first = false;</span>
+	} else {
+<span class="nc" id="L831">	  query += &quot; AND &quot;;</span>
+	}
+<span class="nc" id="L833">	query += &quot;Key_&quot; + keyNames[i] + '=';</span>
+<span class="nc bnc" id="L834" title="All 2 branches missed.">	if (key[i] instanceof String) {</span>
+<span class="nc" id="L835">	  query += &quot;'&quot; + processKeyString(key[i].toString()) + &quot;'&quot;;</span>
+	} else {
+<span class="nc" id="L837">	  query += key[i].toString();</span>
+	}
+      }
+    }
+<span class="nc" id="L841">    boolean retval = false;</span>
+<span class="nc" id="L842">    ResultSet rs = select(query);</span>
+<span class="nc bnc" id="L843" title="All 2 branches missed.">    if (rs.next()) {</span>
+<span class="nc" id="L844">      retval = true;</span>
+<span class="nc bnc" id="L845" title="All 2 branches missed.">      if (rs.next()) {</span>
+<span class="nc" id="L846">	throw new Exception(&quot;More than one result entry &quot;</span>
+<span class="nc" id="L847">	    + &quot;for result key: &quot; + query);</span>
+      }
+    }
+<span class="nc" id="L850">    close(rs);</span>
+<span class="nc" id="L851">    return retval;</span>
+  }
+
+  /**
+   * Executes a database query to extract a result for the supplied key
+   * from the database.           
+   *
+   * @param tableName 	the name of the table where the result is stored
+   * @param rp 		the ResultProducer who will generate the result if 
+   * 			required
+   * @param key 	the key for the result
+   * @return 		true if the result with that key is in the database 
+   * 			already
+   * @throws Exception 	if an error occurs
+   */
+  public Object[] getResultFromTable(String tableName,
+					 ResultProducer rp,
+					 Object [] key)
+    throws Exception {
+
+<span class="nc" id="L871">    String query = &quot;SELECT &quot;;</span>
+<span class="nc" id="L872">    String [] resultNames = rp.getResultNames();</span>
+<span class="nc bnc" id="L873" title="All 2 branches missed.">    for (int i = 0; i &lt; resultNames.length; i++) {</span>
+<span class="nc bnc" id="L874" title="All 2 branches missed.">      if (i != 0) {</span>
+<span class="nc" id="L875">	query += &quot;, &quot;;</span>
+      }
+<span class="nc" id="L877">      query += resultNames[i];</span>
+    }
+<span class="nc" id="L879">    query += &quot; FROM &quot; + tableName;</span>
+<span class="nc" id="L880">    String [] keyNames = rp.getKeyNames();</span>
+<span class="nc bnc" id="L881" title="All 2 branches missed.">    if (keyNames.length != key.length) {</span>
+<span class="nc" id="L882">      throw new Exception(&quot;Key names and key values of different lengths&quot;);</span>
+    }
+<span class="nc" id="L884">    boolean first = true;</span>
+<span class="nc bnc" id="L885" title="All 2 branches missed.">    for (int i = 0; i &lt; key.length; i++) {</span>
+<span class="nc bnc" id="L886" title="All 2 branches missed.">      if (key[i] != null) {</span>
+<span class="nc bnc" id="L887" title="All 2 branches missed.">	if (first) {</span>
+<span class="nc" id="L888">	  query += &quot; WHERE &quot;;</span>
+<span class="nc" id="L889">	  first = false;</span>
+	} else {
+<span class="nc" id="L891">	  query += &quot; AND &quot;;</span>
+	}
+<span class="nc" id="L893">	query += &quot;Key_&quot; + keyNames[i] + '=';</span>
+<span class="nc bnc" id="L894" title="All 2 branches missed.">	if (key[i] instanceof String) {</span>
+<span class="nc" id="L895">	  query += &quot;'&quot; + processKeyString(key[i].toString()) + &quot;'&quot;;</span>
+	} else {
+<span class="nc" id="L897">	  query += key[i].toString();</span>
+	}
+      }
+    }
+<span class="nc" id="L901">    ResultSet rs = select(query);</span>
+<span class="nc" id="L902">    ResultSetMetaData md = rs.getMetaData();</span>
+<span class="nc" id="L903">    int numAttributes = md.getColumnCount();</span>
+<span class="nc bnc" id="L904" title="All 2 branches missed.">    if (!rs.next()) {</span>
+<span class="nc" id="L905">      throw new Exception(&quot;No result for query: &quot; + query);</span>
+    }
+    // Extract the columns for the result
+<span class="nc" id="L908">    Object [] result = new Object [numAttributes];</span>
+<span class="nc bnc" id="L909" title="All 2 branches missed.">    for(int i = 1; i &lt;= numAttributes; i++) {</span>
+<span class="nc bnc" id="L910" title="All 3 branches missed.">      switch (translateDBColumnType(md.getColumnTypeName(i))) {</span>
+	case STRING : 
+<span class="nc" id="L912">	  result[i - 1] = rs.getString(i);</span>
+<span class="nc bnc" id="L913" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L914">	    result[i - 1] = null;</span>
+	  }
+<span class="nc" id="L916">	  break;</span>
+	case FLOAT:
+	case DOUBLE:
+<span class="nc" id="L919">	  result[i - 1] = new Double(rs.getDouble(i));</span>
+<span class="nc bnc" id="L920" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L921">	    result[i - 1] = null;</span>
+	  }
+<span class="nc" id="L923">	  break;</span>
+	default:
+<span class="nc" id="L925">	  throw new Exception(&quot;Unhandled SQL result type (field &quot; + (i + 1)</span>
+<span class="nc" id="L926">	      + &quot;): &quot;</span>
+<span class="nc" id="L927">	      + DatabaseUtils.typeName(md.getColumnType(i)));</span>
+      }
+    }
+<span class="nc bnc" id="L930" title="All 2 branches missed.">    if (rs.next()) {</span>
+<span class="nc" id="L931">      throw new Exception(&quot;More than one result entry &quot;</span>
+<span class="nc" id="L932">			  + &quot;for result key: &quot; + query);</span>
+    }
+<span class="nc" id="L934">    close(rs);</span>
+<span class="nc" id="L935">    return result;</span>
+  }
+
+  /**
+   * Executes a database query to insert a result for the supplied key
+   * into the database.           
+   *
+   * @param tableName 	the name of the table where the result is stored
+   * @param rp 		the ResultProducer who will generate the result if 
+   * 			required
+   * @param key 	the key for the result
+   * @param result 	the result to store
+   * @throws Exception 	if an error occurs
+   */
+  public void putResultInTable(String tableName,
+			       ResultProducer rp,
+			       Object [] key,
+			       Object [] result)
+    throws Exception {
+    
+<span class="nc" id="L955">    String query = &quot;INSERT INTO &quot; + tableName</span>
+<span class="nc" id="L956">      + &quot; VALUES ( &quot;;</span>
+    // Add the results to the table
+<span class="nc bnc" id="L958" title="All 2 branches missed.">    for (int i = 0; i &lt; key.length; i++) {</span>
+<span class="nc bnc" id="L959" title="All 2 branches missed.">      if (i != 0) {</span>
+<span class="nc" id="L960">	query += ',';</span>
+      }
+<span class="nc bnc" id="L962" title="All 2 branches missed.">      if (key[i] != null) {</span>
+<span class="nc bnc" id="L963" title="All 2 branches missed.">	if (key[i] instanceof String) {</span>
+<span class="nc" id="L964">	  query += &quot;'&quot; + processKeyString(key[i].toString()) + &quot;'&quot;;</span>
+<span class="nc bnc" id="L965" title="All 2 branches missed.">	} else if (key[i] instanceof Double) {</span>
+<span class="nc" id="L966">	  query += safeDoubleToString((Double)key[i]);</span>
+	} else {
+<span class="nc" id="L968">	  query += key[i].toString();</span>
+	}
+      } else {
+<span class="nc" id="L971">	query += &quot;NULL&quot;;</span>
+      }
+    }
+<span class="nc bnc" id="L974" title="All 2 branches missed.">    for (int i = 0; i &lt; result.length; i++) {</span>
+<span class="nc" id="L975">      query +=  ',';</span>
+<span class="nc bnc" id="L976" title="All 2 branches missed.">      if (result[i] != null) {</span>
+<span class="nc bnc" id="L977" title="All 2 branches missed.">	if (result[i] instanceof String) {</span>
+<span class="nc" id="L978">	  query += &quot;'&quot; + result[i].toString() + &quot;'&quot;;</span>
+<span class="nc bnc" id="L979" title="All 2 branches missed.">	} else  if (result[i] instanceof Double) {</span>
+<span class="nc" id="L980">	  query += safeDoubleToString((Double)result[i]);</span>
+	} else {
+<span class="nc" id="L982">	  query += result[i].toString();</span>
+	  //!!
+	  //System.err.println(&quot;res: &quot;+ result[i].toString());
+	}
+      } else {
+<span class="nc" id="L987">	query += &quot;NULL&quot;;</span>
+      }
+    }
+<span class="nc" id="L990">    query += ')';</span>
+    
+<span class="nc bnc" id="L992" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L993">      System.err.println(&quot;Submitting result: &quot; + query);</span>
+    }
+<span class="nc" id="L995">    update(query);</span>
+<span class="nc" id="L996">    close();</span>
+<span class="nc" id="L997">  }</span>
+  
+  /**
+   * Inserts a + if the double is in scientific notation.
+   * MySQL doesn't understand the number otherwise.
+   * 
+   * @param number	the number to convert
+   * @return		the number as string
+   */
+  private String safeDoubleToString(Double number) {
+    // NaN is treated as NULL
+<span class="nc bnc" id="L1008" title="All 2 branches missed.">    if (number.isNaN())</span>
+<span class="nc" id="L1009">      return &quot;NULL&quot;;</span>
+
+<span class="nc" id="L1011">    String orig = number.toString();</span>
+
+<span class="nc" id="L1013">    int pos = orig.indexOf('E');</span>
+<span class="nc bnc" id="L1014" title="All 4 branches missed.">    if ((pos == -1) || (orig.charAt(pos + 1) == '-')) {</span>
+<span class="nc" id="L1015">      return orig;</span>
+    } else {
+<span class="nc" id="L1017">      StringBuffer buff = new StringBuffer(orig);</span>
+<span class="nc" id="L1018">      buff.insert(pos + 1, '+');</span>
+<span class="nc" id="L1019">      return new String(buff);</span>
+    }
+  }
+
+  /**
+   * Returns true if the experiment index exists.
+   *
+   * @return 		true if the index exists
+   * @throws Exception 	if an error occurs
+   */
+  public boolean experimentIndexExists() throws Exception {
+<span class="nc" id="L1030">    return tableExists(EXP_INDEX_TABLE);</span>
+  }
+  
+  /**
+   * Attempts to create the experiment index table.
+   *
+   * @throws Exception 	if an error occurs.
+   */
+  public void createExperimentIndex() throws Exception {
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L1040">      System.err.println(&quot;Creating experiment index table...&quot;);</span>
+    }
+    String query;
+
+    // Workaround for MySQL (doesn't support LONGVARBINARY)
+    // Also for InstantDB which attempts to interpret numbers when storing
+    // in LONGVARBINARY
+    /* if (m_Connection.getMetaData().getDriverName().
+	equals(&quot;Mark Matthews' MySQL Driver&quot;)
+	|| (m_Connection.getMetaData().getDriverName().
+	indexOf(&quot;InstantDB JDBC Driver&quot;) != -1)) {
+      query = &quot;CREATE TABLE &quot; + EXP_INDEX_TABLE 
+	+ &quot; ( &quot; + EXP_TYPE_COL + &quot; TEXT,&quot;
+	+ &quot;  &quot; + EXP_SETUP_COL + &quot; TEXT,&quot;
+	+ &quot;  &quot; + EXP_RESULT_COL + &quot; INT )&quot;;
+	} else { */
+    
+<span class="nc" id="L1057">      query = &quot;CREATE TABLE &quot; + EXP_INDEX_TABLE </span>
+<span class="nc" id="L1058">	+ &quot; ( &quot; + EXP_TYPE_COL + &quot; &quot;+ m_stringType+&quot;,&quot;</span>
+<span class="nc" id="L1059">	+ &quot;  &quot; + EXP_SETUP_COL + &quot; &quot;+ m_stringType+&quot;,&quot;</span>
+<span class="nc" id="L1060">	+ &quot;  &quot; + EXP_RESULT_COL + &quot; &quot;+ m_intType+&quot; )&quot;;</span>
+      // }
+    // Other possible fields:
+    //   creator user name (from System properties)
+    //   creation date
+<span class="nc" id="L1065">    update(query);</span>
+<span class="nc" id="L1066">    close();</span>
+<span class="nc" id="L1067">  }</span>
+
+  /**
+   * Attempts to insert a results entry for the table into the
+   * experiment index.
+   *
+   * @param rp 		the ResultProducer generating the results
+   * @return 		the name of the created results table
+   * @throws Exception 	if an error occurs.
+   */
+  public String createExperimentIndexEntry(ResultProducer rp)
+    throws Exception {
+
+<span class="nc bnc" id="L1080" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L1081">      System.err.println(&quot;Creating experiment index entry...&quot;);</span>
+    }
+
+    // Execute compound transaction
+<span class="nc" id="L1085">    int numRows = 0;</span>
+    
+    // Workaround for MySQL (doesn't support transactions)
+    /*  if (m_Connection.getMetaData().getDriverName().
+	equals(&quot;Mark Matthews' MySQL Driver&quot;)) {
+      m_Statement.execute(&quot;LOCK TABLES &quot; + EXP_INDEX_TABLE + &quot; WRITE&quot;);
+      System.err.println(&quot;LOCKING TABLE&quot;);
+      } else {*/
+      
+      //}
+
+    // Get the number of rows
+<span class="nc" id="L1097">    String query = &quot;SELECT COUNT(*) FROM &quot; + EXP_INDEX_TABLE;</span>
+<span class="nc" id="L1098">    ResultSet rs = select(query);</span>
+<span class="nc bnc" id="L1099" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L1100">      System.err.println(&quot;...getting number of rows&quot;);</span>
+    }
+<span class="nc bnc" id="L1102" title="All 2 branches missed.">    if (rs.next()) {</span>
+<span class="nc" id="L1103">      numRows = rs.getInt(1);</span>
+    }
+<span class="nc" id="L1105">    close(rs);</span>
+
+    // Add an entry in the index table
+<span class="nc" id="L1108">    String expType = rp.getClass().getName();</span>
+<span class="nc" id="L1109">    String expParams = rp.getCompatibilityState();</span>
+<span class="nc" id="L1110">    query = &quot;INSERT INTO &quot; + EXP_INDEX_TABLE</span>
+      +&quot; VALUES ('&quot;
+<span class="nc" id="L1112">      + expType + &quot;', '&quot; + expParams</span>
+<span class="nc" id="L1113">      + &quot;', &quot; + numRows + &quot; )&quot;; </span>
+<span class="nc bnc" id="L1114" title="All 2 branches missed.">    if (update(query) &gt; 0) {</span>
+<span class="nc bnc" id="L1115" title="All 2 branches missed.">      if (m_Debug) {</span>
+<span class="nc" id="L1116">	System.err.println(&quot;...create returned resultset&quot;);</span>
+      }
+    }
+<span class="nc" id="L1119">    close();</span>
+    
+    // Finished compound transaction
+    // Workaround for MySQL (doesn't support transactions)
+    /* if (m_Connection.getMetaData().getDriverName().
+	equals(&quot;Mark Matthews' MySQL Driver&quot;)) {
+      m_Statement.execute(&quot;UNLOCK TABLES&quot;);
+      System.err.println(&quot;UNLOCKING TABLE&quot;);
+      } else { */
+<span class="nc bnc" id="L1128" title="All 2 branches missed.">    if (!m_setAutoCommit) {</span>
+<span class="nc" id="L1129">      m_Connection.commit();</span>
+<span class="nc" id="L1130">      m_Connection.setAutoCommit(true);</span>
+    }
+      //}
+
+<span class="nc" id="L1134">    String tableName = getResultsTableName(rp);</span>
+<span class="nc bnc" id="L1135" title="All 2 branches missed.">    if (tableName == null) {</span>
+<span class="nc" id="L1136">      throw new Exception(&quot;Problem adding experiment index entry&quot;);</span>
+    }
+
+    // Drop any existing table by that name (shouldn't occur unless
+    // the experiment index is destroyed, in which case the experimental
+    // conditions of the existing table are unknown)
+    try {
+<span class="nc" id="L1143">      query = &quot;DROP TABLE &quot; + tableName;</span>
+<span class="nc bnc" id="L1144" title="All 2 branches missed.">      if (m_Debug) {</span>
+<span class="nc" id="L1145">	System.err.println(query);</span>
+      }
+<span class="nc" id="L1147">      update(query);</span>
+<span class="nc" id="L1148">    } catch (SQLException ex) {</span>
+<span class="nc" id="L1149">      System.err.println(ex.getMessage());</span>
+    }
+<span class="nc" id="L1151">    return tableName;</span>
+  }
+
+  /**
+   * Gets the name of the experiment table that stores results from a
+   * particular ResultProducer.
+   *
+   * @param rp 		the ResultProducer
+   * @return 		the name of the table where the results for this 
+   * 			ResultProducer are stored, or null if there is no 
+   * 			table for this ResultProducer.
+   * @throws Exception 	if an error occurs
+   */
+  public String getResultsTableName(ResultProducer rp) throws Exception {
+    // Get the experiment table name, or create a new table if necessary.
+<span class="nc bnc" id="L1166" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L1167">      System.err.println(&quot;Getting results table name...&quot;);</span>
+    }
+<span class="nc" id="L1169">    String expType = rp.getClass().getName();</span>
+<span class="nc" id="L1170">    String expParams = rp.getCompatibilityState();</span>
+<span class="nc" id="L1171">    String query = &quot;SELECT &quot; + EXP_RESULT_COL </span>
+      + &quot; FROM &quot; + EXP_INDEX_TABLE
+<span class="nc" id="L1173">       + &quot; WHERE &quot; + EXP_TYPE_COL + &quot;='&quot; + expType </span>
+<span class="nc" id="L1174">      + &quot;' AND &quot; + EXP_SETUP_COL + &quot;='&quot; + expParams + &quot;'&quot;;</span>
+<span class="nc" id="L1175">    String tableName = null;</span>
+<span class="nc" id="L1176">    ResultSet rs = select(query);</span>
+<span class="nc bnc" id="L1177" title="All 2 branches missed.">    if (rs.next()) {</span>
+<span class="nc" id="L1178">      tableName = rs.getString(1);</span>
+<span class="nc bnc" id="L1179" title="All 2 branches missed.">      if (rs.next()) {</span>
+<span class="nc" id="L1180">	throw new Exception(&quot;More than one index entry &quot;</span>
+<span class="nc" id="L1181">	    + &quot;for experiment config: &quot; + query);</span>
+      }
+    }
+<span class="nc" id="L1184">    close(rs);</span>
+<span class="nc bnc" id="L1185" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc bnc" id="L1186" title="All 2 branches missed.">      System.err.println(&quot;...results table = &quot; + ((tableName == null) </span>
+<span class="nc" id="L1187">						  ? &quot;&lt;null&gt;&quot; </span>
+<span class="nc" id="L1188">						  : EXP_RESULT_PREFIX</span>
+<span class="nc" id="L1189">						  + tableName));</span>
+    }
+<span class="nc bnc" id="L1191" title="All 2 branches missed.">    return (tableName == null) ? tableName : EXP_RESULT_PREFIX + tableName;</span>
+  }
+
+  /**
+   * Creates a results table for the supplied result producer.
+   *
+   * @param rp 		the ResultProducer generating the results
+   * @param tableName 	the name of the resultsTable
+   * @return 		the name of the created results table
+   * @throws Exception 	if an error occurs.
+   */
+  public String createResultsTable(ResultProducer rp, String tableName)
+    throws Exception {
+
+<span class="nc bnc" id="L1205" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L1206">      System.err.println(&quot;Creating results table &quot; + tableName + &quot;...&quot;);</span>
+    }
+<span class="nc" id="L1208">    String query = &quot;CREATE TABLE &quot; + tableName + &quot; ( &quot;;</span>
+    // Loop over the key fields
+<span class="nc" id="L1210">    String [] names = rp.getKeyNames();</span>
+<span class="nc" id="L1211">    Object [] types = rp.getKeyTypes();</span>
+<span class="nc bnc" id="L1212" title="All 2 branches missed.">    if (names.length != types.length) {</span>
+<span class="nc" id="L1213">      throw new Exception(&quot;key names types differ in length&quot;);</span>
+    }
+<span class="nc bnc" id="L1215" title="All 2 branches missed.">    for (int i = 0; i &lt; names.length; i++) {</span>
+<span class="nc" id="L1216">      query += &quot;Key_&quot; + names[i] + &quot; &quot;;</span>
+<span class="nc bnc" id="L1217" title="All 2 branches missed.">      if (types[i] instanceof Double) {</span>
+<span class="nc" id="L1218">	query += m_doubleType;</span>
+<span class="nc bnc" id="L1219" title="All 2 branches missed.">      } else if (types[i] instanceof String) {</span>
+
+	// Workaround for MySQL (doesn't support LONGVARCHAR)
+	// Also for InstantDB which attempts to interpret numbers when storing
+	// in LONGVARBINARY
+	/*if (m_Connection.getMetaData().getDriverName().
+	    equals(&quot;Mark Matthews' MySQL Driver&quot;)
+	    || (m_Connection.getMetaData().getDriverName().
+		indexOf(&quot;InstantDB JDBC Driver&quot;)) != -1) {
+	  query += &quot;TEXT &quot;;
+	  } else { */
+	//query += &quot;LONGVARCHAR &quot;;
+<span class="nc" id="L1231">	  query += m_stringType+&quot; &quot;;</span>
+	  //}
+      } else {
+<span class="nc" id="L1234">	throw new Exception(&quot;Unknown/unsupported field type in key&quot;);</span>
+      }
+<span class="nc" id="L1236">      query += &quot;, &quot;;</span>
+    }
+    // Loop over the result fields
+<span class="nc" id="L1239">    names = rp.getResultNames();</span>
+<span class="nc" id="L1240">    types = rp.getResultTypes();</span>
+<span class="nc bnc" id="L1241" title="All 2 branches missed.">    if (names.length != types.length) {</span>
+<span class="nc" id="L1242">      throw new Exception(&quot;result names and types differ in length&quot;);</span>
+    }
+<span class="nc bnc" id="L1244" title="All 2 branches missed.">    for (int i = 0; i &lt; names.length; i++) {</span>
+<span class="nc" id="L1245">      query += names[i] + &quot; &quot;;</span>
+<span class="nc bnc" id="L1246" title="All 2 branches missed.">      if (types[i] instanceof Double) {</span>
+<span class="nc" id="L1247">	query += m_doubleType;</span>
+<span class="nc bnc" id="L1248" title="All 2 branches missed.">      } else if (types[i] instanceof String) {</span>
+	
+	// Workaround for MySQL (doesn't support LONGVARCHAR)
+	// Also for InstantDB which attempts to interpret numbers when storing
+	// in LONGVARBINARY
+	/*if (m_Connection.getMetaData().getDriverName().
+	    equals(&quot;Mark Matthews' MySQL Driver&quot;)
+	    || (m_Connection.getMetaData().getDriverName().
+		equals(&quot;InstantDB JDBC Driver&quot;))) {
+	  query += &quot;TEXT &quot;;
+	  } else {*/
+	//query += &quot;LONGVARCHAR &quot;;
+<span class="nc" id="L1260">	query += m_stringType+&quot; &quot;;</span>
+	  //}
+      } else {
+<span class="nc" id="L1263">	throw new Exception(&quot;Unknown/unsupported field type in key&quot;);</span>
+      }
+<span class="nc bnc" id="L1265" title="All 2 branches missed.">      if (i &lt; names.length - 1) {</span>
+<span class="nc" id="L1266">	query += &quot;, &quot;;</span>
+      }
+    }
+<span class="nc" id="L1269">    query += &quot; )&quot;;</span>
+    
+<span class="nc" id="L1271">    update(query);</span>
+<span class="nc bnc" id="L1272" title="All 2 branches missed.">    if (m_Debug) </span>
+<span class="nc" id="L1273">      System.err.println(&quot;table created&quot;);</span>
+<span class="nc" id="L1274">    close();</span>
+
+
+<span class="nc bnc" id="L1277" title="All 2 branches missed.">    if (m_createIndex) {</span>
+<span class="nc" id="L1278">      query = &quot;CREATE UNIQUE INDEX Key_IDX ON &quot;+ tableName +&quot; (&quot;;</span>
+
+<span class="nc" id="L1280">      String [] keyNames = rp.getKeyNames();</span>
+    
+<span class="nc" id="L1282">      boolean first = true;</span>
+<span class="nc bnc" id="L1283" title="All 2 branches missed.">      for (int i = 0; i &lt; keyNames.length; i++) {</span>
+<span class="nc bnc" id="L1284" title="All 2 branches missed.">	if (keyNames[i] != null) {</span>
+<span class="nc bnc" id="L1285" title="All 2 branches missed.">	  if (first) {</span>
+<span class="nc" id="L1286">	    first = false;</span>
+<span class="nc" id="L1287">	    query += &quot;Key_&quot; + keyNames[i];</span>
+	  } else {
+<span class="nc" id="L1289">	    query += &quot;,Key_&quot; + keyNames[i];</span>
+	  } 
+	}
+      }
+<span class="nc" id="L1293">      query += &quot;)&quot;;</span>
+    
+<span class="nc" id="L1295">      update(query);</span>
+    }
+<span class="nc" id="L1297">    return tableName;</span>
+  }
+  
+  /**
+   * Sets the keywords (comma-separated list) to use.
+   * 
+   * @param value	the list of keywords
+   */
+  public void setKeywords(String value) {
+    String[] 	keywords;
+    int		i;
+    
+<span class="fc" id="L1309">    m_Keywords.clear();</span>
+    
+<span class="fc" id="L1311">    keywords = value.replaceAll(&quot; &quot;, &quot;&quot;).split(&quot;,&quot;);</span>
+<span class="fc bfc" id="L1312" title="All 2 branches covered.">    for (i = 0; i &lt; keywords.length; i++)</span>
+<span class="fc" id="L1313">      m_Keywords.add(keywords[i].toUpperCase());</span>
+<span class="fc" id="L1314">  }</span>
+  
+  /**
+   * Returns the currently stored keywords (as comma-separated list).
+   * 
+   * @return		the list of keywords
+   */
+  public String getKeywords() {
+    String		result;
+    Vector&lt;String&gt;	list;
+    int			i;
+    
+<span class="nc" id="L1326">    list = new Vector&lt;String&gt;(m_Keywords);</span>
+<span class="nc" id="L1327">    Collections.sort(list);</span>
+    
+<span class="nc" id="L1329">    result = &quot;&quot;;</span>
+<span class="nc bnc" id="L1330" title="All 2 branches missed.">    for (i = 0; i &lt; list.size(); i++) {</span>
+<span class="nc bnc" id="L1331" title="All 2 branches missed.">      if (i &gt; 0)</span>
+<span class="nc" id="L1332">	result += &quot;,&quot;;</span>
+<span class="nc" id="L1333">      result += list.get(i);</span>
+    }
+    
+<span class="nc" id="L1336">    return result;</span>
+  }
+  
+  /**
+   * Sets the mask character to append to table or attribute names that
+   * are a reserved keyword.
+   * 
+   * @param value	the new character
+   */
+  public void setKeywordsMaskChar(String value) {
+<span class="fc" id="L1346">    m_KeywordsMaskChar = value;</span>
+<span class="fc" id="L1347">  }</span>
+  
+  /**
+   * Returns the currently set mask character.
+   * 
+   * @return		the character
+   */
+  public String getKeywordsMaskChar() {
+<span class="nc" id="L1355">    return m_KeywordsMaskChar;</span>
+  }
+  
+  /**
+   * Checks whether the given string is a reserved keyword.
+   * 
+   * @param s		the string to check
+   * @return		true if the string is a keyword
+   * @see		#m_Keywords
+   */
+  public boolean isKeyword(String s) {
+<span class="nc" id="L1366">    return m_Keywords.contains(s.toUpperCase());</span>
+  }
+  
+  /**
+   * If the given string is a keyword, then the mask character will be 
+   * appended and returned. Otherwise, the same string will be returned
+   * unchanged.
+   * 
+   * @param s		the string to check
+   * @return		the potentially masked string
+   * @see		#m_KeywordsMaskChar
+   * @see		#isKeyword(String)
+   */
+  public String maskKeyword(String s) {
+<span class="nc bnc" id="L1380" title="All 2 branches missed.">    if (isKeyword(s))</span>
+<span class="nc" id="L1381">      return s + m_KeywordsMaskChar;</span>
+    else
+<span class="nc" id="L1383">      return s;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1392">    return RevisionUtils.extract(&quot;$Revision: 5240 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

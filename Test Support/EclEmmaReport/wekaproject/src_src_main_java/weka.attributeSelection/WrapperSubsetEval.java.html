@@ -1,0 +1,690 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>WrapperSubsetEval.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">WrapperSubsetEval.java</span></div><h1>WrapperSubsetEval.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    WrapperSubsetEval.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.attributeSelection;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.Evaluation;
+import weka.classifiers.rules.ZeroR;
+import weka.core.Capabilities;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Remove;
+
+import java.util.BitSet;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * WrapperSubsetEval:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Evaluates attribute sets by using a learning scheme. Cross validation is used to estimate the accuracy of the learning scheme for a set of attributes.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Ron Kohavi, George H. John (1997). Wrappers for feature subset selection. Artificial Intelligence. 97(1-2):273-324.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;article{Kohavi1997,
+ *    author = {Ron Kohavi and George H. John},
+ *    journal = {Artificial Intelligence},
+ *    note = {Special issue on relevance},
+ *    number = {1-2},
+ *    pages = {273-324},
+ *    title = {Wrappers for feature subset selection},
+ *    volume = {97},
+ *    year = {1997},
+ *    ISSN = {0004-3702}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;base learner&amp;gt;
+ *  class name of base learner to use for  accuracy estimation.
+ *  Place any classifier options LAST on the command line
+ *  following a &quot;--&quot;. eg.:
+ *   -B weka.classifiers.bayes.NaiveBayes ... -- -K
+ *  (default: weka.classifiers.rules.ZeroR)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -F &amp;lt;num&amp;gt;
+ *  number of cross validation folds to use for estimating accuracy.
+ *  (default=5)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;seed&amp;gt;
+ *  Seed for cross validation accuracy testimation.
+ *  (default = 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -T &amp;lt;num&amp;gt;
+ *  threshold by which to execute another cross validation
+ *  (standard deviation---expressed as a percentage of the mean).
+ *  (default: 0.01 (1%))&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to scheme weka.classifiers.rules.ZeroR:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version $Revision: 7433 $
+ */
+public class WrapperSubsetEval
+  extends ASEvaluation
+  implements SubsetEvaluator,
+             OptionHandler, 
+             TechnicalInformationHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = -4573057658746728675L;
+
+  /** training instances */
+  private Instances m_trainInstances;
+  /** class index */
+  private int m_classIndex;
+  /** number of attributes in the training data */
+  private int m_numAttribs;
+  /** number of instances in the training data */
+  private int m_numInstances;
+  /** holds an evaluation object */
+  private Evaluation m_Evaluation;
+  /** holds the base classifier object */
+  private Classifier m_BaseClassifier;
+  /** number of folds to use for cross validation */
+  private int m_folds;
+  /** random number seed */
+  private int m_seed;
+  /** 
+   * the threshold by which to do further cross validations when
+   * estimating the accuracy of a subset
+   */
+  private double m_threshold;
+
+  /**
+   * Returns a string describing this attribute evaluator
+   * @return a description of the evaluator suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L150">    return &quot;WrapperSubsetEval:\n\n&quot;</span>
+      +&quot;Evaluates attribute sets by using a learning scheme. Cross &quot;
+      +&quot;validation is used to estimate the accuracy of the learning &quot;
+      +&quot;scheme for a set of attributes.\n\n&quot;
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L155">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L168">    result = new TechnicalInformation(Type.ARTICLE);</span>
+<span class="nc" id="L169">    result.setValue(Field.AUTHOR, &quot;Ron Kohavi and George H. John&quot;);</span>
+<span class="nc" id="L170">    result.setValue(Field.YEAR, &quot;1997&quot;);</span>
+<span class="nc" id="L171">    result.setValue(Field.TITLE, &quot;Wrappers for feature subset selection&quot;);</span>
+<span class="nc" id="L172">    result.setValue(Field.JOURNAL, &quot;Artificial Intelligence&quot;);</span>
+<span class="nc" id="L173">    result.setValue(Field.VOLUME, &quot;97&quot;);</span>
+<span class="nc" id="L174">    result.setValue(Field.NUMBER, &quot;1-2&quot;);</span>
+<span class="nc" id="L175">    result.setValue(Field.PAGES, &quot;273-324&quot;);</span>
+<span class="nc" id="L176">    result.setValue(Field.NOTE, &quot;Special issue on relevance&quot;);</span>
+<span class="nc" id="L177">    result.setValue(Field.ISSN, &quot;0004-3702&quot;);</span>
+    
+<span class="nc" id="L179">    return result;</span>
+  }
+
+  /**
+   * Constructor. Calls restOptions to set default options
+   **/
+<span class="nc" id="L185">  public WrapperSubsetEval () {</span>
+<span class="nc" id="L186">    resetOptions();</span>
+<span class="nc" id="L187">  }</span>
+
+
+  /**
+   * Returns an enumeration describing the available options.
+   * @return an enumeration of all the available options.
+   **/
+  public Enumeration listOptions () {
+<span class="nc" id="L195">    Vector newVector = new Vector(4);</span>
+<span class="nc" id="L196">    newVector.addElement(new Option(</span>
+<span class="nc" id="L197">	&quot;\tclass name of base learner to use for \taccuracy estimation.\n&quot;</span>
+	+ &quot;\tPlace any classifier options LAST on the command line\n&quot;
+	+ &quot;\tfollowing a \&quot;--\&quot;. eg.:\n&quot;
+	+ &quot;\t\t-B weka.classifiers.bayes.NaiveBayes ... -- -K\n&quot;
+	+ &quot;\t(default: weka.classifiers.rules.ZeroR)&quot;, 
+<span class="nc" id="L202">	&quot;B&quot;, 1, &quot;-B &lt;base learner&gt;&quot;));</span>
+    
+<span class="nc" id="L204">    newVector.addElement(new Option(</span>
+<span class="nc" id="L205">	&quot;\tnumber of cross validation folds to use for estimating accuracy.\n&quot; </span>
+	+ &quot;\t(default=5)&quot;, 
+<span class="nc" id="L207">	&quot;F&quot;, 1, &quot;-F &lt;num&gt;&quot;));</span>
+    
+<span class="nc" id="L209">    newVector.addElement(new Option(</span>
+<span class="nc" id="L210">	&quot;\tSeed for cross validation accuracy testimation.\n&quot;</span>
+	+ &quot;\t(default = 1)&quot;, 
+<span class="nc" id="L212">	&quot;R&quot;, 1,&quot;-R &lt;seed&gt;&quot;));</span>
+    
+<span class="nc" id="L214">    newVector.addElement(new Option(</span>
+<span class="nc" id="L215">	&quot;\tthreshold by which to execute another cross validation\n&quot; </span>
+	+ &quot;\t(standard deviation---expressed as a percentage of the mean).\n&quot;
+	+ &quot;\t(default: 0.01 (1%))&quot;, 
+<span class="nc" id="L218">	&quot;T&quot;, 1, &quot;-T &lt;num&gt;&quot;));</span>
+
+<span class="nc bnc" id="L220" title="All 2 branches missed.">    if ((m_BaseClassifier != null) &amp;&amp; </span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">	(m_BaseClassifier instanceof OptionHandler)) {</span>
+<span class="nc" id="L222">      newVector.addElement(new Option(&quot;&quot;, &quot;&quot;, 0, &quot;\nOptions specific to scheme &quot; </span>
+<span class="nc" id="L223">				      + m_BaseClassifier.getClass().getName() </span>
+<span class="nc" id="L224">				      + &quot;:&quot;));</span>
+<span class="nc" id="L225">      Enumeration enu = ((OptionHandler)m_BaseClassifier).listOptions();</span>
+
+<span class="nc bnc" id="L227" title="All 2 branches missed.">      while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L228">        newVector.addElement(enu.nextElement());</span>
+      }
+    }
+
+<span class="nc" id="L232">    return  newVector.elements();</span>
+  }
+
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -B &amp;lt;base learner&amp;gt;
+   *  class name of base learner to use for  accuracy estimation.
+   *  Place any classifier options LAST on the command line
+   *  following a &quot;--&quot;. eg.:
+   *   -B weka.classifiers.bayes.NaiveBayes ... -- -K
+   *  (default: weka.classifiers.rules.ZeroR)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -F &amp;lt;num&amp;gt;
+   *  number of cross validation folds to use for estimating accuracy.
+   *  (default=5)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;seed&amp;gt;
+   *  Seed for cross validation accuracy testimation.
+   *  (default = 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -T &amp;lt;num&amp;gt;
+   *  threshold by which to execute another cross validation
+   *  (standard deviation---expressed as a percentage of the mean).
+   *  (default: 0.01 (1%))&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to scheme weka.classifiers.rules.ZeroR:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions (String[] options)
+    throws Exception {
+    String optionString;
+<span class="nc" id="L278">    resetOptions();</span>
+<span class="nc" id="L279">    optionString = Utils.getOption('B', options);</span>
+
+<span class="nc bnc" id="L281" title="All 2 branches missed.">    if (optionString.length() == 0)</span>
+<span class="nc" id="L282">      optionString = ZeroR.class.getName();</span>
+<span class="nc" id="L283">    setClassifier(Classifier.forName(optionString, </span>
+<span class="nc" id="L284">				     Utils.partitionOptions(options)));</span>
+<span class="nc" id="L285">    optionString = Utils.getOption('F', options);</span>
+
+<span class="nc bnc" id="L287" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L288">      setFolds(Integer.parseInt(optionString));</span>
+    }
+
+<span class="nc" id="L291">    optionString = Utils.getOption('R', options);</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L293">      setSeed(Integer.parseInt(optionString));</span>
+    }
+
+    //       optionString = Utils.getOption('S',options);
+    //       if (optionString.length() != 0)
+    //         {
+    //  	 seed = Integer.parseInt(optionString);
+    //         }
+<span class="nc" id="L301">    optionString = Utils.getOption('T', options);</span>
+
+<span class="nc bnc" id="L303" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+      Double temp;
+<span class="nc" id="L305">      temp = Double.valueOf(optionString);</span>
+<span class="nc" id="L306">      setThreshold(temp.doubleValue());</span>
+    }
+<span class="nc" id="L308">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String thresholdTipText() {
+<span class="nc" id="L316">    return &quot;Repeat xval if stdev of mean exceeds this value.&quot;;</span>
+  }
+
+  /**
+   * Set the value of the threshold for repeating cross validation
+   *
+   * @param t the value of the threshold
+   */
+  public void setThreshold (double t) {
+<span class="nc" id="L325">    m_threshold = t;</span>
+<span class="nc" id="L326">  }</span>
+
+
+  /**
+   * Get the value of the threshold
+   *
+   * @return the threshold as a double
+   */
+  public double getThreshold () {
+<span class="nc" id="L335">    return  m_threshold;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String foldsTipText() {
+<span class="nc" id="L344">    return &quot;Number of xval folds to use when estimating subset accuracy.&quot;;</span>
+  }
+
+  /**
+   * Set the number of folds to use for accuracy estimation
+   *
+   * @param f the number of folds
+   */
+  public void setFolds (int f) {
+<span class="nc" id="L353">    m_folds = f;</span>
+<span class="nc" id="L354">  }</span>
+
+
+  /**
+   * Get the number of folds used for accuracy estimation
+   *
+   * @return the number of folds
+   */
+  public int getFolds () {
+<span class="nc" id="L363">    return  m_folds;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String seedTipText() {
+<span class="nc" id="L372">    return &quot;Seed to use for randomly generating xval splits.&quot;;</span>
+  }
+
+  /**
+   * Set the seed to use for cross validation
+   *
+   * @param s the seed
+   */
+  public void setSeed (int s) {
+<span class="nc" id="L381">    m_seed = s;</span>
+<span class="nc" id="L382">  }</span>
+
+
+  /**
+   * Get the random number seed used for cross validation
+   *
+   * @return the seed
+   */
+  public int getSeed () {
+<span class="nc" id="L391">    return  m_seed;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String classifierTipText() {
+<span class="nc" id="L400">    return &quot;Classifier to use for estimating the accuracy of subsets&quot;;</span>
+  }
+
+  /**
+   * Set the classifier to use for accuracy estimation
+   *
+   * @param newClassifier the Classifier to use.
+   */
+  public void setClassifier (Classifier newClassifier) {
+<span class="nc" id="L409">    m_BaseClassifier = newClassifier;</span>
+<span class="nc" id="L410">  }</span>
+
+
+  /**
+   * Get the classifier used as the base learner.
+   *
+   * @return the classifier used as the classifier
+   */
+  public Classifier getClassifier () {
+<span class="nc" id="L419">    return  m_BaseClassifier;</span>
+  }
+
+
+  /**
+   * Gets the current settings of WrapperSubsetEval.
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions () {
+<span class="nc" id="L429">    String[] classifierOptions = new String[0];</span>
+
+<span class="nc bnc" id="L431" title="All 2 branches missed.">    if ((m_BaseClassifier != null) &amp;&amp; </span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">	(m_BaseClassifier instanceof OptionHandler)) {</span>
+<span class="nc" id="L433">      classifierOptions = ((OptionHandler)m_BaseClassifier).getOptions();</span>
+    }
+
+<span class="nc" id="L436">    String[] options = new String[9 + classifierOptions.length];</span>
+<span class="nc" id="L437">    int current = 0;</span>
+
+<span class="nc bnc" id="L439" title="All 2 branches missed.">    if (getClassifier() != null) {</span>
+<span class="nc" id="L440">      options[current++] = &quot;-B&quot;;</span>
+<span class="nc" id="L441">      options[current++] = getClassifier().getClass().getName();</span>
+    }
+
+<span class="nc" id="L444">    options[current++] = &quot;-F&quot;;</span>
+<span class="nc" id="L445">    options[current++] = &quot;&quot; + getFolds();</span>
+<span class="nc" id="L446">    options[current++] = &quot;-T&quot;;</span>
+<span class="nc" id="L447">    options[current++] = &quot;&quot; + getThreshold();</span>
+<span class="nc" id="L448">    options[current++] = &quot;-R&quot;;</span>
+<span class="nc" id="L449">    options[current++] = &quot;&quot; + getSeed();</span>
+<span class="nc" id="L450">    options[current++] = &quot;--&quot;;</span>
+<span class="nc" id="L451">    System.arraycopy(classifierOptions, 0, options, current, </span>
+<span class="nc" id="L452">		     classifierOptions.length);</span>
+<span class="nc" id="L453">    current += classifierOptions.length;</span>
+
+<span class="nc bnc" id="L455" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L456">      options[current++] = &quot;&quot;;</span>
+    }
+
+<span class="nc" id="L459">    return  options;</span>
+  }
+
+
+  protected void resetOptions () {
+<span class="nc" id="L464">    m_trainInstances = null;</span>
+<span class="nc" id="L465">    m_Evaluation = null;</span>
+<span class="nc" id="L466">    m_BaseClassifier = new ZeroR();</span>
+<span class="nc" id="L467">    m_folds = 5;</span>
+<span class="nc" id="L468">    m_seed = 1;</span>
+<span class="nc" id="L469">    m_threshold = 0.01;</span>
+<span class="nc" id="L470">  }</span>
+
+  /**
+   * Returns the capabilities of this evaluator.
+   *
+   * @return            the capabilities of this evaluator
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+    Capabilities	result;
+    
+<span class="nc bnc" id="L481" title="All 2 branches missed.">    if (getClassifier() == null) {</span>
+<span class="nc" id="L482">      result = super.getCapabilities();</span>
+<span class="nc" id="L483">      result.disableAll();</span>
+    } else {
+<span class="nc" id="L485">      result = getClassifier().getCapabilities();</span>
+    }
+    
+    // set dependencies
+<span class="nc bnc" id="L489" title="All 2 branches missed.">    for (Capability cap: Capability.values())</span>
+<span class="nc" id="L490">      result.enableDependency(cap);</span>
+    
+<span class="nc" id="L492">    result.setMinimumNumberInstances(getFolds());</span>
+    
+<span class="nc" id="L494">    return result;</span>
+  }
+
+  /**
+   * Generates a attribute evaluator. Has to initialize all fields of the 
+   * evaluator that are not being set via options.
+   *
+   * @param data set of instances serving as training data 
+   * @throws Exception if the evaluator has not been 
+   * generated successfully
+   */
+  public void buildEvaluator (Instances data)
+    throws Exception {
+
+    // can evaluator handle data?
+<span class="nc" id="L509">    getCapabilities().testWithFail(data);</span>
+
+<span class="nc" id="L511">    m_trainInstances = data;</span>
+<span class="nc" id="L512">    m_classIndex = m_trainInstances.classIndex();</span>
+<span class="nc" id="L513">    m_numAttribs = m_trainInstances.numAttributes();</span>
+<span class="nc" id="L514">    m_numInstances = m_trainInstances.numInstances();</span>
+<span class="nc" id="L515">  }</span>
+
+
+  /**
+   * Evaluates a subset of attributes
+   *
+   * @param subset a bitset representing the attribute subset to be 
+   * evaluated 
+   * @return the error rate
+   * @throws Exception if the subset could not be evaluated
+   */
+  public double evaluateSubset (BitSet subset)
+    throws Exception {
+<span class="nc" id="L528">    double errorRate = 0;</span>
+<span class="nc" id="L529">    double[] repError = new double[5];</span>
+<span class="nc" id="L530">    int numAttributes = 0;</span>
+    int i, j;
+<span class="nc" id="L532">    Random Rnd = new Random(m_seed);</span>
+<span class="nc" id="L533">    Remove delTransform = new Remove();</span>
+<span class="nc" id="L534">    delTransform.setInvertSelection(true);</span>
+    // copy the instances
+<span class="nc" id="L536">    Instances trainCopy = new Instances(m_trainInstances);</span>
+
+    // count attributes set in the BitSet
+<span class="nc bnc" id="L539" title="All 2 branches missed.">    for (i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="nc bnc" id="L540" title="All 2 branches missed.">      if (subset.get(i)) {</span>
+<span class="nc" id="L541">        numAttributes++;</span>
+      }
+    }
+
+    // set up an array of attribute indexes for the filter (+1 for the class)
+<span class="nc" id="L546">    int[] featArray = new int[numAttributes + 1];</span>
+
+<span class="nc bnc" id="L548" title="All 2 branches missed.">    for (i = 0, j = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="nc bnc" id="L549" title="All 2 branches missed.">      if (subset.get(i)) {</span>
+<span class="nc" id="L550">        featArray[j++] = i;</span>
+      }
+    }
+
+<span class="nc" id="L554">    featArray[j] = m_classIndex;</span>
+<span class="nc" id="L555">    delTransform.setAttributeIndicesArray(featArray);</span>
+<span class="nc" id="L556">    delTransform.setInputFormat(trainCopy);</span>
+<span class="nc" id="L557">    trainCopy = Filter.useFilter(trainCopy, delTransform);</span>
+
+    // max of 5 repititions ofcross validation
+<span class="nc bnc" id="L560" title="All 2 branches missed.">    for (i = 0; i &lt; 5; i++) {</span>
+<span class="nc" id="L561">      m_Evaluation = new Evaluation(trainCopy);</span>
+<span class="nc" id="L562">      m_Evaluation.crossValidateModel(m_BaseClassifier, trainCopy, m_folds, Rnd);</span>
+<span class="nc" id="L563">      repError[i] = m_Evaluation.errorRate();</span>
+
+      // check on the standard deviation
+<span class="nc bnc" id="L566" title="All 2 branches missed.">      if (!repeat(repError, i + 1)) {</span>
+<span class="nc" id="L567">        i++;</span>
+<span class="nc" id="L568">        break;</span>
+      }
+    }
+
+<span class="nc bnc" id="L572" title="All 2 branches missed.">    for (j = 0; j &lt; i; j++) {</span>
+<span class="nc" id="L573">      errorRate += repError[j];</span>
+    }
+
+<span class="nc" id="L576">    errorRate /= (double)i;</span>
+<span class="nc" id="L577">    m_Evaluation = null;</span>
+<span class="nc" id="L578">    return  -errorRate;</span>
+  }
+
+
+  /**
+   * Returns a string describing the wrapper
+   *
+   * @return the description as a string
+   */
+  public String toString () {
+<span class="nc" id="L588">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc bnc" id="L590" title="All 2 branches missed.">    if (m_trainInstances == null) {</span>
+<span class="nc" id="L591">      text.append(&quot;\tWrapper subset evaluator has not been built yet\n&quot;);</span>
+    }
+    else {
+<span class="nc" id="L594">      text.append(&quot;\tWrapper Subset Evaluator\n&quot;);</span>
+<span class="nc" id="L595">      text.append(&quot;\tLearning scheme: &quot; </span>
+<span class="nc" id="L596">		  + getClassifier().getClass().getName() + &quot;\n&quot;);</span>
+<span class="nc" id="L597">      text.append(&quot;\tScheme options: &quot;);</span>
+<span class="nc" id="L598">      String[] classifierOptions = new String[0];</span>
+
+<span class="nc bnc" id="L600" title="All 2 branches missed.">      if (m_BaseClassifier instanceof OptionHandler) {</span>
+<span class="nc" id="L601">        classifierOptions = ((OptionHandler)m_BaseClassifier).getOptions();</span>
+
+<span class="nc bnc" id="L603" title="All 2 branches missed.">        for (int i = 0; i &lt; classifierOptions.length; i++) {</span>
+<span class="nc" id="L604">          text.append(classifierOptions[i] + &quot; &quot;);</span>
+        }
+      }
+
+<span class="nc" id="L608">      text.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L609" title="All 2 branches missed.">      if (m_trainInstances.attribute(m_classIndex).isNumeric()) {</span>
+<span class="nc" id="L610">	text.append(&quot;\tAccuracy estimation: RMSE\n&quot;);</span>
+      } else {
+<span class="nc" id="L612">	text.append(&quot;\tAccuracy estimation: classification error\n&quot;);</span>
+      }
+      
+<span class="nc" id="L615">      text.append(&quot;\tNumber of folds for accuracy estimation: &quot; </span>
+<span class="nc" id="L616">		  + m_folds </span>
+<span class="nc" id="L617">		  + &quot;\n&quot;);</span>
+    }
+
+<span class="nc" id="L620">    return  text.toString();</span>
+  }
+
+
+  /**
+   * decides whether to do another repeat of cross validation. If the
+   * standard deviation of the cross validations
+   * is greater than threshold% of the mean (default 1%) then another 
+   * repeat is done. 
+   *
+   * @param repError an array of cross validation results
+   * @param entries the number of cross validations done so far
+   * @return true if another cv is to be done
+   */
+  private boolean repeat (double[] repError, int entries) {
+    int i;
+<span class="nc" id="L636">    double mean = 0;</span>
+<span class="nc" id="L637">    double variance = 0;</span>
+    
+    // setting a threshold less than zero allows for &quot;manual&quot; exploration
+    // and prevents multiple xval for each subset
+<span class="nc bnc" id="L641" title="All 2 branches missed.">    if (m_threshold &lt; 0) { </span>
+<span class="nc" id="L642">      return false; </span>
+    }
+
+<span class="nc bnc" id="L645" title="All 2 branches missed.">    if (entries == 1) {</span>
+<span class="nc" id="L646">      return  true;</span>
+    }
+
+<span class="nc bnc" id="L649" title="All 2 branches missed.">    for (i = 0; i &lt; entries; i++) {</span>
+<span class="nc" id="L650">      mean += repError[i];</span>
+    }
+
+<span class="nc" id="L653">    mean /= (double)entries;</span>
+
+<span class="nc bnc" id="L655" title="All 2 branches missed.">    for (i = 0; i &lt; entries; i++) {</span>
+<span class="nc" id="L656">      variance += ((repError[i] - mean)*(repError[i] - mean));</span>
+    }
+
+<span class="nc" id="L659">    variance /= (double)entries;</span>
+
+<span class="nc bnc" id="L661" title="All 2 branches missed.">    if (variance &gt; 0) {</span>
+<span class="nc" id="L662">      variance = Math.sqrt(variance);</span>
+    }
+
+<span class="nc bnc" id="L665" title="All 2 branches missed.">    if ((variance/mean) &gt; m_threshold) {</span>
+<span class="nc" id="L666">      return  true;</span>
+    }
+
+<span class="nc" id="L669">    return  false;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L678">    return RevisionUtils.extract(&quot;$Revision: 7433 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param args the options
+   */
+  public static void main (String[] args) {
+<span class="nc" id="L687">    runEvaluator(new WrapperSubsetEval(), args);</span>
+<span class="nc" id="L688">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

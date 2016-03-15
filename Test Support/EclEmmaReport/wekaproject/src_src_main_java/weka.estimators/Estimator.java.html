@@ -1,0 +1,712 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Estimator.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.estimators</a> &gt; <span class="el_source">Estimator.java</span></div><h1>Estimator.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Estimator.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.estimators;
+
+import weka.core.Capabilities;
+import weka.core.CapabilitiesHandler;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SerializedObject;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.Vector;
+ 
+/** 
+ *
+ * Abstract class for all estimators.
+ *
+ * Example code for a nonincremental estimator
+ * &lt;code&gt; &lt;pre&gt;
+ *   // create a histogram for estimation
+ *   EqualWidthEstimator est = new EqualWidthEstimator();
+ *   est.addValues(instances, attrIndex);
+ * &lt;/pre&gt; &lt;/code&gt;
+ *
+ *
+ * Example code for an incremental estimator (incremental
+ * estimators must implement interface IncrementalEstimator)
+ * &lt;code&gt; &lt;pre&gt;
+ *   // Create a discrete estimator that takes values 0 to 9
+ *   DiscreteEstimator newEst = new DiscreteEstimator(10, true);
+ *
+ *   // Create 50 random integers first predicting the probability of the
+ *   // value, then adding the value to the estimator
+ *   Random r = new Random(seed);
+ *   for(int i = 0; i &lt; 50; i++) {
+ *     current = Math.abs(r.nextInt() % 10);
+ *     System.out.println(newEst);
+ *     System.out.println(&quot;Prediction for &quot; + current 
+ *                        + &quot; = &quot; + newEst.getProbability(current));
+ *     newEst.addValue(current, 1);
+ *   }
+ * &lt;/pre&gt; &lt;/code&gt;
+ *
+ *
+ * Example code for a main method for an estimator.&lt;p&gt;
+ * &lt;code&gt; &lt;pre&gt;
+ * public static void main(String [] argv) {
+ *
+ *   try {
+ *     LoglikeliEstimator est = new LoglikeliEstimator();      
+ *     Estimator.buildEstimator((Estimator) est, argv, false);      
+ *     System.out.println(est.toString());
+ *   } catch (Exception ex) {
+ *     ex.printStackTrace();
+ *     System.out.println(ex.getMessage());
+ *   }
+ * }
+ * &lt;/pre&gt; &lt;/code&gt;
+ *
+ *
+ * @author Gabi Schmidberger (gabi@cs.waikato.ac.nz)
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 5539 $
+ */
+<span class="fc" id="L96">public abstract class Estimator </span>
+  implements Cloneable, Serializable, OptionHandler, CapabilitiesHandler, 
+             RevisionHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = -5902411487362274342L;
+  
+  /** Debugging mode */
+<span class="fc" id="L104">  private boolean m_Debug = false;</span>
+  
+  /** The class value index is &gt; -1 if subset is taken with specific class value only*/
+<span class="fc" id="L107">  protected double m_classValueIndex = -1.0;</span>
+  
+  /** set if class is not important */
+<span class="fc" id="L110">  protected boolean m_noClass = true;</span>
+  
+  /**
+   * Class to support a building process of an estimator.
+   */
+<span class="nc" id="L115">  private static class Builder</span>
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    private static final long serialVersionUID = -5810927990193597303L;
+    
+    /** instances of the builder */
+<span class="nc" id="L122">    Instances m_instances = null;</span>
+    
+    /** attribute index of the builder */
+<span class="nc" id="L125">    int m_attrIndex = -1;</span>
+    
+    /** class index of the builder, only relevant if class value index is set*/
+<span class="nc" id="L128">    int m_classIndex = -1; </span>
+
+    /** class value index of the builder */
+<span class="nc" id="L131">    int m_classValueIndex = -1; </span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L139">      return RevisionUtils.extract(&quot;$Revision: 5539 $&quot;);</span>
+    }
+  }
+  
+  /**
+   * Add a new data value to the current estimator.
+   *
+   * @param data the new data value 
+   * @param weight the weight assigned to the data value 
+   */
+  public void addValue(double data, double weight) {
+    try {  
+<span class="nc" id="L151">      throw new Exception(&quot;Method to add single value is not implemented!\n&quot;+</span>
+			  &quot;Estimator should implement IncrementalEstimator.&quot;);
+<span class="nc" id="L153">    } catch (Exception ex) {</span>
+<span class="nc" id="L154">      ex.printStackTrace();</span>
+<span class="nc" id="L155">      System.out.println(ex.getMessage());</span>
+    }
+<span class="nc" id="L157">  }</span>
+
+  /**
+   * Initialize the estimator with a new dataset.
+   * Finds min and max first.
+   *
+   * @param data the dataset used to build this estimator 
+   * @param attrIndex attribute the estimator is for
+   * @exception Exception if building of estimator goes wrong
+   */
+  public void addValues(Instances data, int attrIndex) throws Exception {
+    // can estimator handle the data?
+<span class="nc" id="L169">    getCapabilities().testWithFail(data);</span>
+   
+<span class="nc" id="L171">    double []minMax = new double[2];</span>
+    
+    try {
+<span class="nc" id="L174">      EstimatorUtils.getMinMax(data, attrIndex, minMax);</span>
+<span class="nc" id="L175">    } catch (Exception ex) {</span>
+<span class="nc" id="L176">      ex.printStackTrace();</span>
+<span class="nc" id="L177">      System.out.println(ex.getMessage());</span>
+    }
+    
+<span class="nc" id="L180">    double min = minMax[0];</span>
+<span class="nc" id="L181">    double max = minMax[1];</span>
+
+    // factor is 1.0, data set has not been reduced
+<span class="nc" id="L184">    addValues(data, attrIndex, min, max, 1.0);</span>
+<span class="nc" id="L185">  }</span>
+  
+  /**
+   * Initialize the estimator with all values of one attribute of a dataset. 
+   * Some estimator might ignore the min and max values.
+   *
+   * @param data the dataset used to build this estimator 
+   * @param attrIndex attribute the estimator is for
+   * @param min minimal border of range
+   * @param max maximal border of range
+   * @param factor number of instances has been reduced to that factor
+   * @exception Exception if building of estimator goes wrong
+   */
+  public void addValues(Instances data, int attrIndex,
+			double min, double max, double factor) throws Exception {
+    // no handling of factor, would have to be overridden
+
+    // no handling of min and max, would have to be overridden
+
+<span class="nc" id="L204">    int numInst = data.numInstances();</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">    for (int i = 1; i &lt; numInst; i++) {</span>
+<span class="nc" id="L206">      addValue(data.instance(i).value(attrIndex), 1.0);</span>
+    }
+<span class="nc" id="L208">  }</span>
+ 
+  /**
+   * Initialize the estimator using only the instance of one class. 
+   * It is using the values of one attribute only.
+   *
+   * @param data the dataset used to build this estimator 
+   * @param attrIndex attribute the estimator is for
+   * @param classIndex index of the class attribute
+   * @param classValue the class value 
+   * @exception Exception if building of estimator goes wrong
+   */
+  public void addValues(Instances data, int attrIndex,
+			int classIndex, int classValue) throws Exception{
+    // can estimator handle the data?
+<span class="nc" id="L223">    m_noClass = false;    </span>
+<span class="nc" id="L224">    getCapabilities().testWithFail(data);</span>
+    
+    // find the minimal and the maximal value
+<span class="nc" id="L227">    double []minMax = new double[2];</span>
+    
+    try {
+<span class="nc" id="L230">      EstimatorUtils.getMinMax(data, attrIndex, minMax);</span>
+<span class="nc" id="L231">    } catch (Exception ex) {</span>
+<span class="nc" id="L232">      ex.printStackTrace();</span>
+<span class="nc" id="L233">      System.out.println(ex.getMessage());</span>
+    }
+    
+<span class="nc" id="L236">    double min = minMax[0];</span>
+<span class="nc" id="L237">    double max = minMax[1];</span>
+ 
+    // extract the instances with the given class value
+<span class="nc" id="L240">    Instances workData = new Instances(data, 0);</span>
+<span class="nc" id="L241">    double factor = getInstancesFromClass(data, attrIndex,</span>
+<span class="nc" id="L242">					  classIndex, </span>
+<span class="nc" id="L243">					  (double)classValue, workData);</span>
+
+    // if no data return
+<span class="nc bnc" id="L246" title="All 2 branches missed.">    if (workData.numInstances() == 0) return;</span>
+
+<span class="nc" id="L248">    addValues(data, attrIndex, min, max, factor);</span>
+<span class="nc" id="L249">  }</span>
+  
+  /**
+   * Initialize the estimator using only the instance of one class. 
+   * It is using the values of one attribute only.
+   *
+   * @param data the dataset used to build this estimator 
+   * @param attrIndex attribute the estimator is for
+   * @param classIndex index of the class attribute
+   * @param classValue the class value 
+   * @param min minimal value of this attribute
+   * @param max maximal value of this attribute
+   * @exception Exception if building of estimator goes wrong
+   */
+  public void addValues(Instances data, int attrIndex,
+      int classIndex, int classValue,
+      double min, double max) throws Exception{
+     
+    // extract the instances with the given class value
+<span class="nc" id="L268">    Instances workData = new Instances(data, 0);</span>
+<span class="nc" id="L269">    double factor = getInstancesFromClass(data, attrIndex,</span>
+<span class="nc" id="L270">            classIndex, </span>
+<span class="nc" id="L271">            (double)classValue, workData);</span>
+
+    // if no data return
+<span class="nc bnc" id="L274" title="All 2 branches missed.">    if (workData.numInstances() == 0) return;</span>
+
+<span class="nc" id="L276">    addValues(data, attrIndex, min, max, factor);</span>
+<span class="nc" id="L277">  }</span>
+  
+ 
+  /**
+   * Returns a dataset that contains all instances of a certain class value.
+   *
+   * @param data dataset to select the instances from
+   * @param attrIndex index of the relevant attribute
+   * @param classIndex index of the class attribute
+   * @param classValue the relevant class value 
+   * @return a dataset with only 
+   */
+  private double getInstancesFromClass(Instances data, int attrIndex,
+				       int classIndex,
+				       double classValue, Instances workData) {
+    //DBO.pln(&quot;getInstancesFromClass classValue&quot;+classValue+&quot; workData&quot;+data.numInstances());
+
+<span class="nc" id="L294">    int num = 0;</span>
+<span class="nc" id="L295">    int numClassValue = 0;</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">      if (!data.instance(i).isMissing(attrIndex)) {</span>
+<span class="nc" id="L298">	num++;</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">	if (data.instance(i).value(classIndex) == classValue) {</span>
+<span class="nc" id="L300">	  workData.add(data.instance(i));</span>
+<span class="nc" id="L301">	  numClassValue++;</span>
+	}
+      }
+    } 
+
+<span class="nc" id="L306">    Double alphaFactor = new Double((double)numClassValue/(double)num);</span>
+<span class="nc" id="L307">    return alphaFactor;</span>
+  }
+
+  /**
+   * Get a probability estimate for a value.
+   *
+   * @param data the value to estimate the probability of
+   * @return the estimated probability of the supplied value
+   */
+  public abstract double getProbability(double data);
+
+  /**
+   * Build an estimator using the options. The data is given in the options.
+   *
+   * @param est the estimator used
+   * @param options the list of options
+   * @param isIncremental true if estimator is incremental
+   * @exception Exception if something goes wrong or the user requests help on
+   * command options
+   */
+  public static void buildEstimator(Estimator est, String [] options,
+				    boolean isIncremental) 
+    throws Exception {
+    //DBO.pln(&quot;buildEstimator&quot;);
+    
+<span class="nc" id="L332">    boolean debug = false;</span>
+    boolean helpRequest;
+    
+    // read all options
+<span class="nc" id="L336">    Builder build = new Builder();</span>
+    try {
+<span class="nc" id="L338">      setGeneralOptions(build, est, options);</span>
+      
+<span class="nc bnc" id="L340" title="All 2 branches missed.">      if (est instanceof OptionHandler) {</span>
+<span class="nc" id="L341">	((OptionHandler)est).setOptions(options);</span>
+      }
+      
+<span class="nc" id="L344">      Utils.checkForRemainingOptions(options);</span>
+      
+    
+<span class="nc" id="L347">      buildEstimator(est, build.m_instances, build.m_attrIndex,</span>
+<span class="nc" id="L348">		     build.m_classIndex, build.m_classValueIndex, isIncremental);</span>
+<span class="nc" id="L349">    } catch (Exception ex) {</span>
+<span class="nc" id="L350">      ex.printStackTrace();</span>
+<span class="nc" id="L351">      System.out.println(ex.getMessage());</span>
+<span class="nc" id="L352">      String specificOptions = &quot;&quot;;</span>
+      // Output the error and also the valid options
+<span class="nc bnc" id="L354" title="All 2 branches missed.">      if (est instanceof OptionHandler) {</span>
+<span class="nc" id="L355">	specificOptions += &quot;\nEstimator options:\n\n&quot;;</span>
+<span class="nc" id="L356">	Enumeration enumOptions = ((OptionHandler)est).listOptions();</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">	while (enumOptions.hasMoreElements()) {</span>
+<span class="nc" id="L358">	  Option option = (Option) enumOptions.nextElement();</span>
+<span class="nc" id="L359">	  specificOptions += option.synopsis() + '\n'</span>
+<span class="nc" id="L360">	    + option.description() + &quot;\n&quot;;</span>
+	}
+      }
+      
+<span class="nc" id="L364">      String genericOptions = &quot;\nGeneral options:\n\n&quot;</span>
+	+ &quot;-h\n&quot;
+	+ &quot;\tGet help on available options.\n&quot;
+	+ &quot;-i &lt;file&gt;\n&quot;
+	+ &quot;\tThe name of the file containing input instances.\n&quot;
+	+ &quot;\tIf not supplied then instances will be read from stdin.\n&quot;
+	+ &quot;-a &lt;attribute index&gt;\n&quot;
+	+ &quot;\tThe number of the attribute the probability distribution\n&quot;
+	+ &quot;\testimation is done for.\n&quot;
+	+ &quot;\t\&quot;first\&quot; and \&quot;last\&quot; are also valid entries.\n&quot;
+	+ &quot;\tIf not supplied then no class is assigned.\n&quot;
+	+ &quot;-c &lt;class index&gt;\n&quot;
+	+ &quot;\tIf class value index is set, this attribute is taken as class.\n&quot;
+	+ &quot;\t\&quot;first\&quot; and \&quot;last\&quot; are also valid entries.\n&quot;
+	+ &quot;\tIf not supplied then last is default.\n&quot;
+	+ &quot;-v &lt;class value index&gt;\n&quot;
+	+ &quot;\tIf value is different to -1, select instances of this class value.\n&quot;
+	+ &quot;\t\&quot;first\&quot; and \&quot;last\&quot; are also valid entries.\n&quot;
+	+ &quot;\tIf not supplied then all instances are taken.\n&quot;;
+      
+<span class="nc" id="L384">      throw new Exception('\n' + ex.getMessage()</span>
+<span class="nc" id="L385">			  + specificOptions+genericOptions);</span>
+    }
+<span class="nc" id="L387">  }</span>
+
+  public static void buildEstimator(Estimator est,
+				    Instances instances, int attrIndex, 
+				    int classIndex, int classValueIndex,
+				    boolean isIncremental) throws Exception {
+
+    // DBO.pln(&quot;buildEstimator 2 &quot; + classValueIndex);
+
+    // non-incremental estimator add all instances at once
+<span class="nc bnc" id="L397" title="All 2 branches missed.">    if (!isIncremental) {</span>
+      
+<span class="nc bnc" id="L399" title="All 2 branches missed.">      if (classValueIndex == -1) {</span>
+	// DBO.pln(&quot;before addValues -- Estimator&quot;);
+<span class="nc" id="L401">	est.addValues(instances, attrIndex);</span>
+      } else {
+	// DBO.pln(&quot;before addValues with classvalue -- Estimator&quot;);
+<span class="nc" id="L404">	est.addValues(instances, attrIndex, </span>
+<span class="nc" id="L405">		      classIndex, classValueIndex);</span>
+      }
+    } else {
+      // incremental estimator, read one value at a time
+<span class="nc" id="L409">      Enumeration enumInsts = (instances).enumerateInstances();</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">      while (enumInsts.hasMoreElements()) {</span>
+<span class="nc" id="L411">	Instance instance = </span>
+<span class="nc" id="L412">	  (Instance) enumInsts.nextElement();</span>
+<span class="nc" id="L413">	((IncrementalEstimator)est).addValue(instance.value(attrIndex),</span>
+<span class="nc" id="L414">					     instance.weight());</span>
+      }
+    }
+<span class="nc" id="L417">  }</span>
+  
+  /**
+   * Parses and sets the general options
+   * @param build contains the data used
+   * @param est the estimator used
+   * @param options the options from the command line
+   */
+  private static void setGeneralOptions(Builder build, Estimator est, 
+					String [] options)  
+    throws Exception {
+<span class="nc" id="L428">    Reader input = null;</span>
+    
+    // help request option
+<span class="nc" id="L431">    boolean helpRequest = Utils.getFlag('h', options);</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">    if (helpRequest) {</span>
+<span class="nc" id="L433">      throw new Exception(&quot;Help requested.\n&quot;);</span>
+    }
+    
+    // instances used
+<span class="nc" id="L437">    String infileName = Utils.getOption('i', options);</span>
+<span class="nc bnc" id="L438" title="All 2 branches missed.">    if (infileName.length() != 0) {</span>
+<span class="nc" id="L439">      input = new BufferedReader(new FileReader(infileName));</span>
+    } else {
+<span class="nc" id="L441">      input = new BufferedReader(new InputStreamReader(System.in));</span>
+    }
+    
+<span class="nc" id="L444">    build.m_instances = new Instances(input);</span>
+    
+    // attribute index
+<span class="nc" id="L447">    String attrIndex = Utils.getOption('a', options);</span>
+    
+<span class="nc bnc" id="L449" title="All 2 branches missed.">    if (attrIndex.length() != 0) {</span>
+<span class="nc bnc" id="L450" title="All 2 branches missed.">      if (attrIndex.equals(&quot;first&quot;)) {</span>
+<span class="nc" id="L451">	build.m_attrIndex = 0;</span>
+<span class="nc bnc" id="L452" title="All 2 branches missed.">      } else if (attrIndex.equals(&quot;last&quot;)) {</span>
+<span class="nc" id="L453">	build.m_attrIndex = build.m_instances.numAttributes() - 1;</span>
+      } else {
+<span class="nc" id="L455">	int index = Integer.parseInt(attrIndex) - 1;</span>
+<span class="nc bnc" id="L456" title="All 4 branches missed.">	if ((index &lt; 0) || (index &gt;= build.m_instances.numAttributes())) {</span>
+<span class="nc" id="L457">	  throw new IllegalArgumentException(&quot;Option a: attribute index out of range.&quot;);</span>
+	}
+<span class="nc" id="L459">	build.m_attrIndex = index;</span>
+	
+      }
+    } else {
+      // default is the first attribute
+<span class="nc" id="L464">      build.m_attrIndex = 0;</span>
+    }
+    
+    //class index, if not given is set to last attribute
+<span class="nc" id="L468">    String classIndex = Utils.getOption('c', options);</span>
+<span class="nc bnc" id="L469" title="All 2 branches missed.">    if (classIndex.length() == 0) classIndex = &quot;last&quot;;</span>
+
+<span class="nc bnc" id="L471" title="All 2 branches missed.">    if (classIndex.length() != 0) {</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">      if (classIndex.equals(&quot;first&quot;)) {</span>
+<span class="nc" id="L473">	build.m_classIndex = 0;</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">      } else if (classIndex.equals(&quot;last&quot;)) {</span>
+<span class="nc" id="L475">	build.m_classIndex = build.m_instances.numAttributes() - 1;</span>
+      } else {
+<span class="nc" id="L477">	int cl = Integer.parseInt(classIndex);</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">	if (cl == -1) {</span>
+<span class="nc" id="L479">	  build.m_classIndex = build.m_instances.numAttributes() - 1;</span>
+	} else {
+<span class="nc" id="L481">	  build.m_classIndex = cl - 1;	</span>
+	}
+      }
+    } 
+    
+    //class value index, if not given is set to  -1
+<span class="nc" id="L487">    String classValueIndex = Utils.getOption('v', options);</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">    if (classValueIndex.length() != 0) {</span>
+<span class="nc bnc" id="L489" title="All 2 branches missed.">      if (classValueIndex.equals(&quot;first&quot;)) {</span>
+<span class="nc" id="L490">	build.m_classValueIndex = 0;</span>
+<span class="nc bnc" id="L491" title="All 2 branches missed.">      } else if (classValueIndex.equals(&quot;last&quot;)) {</span>
+<span class="nc" id="L492">	build.m_classValueIndex = build.m_instances.numAttributes() - 1;</span>
+      } else {
+<span class="nc" id="L494">	int cl = Integer.parseInt(classValueIndex);</span>
+<span class="nc bnc" id="L495" title="All 2 branches missed.">	if (cl == -1) {</span>
+<span class="nc" id="L496">	  build.m_classValueIndex = -1;</span>
+	} else {
+<span class="nc" id="L498">	  build.m_classValueIndex = cl - 1;	</span>
+	}
+      }
+    } 
+    
+<span class="nc" id="L503">    build.m_instances.setClassIndex(build.m_classIndex);</span>
+<span class="nc" id="L504">  }</span>
+  
+  /**
+   * Creates a deep copy of the given estimator using serialization.
+   *
+   * @param model the estimator to copy
+   * @return a deep copy of the estimator
+   * @exception Exception if an error occurs
+   */
+  public static Estimator clone(Estimator model) throws Exception {
+    
+<span class="nc" id="L515">    return makeCopy(model);</span>
+  }
+  
+  /**
+   * Creates a deep copy of the given estimator using serialization.
+   *
+   * @param model the estimator to copy
+   * @return a deep copy of the estimator
+   * @exception Exception if an error occurs
+   */
+  public static Estimator makeCopy(Estimator model) throws Exception {
+
+<span class="nc" id="L527">    return (Estimator)new SerializedObject(model).getObject();</span>
+  }
+
+  /**
+   * Creates a given number of deep copies of the given estimator using serialization.
+   * 
+   * @param model the estimator to copy
+   * @param num the number of estimator copies to create.
+   * @return an array of estimators.
+   * @exception Exception if an error occurs
+   */
+  public static Estimator [] makeCopies(Estimator model,
+					 int num) throws Exception {
+
+<span class="nc bnc" id="L541" title="All 2 branches missed.">    if (model == null) {</span>
+<span class="nc" id="L542">      throw new Exception(&quot;No model estimator set&quot;);</span>
+    }
+<span class="nc" id="L544">    Estimator [] estimators = new Estimator [num];</span>
+<span class="nc" id="L545">    SerializedObject so = new SerializedObject(model);</span>
+<span class="nc bnc" id="L546" title="All 2 branches missed.">    for(int i = 0; i &lt; estimators.length; i++) {</span>
+<span class="nc" id="L547">      estimators[i] = (Estimator) so.getObject();</span>
+    }
+<span class="nc" id="L549">    return estimators;</span>
+  }
+ 
+  /**
+   * Tests whether the current estimation object is equal to another
+   * estimation object
+   *
+   * @param obj the object to compare against
+   * @return true if the two objects are equal
+   */
+  public boolean equals(Object obj) {
+    
+<span class="nc bnc" id="L561" title="All 4 branches missed.">    if ((obj == null) || !(obj.getClass().equals(this.getClass()))) {</span>
+<span class="nc" id="L562">      return false;</span>
+    }
+<span class="nc" id="L564">    Estimator cmp = (Estimator) obj;</span>
+<span class="nc bnc" id="L565" title="All 2 branches missed.">    if (m_Debug != cmp.m_Debug) return false;</span>
+<span class="nc bnc" id="L566" title="All 2 branches missed.">    if (m_classValueIndex != cmp.m_classValueIndex) return false;</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">    if (m_noClass != cmp.m_noClass) return false;</span>
+    
+<span class="nc" id="L569">    return true;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="nc" id="L579">    Vector newVector = new Vector(1);</span>
+
+<span class="nc" id="L581">    newVector.addElement(new Option(</span>
+<span class="nc" id="L582">	      &quot;\tIf set, estimator is run in debug mode and\n&quot;</span>
+	      + &quot;\tmay output additional info to the console&quot;,
+<span class="nc" id="L584">	      &quot;D&quot;, 0, &quot;-D&quot;));</span>
+<span class="nc" id="L585">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. Valid options are:&lt;p&gt;
+   *
+   * -D  &lt;br&gt;
+   * If set, estimator is run in debug mode and 
+   * may output additional info to the console.&lt;p&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @exception Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="nc" id="L600">    setDebug(Utils.getFlag('D', options));</span>
+<span class="nc" id="L601">  }</span>
+
+  /**
+   * Gets the current settings of the Estimator.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+
+    String [] options;
+<span class="nc bnc" id="L611" title="All 2 branches missed.">    if (getDebug()) {</span>
+<span class="nc" id="L612">      options = new String[1];</span>
+<span class="nc" id="L613">      options[0] = &quot;-D&quot;;</span>
+    } else {
+<span class="nc" id="L615">      options = new String[0];</span>
+    }
+<span class="nc" id="L617">    return options;</span>
+  }
+  
+  /**
+   * Creates a new instance of a estimatorr given it's class name and
+   * (optional) arguments to pass to it's setOptions method. If the
+   * classifier implements OptionHandler and the options parameter is
+   * non-null, the classifier will have it's options set.
+   *
+   * @param name the fully qualified class name of the estimatorr
+   * @param options an array of options suitable for passing to setOptions. May
+   * be null.
+   * @return the newly created classifier, ready for use.
+   * @exception Exception if the classifier name is invalid, or the options
+   * supplied are not acceptable to the classifier
+   */
+  public static Estimator forName(String name,
+      String [] options) throws Exception {
+    
+<span class="nc" id="L636">    return (Estimator)Utils.forName(Estimator.class,</span>
+<span class="nc" id="L637">        name,</span>
+<span class="nc" id="L638">        options);</span>
+  }
+
+ /**
+   * Set debugging mode.
+   *
+   * @param debug true if debug output should be printed
+   */
+  public void setDebug(boolean debug) {
+
+<span class="nc" id="L648">    m_Debug = debug;</span>
+<span class="nc" id="L649">  }</span>
+
+  /**
+   * Get whether debugging is turned on.
+   *
+   * @return true if debugging output is on
+   */
+  public boolean getDebug() {
+
+<span class="nc" id="L658">    return m_Debug;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String debugTipText() {
+<span class="nc" id="L667">    return &quot;If set to true, estimator may output additional info to &quot; +</span>
+      &quot;the console.&quot;;
+  }
+ 
+  /** 
+   * Returns the Capabilities of this Estimator. Derived estimators have to
+   * override this method to enable capabilities.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L679">    Capabilities result = new Capabilities(this);</span>
+<span class="nc" id="L680">    result.enableAll();</span>
+    
+/*    // class
+    if (!m_noClass) {
+      result.enable(Capability.NOMINAL_CLASS);
+      result.enable(Capability.MISSING_CLASS_VALUES);
+    } else {
+      result.enable(Capability.NO_CLASS);
+    } */
+       
+<span class="nc" id="L690">    return result;</span>
+  }
+  
+  /** 
+   * Test if the estimator can handle the data.
+   * @param data the dataset the estimator takes an attribute from
+   * @param attrIndex the index of the attribute
+   * @see Capabilities
+   */
+  public void testCapabilities(Instances data, int attrIndex) throws Exception {
+<span class="nc" id="L700">    getCapabilities().testWithFail(data);</span>
+<span class="nc" id="L701">    getCapabilities().testWithFail(data.attribute(attrIndex));</span>
+<span class="nc" id="L702">  }</span>
+}
+
+
+
+
+
+
+
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

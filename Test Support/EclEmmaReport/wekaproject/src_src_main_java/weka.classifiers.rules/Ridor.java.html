@@ -1,0 +1,1654 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Ridor.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.rules</a> &gt; <span class="el_source">Ridor.java</span></div><h1>Ridor.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Ridor.java
+ *    Copyright (C) 2001 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.rules;
+
+import weka.classifiers.Classifier;
+import weka.core.AdditionalMeasureProducer;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.UnsupportedClassTypeException;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * An implementation of a RIpple-DOwn Rule learner.&lt;br/&gt;
+ * &lt;br/&gt;
+ * It generates a default rule first and then the exceptions for the default rule with the least (weighted) error rate.  Then it generates the &quot;best&quot; exceptions for each exception and iterates until pure.  Thus it performs a tree-like expansion of exceptions.The exceptions are a set of rules that predict classes other than the default. IREP is used to generate the exceptions.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information about Ripple-Down Rules, see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Brian R. Gaines, Paul Compton (1995). Induction of Ripple-Down Rules Applied to Modeling Large Databases. J. Intell. Inf. Syst.. 5(3):211-228.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ * There are five inner classes defined in this class. &lt;br&gt;
+ * The first is Ridor_node, which implements one node in the Ridor tree.  It's basically
+ * composed of a default class and a set of exception rules to the default class.&lt;br&gt;
+ * The second inner class is RidorRule, which implements a single exception rule 
+ * using REP.&lt;br&gt;
+ * The last three inner classes are only used in RidorRule.  They are Antd, NumericAntd 
+ * and NominalAntd, which all implement a single antecedent in the RidorRule. &lt;br&gt;
+ * The Antd class is an abstract class, which has two subclasses, NumericAntd and 
+ * NominalAntd, to implement the corresponding abstract functions.  These two subclasses
+ * implement the functions related to a antecedent with a nominal attribute and a numeric 
+ * attribute respectively.&lt;p&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -F &amp;lt;number of folds&amp;gt;
+ *  Set number of folds for IREP
+ *  One fold is used as pruning set.
+ *  (default 3)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;number of shuffles&amp;gt;
+ *  Set number of shuffles to randomize
+ *  the data in order to get better rule.
+ *  (default 10)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A
+ *  Set flag of whether use the error rate 
+ *  of all the data to select the default class
+ *  in each step. If not set, the learner will only use the error rate in the pruning data&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *   Set flag of whether use the majority class as
+ *  the default class in each step instead of 
+ *  choosing default class based on the error rate
+ *  (if the flag is not set)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;min. weights&amp;gt;
+ *  Set the minimal weights of instances
+ *  within a split.
+ *  (default 2.0)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Xin XU (xx5@cs.waikato.ac.nz)
+ * @version $Revision: 5529 $ 
+ */
+<span class="fc" id="L103">public class Ridor </span>
+  extends Classifier
+  implements AdditionalMeasureProducer, WeightedInstancesHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -7261533075088314436L;
+  
+  /** The number of folds to split data into Grow and Prune for IREP */
+<span class="fc" id="L111">  private int m_Folds = 3;</span>
+    
+  /** The number of shuffles performed on the data for randomization */
+<span class="fc" id="L114">  private int m_Shuffle = 1;</span>
+
+  /** Random object for randomization */
+<span class="fc" id="L117">  private Random m_Random = null;</span>
+    
+  /** The seed to perform randomization */
+<span class="fc" id="L120">  private int m_Seed = 1;</span>
+
+  /** Whether use error rate on all the data */
+<span class="fc" id="L123">  private boolean m_IsAllErr = false;</span>
+
+  /** Whether use majority class as default class */
+<span class="fc" id="L126">  private boolean m_IsMajority = false;</span>
+    
+  /** The root of Ridor */
+<span class="fc" id="L129">  private Ridor_node m_Root = null;</span>
+    
+  /** The class attribute of the data */
+  private Attribute m_Class;
+
+  /** Statistics of the data */
+  private double m_Cover, m_Err;
+
+  /** The minimal number of instance weights within a split*/
+<span class="fc" id="L138">  private double m_MinNo = 2.0;</span>
+    
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L146">    return &quot;An implementation of a RIpple-DOwn Rule learner.\n\n&quot; </span>
+      + &quot;It generates a default rule first and then the exceptions for the default rule &quot;
+      + &quot;with the least (weighted) error rate.  Then it generates the \&quot;best\&quot; exceptions for &quot;
+      + &quot;each exception and iterates until pure.  Thus it performs a tree-like expansion of &quot;
+      + &quot;exceptions.&quot;
+      + &quot;The exceptions are a set of rules that predict classes other than the default. &quot;
+      + &quot;IREP is used to generate the exceptions.\n\n&quot;
+      + &quot;For more information about Ripple-Down Rules, see:\n\n&quot;;
+  }
+    
+  /** 
+   * Private class implementing the single node of Ridor. 
+   * It consists of a default class label, a set of exceptions to the default rule
+   * and the exceptions to each exception
+   */
+<span class="fc" id="L161">  private class Ridor_node </span>
+    implements Serializable, RevisionHandler {
+    
+    /** for serialization */
+    static final long serialVersionUID = -581370560157467677L;
+	
+    /** The default class label */
+<span class="fc" id="L168">    private double defClass = Double.NaN;</span>
+	
+    /** The set of exceptions of the default rule. 
+	Each element also has its own exceptions and the consequent of each rule 
+	is determined by its exceptions */
+<span class="fc" id="L173">    private RidorRule[] rules = null;</span>
+	
+    /** The exceptions of the exception rules */
+<span class="fc" id="L176">    private Ridor_node[] excepts = null; </span>
+
+    /** The level of this node */
+    private int level;
+
+    /**
+     * Gets the default class label
+     *
+     * @return the default class label
+     */
+    public double getDefClass() { 
+<span class="fc" id="L187">      return defClass; </span>
+    }
+    
+    /**
+     * Gets the set of exceptions
+     * 
+     * @return the set of exceptions
+     */
+    public RidorRule[] getRules() { 
+<span class="fc" id="L196">      return rules; </span>
+    }
+    
+    /**
+     * Gets the exceptions of the exceptions rules
+     * 
+     * @return the exceptions of the exceptions rules
+     */
+    public Ridor_node[] getExcepts() { 
+<span class="fc" id="L205">      return excepts; </span>
+    }
+
+    /**
+     * Builds a ripple-down manner rule learner.
+     *
+     * @param dataByClass the divided data by their class label. The real class
+     * labels of the instances are all set to 0
+     * @param lvl the level of the parent node
+     * @throws Exception if ruleset of this node cannot be built
+     */
+    public void findRules(Instances[] dataByClass, int lvl) throws Exception {
+<span class="fc" id="L217">      Vector finalRules = null;</span>
+<span class="fc" id="L218">      int clas = -1;</span>
+<span class="fc" id="L219">      double[] isPure = new double[dataByClass.length];</span>
+<span class="fc" id="L220">      int numMajority = 0;</span>
+	    
+<span class="fc" id="L222">      level = lvl + 1;</span>
+	    
+<span class="fc bfc" id="L224" title="All 2 branches covered.">      for(int h=0; h &lt; dataByClass.length; h++){</span>
+<span class="fc" id="L225">	isPure[h] = dataByClass[h].sumOfWeights();</span>
+<span class="fc bfc" id="L226" title="All 2 branches covered.">	if(Utils.grOrEq(isPure[h], m_Folds))</span>
+<span class="fc" id="L227">	  numMajority++;  // Count how many class labels have enough instances</span>
+      }
+	    
+<span class="fc bfc" id="L230" title="All 2 branches covered.">      if(numMajority &lt;= 1){	                   // The data is pure or not enough</span>
+<span class="fc" id="L231">	defClass = (double)Utils.maxIndex(isPure);</span>
+<span class="fc" id="L232">	return;</span>
+      }
+<span class="fc" id="L234">      double total = Utils.sum(isPure);	 </span>
+	    
+<span class="pc bpc" id="L236" title="1 of 2 branches missed.">      if(m_IsMajority){</span>
+<span class="nc" id="L237">	defClass = (double)Utils.maxIndex(isPure);</span>
+<span class="nc" id="L238">	Instances data = new Instances(dataByClass[(int)defClass]);</span>
+<span class="nc" id="L239">	int index = data.classIndex();</span>
+		
+<span class="nc bnc" id="L241" title="All 2 branches missed.">	for(int j=0; j&lt;data.numInstances(); j++)</span>
+<span class="nc" id="L242">	  data.instance(j).setClassValue(1);       // Set one class as default</span>
+		
+<span class="nc bnc" id="L244" title="All 2 branches missed.">	for(int k=0; k &lt; dataByClass.length; k++)    // Merge into one dataset</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">	  if(k != (int)defClass){</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">	    if(data.numInstances() &gt;= dataByClass[k].numInstances())</span>
+<span class="nc" id="L247">	      data = append(data, dataByClass[k]);</span>
+<span class="nc" id="L248">	    else data = append(dataByClass[k], data);</span>
+	  }
+		
+<span class="nc" id="L251">	data.setClassIndex(index);           // Position new class label</span>
+		
+<span class="nc" id="L253">	double classCount = total - isPure[(int)defClass];</span>
+<span class="nc" id="L254">	finalRules = new Vector();</span>
+<span class="nc" id="L255">	buildRuleset(data, classCount, finalRules);</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">	if(finalRules.size() == 0)           // No good rules built</span>
+<span class="nc" id="L257">	  return;</span>
+      }
+      else{
+<span class="fc" id="L260">	double maxAcRt = isPure[Utils.maxIndex(isPure)] / total;</span>
+		
+	// Find default class
+<span class="fc bfc" id="L263" title="All 2 branches covered.">	for(int i=0; i &lt; dataByClass.length; i++){</span>
+<span class="fc bfc" id="L264" title="All 2 branches covered.">	  if(isPure[i] &gt;= m_Folds){</span>
+<span class="fc" id="L265">	    Instances data = new Instances(dataByClass[i]);</span>
+<span class="fc" id="L266">	    int index = data.classIndex();</span>
+			
+<span class="fc bfc" id="L268" title="All 2 branches covered.">	    for(int j=0; j&lt;data.numInstances(); j++)</span>
+<span class="fc" id="L269">	      data.instance(j).setClassValue(1);       // Set one class as default</span>
+			
+<span class="fc bfc" id="L271" title="All 2 branches covered.">	    for(int k=0; k &lt; dataByClass.length; k++)    // Merge into one dataset</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">	      if(k != i){</span>
+<span class="fc bfc" id="L273" title="All 2 branches covered.">		if(data.numInstances() &gt;= dataByClass[k].numInstances())</span>
+<span class="fc" id="L274">		  data = append(data, dataByClass[k]);</span>
+<span class="fc" id="L275">		else data = append(dataByClass[k], data);</span>
+	      }
+			
+<span class="fc" id="L278">	    data.setClassIndex(index);           // Position new class label </span>
+			
+	    /* Build a set of rules */
+<span class="fc" id="L281">	    double classCount = data.sumOfWeights() - isPure[i];</span>
+<span class="fc" id="L282">	    Vector ruleset = new Vector();</span>
+<span class="fc" id="L283">	    double wAcRt = buildRuleset(data, classCount, ruleset); </span>
+			
+<span class="fc bfc" id="L285" title="All 2 branches covered.">	    if(Utils.gr(wAcRt, maxAcRt)){</span>
+<span class="fc" id="L286">	      finalRules = ruleset;</span>
+<span class="fc" id="L287">	      maxAcRt = wAcRt;</span>
+<span class="fc" id="L288">	      clas = i;</span>
+	    }
+	  }
+	}
+		
+<span class="fc bfc" id="L293" title="All 2 branches covered.">	if(finalRules == null){ // No good rules found, set majority class as default</span>
+<span class="fc" id="L294">	  defClass = (double)Utils.maxIndex(isPure);</span>
+<span class="fc" id="L295">	  return;</span>
+	}
+		
+<span class="fc" id="L298">	defClass = (double)clas;</span>
+      }
+			
+      /* Store the exception rules and default class in this node */
+<span class="fc" id="L302">      int size = finalRules.size();</span>
+<span class="fc" id="L303">      rules = new RidorRule[size];</span>
+<span class="fc" id="L304">      excepts = new Ridor_node[size];</span>
+<span class="fc bfc" id="L305" title="All 2 branches covered.">      for(int l=0; l &lt; size; l++)</span>
+<span class="fc" id="L306">	rules[l] = (RidorRule)finalRules.elementAt(l);</span>
+	    
+      /* Build exceptions for each exception rule */
+<span class="fc" id="L309">      Instances[] uncovered = dataByClass; </span>
+<span class="fc bfc" id="L310" title="All 2 branches covered.">      if(level == 1)  // The error of default rule</span>
+<span class="fc" id="L311">	m_Err = total - uncovered[(int)defClass].sumOfWeights();			</span>
+
+<span class="fc" id="L313">      uncovered[(int)defClass] = new Instances(uncovered[(int)defClass], 0);    </span>
+	    
+<span class="fc bfc" id="L315" title="All 2 branches covered.">      for(int m=0; m &lt; size; m++){</span>
+	/* The data covered by this rule, they are also deducted from the original data */
+<span class="fc" id="L317">	Instances[][] dvdData = divide(rules[m], uncovered);</span>
+<span class="fc" id="L318">	Instances[] covered = dvdData[0];    // Data covered by the rule</span>
+	//uncovered = dvdData[1];            // Data not covered by the rule
+<span class="fc" id="L320">	excepts[m] = new Ridor_node();</span>
+<span class="fc" id="L321">	excepts[m].findRules(covered, level);// Find exceptions on the covered data</span>
+      }
+<span class="fc" id="L323">    }</span>
+
+    /**	
+     * Private function to build a rule set and return the weighted avg of accuracy
+     * rate of rules in the set.
+     *
+     * @param insts the data used to build ruleset
+     * @param classCount the counts of the instances with the predicted class but not
+     *                   yet covered by the ruleset
+     * @param ruleset the ruleset to be built
+     * @return the weighted accuracy rate of the ruleset
+     * @throws Exception if the rules cannot be built properly
+     */
+    private double buildRuleset(Instances insts, double classCount, Vector ruleset) 
+      throws Exception {	    
+<span class="fc" id="L338">      Instances data = new Instances(insts);</span>
+<span class="fc" id="L339">      double wAcRt = 0;  // The weighted accuracy rate of this ruleset</span>
+<span class="fc" id="L340">      double total = data.sumOfWeights();</span>
+	    
+<span class="fc bfc" id="L342" title="All 2 branches covered.">      while( classCount &gt;= m_Folds ){      // Data is not pure</span>
+<span class="fc" id="L343">	RidorRule bestRule = null;</span>
+<span class="fc" id="L344">	double bestWorthRate= -1;        // The best worth achieved by</span>
+<span class="fc" id="L345">	double bestWorth = -1;           // randomization of the data</span>
+		
+<span class="fc" id="L347">	RidorRule rule = new RidorRule();                                </span>
+<span class="fc" id="L348">	rule.setPredictedClass(0);       // Predict the classes other than default</span>
+		
+<span class="fc bfc" id="L350" title="All 2 branches covered.">	for(int j = 0; j &lt; m_Shuffle; j++){</span>
+<span class="pc bpc" id="L351" title="1 of 2 branches missed.">	  if(m_Shuffle &gt; 1)</span>
+<span class="nc" id="L352">	    data.randomize(m_Random);</span>
+		    
+<span class="fc" id="L354">	  rule.buildClassifier(data);</span>
+		    
+	  double wr, w; // Worth rate and worth
+<span class="pc bpc" id="L357" title="1 of 2 branches missed.">	  if(m_IsAllErr){</span>
+<span class="nc" id="L358">	    wr = (rule.getWorth()+rule.getAccuG()) / </span>
+<span class="nc" id="L359">	      (rule.getCoverP()+rule.getCoverG());</span>
+<span class="nc" id="L360">	    w = rule.getWorth() + rule.getAccuG();</span>
+	  }
+	  else{
+<span class="fc" id="L363">	    wr = rule.getWorthRate();</span>
+<span class="fc" id="L364">	    w = rule.getWorth(); </span>
+	  }
+		    
+<span class="pc bpc" id="L367" title="1 of 2 branches missed.">	  if(Utils.gr(wr, bestWorthRate) ||</span>
+<span class="nc bnc" id="L368" title="All 4 branches missed.">	     (Utils.eq(wr, bestWorthRate) &amp;&amp; Utils.gr(w, bestWorth))){</span>
+<span class="fc" id="L369">	    bestRule = rule;</span>
+<span class="fc" id="L370">	    bestWorthRate = wr;</span>
+<span class="fc" id="L371">	    bestWorth = w;</span>
+	  }
+	}
+		
+<span class="pc bpc" id="L375" title="1 of 2 branches missed.">	if (bestRule == null)</span>
+<span class="nc" id="L376">	  throw new Exception(&quot;Something wrong here inside findRule()!&quot;);</span>
+		
+<span class="pc bpc" id="L378" title="1 of 4 branches missed.">	if(Utils.sm(bestWorthRate, 0.5) || (!bestRule.hasAntds()))</span>
+<span class="nc" id="L379">	  break;                       // No more good rules generated</span>
+		
+<span class="fc" id="L381">	Instances newData = new Instances(data); </span>
+<span class="fc" id="L382">	data = new Instances(newData, 0);// Empty the data</span>
+<span class="fc" id="L383">	classCount = 0;</span>
+<span class="fc" id="L384">	double cover = 0;                // Coverage of this rule on whole data</span>
+		
+<span class="fc bfc" id="L386" title="All 2 branches covered.">	for(int l=0; l&lt;newData.numInstances(); l++){</span>
+<span class="fc" id="L387">	  Instance datum = newData.instance(l);</span>
+<span class="fc bfc" id="L388" title="All 2 branches covered.">	  if(!bestRule.isCover(datum)){// Data not covered by the previous rule</span>
+<span class="fc" id="L389">	    data.add(datum);</span>
+<span class="fc bfc" id="L390" title="All 2 branches covered.">	    if(Utils.eq(datum.classValue(), 0)) </span>
+<span class="fc" id="L391">	      classCount += datum.weight(); // The predicted class in the data</span>
+	  }
+<span class="fc" id="L393">	  else cover += datum.weight();</span>
+	}			
+		
+<span class="fc" id="L396">	wAcRt += computeWeightedAcRt(bestWorthRate, cover, total);</span>
+<span class="fc" id="L397">	ruleset.addElement(bestRule);			</span>
+      }  
+	    
+      /* The weighted def. accuracy */
+<span class="fc" id="L401">      double wDefAcRt = (data.sumOfWeights()-classCount) / total;		    </span>
+<span class="fc" id="L402">      wAcRt += wDefAcRt;</span>
+	    
+<span class="fc" id="L404">      return wAcRt;</span>
+    }
+	
+    /**
+     * Private function to combine two data
+     *
+     * @param data1 the data to which data2 is appended 
+     * @param data2 the data to be appended to data1
+     * @return the merged data
+     */
+    private Instances append(Instances data1, Instances data2){
+<span class="fc" id="L415">      Instances data = new Instances(data1);</span>
+<span class="fc bfc" id="L416" title="All 2 branches covered.">      for(int i=0; i&lt;data2.numInstances(); i++)</span>
+<span class="fc" id="L417">	data.add(data2.instance(i));</span>
+	    
+<span class="fc" id="L419">      return data;</span>
+    }
+	
+    /**
+     * Compute the weighted average of accuracy rate of a certain rule
+     * Each rule is weighted by its coverage proportion in the whole data.  
+     * So the accuracy rate of one ruleset is actually 
+     * 
+     * (worth rate) * (coverage proportion)
+     *
+     *                               coverage of the rule on the whole data
+     * where coverage proportion = -----------------------------------------
+     *                              the whole data size fed into the ruleset
+     *
+     * @param worthRt the worth rate
+     * @param cover the coverage of the rule on the whole data
+     * @param total the total data size fed into the ruleset
+     * @return the weighted accuracy rate of this rule
+     */
+    private double computeWeightedAcRt(double worthRt, double cover, double total){
+	  
+<span class="fc" id="L440">      return (worthRt * (cover/total));	</span>
+    }
+	
+    /**
+     * Builds an array of data according to their true class label
+     * Each bag of data is filtered through the rule specified and
+     * is totally covered by this rule.  
+     * Both the data covered and uncovered by the rule will be returned
+     * by the procedure.  
+     *
+     * @param rule the rule covering the data
+     * @param dataByClass the array of data to be covered by the rule
+     * @return the arrays of data both covered and not covered by the rule
+     */
+    private Instances[][] divide(RidorRule rule, Instances[] dataByClass){
+<span class="fc" id="L455">      int len = dataByClass.length;</span>
+<span class="fc" id="L456">      Instances[][] dataBags = new Instances[2][len];</span>
+	    
+<span class="fc bfc" id="L458" title="All 2 branches covered.">      for(int i=0; i &lt; len; i++){</span>
+<span class="fc" id="L459">	Instances[] dvdData = rule.coveredByRule(dataByClass[i]);</span>
+<span class="fc" id="L460">	dataBags[0][i] = dvdData[0];     // Covered by the rule</span>
+<span class="fc" id="L461">	dataBags[1][i] = dvdData[1];     // Not covered by the rule</span>
+      }
+	    
+<span class="fc" id="L464">      return dataBags;</span>
+    }
+    /**
+     * The size of the certain node of Ridor, i.e. the 
+     * number of rules generated within and below this node
+     *
+     * @return the size of this node
+     */
+    public int size(){
+<span class="nc" id="L473">      int size = 0;</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">      if(rules != null){</span>
+<span class="nc bnc" id="L475" title="All 2 branches missed.">	for(int i=0; i &lt; rules.length; i++)</span>
+<span class="nc" id="L476">	  size += excepts[i].size(); // The children's size</span>
+<span class="nc" id="L477">	size += rules.length;          // This node's size</span>
+      }
+<span class="nc" id="L479">      return size;</span>
+    }
+	
+    /**
+     * Prints the all the rules of one node of Ridor.
+     *
+     * @return a textual description of one node of Ridor
+     */
+    public String toString(){
+<span class="nc" id="L488">      StringBuffer text =  new StringBuffer();</span>
+	    
+<span class="nc bnc" id="L490" title="All 2 branches missed.">      if(level == 1)</span>
+<span class="nc" id="L491">	text.append(m_Class.name() + &quot; = &quot; + m_Class.value((int)getDefClass())+</span>
+<span class="nc" id="L492">		    &quot;  (&quot;+m_Cover+&quot;/&quot;+m_Err+&quot;)\n&quot;);</span>
+<span class="nc bnc" id="L493" title="All 2 branches missed.">      if(rules != null){</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">	for(int i=0; i &lt; rules.length; i++){</span>
+<span class="nc bnc" id="L495" title="All 2 branches missed.">	  for(int j=0; j &lt; level; j++)</span>
+<span class="nc" id="L496">	    text.append(&quot;         &quot;);</span>
+<span class="nc" id="L497">	  String cl = m_Class.value((int)(excepts[i].getDefClass()));</span>
+<span class="nc" id="L498">	  text.append(&quot;  Except &quot; + </span>
+<span class="nc" id="L499">		      rules[i].toString(m_Class.name(), cl)+</span>
+<span class="nc" id="L500">		      &quot;\n&quot; + excepts[i].toString());</span>
+	}
+      }
+	    
+<span class="nc" id="L504">      return text.toString();</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L513">      return RevisionUtils.extract(&quot;$Revision: 5529 $&quot;);</span>
+    }
+  }    
+
+  /**
+   * This class implements a single rule that predicts the 2-class distribution.  
+   *
+   * A rule consists of antecedents &quot;AND&quot;ed together and the consequent (class value) 
+   * for the classification.  In this case, the consequent is the distribution of
+   * the available classes (always 2 classes) in the dataset.  
+   * In this class, the Information Gain (p*[log(p/t) - log(P/T)]) is used to select 
+   * an antecedent and Reduced Error Prunning (REP) is used to prune the rule. 
+   *
+   */
+<span class="fc" id="L527">  private class RidorRule </span>
+    implements WeightedInstancesHandler, Serializable, RevisionHandler {
+	
+    /** for serialization */
+    static final long serialVersionUID = 4375199423973848157L;
+    
+    /** The internal representation of the class label to be predicted*/
+<span class="fc" id="L534">    private double m_Class = -1;	</span>
+	
+    /** The class attribute of the data*/
+    private Attribute m_ClassAttribute;
+	
+    /** The vector of antecedents of this rule*/
+<span class="fc" id="L540">    protected FastVector m_Antds = null;</span>
+	
+    /** The worth rate of this rule, in this case, accuracy rate in the pruning data*/
+<span class="fc" id="L543">    private double m_WorthRate = 0;</span>
+	
+    /** The worth value of this rule, in this case, accurate # in pruning data*/
+<span class="fc" id="L546">    private double m_Worth = 0;</span>
+	
+    /** The sum of weights of the data covered by this rule in the pruning data */
+<span class="fc" id="L549">    private double m_CoverP = 0;   </span>
+	
+    /** The accurate and covered data of this rule in the growing data */
+<span class="fc" id="L552">    private double m_CoverG = 0, m_AccuG = 0;   	</span>
+  
+    /** The access functions for parameters */
+<span class="fc" id="L555">    public void setPredictedClass(double cl){  m_Class = cl; }</span>
+<span class="nc" id="L556">    public double getPredictedClass(){ return m_Class; }</span>
+	
+    /**
+     * Builds a single rule learner with REP dealing with 2 classes.
+     * This rule learner always tries to predict the class with label 
+     * m_Class.
+     *
+     * @param instances the training data
+     * @throws Exception if classifier can't be built successfully
+     */
+    public void buildClassifier(Instances instances) throws Exception {
+<span class="fc" id="L567">      m_ClassAttribute = instances.classAttribute();</span>
+<span class="pc bpc" id="L568" title="1 of 2 branches missed.">      if (!m_ClassAttribute.isNominal()) </span>
+<span class="nc" id="L569">	throw new UnsupportedClassTypeException(&quot; Only nominal class, please.&quot;);</span>
+<span class="pc bpc" id="L570" title="1 of 2 branches missed.">      if(instances.numClasses() != 2)</span>
+<span class="nc" id="L571">	throw new Exception(&quot; Only 2 classes, please.&quot;);</span>
+	    
+<span class="fc" id="L573">      Instances data = new Instances(instances);</span>
+<span class="pc bpc" id="L574" title="1 of 2 branches missed.">      if(Utils.eq(data.sumOfWeights(),0))</span>
+<span class="nc" id="L575">	throw new Exception(&quot; No training data.&quot;);</span>
+	    
+<span class="fc" id="L577">      data.deleteWithMissingClass();</span>
+<span class="pc bpc" id="L578" title="1 of 2 branches missed.">      if(Utils.eq(data.sumOfWeights(),0))</span>
+<span class="nc" id="L579">	throw new Exception(&quot; The class labels of all the training data are missing.&quot;);	</span>
+	    
+<span class="pc bpc" id="L581" title="1 of 2 branches missed.">      if(data.numInstances() &lt; m_Folds)</span>
+<span class="nc" id="L582">	throw new Exception(&quot; Not enough data for REP.&quot;);</span>
+	    
+<span class="fc" id="L584">      m_Antds = new FastVector();	</span>
+	    
+      /* Split data into Grow and Prune*/
+<span class="fc" id="L587">      m_Random = new Random(m_Seed);</span>
+<span class="fc" id="L588">      data.randomize(m_Random);</span>
+<span class="fc" id="L589">      data.stratify(m_Folds);</span>
+<span class="fc" id="L590">      Instances growData=data.trainCV(m_Folds, m_Folds-1, m_Random);</span>
+<span class="fc" id="L591">      Instances pruneData=data.testCV(m_Folds, m_Folds-1);</span>
+	    
+<span class="fc" id="L593">      grow(growData);      // Build this rule</span>
+	    
+<span class="fc" id="L595">      prune(pruneData);    // Prune this rule</span>
+<span class="fc" id="L596">    }</span>
+	
+    /**
+     * Find all the instances in the dataset covered by this rule.
+     * The instances not covered will also be deducted from the the original data
+     * and returned by this procedure.
+     * 
+     * @param insts the dataset to be covered by this rule.
+     * @return the instances covered and not covered by this rule
+     */
+    public Instances[] coveredByRule(Instances insts){
+<span class="fc" id="L607">      Instances[] data = new Instances[2];</span>
+<span class="fc" id="L608">      data[0] = new Instances(insts, insts.numInstances());</span>
+<span class="fc" id="L609">      data[1] = new Instances(insts, insts.numInstances());</span>
+	    
+<span class="fc bfc" id="L611" title="All 2 branches covered.">      for(int i=0; i&lt;insts.numInstances(); i++){</span>
+<span class="fc" id="L612">	Instance datum = insts.instance(i);</span>
+<span class="fc bfc" id="L613" title="All 2 branches covered.">	if(isCover(datum))</span>
+<span class="fc" id="L614">	  data[0].add(datum);        // Covered by this rule</span>
+	else
+<span class="fc" id="L616">	  data[1].add(datum);        // Not covered by this rule</span>
+      }
+	    
+<span class="fc" id="L619">      return data;</span>
+    }
+	
+    /**
+     * Whether the instance covered by this rule
+     * 
+     * @param inst the instance in question
+     * @return the boolean value indicating whether the instance is covered by this rule
+     */
+    public boolean isCover(Instance datum){
+<span class="fc" id="L629">      boolean isCover=true;</span>
+	    
+<span class="fc bfc" id="L631" title="All 2 branches covered.">      for(int i=0; i&lt;m_Antds.size(); i++){</span>
+<span class="fc" id="L632">	Antd antd = (Antd)m_Antds.elementAt(i);</span>
+<span class="fc bfc" id="L633" title="All 2 branches covered.">	if(!antd.isCover(datum)){</span>
+<span class="fc" id="L634">	  isCover = false;</span>
+<span class="fc" id="L635">	  break;</span>
+	}
+      }
+	    
+<span class="fc" id="L639">      return isCover;</span>
+    }        
+	
+    /**
+     * Whether this rule has antecedents, i.e. whether it is a default rule
+     * 
+     * @return the boolean value indicating whether the rule has antecedents
+     */
+    public boolean hasAntds(){
+<span class="pc bpc" id="L648" title="1 of 2 branches missed.">      if (m_Antds == null)</span>
+<span class="nc" id="L649">	return false;</span>
+      else
+<span class="pc bpc" id="L651" title="1 of 2 branches missed.">	return (m_Antds.size() &gt; 0);</span>
+    }      
+	
+    /**
+     * Build one rule using the growing data
+     *
+     * @param data the growing data used to build the rule
+     */    
+    private void grow(Instances data){
+<span class="fc" id="L660">      Instances growData = new Instances(data);</span>
+	    
+<span class="fc" id="L662">      m_AccuG = computeDefAccu(growData);</span>
+<span class="fc" id="L663">      m_CoverG = growData.sumOfWeights();</span>
+      /* Compute the default accurate rate of the growing data */
+<span class="fc" id="L665">      double defAcRt= m_AccuG / m_CoverG; </span>
+	    
+      /* Keep the record of which attributes have already been used*/    
+<span class="fc" id="L668">      boolean[] used=new boolean [growData.numAttributes()];</span>
+<span class="fc bfc" id="L669" title="All 2 branches covered.">      for (int k=0; k&lt;used.length; k++)</span>
+<span class="fc" id="L670">	used[k]=false;</span>
+<span class="fc" id="L671">      int numUnused=used.length;</span>
+	    
+      double maxInfoGain;
+<span class="fc" id="L674">      boolean isContinue = true; // The stopping criterion of this rule</span>
+	    
+<span class="fc bfc" id="L676" title="All 2 branches covered.">      while (isContinue){   </span>
+<span class="fc" id="L677">	maxInfoGain = 0;       // We require that infoGain be positive</span>
+		
+	/* Build a list of antecedents */
+<span class="fc" id="L680">	Antd oneAntd=null;</span>
+<span class="fc" id="L681">	Instances coverData = null;</span>
+<span class="fc" id="L682">	Enumeration enumAttr=growData.enumerateAttributes();	    </span>
+<span class="fc" id="L683">	int index=-1;  </span>
+		
+	/* Build one condition based on all attributes not used yet*/
+<span class="fc bfc" id="L686" title="All 2 branches covered.">	while (enumAttr.hasMoreElements()){</span>
+<span class="fc" id="L687">	  Attribute att= (Attribute)(enumAttr.nextElement());</span>
+<span class="fc" id="L688">	  index++;</span>
+		    
+<span class="fc" id="L690">	  Antd antd =null;	</span>
+<span class="fc bfc" id="L691" title="All 2 branches covered.">	  if(att.isNumeric())</span>
+<span class="fc" id="L692">	    antd = new NumericAntd(att);</span>
+	  else
+<span class="fc" id="L694">	    antd = new NominalAntd(att);</span>
+		    
+<span class="fc bfc" id="L696" title="All 2 branches covered.">	  if(!used[index]){</span>
+	    /* Compute the best information gain for each attribute,
+	       it's stored in the antecedent formed by this attribute.
+	       This procedure returns the data covered by the antecedent*/
+<span class="fc" id="L700">	    Instances coveredData = computeInfoGain(growData, defAcRt, antd);</span>
+<span class="fc bfc" id="L701" title="All 2 branches covered.">	    if(coveredData != null){</span>
+<span class="fc" id="L702">	      double infoGain = antd.getMaxInfoGain();			</span>
+<span class="fc bfc" id="L703" title="All 2 branches covered.">	      if(Utils.gr(infoGain, maxInfoGain)){</span>
+<span class="fc" id="L704">		oneAntd=antd;</span>
+<span class="fc" id="L705">		coverData = coveredData;  </span>
+<span class="fc" id="L706">		maxInfoGain = infoGain;</span>
+	      }		    
+	    }
+	  }
+	}
+		
+<span class="fc bfc" id="L712" title="All 2 branches covered.">	if(oneAntd == null)	 return;</span>
+		
+	//Numeric attributes can be used more than once
+<span class="fc bfc" id="L715" title="All 2 branches covered.">	if(!oneAntd.getAttr().isNumeric()){ </span>
+<span class="fc" id="L716">	  used[oneAntd.getAttr().index()]=true;</span>
+<span class="fc" id="L717">	  numUnused--;</span>
+	}
+		
+<span class="fc" id="L720">	m_Antds.addElement((Object)oneAntd);</span>
+<span class="fc" id="L721">	growData = coverData;// Grow data size is shrinking </span>
+		
+<span class="fc" id="L723">	defAcRt = oneAntd.getAccuRate();</span>
+		
+	/* Stop if no more data, rule perfect, no more attributes */
+<span class="pc bpc" id="L726" title="2 of 6 branches missed.">	if(Utils.eq(growData.sumOfWeights(), 0.0) || Utils.eq(defAcRt, 1.0) || (numUnused == 0))</span>
+<span class="fc" id="L727">	  isContinue = false;</span>
+      }
+<span class="fc" id="L729">    }</span>
+	
+    /** 
+     * Compute the best information gain for the specified antecedent
+     *  
+     * @param data the data based on which the infoGain is computed
+     * @param defAcRt the default accuracy rate of data
+     * @param antd the specific antecedent
+     * @return the data covered by the antecedent
+     */
+    private Instances computeInfoGain(Instances instances, double defAcRt, Antd antd){
+<span class="fc" id="L740">      Instances data = new Instances(instances);</span>
+	    
+      /* Split the data into bags.
+	 The information gain of each bag is also calculated in this procedure */
+<span class="fc" id="L744">      Instances[] splitData = antd.splitData(data, defAcRt, m_Class); </span>
+	    
+      /* Get the bag of data to be used for next antecedents */
+<span class="fc bfc" id="L747" title="All 2 branches covered.">      if(splitData != null)</span>
+<span class="fc" id="L748">	return splitData[(int)antd.getAttrValue()];</span>
+<span class="fc" id="L749">      else return null;</span>
+    }
+	
+    /**
+     * Prune the rule using the pruning data and update the worth parameters for this rule
+     * The accuracy rate is used to prune the rule.
+     *
+     * @param pruneData the pruning data used to prune the rule
+     */    
+    private void prune(Instances pruneData){
+<span class="fc" id="L759">      Instances data=new Instances(pruneData);</span>
+	    
+<span class="fc" id="L761">      double total = data.sumOfWeights();</span>
+	    
+      /* The default accurate# and the the accuracy rate on pruning data */
+<span class="fc" id="L764">      double defAccu=0, defAccuRate=0;</span>
+	    
+<span class="fc" id="L766">      int size=m_Antds.size();</span>
+<span class="fc bfc" id="L767" title="All 2 branches covered.">      if(size == 0) return; // Default rule before pruning</span>
+	    
+<span class="fc" id="L769">      double[] worthRt = new double[size];</span>
+<span class="fc" id="L770">      double[] coverage = new double[size];</span>
+<span class="fc" id="L771">      double[] worthValue = new double[size];</span>
+<span class="fc bfc" id="L772" title="All 2 branches covered.">      for(int w=0; w&lt;size; w++){</span>
+<span class="fc" id="L773">	worthRt[w]=coverage[w]=worthValue[w]=0.0;</span>
+      }
+	    
+      /* Calculate accuracy parameters for all the antecedents in this rule */
+<span class="fc bfc" id="L777" title="All 2 branches covered.">      for(int x=0; x&lt;size; x++){</span>
+<span class="fc" id="L778">	Antd antd=(Antd)m_Antds.elementAt(x);</span>
+<span class="fc" id="L779">	Attribute attr= antd.getAttr();</span>
+<span class="fc" id="L780">	Instances newData = new Instances(data);</span>
+<span class="fc" id="L781">	data = new Instances(newData, newData.numInstances()); // Make data empty</span>
+		
+<span class="fc bfc" id="L783" title="All 2 branches covered.">	for(int y=0; y&lt;newData.numInstances(); y++){</span>
+<span class="fc" id="L784">	  Instance ins=newData.instance(y);</span>
+<span class="fc bfc" id="L785" title="All 2 branches covered.">	  if(!ins.isMissing(attr)){              // Attribute not missing</span>
+<span class="fc bfc" id="L786" title="All 2 branches covered.">	    if(antd.isCover(ins)){             // Covered by this antecedent</span>
+<span class="fc" id="L787">	      coverage[x] += ins.weight();</span>
+<span class="fc" id="L788">	      data.add(ins);                 // Add to data for further pruning</span>
+<span class="fc bfc" id="L789" title="All 2 branches covered.">	      if(Utils.eq(ins.classValue(), m_Class)) // Accurate prediction</span>
+<span class="fc" id="L790">		worthValue[x] += ins.weight();</span>
+	    }
+	  }
+	}
+		
+<span class="pc bpc" id="L795" title="1 of 2 branches missed.">	if(coverage[x] != 0)  </span>
+<span class="fc" id="L796">	  worthRt[x] = worthValue[x]/coverage[x];</span>
+      }
+	    
+      /* Prune the antecedents according to the accuracy parameters */
+<span class="pc bfc" id="L800" title="All 2 branches covered.">      for(int z=(size-1); z &gt; 0; z--)</span>
+<span class="pc bpc" id="L801" title="1 of 2 branches missed.">	if(Utils.sm(worthRt[z], worthRt[z-1]))</span>
+<span class="nc" id="L802">	  m_Antds.removeElementAt(z);</span>
+	else  break;
+	    
+      /* Check whether this rule is a default rule */
+<span class="fc bfc" id="L806" title="All 2 branches covered.">      if(m_Antds.size() == 1){</span>
+<span class="fc" id="L807">	defAccu = computeDefAccu(pruneData);</span>
+<span class="fc" id="L808">	defAccuRate = defAccu/total;                // Compute def. accuracy</span>
+<span class="pc bpc" id="L809" title="1 of 2 branches missed.">	if(Utils.sm(worthRt[0], defAccuRate)){      // Becomes a default rule</span>
+<span class="nc" id="L810">	  m_Antds.removeAllElements();</span>
+	}
+      }   
+	    
+      /* Update the worth parameters of this rule*/
+<span class="fc" id="L815">      int antdsSize = m_Antds.size();</span>
+<span class="pc bpc" id="L816" title="1 of 2 branches missed.">      if(antdsSize != 0){                          // Not a default rule</span>
+<span class="fc" id="L817">	m_Worth = worthValue[antdsSize-1];       // WorthValues of the last antecedent</span>
+<span class="fc" id="L818">	m_WorthRate = worthRt[antdsSize-1];</span>
+<span class="fc" id="L819">	m_CoverP = coverage[antdsSize-1];</span>
+<span class="fc" id="L820">	Antd last = (Antd)m_Antds.lastElement();</span>
+<span class="fc" id="L821">	m_CoverG = last.getCover();</span>
+<span class="fc" id="L822">	m_AccuG = last.getAccu();</span>
+      }
+      else{                                        // Default rule    
+<span class="nc" id="L825">	m_Worth = defAccu;                       // Default WorthValues</span>
+<span class="nc" id="L826">	m_WorthRate = defAccuRate;</span>
+<span class="nc" id="L827">	m_CoverP = total;</span>
+      }
+<span class="fc" id="L829">    }</span>
+	
+    /**
+     * Private function to compute default number of accurate instances
+     * in the specified data for m_Class
+     * 
+     * @param data the data in question
+     * @return the default accuracy number
+     */
+    private double computeDefAccu(Instances data){ 
+<span class="fc" id="L839">      double defAccu=0;</span>
+<span class="fc bfc" id="L840" title="All 2 branches covered.">      for(int i=0; i&lt;data.numInstances(); i++){</span>
+<span class="fc" id="L841">	Instance inst = data.instance(i);</span>
+<span class="fc bfc" id="L842" title="All 2 branches covered.">	if(Utils.eq(inst.classValue(), m_Class))</span>
+<span class="fc" id="L843">	  defAccu += inst.weight();</span>
+      }
+<span class="fc" id="L845">      return defAccu;</span>
+    }
+	
+    /** The following are get functions after prune() has set the value of worthRate and worth*/
+<span class="fc" id="L849">    public double getWorthRate(){ return m_WorthRate; }</span>
+<span class="fc" id="L850">    public double getWorth(){ return m_Worth; }</span>
+<span class="nc" id="L851">    public double getCoverP(){ return m_CoverP; }</span>
+<span class="nc" id="L852">    public double getCoverG(){ return m_CoverG; }</span>
+<span class="nc" id="L853">    public double getAccuG(){ return m_AccuG; }</span>
+
+    /**
+     * Prints this rule with the specified class label
+     *
+     * @param att the string standing for attribute in the consequent of this rule
+     * @param cl the string standing for value in the consequent of this rule
+     * @return a textual description of this rule with the specified class label
+     */
+    public String toString(String att, String cl) {
+<span class="nc" id="L863">      StringBuffer text =  new StringBuffer();</span>
+<span class="nc bnc" id="L864" title="All 2 branches missed.">      if(m_Antds.size() &gt; 0){</span>
+<span class="nc bnc" id="L865" title="All 2 branches missed.">	for(int j=0; j&lt; (m_Antds.size()-1); j++)</span>
+<span class="nc" id="L866">	  text.append(&quot;(&quot; + ((Antd)(m_Antds.elementAt(j))).toString()+ &quot;) and &quot;);</span>
+<span class="nc" id="L867">	text.append(&quot;(&quot;+((Antd)(m_Antds.lastElement())).toString() + &quot;)&quot;);</span>
+      }
+<span class="nc" id="L869">      text.append(&quot; =&gt; &quot; + att + &quot; = &quot; + cl);</span>
+<span class="nc" id="L870">      text.append(&quot;  (&quot;+m_CoverG+&quot;/&quot;+(m_CoverG - m_AccuG)+&quot;) [&quot;+</span>
+<span class="nc" id="L871">		  m_CoverP+&quot;/&quot;+(m_CoverP - m_Worth)+&quot;]&quot;);</span>
+<span class="nc" id="L872">      return text.toString();</span>
+    }
+	
+    /**
+     * Prints this rule
+     *
+     * @return a textual description of this rule
+     */
+    public String toString() {
+<span class="nc" id="L881">      return toString(m_ClassAttribute.name(), m_ClassAttribute.value((int)m_Class));</span>
+    }        
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L890">      return RevisionUtils.extract(&quot;$Revision: 5529 $&quot;);</span>
+    }
+  }
+    
+    
+  /** 
+   * The single antecedent in the rule, which is composed of an attribute and 
+   * the corresponding value.  There are two inherited classes, namely NumericAntd
+   * and NominalAntd in which the attributes are numeric and nominal respectively.
+   */
+  private abstract class Antd 
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    private static final long serialVersionUID = 5317379013858933369L;
+    
+    /** The attribute of the antecedent */
+    protected Attribute att;
+	
+    /** The attribute value of the antecedent.  
+       For numeric attribute, value is either 0(1st bag) or 1(2nd bag) */
+    protected double value; 
+	
+    /** The maximum infoGain achieved by this antecedent test */
+    protected double maxInfoGain;
+	
+    /** The accurate rate of this antecedent test on the growing data */
+    protected double accuRate;
+	
+    /** The coverage of this antecedent */
+    protected double cover;
+	
+    /** The accurate data for this antecedent */
+    protected double accu;
+	
+    /** Constructor*/
+<span class="fc" id="L926">    public Antd(Attribute a){</span>
+<span class="fc" id="L927">      att=a;</span>
+<span class="fc" id="L928">      value=Double.NaN; </span>
+<span class="fc" id="L929">      maxInfoGain = 0;</span>
+<span class="fc" id="L930">      accuRate = Double.NaN;</span>
+<span class="fc" id="L931">      cover = Double.NaN;</span>
+<span class="fc" id="L932">      accu = Double.NaN;</span>
+<span class="fc" id="L933">    }</span>
+	
+    /* The abstract members for inheritance */
+    public abstract Instances[] splitData(Instances data, double defAcRt, double cla);
+    public abstract boolean isCover(Instance inst);
+    public abstract String toString();
+	
+    /* Get functions of this antecedent */
+<span class="fc" id="L941">    public Attribute getAttr(){ return att; }</span>
+<span class="fc" id="L942">    public double getAttrValue(){ return value; }</span>
+<span class="fc" id="L943">    public double getMaxInfoGain(){ return maxInfoGain; }</span>
+<span class="fc" id="L944">    public double getAccuRate(){ return accuRate; } </span>
+<span class="fc" id="L945">    public double getAccu(){ return accu; } </span>
+<span class="fc" id="L946">    public double getCover(){ return cover; } </span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L954">      return RevisionUtils.extract(&quot;$Revision: 5529 $&quot;);</span>
+    }
+  }
+    
+  /** 
+   * The antecedent with numeric attribute
+   */
+  private class NumericAntd 
+    extends Antd {
+    
+    /** for serialization */
+    static final long serialVersionUID = 1968761518014492214L;
+	
+    /** The split point for this numeric antecedent */
+    private double splitPoint;
+	
+    /** Constructor*/
+    public NumericAntd(Attribute a){ 
+<span class="fc" id="L972">      super(a);</span>
+<span class="fc" id="L973">      splitPoint = Double.NaN;</span>
+<span class="fc" id="L974">    }    </span>
+	
+    /** Get split point of this numeric antecedent */
+<span class="nc" id="L977">    public double getSplitPoint(){ return splitPoint; }</span>
+	
+    /**
+     * Implements the splitData function.  
+     * This procedure is to split the data into two bags according 
+     * to the information gain of the numeric attribute value
+     * The maximum infoGain is also calculated.  
+     * 
+     * @param insts the data to be split
+     * @param defAcRt the default accuracy rate for data
+     * @param cl the class label to be predicted
+     * @return the array of data after split
+     */
+    public Instances[] splitData(Instances insts, double defAcRt, double cl){
+<span class="fc" id="L991">      Instances data = new Instances(insts);</span>
+<span class="fc" id="L992">      data.sort(att);</span>
+<span class="fc" id="L993">      int total=data.numInstances();// Total number of instances without </span>
+      // missing value for att
+	    
+<span class="fc" id="L996">      int split=1;                  // Current split position</span>
+<span class="fc" id="L997">      int prev=0;                   // Previous split position</span>
+<span class="fc" id="L998">      int finalSplit=split;         // Final split position</span>
+<span class="fc" id="L999">      maxInfoGain = 0;</span>
+<span class="fc" id="L1000">      value = 0;	</span>
+
+      // Compute minimum number of Instances required in each split
+<span class="fc" id="L1003">      double minSplit =  0.1 * (data.sumOfWeights()) / 2.0;</span>
+<span class="fc bfc" id="L1004" title="All 2 branches covered.">      if (Utils.smOrEq(minSplit,m_MinNo)) </span>
+<span class="fc" id="L1005">	minSplit = m_MinNo;</span>
+<span class="pc bpc" id="L1006" title="1 of 2 branches missed.">      else if (Utils.gr(minSplit,25)) </span>
+<span class="nc" id="L1007">	minSplit = 25;	    </span>
+	    
+<span class="fc" id="L1009">      double fstCover=0, sndCover=0, fstAccu=0, sndAccu=0;</span>
+	    
+<span class="fc bfc" id="L1011" title="All 2 branches covered.">      for(int x=0; x&lt;data.numInstances(); x++){</span>
+<span class="fc" id="L1012">	Instance inst = data.instance(x);</span>
+<span class="fc bfc" id="L1013" title="All 2 branches covered.">	if(inst.isMissing(att)){</span>
+<span class="fc" id="L1014">	  total = x;</span>
+<span class="fc" id="L1015">	  break;</span>
+	}
+		
+<span class="fc" id="L1018">	sndCover += inst.weight();</span>
+<span class="fc bfc" id="L1019" title="All 2 branches covered.">	if(Utils.eq(inst.classValue(), cl))</span>
+<span class="fc" id="L1020">	  sndAccu += inst.weight();</span>
+      }
+	    
+      // Enough Instances with known values?
+<span class="fc bfc" id="L1024" title="All 2 branches covered.">      if (Utils.sm(sndCover,(2*minSplit)))</span>
+<span class="fc" id="L1025">	return null;</span>
+	    
+<span class="pc bpc" id="L1027" title="1 of 2 branches missed.">      if(total == 0) return null; // Data all missing for the attribute 	</span>
+<span class="fc" id="L1028">      splitPoint = data.instance(total-1).value(att);	</span>
+	    
+<span class="fc bfc" id="L1030" title="All 2 branches covered.">      for(; split &lt; total; split++){</span>
+<span class="fc bfc" id="L1031" title="All 2 branches covered.">	if(!Utils.eq(data.instance(split).value(att), </span>
+<span class="fc" id="L1032">		     data.instance(prev).value(att))){ // Can't split within same value</span>
+		    
+<span class="fc bfc" id="L1034" title="All 2 branches covered.">	  for(int y=prev; y&lt;split; y++){</span>
+<span class="fc" id="L1035">	    Instance inst = data.instance(y);</span>
+<span class="fc" id="L1036">	    fstCover += inst.weight(); sndCover -= inst.weight(); </span>
+<span class="fc bfc" id="L1037" title="All 2 branches covered.">	    if(Utils.eq(data.instance(y).classValue(), cl)){</span>
+<span class="fc" id="L1038">	      fstAccu += inst.weight();  // First bag positive# ++</span>
+<span class="fc" id="L1039">	      sndAccu -= inst.weight();  // Second bag positive# --</span>
+	    }	     		   
+	  }
+		    
+<span class="fc bfc" id="L1043" title="All 4 branches covered.">	  if(Utils.sm(fstCover, minSplit) || Utils.sm(sndCover, minSplit)){</span>
+<span class="fc" id="L1044">	    prev=split;  // Cannot split because either</span>
+<span class="fc" id="L1045">	    continue;    // split has not enough data</span>
+	  }
+		    
+<span class="fc" id="L1048">	  double fstAccuRate = 0, sndAccuRate = 0;</span>
+<span class="pc bpc" id="L1049" title="1 of 2 branches missed.">	  if(!Utils.eq(fstCover,0))</span>
+<span class="fc" id="L1050">	    fstAccuRate = fstAccu/fstCover;		</span>
+<span class="pc bpc" id="L1051" title="1 of 2 branches missed.">	  if(!Utils.eq(sndCover,0))</span>
+<span class="fc" id="L1052">	    sndAccuRate = sndAccu/sndCover;</span>
+		    
+	  /* Which bag has higher information gain? */
+	  boolean isFirst; 
+	  double fstInfoGain, sndInfoGain;
+	  double accRate, infoGain, coverage, accurate;
+		    
+<span class="fc bfc" id="L1059" title="All 2 branches covered.">	  fstInfoGain = Utils.eq(fstAccuRate, 0) ? </span>
+<span class="fc" id="L1060">	    0 : (fstAccu*(Utils.log2(fstAccuRate) - Utils.log2(defAcRt)));</span>
+<span class="fc bfc" id="L1061" title="All 2 branches covered.">	  sndInfoGain = Utils.eq(sndAccuRate, 0) ? </span>
+<span class="fc" id="L1062">	    0 : (sndAccu*(Utils.log2(sndAccuRate) - Utils.log2(defAcRt)));</span>
+<span class="fc bfc" id="L1063" title="All 2 branches covered.">	  if(Utils.gr(fstInfoGain,sndInfoGain) || </span>
+<span class="pc bpc" id="L1064" title="1 of 4 branches missed.">	     (Utils.eq(fstInfoGain,sndInfoGain)&amp;&amp;(Utils.grOrEq(fstAccuRate,sndAccuRate)))){</span>
+<span class="fc" id="L1065">	    isFirst = true;</span>
+<span class="fc" id="L1066">	    infoGain = fstInfoGain;</span>
+<span class="fc" id="L1067">	    accRate = fstAccuRate;</span>
+<span class="fc" id="L1068">	    accurate = fstAccu;</span>
+<span class="fc" id="L1069">	    coverage = fstCover;</span>
+	  }
+	  else{
+<span class="fc" id="L1072">	    isFirst = false;</span>
+<span class="fc" id="L1073">	    infoGain = sndInfoGain;</span>
+<span class="fc" id="L1074">	    accRate = sndAccuRate;</span>
+<span class="fc" id="L1075">	    accurate = sndAccu;</span>
+<span class="fc" id="L1076">	    coverage = sndCover;</span>
+	  }
+		    
+<span class="fc" id="L1079">	  boolean isUpdate = Utils.gr(infoGain, maxInfoGain);</span>
+		    
+	  /* Check whether so far the max infoGain */
+<span class="fc bfc" id="L1082" title="All 2 branches covered.">	  if(isUpdate){</span>
+<span class="fc" id="L1083">	    splitPoint = (data.instance(split).value(att) + </span>
+<span class="fc" id="L1084">			  data.instance(prev).value(att))/2;</span>
+<span class="fc bfc" id="L1085" title="All 2 branches covered.">	    value = ((isFirst) ? 0 : 1);</span>
+<span class="fc" id="L1086">	    accuRate = accRate;</span>
+<span class="fc" id="L1087">	    accu = accurate;</span>
+<span class="fc" id="L1088">	    cover = coverage;</span>
+<span class="fc" id="L1089">	    maxInfoGain = infoGain;</span>
+<span class="fc" id="L1090">	    finalSplit = split;</span>
+	  }
+<span class="fc" id="L1092">	  prev=split;</span>
+	}
+      }
+	    
+      /* Split the data */
+<span class="fc" id="L1097">      Instances[] splitData = new Instances[2];</span>
+<span class="fc" id="L1098">      splitData[0] = new Instances(data, 0, finalSplit);</span>
+<span class="fc" id="L1099">      splitData[1] = new Instances(data, finalSplit, total-finalSplit);</span>
+	    
+<span class="fc" id="L1101">      return splitData;</span>
+    }
+	
+    /**
+     * Whether the instance is covered by this antecedent
+     * 
+     * @param inst the instance in question
+     * @return the boolean value indicating whether the instance is covered 
+     *         by this antecedent
+     */
+    public boolean isCover(Instance inst){
+<span class="fc" id="L1112">      boolean isCover=false;</span>
+<span class="fc bfc" id="L1113" title="All 2 branches covered.">      if(!inst.isMissing(att)){</span>
+<span class="fc bfc" id="L1114" title="All 2 branches covered.">	if(Utils.eq(value, 0)){</span>
+<span class="fc bfc" id="L1115" title="All 2 branches covered.">	  if(Utils.smOrEq(inst.value(att), splitPoint))</span>
+<span class="fc" id="L1116">	    isCover=true;</span>
+	}
+<span class="fc bfc" id="L1118" title="All 2 branches covered.">	else if(Utils.gr(inst.value(att), splitPoint))</span>
+<span class="fc" id="L1119">	  isCover=true;</span>
+      }
+<span class="fc" id="L1121">      return isCover;</span>
+    }
+	
+    /**
+     * Prints this antecedent
+     *
+     * @return a textual description of this antecedent
+     */
+    public String toString() {
+<span class="nc bnc" id="L1130" title="All 2 branches missed.">      String symbol = Utils.eq(value, 0.0) ? &quot; &lt;= &quot; : &quot; &gt; &quot;;</span>
+<span class="nc" id="L1131">      return (att.name() + symbol + Utils.doubleToString(splitPoint, 6));</span>
+    }   
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L1140">      return RevisionUtils.extract(&quot;$Revision: 5529 $&quot;);</span>
+    }
+  }
+    
+    
+  /** 
+   * The antecedent with nominal attribute
+   */
+  private class NominalAntd 
+    extends Antd {
+    
+    /** for serialization */
+    static final long serialVersionUID = -256386137196078004L;
+	
+    /* The parameters of infoGain calculated for each attribute value */
+    private double[] accurate;
+    private double[] coverage;
+    private double[] infoGain;
+	
+    /** Constructor*/
+    public NominalAntd(Attribute a){ 
+<span class="fc" id="L1161">      super(a);</span>
+<span class="fc" id="L1162">      int bag = att.numValues();</span>
+<span class="fc" id="L1163">      accurate = new double[bag];</span>
+<span class="fc" id="L1164">      coverage = new double[bag];</span>
+<span class="fc" id="L1165">      infoGain = new double[bag];</span>
+<span class="fc" id="L1166">    }   </span>
+	
+    /**
+     * Implements the splitData function.  
+     * This procedure is to split the data into bags according 
+     * to the nominal attribute value
+     * The infoGain for each bag is also calculated.  
+     * 
+     * @param data the data to be split
+     * @param defAcRt the default accuracy rate for data
+     * @param cl the class label to be predicted
+     * @return the array of data after split
+     */
+    public Instances[] splitData(Instances data, double defAcRt, double cl){
+<span class="fc" id="L1180">      int bag = att.numValues();</span>
+<span class="fc" id="L1181">      Instances[] splitData = new Instances[bag];</span>
+	    
+<span class="fc bfc" id="L1183" title="All 2 branches covered.">      for(int x=0; x&lt;bag; x++){</span>
+<span class="fc" id="L1184">	accurate[x] = coverage[x] = infoGain[x] = 0;</span>
+<span class="fc" id="L1185">	splitData[x] = new Instances(data, data.numInstances());</span>
+      }
+	    
+<span class="fc bfc" id="L1188" title="All 2 branches covered.">      for(int x=0; x&lt;data.numInstances(); x++){</span>
+<span class="fc" id="L1189">	Instance inst=data.instance(x);</span>
+<span class="fc bfc" id="L1190" title="All 2 branches covered.">	if(!inst.isMissing(att)){</span>
+<span class="fc" id="L1191">	  int v = (int)inst.value(att);</span>
+<span class="fc" id="L1192">	  splitData[v].add(inst);</span>
+<span class="fc" id="L1193">	  coverage[v] += inst.weight();</span>
+<span class="fc bfc" id="L1194" title="All 2 branches covered.">	  if(Utils.eq(inst.classValue(), cl))</span>
+<span class="fc" id="L1195">	    accurate[v] += inst.weight();</span>
+	}
+      }
+	    
+      // Check if &gt;=2 splits have more than the minimal data
+<span class="fc" id="L1200">      int count=0; </span>
+<span class="fc bfc" id="L1201" title="All 2 branches covered.">      for(int x=0; x&lt;bag; x++){</span>
+<span class="fc" id="L1202">	double t = coverage[x];</span>
+<span class="fc bfc" id="L1203" title="All 2 branches covered.">	if(Utils.grOrEq(t, m_MinNo)){</span>
+<span class="fc" id="L1204">	  double p = accurate[x];		</span>
+		    
+<span class="pc bpc" id="L1206" title="1 of 2 branches missed.">	  if(!Utils.eq(t, 0.0))</span>
+<span class="fc" id="L1207">	    infoGain[x] = p *((Utils.log2(p/t)) - (Utils.log2(defAcRt)));</span>
+<span class="fc" id="L1208">	  ++count;</span>
+	}
+      }
+	        
+<span class="fc bfc" id="L1212" title="All 2 branches covered.">      if(count &lt; 2) // Don't split</span>
+<span class="fc" id="L1213">	return null;</span>
+	    
+<span class="fc" id="L1215">      value = (double)Utils.maxIndex(infoGain);</span>
+	    
+<span class="fc" id="L1217">      cover = coverage[(int)value];</span>
+<span class="fc" id="L1218">      accu = accurate[(int)value];</span>
+	    
+<span class="pc bpc" id="L1220" title="1 of 2 branches missed.">      if(!Utils.eq(cover,0))</span>
+<span class="fc" id="L1221">	accuRate = accu / cover;</span>
+<span class="nc" id="L1222">      else accuRate = 0;</span>
+	    
+<span class="fc" id="L1224">      maxInfoGain = infoGain [(int)value];</span>
+	    
+<span class="fc" id="L1226">      return splitData;</span>
+    }
+	
+    /**
+     * Whether the instance is covered by this antecedent
+     * 
+     * @param inst the instance in question
+     * @return the boolean value indicating whether the instance is covered 
+     *         by this antecedent
+     */
+    public boolean isCover(Instance inst){
+<span class="fc" id="L1237">      boolean isCover=false;</span>
+<span class="fc bfc" id="L1238" title="All 2 branches covered.">      if(!inst.isMissing(att)){</span>
+<span class="fc bfc" id="L1239" title="All 2 branches covered.">	if(Utils.eq(inst.value(att), value))</span>
+<span class="fc" id="L1240">	  isCover=true;	    </span>
+      }
+<span class="fc" id="L1242">      return isCover;</span>
+    }
+	
+    /**
+     * Prints this antecedent
+     *
+     * @return a textual description of this antecedent
+     */
+    public String toString() {
+<span class="nc" id="L1251">      return (att.name() + &quot; = &quot; +att.value((int)value));</span>
+    } 
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L1260">      return RevisionUtils.extract(&quot;$Revision: 5529 $&quot;);</span>
+    }
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L1270">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L1271">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L1274">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L1275">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L1276">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L1277">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L1280">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L1281">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="fc" id="L1283">    return result;</span>
+  }
+
+  /**
+   * Builds a ripple-down manner rule learner.
+   *
+   * @param instances the training data
+   * @throws Exception if classifier can't be built successfully
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L1295">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L1298">    Instances data = new Instances(instances);</span>
+<span class="fc" id="L1299">    data.deleteWithMissingClass();</span>
+    
+<span class="fc" id="L1301">    int numCl = data.numClasses();</span>
+<span class="fc" id="L1302">    m_Root = new Ridor_node();</span>
+<span class="fc" id="L1303">    m_Class = instances.classAttribute();     // The original class label</span>
+	
+<span class="fc" id="L1305">    int index = data.classIndex();</span>
+<span class="fc" id="L1306">    m_Cover = data.sumOfWeights();</span>
+
+<span class="fc" id="L1308">    m_Random = new Random(m_Seed);</span>
+	
+    /* Create a binary attribute */
+<span class="fc" id="L1311">    FastVector binary_values = new FastVector(2);</span>
+<span class="fc" id="L1312">    binary_values.addElement(&quot;otherClasses&quot;);</span>
+<span class="fc" id="L1313">    binary_values.addElement(&quot;defClass&quot;);</span>
+<span class="fc" id="L1314">    Attribute attr = new Attribute (&quot;newClass&quot;, binary_values);</span>
+<span class="fc" id="L1315">    data.insertAttributeAt(attr, index);	</span>
+<span class="fc" id="L1316">    data.setClassIndex(index);                 // The new class label</span>
+
+    /* Partition the data into bags according to their original class values */
+<span class="fc" id="L1319">    Instances[] dataByClass = new Instances[numCl];</span>
+<span class="fc bfc" id="L1320" title="All 2 branches covered.">    for(int i=0; i &lt; numCl; i++)</span>
+<span class="fc" id="L1321">      dataByClass[i] = new Instances(data, data.numInstances()); // Empty bags</span>
+<span class="fc bfc" id="L1322" title="All 2 branches covered.">    for(int i=0; i &lt; data.numInstances(); i++){ // Partitioning</span>
+<span class="fc" id="L1323">      Instance inst = data.instance(i);</span>
+<span class="fc" id="L1324">      inst.setClassValue(0);           // Set new class vaue to be 0</span>
+<span class="fc" id="L1325">      dataByClass[(int)inst.value(index+1)].add(inst); </span>
+    }	
+	
+<span class="fc bfc" id="L1328" title="All 2 branches covered.">    for(int i=0; i &lt; numCl; i++)    </span>
+<span class="fc" id="L1329">      dataByClass[i].deleteAttributeAt(index+1);   // Delete original class</span>
+	
+<span class="fc" id="L1331">    m_Root.findRules(dataByClass, 0);</span>
+    
+<span class="fc" id="L1333">  }</span>
+    
+  /**
+   * Classify the test instance with the rule learner 
+   *
+   * @param datum the instance to be classified
+   * @return the classification
+   */
+  public double classifyInstance(Instance datum){
+<span class="fc" id="L1342">    return classify(m_Root, datum);</span>
+  }
+    
+  /**
+   * Classify the test instance with one node of Ridor 
+   *
+   * @param node the node of Ridor to classify the test instance
+   * @param datum the instance to be classified
+   * @return the classification
+   */
+  private double classify(Ridor_node node, Instance datum){
+<span class="fc" id="L1353">    double classValue = node.getDefClass();</span>
+<span class="fc" id="L1354">    RidorRule[] rules = node.getRules();</span>
+
+<span class="fc bfc" id="L1356" title="All 2 branches covered.">    if(rules != null){</span>
+<span class="fc" id="L1357">      Ridor_node[] excepts = node.getExcepts();	</span>
+<span class="fc bfc" id="L1358" title="All 2 branches covered.">      for(int i=0; i &lt; excepts.length; i++){</span>
+<span class="fc bfc" id="L1359" title="All 2 branches covered.">	if(rules[i].isCover(datum)){</span>
+<span class="fc" id="L1360">	  classValue = classify(excepts[i], datum);</span>
+<span class="fc" id="L1361">	  break;</span>
+	}
+      }
+    }
+	
+<span class="fc" id="L1366">    return classValue;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options
+   * Valid options are: &lt;p&gt;
+   *
+   * -F number &lt;br&gt;
+   * Set number of folds for reduced error pruning. One fold is
+   * used as the pruning set. (Default: 3) &lt;p&gt;
+   *
+   * -S number &lt;br&gt;
+   * Set number of shuffles for randomization. (Default: 10) &lt;p&gt;
+   * 
+   * -A &lt;br&gt;
+   * Set flag of whether use the error rate of all the data to select
+   * the default class in each step. If not set, the learner will only use
+   * the error rate in the pruning data &lt;p&gt;
+   *
+   * -M &lt;br&gt;
+   * Set flag of whether use the majority class as the default class
+   * in each step instead of choosing default class based on the error rate
+   * (if the flag is not set) &lt;p&gt;  
+   * 
+   * -N number &lt;br&gt;
+   * Set the minimal weights of instances within a split.
+   * (Default: 2) &lt;p&gt;
+   *    
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+<span class="fc" id="L1397">    Vector newVector = new Vector(5);</span>
+	
+<span class="fc" id="L1399">    newVector.addElement(new Option(&quot;\tSet number of folds for IREP\n&quot; +</span>
+				    &quot;\tOne fold is used as pruning set.\n&quot; +
+<span class="fc" id="L1401">				    &quot;\t(default 3)&quot;,&quot;F&quot;, 1, &quot;-F &lt;number of folds&gt;&quot;));</span>
+<span class="fc" id="L1402">    newVector.addElement(new Option(&quot;\tSet number of shuffles to randomize\n&quot; +</span>
+				    &quot;\tthe data in order to get better rule.\n&quot; +
+<span class="fc" id="L1404">				    &quot;\t(default 10)&quot;,&quot;S&quot;, 1, &quot;-S &lt;number of shuffles&gt;&quot;));</span>
+<span class="fc" id="L1405">    newVector.addElement(new Option(&quot;\tSet flag of whether use the error rate \n&quot;+</span>
+				    &quot;\tof all the data to select the default class\n&quot;+
+				    &quot;\tin each step. If not set, the learner will only use&quot;+
+<span class="fc" id="L1408">				    &quot;\tthe error rate in the pruning data&quot;,&quot;A&quot;, 0, &quot;-A&quot;));</span>
+<span class="fc" id="L1409">    newVector.addElement(new Option(&quot;\t Set flag of whether use the majority class as\n&quot;+</span>
+				    &quot;\tthe default class in each step instead of \n&quot;+
+				    &quot;\tchoosing default class based on the error rate\n&quot;+
+<span class="fc" id="L1412">				    &quot;\t(if the flag is not set)&quot;,&quot;M&quot;, 0, &quot;-M&quot;));</span>
+<span class="fc" id="L1413">    newVector.addElement(new Option(&quot;\tSet the minimal weights of instances\n&quot; +</span>
+				    &quot;\twithin a split.\n&quot; +
+<span class="fc" id="L1415">				    &quot;\t(default 2.0)&quot;,&quot;N&quot;, 1, &quot;-N &lt;min. weights&gt;&quot;));		</span>
+<span class="fc" id="L1416">    return newVector.elements();</span>
+  }
+    
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -F &amp;lt;number of folds&amp;gt;
+   *  Set number of folds for IREP
+   *  One fold is used as pruning set.
+   *  (default 3)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;number of shuffles&amp;gt;
+   *  Set number of shuffles to randomize
+   *  the data in order to get better rule.
+   *  (default 10)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -A
+   *  Set flag of whether use the error rate 
+   *  of all the data to select the default class
+   *  in each step. If not set, the learner will only use the error rate in the pruning data&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M
+   *   Set flag of whether use the majority class as
+   *  the default class in each step instead of 
+   *  choosing default class based on the error rate
+   *  (if the flag is not set)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;min. weights&amp;gt;
+   *  Set the minimal weights of instances
+   *  within a split.
+   *  (default 2.0)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+	
+<span class="fc" id="L1458">    String numFoldsString = Utils.getOption('F', options);</span>
+<span class="fc bfc" id="L1459" title="All 2 branches covered.">    if (numFoldsString.length() != 0) </span>
+<span class="fc" id="L1460">      m_Folds = Integer.parseInt(numFoldsString);</span>
+    else 
+<span class="fc" id="L1462">      m_Folds = 3;</span>
+	
+<span class="fc" id="L1464">    String numShuffleString = Utils.getOption('S', options);</span>
+<span class="fc bfc" id="L1465" title="All 2 branches covered.">    if (numShuffleString.length() != 0) </span>
+<span class="fc" id="L1466">      m_Shuffle = Integer.parseInt(numShuffleString);</span>
+    else 
+<span class="fc" id="L1468">      m_Shuffle = 1;</span>
+
+<span class="fc" id="L1470">    String seedString = Utils.getOption('s', options);</span>
+<span class="pc bpc" id="L1471" title="1 of 2 branches missed.">    if (seedString.length() != 0) </span>
+<span class="nc" id="L1472">      m_Seed = Integer.parseInt(seedString);</span>
+    else 
+<span class="fc" id="L1474">      m_Seed = 1;</span>
+	
+<span class="fc" id="L1476">    String minNoString = Utils.getOption('N', options);</span>
+<span class="fc bfc" id="L1477" title="All 2 branches covered.">    if (minNoString.length() != 0) </span>
+<span class="fc" id="L1478">      m_MinNo = Double.parseDouble(minNoString);</span>
+    else 
+<span class="fc" id="L1480">      m_MinNo = 2.0;</span>
+	
+<span class="fc" id="L1482">    m_IsAllErr = Utils.getFlag('A', options);</span>
+<span class="fc" id="L1483">    m_IsMajority = Utils.getFlag('M', options);</span>
+<span class="fc" id="L1484">  }</span>
+    
+  /**
+   * Gets the current settings of the Classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+	
+<span class="fc" id="L1493">    String [] options = new String [8];</span>
+<span class="fc" id="L1494">    int current = 0;</span>
+<span class="fc" id="L1495">    options[current++] = &quot;-F&quot;; options[current++] = &quot;&quot; + m_Folds;</span>
+<span class="fc" id="L1496">    options[current++] = &quot;-S&quot;; options[current++] = &quot;&quot; + m_Shuffle;</span>
+<span class="fc" id="L1497">    options[current++] = &quot;-N&quot;; options[current++] = &quot;&quot; + m_MinNo;</span>
+	
+<span class="pc bpc" id="L1499" title="1 of 2 branches missed.">    if(m_IsAllErr)</span>
+<span class="nc" id="L1500">      options[current++] = &quot;-A&quot;;</span>
+<span class="pc bpc" id="L1501" title="1 of 2 branches missed.">    if(m_IsMajority)</span>
+<span class="nc" id="L1502">      options[current++] = &quot;-M&quot;;	</span>
+<span class="pc bfc" id="L1503" title="All 2 branches covered.">    while (current &lt; options.length) </span>
+<span class="fc" id="L1504">      options[current++] = &quot;&quot;;</span>
+<span class="fc" id="L1505">    return options;</span>
+  }
+    
+  /** Set and get members for parameters */
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String foldsTipText() {
+<span class="nc" id="L1516">    return &quot;Determines the amount of data used for pruning. One fold is used for &quot;</span>
+      + &quot;pruning, the rest for growing the rules.&quot;;
+  }
+
+<span class="nc" id="L1520">  public void setFolds(int fold){ m_Folds = fold; }</span>
+<span class="nc" id="L1521">  public int getFolds(){ return m_Folds; }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String shuffleTipText() {
+<span class="nc" id="L1529">    return &quot;Determines how often the data is shuffled before a rule &quot;</span>
+      + &quot;is chosen. If &gt; 1, a rule is learned multiple times and the &quot;
+      + &quot;most accurate rule is chosen.&quot;;
+  }
+
+<span class="nc" id="L1534">  public void setShuffle(int sh){ m_Shuffle = sh; }</span>
+<span class="nc" id="L1535">  public int getShuffle(){ return m_Shuffle; }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String seedTipText() {
+<span class="nc" id="L1543">    return &quot;The seed used for randomizing the data.&quot;;</span>
+  }
+
+<span class="nc" id="L1546">  public void setSeed(int s){ m_Seed = s; }</span>
+<span class="nc" id="L1547">  public int getSeed(){ return m_Seed; }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String wholeDataErrTipText() {
+<span class="nc" id="L1555">    return &quot;Whether worth of rule is computed based on all the data &quot;</span>
+      + &quot;or just based on data covered by rule.&quot;;
+  }
+
+<span class="nc" id="L1559">  public void setWholeDataErr(boolean a){ m_IsAllErr = a; }</span>
+<span class="nc" id="L1560">  public boolean getWholeDataErr(){ return m_IsAllErr; }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String majorityClassTipText() {
+<span class="nc" id="L1568">    return &quot;Whether the majority class is used as default.&quot;;</span>
+  }
+<span class="nc" id="L1570">  public void setMajorityClass(boolean m){ m_IsMajority = m; }</span>
+<span class="nc" id="L1571">  public boolean getMajorityClass(){ return m_IsMajority; }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String minNoTipText() {
+<span class="nc" id="L1579">    return &quot;The minimum total weight of the instances in a rule.&quot;;</span>
+  }
+
+<span class="nc" id="L1582">  public void setMinNo(double m){  m_MinNo = m; }</span>
+<span class="nc" id="L1583">  public double getMinNo(){ return m_MinNo; }</span>
+    
+  /**
+   * Returns an enumeration of the additional measure names
+   * @return an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+<span class="nc" id="L1590">    Vector newVector = new Vector(1);</span>
+<span class="nc" id="L1591">    newVector.addElement(&quot;measureNumRules&quot;);</span>
+<span class="nc" id="L1592">    return newVector.elements();</span>
+  }
+    
+  /**
+   * Returns the value of the named measure
+   * @param additionalMeasureName the name of the measure to query for its value
+   * @return the value of the named measure
+   * @throws IllegalArgumentException if the named measure is not supported
+   */
+  public double getMeasure(String additionalMeasureName) {
+<span class="nc bnc" id="L1602" title="All 2 branches missed.">    if (additionalMeasureName.compareToIgnoreCase(&quot;measureNumRules&quot;) == 0) </span>
+<span class="nc" id="L1603">      return numRules();</span>
+    else 
+<span class="nc" id="L1605">      throw new IllegalArgumentException(additionalMeasureName+&quot; not supported (Ripple down rule learner)&quot;);</span>
+  }  
+    
+  /**
+   * Measure the number of rules in total in the model
+   *
+   * @return the number of rules
+   */  
+  private double numRules(){
+<span class="nc" id="L1614">    int size = 0;</span>
+<span class="nc bnc" id="L1615" title="All 2 branches missed.">    if(m_Root != null)</span>
+<span class="nc" id="L1616">      size = m_Root.size();</span>
+	
+<span class="nc" id="L1618">    return (double)(size+1); // Add the default rule</span>
+  }
+   
+  /**
+   * Prints the all the rules of the rule learner.
+   *
+   * @return a textual description of the classifier
+   */
+  public String toString() {
+<span class="pc bpc" id="L1627" title="1 of 2 branches missed.">    if (m_Root == null) </span>
+<span class="fc" id="L1628">      return &quot;RIpple DOwn Rule Learner(Ridor): No model built yet.&quot;;</span>
+	
+<span class="nc" id="L1630">    return (&quot;RIpple DOwn Rule Learner(Ridor) rules\n&quot;+</span>
+	    &quot;--------------------------------------\n\n&quot; + 
+<span class="nc" id="L1632">	    m_Root.toString() +</span>
+<span class="nc" id="L1633">	    &quot;\nTotal number of rules (incl. the default rule): &quot; + (int)numRules());</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1642">    return RevisionUtils.extract(&quot;$Revision: 5529 $&quot;);</span>
+  }
+    
+  /**
+   * Main method.
+   *
+   * @param args the options for the classifier
+   */
+  public static void main(String[] args) {	
+<span class="nc" id="L1651">    runClassifier(new Ridor(), args);</span>
+<span class="nc" id="L1652">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

@@ -1,0 +1,1265 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>SimpleKMeans.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.clusterers</a> &gt; <span class="el_source">SimpleKMeans.java</span></div><h1>SimpleKMeans.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    SimpleKMeans.java
+ *    Copyright (C) 2000 University of Waikato, Hamilton, New Zealand
+ *
+ */
+package weka.clusterers;
+
+import weka.classifiers.rules.DecisionTableHashKey;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.DistanceFunction;
+import weka.core.EuclideanDistance;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.ManhattanDistance;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Cluster data using the k means algorithm
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+ *  number of clusters.
+ *  (default 2).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V
+ *  Display std. deviations for centroids.
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Replace missing values with mean/mode.
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 10)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A &amp;lt;classname and options&amp;gt;
+ *  Distance function to be used for instance comparison
+ *  (default weka.core.EuclidianDistance)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;num&amp;gt;
+ *  Maximum number of iterations. &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -O 
+ *  Preserve order of instances. &lt;/pre&gt;
+ * 
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @version $Revision: 9758 $
+ * @see RandomizableClusterer
+ */
+public class SimpleKMeans 
+  extends RandomizableClusterer 
+  implements NumberOfClustersRequestable, WeightedInstancesHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -3235809600124455376L;
+  
+  /**
+   * replace missing values in training instances
+   */
+  private ReplaceMissingValues m_ReplaceMissingFilter;
+
+  /**
+   * number of clusters to generate
+   */
+<span class="fc" id="L103">  private int m_NumClusters = 2;</span>
+
+  /**
+   * holds the cluster centroids
+   */
+  private Instances m_ClusterCentroids;
+
+  /**
+   * Holds the standard deviations of the numeric attributes in each cluster
+   */
+  private Instances m_ClusterStdDevs;
+
+  
+  /**
+   * For each cluster, holds the frequency counts for the values of each 
+   * nominal attribute
+   */
+  private int [][][] m_ClusterNominalCounts;
+  private int[][] m_ClusterMissingCounts;
+  
+  /**
+   * Stats on the full data set for comparison purposes
+   * In case the attribute is numeric the value is the mean if is 
+   * being used the Euclidian distance or the median if Manhattan distance
+   * and if the attribute is nominal then it's mode is saved
+   */
+  private double[] m_FullMeansOrMediansOrModes;
+  private double[] m_FullStdDevs;
+  private int[][] m_FullNominalCounts;
+  private int[] m_FullMissingCounts;
+
+  /**
+   * Display standard deviations for numeric atts
+   */
+  private boolean m_displayStdDevs;
+
+  /**
+   * Replace missing values globally?
+   */
+<span class="fc" id="L142">  private boolean m_dontReplaceMissing = false;</span>
+
+  /**
+   * The number of instances in each cluster
+   */
+  private int [] m_ClusterSizes;
+
+  /**
+   * Maximum number of iterations to be executed
+   */
+<span class="fc" id="L152">  private int m_MaxIterations = 500;</span>
+
+  /**
+   * Keep track of the number of iterations completed before convergence
+   */
+<span class="fc" id="L157">  private int m_Iterations = 0;</span>
+
+  /**
+   * Holds the squared errors for all clusters
+   */
+  private double [] m_squaredErrors;
+
+  /** the distance function used. */
+<span class="fc" id="L165">  protected DistanceFunction m_DistanceFunction = new EuclideanDistance();</span>
+
+  /**
+   * Preserve order of instances 
+   */
+<span class="fc" id="L170">  private boolean m_PreserveOrder = false;</span>
+	
+  /**
+   * Assignments obtained
+   */
+<span class="fc" id="L175">  protected int[] m_Assignments = null;</span>
+	
+  /**
+   * the default constructor
+   */
+  public SimpleKMeans() {
+<span class="fc" id="L181">    super();</span>
+    
+<span class="fc" id="L183">    m_SeedDefault = 10;</span>
+<span class="fc" id="L184">    setSeed(m_SeedDefault);</span>
+<span class="fc" id="L185">  }</span>
+  
+  /**
+   * Returns a string describing this clusterer
+   * @return a description of the evaluator suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L193">    return &quot;Cluster data using the k means algorithm. Can use either &quot;</span>
+      + &quot;the Euclidean distance (default) or the Manhattan distance.&quot;
+      + &quot; If the Manhattan distance is used, then centroids are computed &quot;
+      + &quot;as the component-wise median rather than mean.&quot;;
+  }
+
+  /**
+   * Returns default capabilities of the clusterer.
+   *
+   * @return      the capabilities of this clusterer
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L205">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L206">    result.disableAll();</span>
+<span class="fc" id="L207">    result.enable(Capability.NO_CLASS);</span>
+
+    // attributes
+<span class="fc" id="L210">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L211">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L212">    result.enable(Capability.MISSING_VALUES);</span>
+
+<span class="fc" id="L214">    return result;</span>
+  }
+
+  /**
+   * Generates a clusterer. Has to initialize all fields of the clusterer
+   * that are not being set via options.
+   *
+   * @param data set of instances serving as training data 
+   * @throws Exception if the clusterer has not been 
+   * generated successfully
+   */
+  public void buildClusterer(Instances data) throws Exception {
+
+    // can clusterer handle the data?
+<span class="fc" id="L228">    getCapabilities().testWithFail(data);</span>
+
+<span class="fc" id="L230">    m_Iterations = 0;</span>
+
+<span class="fc" id="L232">    m_ReplaceMissingFilter = new ReplaceMissingValues();</span>
+<span class="fc" id="L233">    Instances instances = new Instances(data);</span>
+				
+<span class="fc" id="L235">    instances.setClassIndex(-1);</span>
+<span class="pc bpc" id="L236" title="1 of 2 branches missed.">    if (!m_dontReplaceMissing) {</span>
+<span class="fc" id="L237">      m_ReplaceMissingFilter.setInputFormat(instances);</span>
+<span class="fc" id="L238">      instances = Filter.useFilter(instances, m_ReplaceMissingFilter);</span>
+    }
+
+<span class="fc" id="L241">    m_FullMissingCounts = new int[instances.numAttributes()];</span>
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">    if (m_displayStdDevs) {</span>
+<span class="nc" id="L243">      m_FullStdDevs = new double[instances.numAttributes()];</span>
+    }
+<span class="fc" id="L245">    m_FullNominalCounts = new int[instances.numAttributes()][0];</span>
+		
+<span class="fc" id="L247">    m_FullMeansOrMediansOrModes = moveCentroid(0, instances, false);</span>
+<span class="fc bfc" id="L248" title="All 2 branches covered.">    for (int i = 0; i &lt; instances.numAttributes(); i++) {</span>
+<span class="fc" id="L249">      m_FullMissingCounts[i] = instances.attributeStats(i).missingCount;</span>
+<span class="fc bfc" id="L250" title="All 2 branches covered.">      if (instances.attribute(i).isNumeric()) {</span>
+<span class="pc bpc" id="L251" title="1 of 2 branches missed.">        if (m_displayStdDevs) {</span>
+<span class="nc" id="L252">          m_FullStdDevs[i] = Math.sqrt(instances.variance(i));</span>
+        }
+<span class="pc bpc" id="L254" title="1 of 2 branches missed.">        if (m_FullMissingCounts[i] == instances.numInstances()) {</span>
+<span class="nc" id="L255">          m_FullMeansOrMediansOrModes[i] = Double.NaN; // mark missing as mean</span>
+        }
+      } else {
+<span class="fc" id="L258">        m_FullNominalCounts[i] = instances.attributeStats(i).nominalCounts;</span>
+<span class="fc" id="L259">        if (m_FullMissingCounts[i] </span>
+<span class="pc bpc" id="L260" title="1 of 2 branches missed.">            &gt; m_FullNominalCounts[i][Utils.maxIndex(m_FullNominalCounts[i])]) {</span>
+<span class="nc" id="L261">          m_FullMeansOrMediansOrModes[i] = -1; // mark missing as most common value</span>
+        }
+      }
+    }
+
+<span class="fc" id="L266">    m_ClusterCentroids = new Instances(instances, m_NumClusters);</span>
+<span class="fc" id="L267">    int[] clusterAssignments = new int [instances.numInstances()];</span>
+
+<span class="pc bpc" id="L269" title="1 of 2 branches missed.">    if(m_PreserveOrder)</span>
+<span class="nc" id="L270">      m_Assignments = clusterAssignments;</span>
+		
+<span class="fc" id="L272">    m_DistanceFunction.setInstances(instances);</span>
+    
+<span class="fc" id="L274">    Random RandomO = new Random(getSeed());</span>
+    int instIndex;
+<span class="fc" id="L276">    HashMap initC = new HashMap();</span>
+<span class="fc" id="L277">    DecisionTableHashKey hk = null;</span>
+
+<span class="fc" id="L279">    Instances initInstances = null;</span>
+<span class="pc bpc" id="L280" title="1 of 2 branches missed.">    if(m_PreserveOrder)</span>
+<span class="nc" id="L281">      initInstances = new Instances(instances);</span>
+    else
+<span class="fc" id="L283">      initInstances = instances;</span>
+		
+<span class="fc bfc" id="L285" title="All 2 branches covered.">    for (int j = initInstances.numInstances() - 1; j &gt;= 0; j--) {</span>
+<span class="fc" id="L286">      instIndex = RandomO.nextInt(j+1);</span>
+<span class="fc" id="L287">      hk = new DecisionTableHashKey(initInstances.instance(instIndex),</span>
+<span class="fc" id="L288">                                    initInstances.numAttributes(), true);</span>
+<span class="fc bfc" id="L289" title="All 2 branches covered.">      if (!initC.containsKey(hk)) {</span>
+<span class="fc" id="L290">        m_ClusterCentroids.add(initInstances.instance(instIndex));</span>
+<span class="fc" id="L291">	initC.put(hk, null);</span>
+      }
+<span class="fc" id="L293">      initInstances.swap(j, instIndex);</span>
+      
+<span class="fc bfc" id="L295" title="All 2 branches covered.">      if (m_ClusterCentroids.numInstances() == m_NumClusters) {</span>
+<span class="fc" id="L296">	break;</span>
+      }
+    }
+
+<span class="fc" id="L300">    m_NumClusters = m_ClusterCentroids.numInstances();</span>
+    
+    //removing reference
+<span class="fc" id="L303">    initInstances = null;</span>
+		
+    int i;
+<span class="fc" id="L306">    boolean converged = false;</span>
+    int emptyClusterCount;
+<span class="fc" id="L308">    Instances [] tempI = new Instances[m_NumClusters];</span>
+<span class="fc" id="L309">    m_squaredErrors = new double [m_NumClusters];</span>
+<span class="fc" id="L310">    m_ClusterNominalCounts = new int [m_NumClusters][instances.numAttributes()][0];</span>
+<span class="fc" id="L311">    m_ClusterMissingCounts = new int[m_NumClusters][instances.numAttributes()];</span>
+<span class="fc bfc" id="L312" title="All 2 branches covered.">    while (!converged) {</span>
+<span class="fc" id="L313">      emptyClusterCount = 0;</span>
+<span class="fc" id="L314">      m_Iterations++;</span>
+<span class="fc" id="L315">      converged = true;</span>
+<span class="fc bfc" id="L316" title="All 2 branches covered.">      for (i = 0; i &lt; instances.numInstances(); i++) {</span>
+<span class="fc" id="L317">	Instance toCluster = instances.instance(i);</span>
+<span class="fc" id="L318">	int newC = clusterProcessedInstance(toCluster, true);</span>
+<span class="fc bfc" id="L319" title="All 2 branches covered.">	if (newC != clusterAssignments[i]) {</span>
+<span class="fc" id="L320">	  converged = false;</span>
+	}
+<span class="fc" id="L322">	clusterAssignments[i] = newC;</span>
+      }
+      
+      // update centroids
+<span class="fc" id="L326">      m_ClusterCentroids = new Instances(instances, m_NumClusters);</span>
+<span class="fc bfc" id="L327" title="All 2 branches covered.">      for (i = 0; i &lt; m_NumClusters; i++) {</span>
+<span class="fc" id="L328">	tempI[i] = new Instances(instances, 0);</span>
+      }
+<span class="fc bfc" id="L330" title="All 2 branches covered.">      for (i = 0; i &lt; instances.numInstances(); i++) {</span>
+<span class="fc" id="L331">	tempI[clusterAssignments[i]].add(instances.instance(i));</span>
+      }
+<span class="fc bfc" id="L333" title="All 2 branches covered.">      for (i = 0; i &lt; m_NumClusters; i++) {</span>
+<span class="pc bpc" id="L334" title="1 of 2 branches missed.">	if (tempI[i].numInstances() == 0) {</span>
+	  // empty cluster
+<span class="nc" id="L336">	  emptyClusterCount++;</span>
+	} else {
+<span class="fc" id="L338">          moveCentroid( i, tempI[i], true  );					</span>
+	}
+      }
+      
+<span class="pc bpc" id="L342" title="1 of 2 branches missed.">      if (m_Iterations == m_MaxIterations)</span>
+<span class="nc" id="L343">        converged = true;</span>
+
+<span class="pc bpc" id="L345" title="1 of 2 branches missed.">      if (emptyClusterCount &gt; 0) {</span>
+<span class="nc" id="L346">	m_NumClusters -= emptyClusterCount;</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">        if (converged) {</span>
+<span class="nc" id="L348">          Instances[] t = new Instances[m_NumClusters];</span>
+<span class="nc" id="L349">          int index = 0;</span>
+<span class="nc bnc" id="L350" title="All 2 branches missed.">          for (int k = 0; k &lt; tempI.length; k++) {</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">            if (tempI[k].numInstances() &gt; 0) {</span>
+<span class="nc" id="L352">              t[index++] = tempI[k];</span>
+            }
+          }
+<span class="nc" id="L355">          tempI = t;</span>
+        } else {
+<span class="nc" id="L357">          tempI = new Instances[m_NumClusters];</span>
+        }
+      }			
+			
+<span class="fc bfc" id="L361" title="All 2 branches covered.">      if (!converged) {</span>
+<span class="fc" id="L362">	m_squaredErrors = new double [m_NumClusters];</span>
+<span class="fc" id="L363">	m_ClusterNominalCounts = new int [m_NumClusters][instances.numAttributes()][0];</span>
+      }
+    }
+		
+<span class="pc bpc" id="L367" title="1 of 2 branches missed.">    if (m_displayStdDevs) {</span>
+<span class="nc" id="L368">      m_ClusterStdDevs = new Instances(instances, m_NumClusters);</span>
+    }
+<span class="fc" id="L370">    m_ClusterSizes = new int [m_NumClusters];</span>
+<span class="fc bfc" id="L371" title="All 2 branches covered.">    for (i = 0; i &lt; m_NumClusters; i++) {</span>
+<span class="pc bpc" id="L372" title="1 of 2 branches missed.">      if (m_displayStdDevs) {</span>
+<span class="nc" id="L373">        double [] vals2 = new double[instances.numAttributes()];</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">        for (int j = 0; j &lt; instances.numAttributes(); j++) {</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">          if (instances.attribute(j).isNumeric()) {</span>
+<span class="nc" id="L376">            vals2[j] = Math.sqrt(tempI[i].variance(j));</span>
+          } else {
+<span class="nc" id="L378">            vals2[j] = Instance.missingValue();</span>
+          }	
+        }    
+<span class="nc" id="L381">        m_ClusterStdDevs.add(new Instance(1.0, vals2));</span>
+      }
+<span class="fc" id="L383">      m_ClusterSizes[i] = tempI[i].numInstances();</span>
+    }
+<span class="fc" id="L385">  }</span>
+
+  /**
+   * Move the centroid to it's new coordinates. Generate the centroid coordinates based 
+   * on it's  members (objects assigned to the cluster of the centroid) and the distance 
+   * function being used.
+   * @param centroidIndex index of the centroid which the coordinates will be computed
+   * @param members the objects that are assigned to the cluster of this centroid
+   * @param updateClusterInfo if the method is supposed to update the m_Cluster arrays
+   * @return the centroid coordinates
+   */
+  protected double[] moveCentroid(int centroidIndex, Instances members, boolean updateClusterInfo){
+<span class="fc" id="L397">    double [] vals = new double[members.numAttributes()];</span>
+		
+    //used only for Manhattan Distance
+<span class="fc" id="L400">    Instances sortedMembers = null;</span>
+<span class="fc" id="L401">    int middle = 0;</span>
+<span class="fc" id="L402">    boolean dataIsEven = false;</span>
+		
+<span class="pc bpc" id="L404" title="1 of 2 branches missed.">    if(m_DistanceFunction instanceof ManhattanDistance){</span>
+<span class="nc" id="L405">      middle = (members.numInstances()-1)/2;</span>
+<span class="nc bnc" id="L406" title="All 2 branches missed.">      dataIsEven = ((members.numInstances()%2)==0);</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">      if(m_PreserveOrder){</span>
+<span class="nc" id="L408">        sortedMembers = members;</span>
+      }else{
+<span class="nc" id="L410">        sortedMembers = new Instances(members);</span>
+      }
+    }
+		
+<span class="fc bfc" id="L414" title="All 2 branches covered.">    for (int j = 0; j &lt; members.numAttributes(); j++) {						</span>
+			
+      //in case of Euclidian distance the centroid is the mean point
+      //in case of Manhattan distance the centroid is the median point
+      //in both cases, if the attribute is nominal, the centroid is the mode
+<span class="pc bpc" id="L419" title="1 of 2 branches missed.">      if(m_DistanceFunction instanceof EuclideanDistance ||</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">         members.attribute(j).isNominal())</span>
+        {													
+<span class="fc" id="L422">          vals[j] = members.meanOrMode(j);</span>
+<span class="nc bnc" id="L423" title="All 2 branches missed.">        }else if(m_DistanceFunction instanceof ManhattanDistance){</span>
+        //singleton special case
+<span class="nc bnc" id="L425" title="All 2 branches missed.">        if(members.numInstances() == 1){</span>
+<span class="nc" id="L426">          vals[j] = members.instance(0).value(j);</span>
+        }else{
+<span class="nc" id="L428">          vals[j] = sortedMembers.kthSmallestValue(j, middle + 1);</span>
+<span class="nc bnc" id="L429" title="All 2 branches missed.">          if (dataIsEven) {</span>
+<span class="nc" id="L430">            vals[j] = (vals[j] + sortedMembers.kthSmallestValue(j, middle + 2)) / 2;</span>
+          }
+        }
+      }	
+			
+<span class="fc bfc" id="L435" title="All 2 branches covered.">      if(updateClusterInfo){</span>
+<span class="fc" id="L436">        m_ClusterMissingCounts[centroidIndex][j] = members.attributeStats(j).missingCount;</span>
+<span class="fc" id="L437">        m_ClusterNominalCounts[centroidIndex][j] = members.attributeStats(j).nominalCounts;</span>
+<span class="fc bfc" id="L438" title="All 2 branches covered.">        if (members.attribute(j).isNominal()) {</span>
+<span class="fc" id="L439">          if (m_ClusterMissingCounts[centroidIndex][j] &gt;  </span>
+<span class="pc bpc" id="L440" title="1 of 2 branches missed.">              m_ClusterNominalCounts[centroidIndex][j][Utils.maxIndex(m_ClusterNominalCounts[centroidIndex][j])]) </span>
+            {
+<span class="nc" id="L442">              vals[j] = Instance.missingValue(); // mark mode as missing</span>
+            }
+        } else {
+<span class="pc bpc" id="L445" title="1 of 2 branches missed.">          if (m_ClusterMissingCounts[centroidIndex][j] == members.numInstances()) {</span>
+<span class="nc" id="L446">            vals[j] = Instance.missingValue(); // mark mean as missing</span>
+          }
+        }
+      }
+    }
+<span class="fc bfc" id="L451" title="All 2 branches covered.">    if(updateClusterInfo)</span>
+<span class="fc" id="L452">      m_ClusterCentroids.add(new Instance(1.0, vals));</span>
+<span class="fc" id="L453">    return vals;</span>
+  }
+	
+  /**
+   * clusters an instance that has been through the filters
+   *
+   * @param instance the instance to assign a cluster to
+   * @param updateErrors if true, update the within clusters sum of errors
+   * @return a cluster number
+   */
+  private int clusterProcessedInstance(Instance instance, boolean updateErrors) {
+<span class="fc" id="L464">    double minDist = Integer.MAX_VALUE;</span>
+<span class="fc" id="L465">    int bestCluster = 0;</span>
+<span class="fc bfc" id="L466" title="All 2 branches covered.">    for (int i = 0; i &lt; m_NumClusters; i++) {</span>
+<span class="fc" id="L467">      double dist = m_DistanceFunction.distance(instance, m_ClusterCentroids.instance(i));</span>
+<span class="fc bfc" id="L468" title="All 2 branches covered.">      if (dist &lt; minDist) {</span>
+<span class="fc" id="L469">	minDist = dist;</span>
+<span class="fc" id="L470">	bestCluster = i;</span>
+      }
+    }
+<span class="fc bfc" id="L473" title="All 2 branches covered.">    if (updateErrors) {</span>
+<span class="pc bpc" id="L474" title="1 of 2 branches missed.">      if(m_DistanceFunction instanceof EuclideanDistance){</span>
+        //Euclidean distance to Squared Euclidean distance
+<span class="fc" id="L476">        minDist *= minDist;</span>
+      }
+<span class="fc" id="L478">      m_squaredErrors[bestCluster] += minDist;</span>
+    }
+<span class="fc" id="L480">    return bestCluster;</span>
+  }
+
+  /**
+   * Classifies a given instance.
+   *
+   * @param instance the instance to be assigned to a cluster
+   * @return the number of the assigned cluster as an interger
+   * if the class is enumerated, otherwise the predicted value
+   * @throws Exception if instance could not be classified
+   * successfully
+   */
+  public int clusterInstance(Instance instance) throws Exception {
+<span class="fc" id="L493">    Instance inst = null;</span>
+<span class="pc bpc" id="L494" title="1 of 2 branches missed.">    if (!m_dontReplaceMissing) {</span>
+<span class="fc" id="L495">      m_ReplaceMissingFilter.input(instance);</span>
+<span class="fc" id="L496">      m_ReplaceMissingFilter.batchFinished();</span>
+<span class="fc" id="L497">      inst = m_ReplaceMissingFilter.output();</span>
+    } else {
+<span class="nc" id="L499">      inst = instance;</span>
+    }
+
+<span class="fc" id="L502">    return clusterProcessedInstance(inst, false);</span>
+  }
+
+  /**
+   * Returns the number of clusters.
+   *
+   * @return the number of clusters generated for a training dataset.
+   * @throws Exception if number of clusters could not be returned
+   * successfully
+   */
+  public int numberOfClusters() throws Exception {
+<span class="fc" id="L513">    return m_NumClusters;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions () {
+<span class="fc" id="L522">    Vector result = new Vector();</span>
+
+<span class="fc" id="L524">    result.addElement(new Option(</span>
+<span class="fc" id="L525">                                 &quot;\tnumber of clusters.\n&quot;</span>
+                                 + &quot;\t(default 2).&quot;, 
+<span class="fc" id="L527">                                 &quot;N&quot;, 1, &quot;-N &lt;num&gt;&quot;));</span>
+<span class="fc" id="L528">    result.addElement(new Option(</span>
+<span class="fc" id="L529">                                 &quot;\tDisplay std. deviations for centroids.\n&quot;, </span>
+<span class="fc" id="L530">                                 &quot;V&quot;, 0, &quot;-V&quot;));</span>
+<span class="fc" id="L531">    result.addElement(new Option(</span>
+<span class="fc" id="L532">                                 &quot;\tDon't replace missing values with mean/mode.\n&quot;, </span>
+<span class="fc" id="L533">                                 &quot;M&quot;, 0, &quot;-M&quot;));</span>
+
+<span class="fc" id="L535">    result.add(new Option(</span>
+<span class="fc" id="L536">                          &quot;\tDistance function to use.\n&quot;</span>
+                          + &quot;\t(default: weka.core.EuclideanDistance)&quot;,
+<span class="fc" id="L538">                          &quot;A&quot;, 1,&quot;-A &lt;classname and options&gt;&quot;));</span>
+		
+<span class="fc" id="L540">    result.add(new Option(</span>
+<span class="fc" id="L541">                          &quot;\tMaximum number of iterations.\n&quot;,</span>
+<span class="fc" id="L542">                          &quot;I&quot;,1,&quot;-I &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L544">    result.addElement(new Option(</span>
+<span class="fc" id="L545">                                 &quot;\tPreserve order of instances.\n&quot;, </span>
+<span class="fc" id="L546">                                 &quot;O&quot;, 0, &quot;-O&quot;));</span>
+		
+<span class="fc" id="L548">    Enumeration en = super.listOptions();</span>
+<span class="fc bfc" id="L549" title="All 2 branches covered.">    while (en.hasMoreElements())</span>
+<span class="fc" id="L550">      result.addElement(en.nextElement());</span>
+
+<span class="fc" id="L552">    return  result.elements();</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numClustersTipText() {
+<span class="nc" id="L561">    return &quot;set number of clusters&quot;;</span>
+  }
+
+  /**
+   * set the number of clusters to generate
+   *
+   * @param n the number of clusters to generate
+   * @throws Exception if number of clusters is negative
+   */
+  public void setNumClusters(int n) throws Exception {
+<span class="pc bpc" id="L571" title="1 of 2 branches missed.">    if (n &lt;= 0) {</span>
+<span class="nc" id="L572">      throw new Exception(&quot;Number of clusters must be &gt; 0&quot;);</span>
+    }
+<span class="fc" id="L574">    m_NumClusters = n;</span>
+<span class="fc" id="L575">  }</span>
+
+  /**
+   * gets the number of clusters to generate
+   *
+   * @return the number of clusters to generate
+   */
+  public int getNumClusters() {
+<span class="fc" id="L583">    return m_NumClusters;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String maxIterationsTipText() {
+<span class="nc" id="L592">    return &quot;set maximum number of iterations&quot;;</span>
+  }
+
+  /**
+   * set the maximum number of iterations to be executed
+   *
+   * @param n the maximum number of iterations
+   * @throws Exception if maximum number of iteration is smaller than 1
+   */
+  public void setMaxIterations(int n) throws Exception {
+<span class="pc bpc" id="L602" title="1 of 2 branches missed.">    if (n &lt;= 0) {</span>
+<span class="nc" id="L603">      throw new Exception(&quot;Maximum number of iterations must be &gt; 0&quot;);</span>
+    }
+<span class="fc" id="L605">    m_MaxIterations = n;</span>
+<span class="fc" id="L606">  }</span>
+
+  /**
+   * gets the number of maximum iterations to be executed
+   *
+   * @return the number of clusters to generate
+   */
+  public int getMaxIterations() {
+<span class="fc" id="L614">    return m_MaxIterations;</span>
+  }
+	
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String displayStdDevsTipText() {
+<span class="nc" id="L624">    return &quot;Display std deviations of numeric attributes &quot;</span>
+      + &quot;and counts of nominal attributes.&quot;;
+  }
+
+  /**
+   * Sets whether standard deviations and nominal count
+   * Should be displayed in the clustering output
+   *
+   * @param stdD true if std. devs and counts should be 
+   * displayed
+   */
+  public void setDisplayStdDevs(boolean stdD) {
+<span class="nc" id="L636">    m_displayStdDevs = stdD;</span>
+<span class="nc" id="L637">  }</span>
+
+  /**
+   * Gets whether standard deviations and nominal count
+   * Should be displayed in the clustering output
+   *
+   * @return true if std. devs and counts should be 
+   * displayed
+   */
+  public boolean getDisplayStdDevs() {
+<span class="nc" id="L647">    return m_displayStdDevs;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String dontReplaceMissingValuesTipText() {
+<span class="nc" id="L656">    return &quot;Replace missing values globally with mean/mode.&quot;;</span>
+  }
+
+  /**
+   * Sets whether missing values are to be replaced
+   *
+   * @param r true if missing values are to be
+   * replaced
+   */
+  public void setDontReplaceMissingValues(boolean r) {
+<span class="nc" id="L666">    m_dontReplaceMissing = r;</span>
+<span class="nc" id="L667">  }</span>
+
+  /**
+   * Gets whether missing values are to be replaced
+   *
+   * @return true if missing values are to be
+   * replaced
+   */
+  public boolean getDontReplaceMissingValues() {
+<span class="nc" id="L676">    return m_dontReplaceMissing;</span>
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return 		tip text for this property suitable for
+   *         		displaying in the explorer/experimenter gui
+   */
+  public String distanceFunctionTipText() {
+<span class="nc" id="L686">    return &quot;The distance function to use for instances comparison &quot; +</span>
+      &quot;(default: weka.core.EuclideanDistance). &quot;;
+  }
+
+  /**
+   * returns the distance function currently in use.
+   * 
+   * @return the distance function
+   */
+  public DistanceFunction getDistanceFunction() {
+<span class="nc" id="L696">    return m_DistanceFunction;</span>
+  }
+
+  /**
+   * sets the distance function to use for instance comparison.
+   * 
+   * @param df the new distance function to use
+   * @throws Exception if instances cannot be processed
+   */
+  public void setDistanceFunction(DistanceFunction df) throws Exception {
+<span class="pc bpc" id="L706" title="1 of 2 branches missed.">    if(!(df instanceof EuclideanDistance) &amp;&amp; </span>
+<span class="nc bnc" id="L707" title="All 2 branches missed.">       !(df instanceof ManhattanDistance))</span>
+      {
+<span class="nc" id="L709">        throw new Exception(&quot;SimpleKMeans currently only supports the Euclidean and Manhattan distances.&quot;);</span>
+      }
+<span class="fc" id="L711">    m_DistanceFunction = df;</span>
+<span class="fc" id="L712">  }	</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String preserveInstancesOrderTipText() {
+<span class="nc" id="L720">    return &quot;Preserve order of instances.&quot;;</span>
+  }
+
+  /**
+   * Sets whether order of instances must be preserved
+   *
+   * @param r true if missing values are to be
+   * replaced
+   */
+  public void setPreserveInstancesOrder(boolean r) {
+<span class="nc" id="L730">    m_PreserveOrder = r;</span>
+<span class="nc" id="L731">  }</span>
+
+  /**
+   * Gets whether order of instances must be preserved
+   *
+   * @return true if missing values are to be
+   * replaced
+   */
+  public boolean getPreserveInstancesOrder() {
+<span class="nc" id="L740">    return m_PreserveOrder;</span>
+  }
+	
+	
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+   *  number of clusters.
+   *  (default 2).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V
+   *  Display std. deviations for centroids.
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  Replace missing values with mean/mode.
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 10)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -A &amp;lt;classname and options&amp;gt;
+   *  Distance function to be used for instance comparison
+   *  (default weka.core.EuclidianDistance)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -I &amp;lt;num&amp;gt;
+   *  Maximum number of iterations. &lt;/pre&gt;
+   *  
+   * &lt;pre&gt; -O
+   *  Preserve order of instances.
+   * &lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions (String[] options)
+    throws Exception {
+
+<span class="fc" id="L785">    m_displayStdDevs = Utils.getFlag(&quot;V&quot;, options);</span>
+<span class="fc" id="L786">    m_dontReplaceMissing = Utils.getFlag(&quot;M&quot;, options);</span>
+
+<span class="fc" id="L788">    String optionString = Utils.getOption('N', options);</span>
+
+<span class="fc bfc" id="L790" title="All 2 branches covered.">    if (optionString.length() != 0) {</span>
+<span class="fc" id="L791">      setNumClusters(Integer.parseInt(optionString));</span>
+    }
+    
+<span class="fc" id="L794">    optionString = Utils.getOption(&quot;I&quot;, options);</span>
+<span class="fc bfc" id="L795" title="All 2 branches covered.">    if (optionString.length() != 0) {</span>
+<span class="fc" id="L796">      setMaxIterations(Integer.parseInt(optionString));</span>
+    }
+		
+<span class="fc" id="L799">    String distFunctionClass = Utils.getOption('A', options);</span>
+<span class="fc bfc" id="L800" title="All 2 branches covered.">    if(distFunctionClass.length() != 0) {</span>
+<span class="fc" id="L801">      String distFunctionClassSpec[] = Utils.splitOptions(distFunctionClass);</span>
+<span class="pc bpc" id="L802" title="1 of 2 branches missed.">      if(distFunctionClassSpec.length == 0) { </span>
+<span class="nc" id="L803">        throw new Exception(&quot;Invalid DistanceFunction specification string.&quot;); </span>
+      }
+<span class="fc" id="L805">      String className = distFunctionClassSpec[0];</span>
+<span class="fc" id="L806">      distFunctionClassSpec[0] = &quot;&quot;;</span>
+
+<span class="fc" id="L808">      setDistanceFunction( (DistanceFunction)</span>
+<span class="fc" id="L809">                           Utils.forName( DistanceFunction.class, </span>
+<span class="fc" id="L810">                                          className, distFunctionClassSpec) );</span>
+    }
+    else {
+<span class="fc" id="L813">      setDistanceFunction(new EuclideanDistance());</span>
+    }
+		
+<span class="fc" id="L816">    m_PreserveOrder = Utils.getFlag(&quot;O&quot;, options);</span>
+
+<span class="fc" id="L818">    super.setOptions(options);</span>
+<span class="fc" id="L819">  }</span>
+
+  /**
+   * Gets the current settings of SimpleKMeans
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions () {
+    int       	i;
+    Vector    	result;
+    String[]  	options;
+
+<span class="fc" id="L831">    result = new Vector();</span>
+
+<span class="pc bpc" id="L833" title="1 of 2 branches missed.">    if (m_displayStdDevs) {</span>
+<span class="nc" id="L834">      result.add(&quot;-V&quot;);</span>
+    }
+
+<span class="pc bpc" id="L837" title="1 of 2 branches missed.">    if (m_dontReplaceMissing) {</span>
+<span class="nc" id="L838">      result.add(&quot;-M&quot;);</span>
+    }
+
+<span class="fc" id="L841">    result.add(&quot;-N&quot;);</span>
+<span class="fc" id="L842">    result.add(&quot;&quot; + getNumClusters());</span>
+
+<span class="fc" id="L844">    result.add(&quot;-A&quot;);</span>
+<span class="fc" id="L845">    result.add((m_DistanceFunction.getClass().getName() + &quot; &quot; +</span>
+<span class="fc" id="L846">                Utils.joinOptions(m_DistanceFunction.getOptions())).trim());</span>
+		
+<span class="fc" id="L848">    result.add(&quot;-I&quot;);</span>
+<span class="fc" id="L849">    result.add(&quot;&quot;+ getMaxIterations());</span>
+
+<span class="pc bpc" id="L851" title="1 of 2 branches missed.">    if(m_PreserveOrder){</span>
+<span class="nc" id="L852">      result.add(&quot;-O&quot;);</span>
+    }
+		
+<span class="fc" id="L855">    options = super.getOptions();</span>
+<span class="fc bfc" id="L856" title="All 2 branches covered.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="fc" id="L857">      result.add(options[i]);</span>
+
+<span class="fc" id="L859">    return (String[]) result.toArray(new String[result.size()]);	  </span>
+  }
+
+  /**
+   * return a string describing this clusterer
+   *
+   * @return a description of the clusterer as a string
+   */
+  public String toString() {
+<span class="pc bpc" id="L868" title="1 of 2 branches missed.">    if (m_ClusterCentroids == null) {</span>
+<span class="nc" id="L869">      return &quot;No clusterer built yet!&quot;;</span>
+    }
+
+<span class="fc" id="L872">    int maxWidth = 0;</span>
+<span class="fc" id="L873">    int maxAttWidth = 0;</span>
+<span class="fc" id="L874">    boolean containsNumeric = false;</span>
+<span class="fc bfc" id="L875" title="All 2 branches covered.">    for (int i = 0; i &lt; m_NumClusters; i++) {</span>
+<span class="fc bfc" id="L876" title="All 2 branches covered.">      for (int j = 0 ;j &lt; m_ClusterCentroids.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L877" title="All 2 branches covered.">        if (m_ClusterCentroids.attribute(j).name().length() &gt; maxAttWidth) {</span>
+<span class="fc" id="L878">          maxAttWidth = m_ClusterCentroids.attribute(j).name().length();</span>
+        }
+<span class="fc bfc" id="L880" title="All 2 branches covered.">	if (m_ClusterCentroids.attribute(j).isNumeric()) {</span>
+<span class="fc" id="L881">          containsNumeric = true;</span>
+<span class="fc" id="L882">	  double width = Math.log(Math.abs(m_ClusterCentroids.instance(i).value(j))) /</span>
+<span class="fc" id="L883">	    Math.log(10.0);</span>
+          //          System.err.println(m_ClusterCentroids.instance(i).value(j)+&quot; &quot;+width);
+<span class="fc bfc" id="L885" title="All 2 branches covered.">          if (width &lt; 0) {</span>
+<span class="fc" id="L886">            width = 1;</span>
+          }
+          // decimal + # decimal places + 1
+<span class="fc" id="L889">	  width += 6.0;</span>
+<span class="fc bfc" id="L890" title="All 2 branches covered.">	  if ((int)width &gt; maxWidth) {</span>
+<span class="fc" id="L891">	    maxWidth = (int)width;</span>
+	  }
+	}
+      }
+    }
+
+<span class="fc bfc" id="L897" title="All 2 branches covered.">    for (int i = 0; i &lt; m_ClusterCentroids.numAttributes(); i++) {</span>
+<span class="fc bfc" id="L898" title="All 2 branches covered.">      if (m_ClusterCentroids.attribute(i).isNominal()) {</span>
+<span class="fc" id="L899">        Attribute a = m_ClusterCentroids.attribute(i);</span>
+<span class="fc bfc" id="L900" title="All 2 branches covered.">        for (int j = 0; j &lt; m_ClusterCentroids.numInstances(); j++) {</span>
+<span class="fc" id="L901">          String val = a.value((int)m_ClusterCentroids.instance(j).value(i));</span>
+<span class="fc bfc" id="L902" title="All 2 branches covered.">          if (val.length() &gt; maxWidth) {</span>
+<span class="fc" id="L903">            maxWidth = val.length();</span>
+          }
+        }
+<span class="fc bfc" id="L906" title="All 2 branches covered.">        for (int j = 0; j &lt; a.numValues(); j++) {</span>
+<span class="fc" id="L907">          String val = a.value(j) + &quot; &quot;;</span>
+<span class="fc bfc" id="L908" title="All 2 branches covered.">          if (val.length() &gt; maxAttWidth) {</span>
+<span class="fc" id="L909">            maxAttWidth = val.length();</span>
+          }
+        }
+      }
+    }
+
+<span class="pc bpc" id="L915" title="1 of 2 branches missed.">    if (m_displayStdDevs) {</span>
+      // check for maximum width of maximum frequency count
+<span class="nc bnc" id="L917" title="All 2 branches missed.">      for (int i = 0; i &lt; m_ClusterCentroids.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L918" title="All 2 branches missed.">        if (m_ClusterCentroids.attribute(i).isNominal()) {</span>
+<span class="nc" id="L919">          int maxV = Utils.maxIndex(m_FullNominalCounts[i]);</span>
+          /*          int percent = (int)((double)m_FullNominalCounts[i][maxV] /
+                      Utils.sum(m_ClusterSizes) * 100.0); */
+<span class="nc" id="L922">          int percent = 6; // max percent width (100%)</span>
+<span class="nc" id="L923">          String nomV = &quot;&quot; + m_FullNominalCounts[i][maxV];</span>
+          //            + &quot; (&quot; + percent + &quot;%)&quot;;
+<span class="nc bnc" id="L925" title="All 2 branches missed.">          if (nomV.length() + percent &gt; maxWidth) {</span>
+<span class="nc" id="L926">            maxWidth = nomV.length() + 1;</span>
+          }
+        }
+      }
+    }
+
+    // check for size of cluster sizes
+<span class="fc bfc" id="L933" title="All 2 branches covered.">    for (int i = 0; i &lt; m_ClusterSizes.length; i++) {</span>
+<span class="fc" id="L934">      String size = &quot;(&quot; + m_ClusterSizes[i] + &quot;)&quot;;</span>
+<span class="pc bpc" id="L935" title="1 of 2 branches missed.">      if (size.length() &gt; maxWidth) {</span>
+<span class="nc" id="L936">        maxWidth = size.length();</span>
+      }
+    }
+    
+<span class="pc bpc" id="L940" title="3 of 4 branches missed.">    if (m_displayStdDevs &amp;&amp; maxAttWidth &lt; &quot;missing&quot;.length()) {</span>
+<span class="nc" id="L941">      maxAttWidth = &quot;missing&quot;.length();</span>
+    }
+    
+<span class="fc" id="L944">    String plusMinus = &quot;+/-&quot;;</span>
+<span class="fc" id="L945">    maxAttWidth += 2;</span>
+<span class="pc bpc" id="L946" title="3 of 4 branches missed.">    if (m_displayStdDevs &amp;&amp; containsNumeric) {</span>
+<span class="nc" id="L947">      maxWidth += plusMinus.length();</span>
+    }
+<span class="fc bfc" id="L949" title="All 2 branches covered.">    if (maxAttWidth &lt; &quot;Attribute&quot;.length() + 2) {</span>
+<span class="fc" id="L950">      maxAttWidth = &quot;Attribute&quot;.length() + 2;</span>
+    }
+
+<span class="pc bpc" id="L953" title="1 of 2 branches missed.">    if (maxWidth &lt; &quot;Full Data&quot;.length()) {</span>
+<span class="fc" id="L954">      maxWidth = &quot;Full Data&quot;.length() + 1;</span>
+    }
+
+<span class="pc bpc" id="L957" title="1 of 2 branches missed.">    if (maxWidth &lt; &quot;missing&quot;.length()) {</span>
+<span class="nc" id="L958">      maxWidth = &quot;missing&quot;.length() + 1;</span>
+    }
+
+
+    
+<span class="fc" id="L963">    StringBuffer temp = new StringBuffer();</span>
+    //    String naString = &quot;N/A&quot;;
+
+    
+    /*    for (int i = 0; i &lt; maxWidth+2; i++) {
+          naString += &quot; &quot;;
+          } */
+<span class="fc" id="L970">    temp.append(&quot;\nkMeans\n======\n&quot;);</span>
+<span class="fc" id="L971">    temp.append(&quot;\nNumber of iterations: &quot; + m_Iterations+&quot;\n&quot;);</span>
+		
+<span class="pc bpc" id="L973" title="1 of 2 branches missed.">    if(m_DistanceFunction instanceof EuclideanDistance){</span>
+<span class="fc" id="L974">      temp.append(&quot;Within cluster sum of squared errors: &quot; + Utils.sum(m_squaredErrors));</span>
+    }else{
+<span class="nc" id="L976">      temp.append(&quot;Sum of within cluster distances: &quot; + Utils.sum(m_squaredErrors));</span>
+    }
+		
+		
+<span class="pc bpc" id="L980" title="1 of 2 branches missed.">    if (!m_dontReplaceMissing) {</span>
+<span class="fc" id="L981">      temp.append(&quot;\nMissing values globally replaced with mean/mode&quot;);</span>
+    }
+
+<span class="fc" id="L984">    temp.append(&quot;\n\nCluster centroids:\n&quot;);</span>
+<span class="fc" id="L985">    temp.append(pad(&quot;Cluster#&quot;, &quot; &quot;, (maxAttWidth + (maxWidth * 2 + 2)) - &quot;Cluster#&quot;.length(), true));</span>
+
+<span class="fc" id="L987">    temp.append(&quot;\n&quot;);</span>
+<span class="fc" id="L988">    temp.append(pad(&quot;Attribute&quot;, &quot; &quot;, maxAttWidth - &quot;Attribute&quot;.length(), false));</span>
+
+    
+<span class="fc" id="L991">    temp.append(pad(&quot;Full Data&quot;, &quot; &quot;, maxWidth + 1 - &quot;Full Data&quot;.length(), true));</span>
+
+    // cluster numbers
+<span class="fc bfc" id="L994" title="All 2 branches covered.">    for (int i = 0; i &lt; m_NumClusters; i++) {</span>
+<span class="fc" id="L995">      String clustNum = &quot;&quot; + i;</span>
+<span class="fc" id="L996">      temp.append(pad(clustNum, &quot; &quot;, maxWidth + 1 - clustNum.length(), true));</span>
+    }
+<span class="fc" id="L998">    temp.append(&quot;\n&quot;);</span>
+
+    // cluster sizes
+<span class="fc" id="L1001">    String cSize = &quot;(&quot; + Utils.sum(m_ClusterSizes) + &quot;)&quot;;</span>
+<span class="fc" id="L1002">    temp.append(pad(cSize, &quot; &quot;, maxAttWidth + maxWidth + 1 - cSize.length(), true));</span>
+<span class="fc bfc" id="L1003" title="All 2 branches covered.">    for (int i = 0; i &lt; m_NumClusters; i++) {</span>
+<span class="fc" id="L1004">      cSize = &quot;(&quot; + m_ClusterSizes[i] + &quot;)&quot;;</span>
+<span class="fc" id="L1005">      temp.append(pad(cSize, &quot; &quot;,maxWidth + 1 - cSize.length(), true));</span>
+    }
+<span class="fc" id="L1007">    temp.append(&quot;\n&quot;);</span>
+
+<span class="fc" id="L1009">    temp.append(pad(&quot;&quot;, &quot;=&quot;, maxAttWidth + </span>
+<span class="fc" id="L1010">                    (maxWidth * (m_ClusterCentroids.numInstances()+1) </span>
+<span class="fc" id="L1011">                     + m_ClusterCentroids.numInstances() + 1), true));</span>
+<span class="fc" id="L1012">    temp.append(&quot;\n&quot;);</span>
+
+<span class="fc bfc" id="L1014" title="All 2 branches covered.">    for (int i = 0; i &lt; m_ClusterCentroids.numAttributes(); i++) {</span>
+<span class="fc" id="L1015">      String attName = m_ClusterCentroids.attribute(i).name();</span>
+<span class="fc" id="L1016">      temp.append(attName);</span>
+<span class="fc bfc" id="L1017" title="All 2 branches covered.">      for (int j = 0; j &lt; maxAttWidth - attName.length(); j++) {</span>
+<span class="fc" id="L1018">        temp.append(&quot; &quot;);</span>
+      }
+
+      String strVal;
+      String valMeanMode;
+      // full data
+<span class="fc bfc" id="L1024" title="All 2 branches covered.">      if (m_ClusterCentroids.attribute(i).isNominal()) {</span>
+<span class="pc bpc" id="L1025" title="1 of 2 branches missed.">        if (m_FullMeansOrMediansOrModes[i] == -1) { // missing</span>
+<span class="nc" id="L1026">          valMeanMode = pad(&quot;missing&quot;, &quot; &quot;, maxWidth + 1 - &quot;missing&quot;.length(), true);</span>
+        } else {
+<span class="fc" id="L1028">          valMeanMode = </span>
+<span class="fc" id="L1029">            pad((strVal = m_ClusterCentroids.attribute(i).value((int)m_FullMeansOrMediansOrModes[i])),</span>
+<span class="fc" id="L1030">                &quot; &quot;, maxWidth + 1 - strVal.length(), true);</span>
+        }
+      } else {
+<span class="pc bpc" id="L1033" title="1 of 2 branches missed.">        if (Double.isNaN(m_FullMeansOrMediansOrModes[i])) {</span>
+<span class="nc" id="L1034">          valMeanMode = pad(&quot;missing&quot;, &quot; &quot;, maxWidth + 1 - &quot;missing&quot;.length(), true);</span>
+        } else {
+<span class="fc" id="L1036">          valMeanMode =  pad((strVal = Utils.doubleToString(m_FullMeansOrMediansOrModes[i],</span>
+<span class="fc" id="L1037">                                                            maxWidth,4).trim()), </span>
+<span class="fc" id="L1038">                             &quot; &quot;, maxWidth + 1 - strVal.length(), true);</span>
+        }
+      }
+<span class="fc" id="L1041">      temp.append(valMeanMode);</span>
+
+<span class="fc bfc" id="L1043" title="All 2 branches covered.">      for (int j = 0; j &lt; m_NumClusters; j++) {</span>
+<span class="fc bfc" id="L1044" title="All 2 branches covered.">        if (m_ClusterCentroids.attribute(i).isNominal()) {</span>
+<span class="pc bpc" id="L1045" title="1 of 2 branches missed.">          if (m_ClusterCentroids.instance(j).isMissing(i)) {</span>
+<span class="nc" id="L1046">            valMeanMode = pad(&quot;missing&quot;, &quot; &quot;, maxWidth + 1 - &quot;missing&quot;.length(), true);</span>
+          } else {
+<span class="fc" id="L1048">            valMeanMode = </span>
+<span class="fc" id="L1049">              pad((strVal = m_ClusterCentroids.attribute(i).value((int)m_ClusterCentroids.instance(j).value(i))),</span>
+<span class="fc" id="L1050">                  &quot; &quot;, maxWidth + 1 - strVal.length(), true);</span>
+          }
+        } else {
+<span class="pc bpc" id="L1053" title="1 of 2 branches missed.">          if (m_ClusterCentroids.instance(j).isMissing(i)) {</span>
+<span class="nc" id="L1054">            valMeanMode = pad(&quot;missing&quot;, &quot; &quot;, maxWidth + 1 - &quot;missing&quot;.length(), true);</span>
+          } else {
+<span class="fc" id="L1056">            valMeanMode = pad((strVal = Utils.doubleToString(m_ClusterCentroids.instance(j).value(i),</span>
+<span class="fc" id="L1057">                                                             maxWidth,4).trim()), </span>
+<span class="fc" id="L1058">                              &quot; &quot;, maxWidth + 1 - strVal.length(), true);</span>
+          }
+        }
+<span class="fc" id="L1061">        temp.append(valMeanMode);</span>
+      }
+<span class="fc" id="L1063">      temp.append(&quot;\n&quot;);</span>
+
+<span class="pc bpc" id="L1065" title="1 of 2 branches missed.">      if (m_displayStdDevs) {</span>
+        // Std devs/max nominal
+<span class="nc" id="L1067">        String stdDevVal = &quot;&quot;;</span>
+
+<span class="nc bnc" id="L1069" title="All 2 branches missed.">        if (m_ClusterCentroids.attribute(i).isNominal()) {</span>
+          // Do the values of the nominal attribute
+<span class="nc" id="L1071">          Attribute a = m_ClusterCentroids.attribute(i);</span>
+<span class="nc bnc" id="L1072" title="All 2 branches missed.">          for (int j = 0; j &lt; a.numValues(); j++) {</span>
+            // full data
+<span class="nc" id="L1074">            String val = &quot;  &quot; + a.value(j);</span>
+<span class="nc" id="L1075">            temp.append(pad(val, &quot; &quot;, maxAttWidth + 1 - val.length(), false));</span>
+<span class="nc" id="L1076">            int count = m_FullNominalCounts[i][j];</span>
+<span class="nc" id="L1077">            int percent = (int)((double)m_FullNominalCounts[i][j] /</span>
+<span class="nc" id="L1078">                                Utils.sum(m_ClusterSizes) * 100.0);</span>
+<span class="nc" id="L1079">            String percentS = &quot;&quot; + percent + &quot;%)&quot;;</span>
+<span class="nc" id="L1080">            percentS = pad(percentS, &quot; &quot;, 5 - percentS.length(), true);</span>
+<span class="nc" id="L1081">            stdDevVal = &quot;&quot; + count + &quot; (&quot; + percentS;</span>
+<span class="nc" id="L1082">            stdDevVal = </span>
+<span class="nc" id="L1083">              pad(stdDevVal, &quot; &quot;, maxWidth + 1 - stdDevVal.length(), true);</span>
+<span class="nc" id="L1084">            temp.append(stdDevVal);</span>
+
+            // Clusters
+<span class="nc bnc" id="L1087" title="All 2 branches missed.">            for (int k = 0; k &lt; m_NumClusters; k++) {</span>
+<span class="nc" id="L1088">              count = m_ClusterNominalCounts[k][i][j];</span>
+<span class="nc" id="L1089">              percent = (int)((double)m_ClusterNominalCounts[k][i][j] /</span>
+<span class="nc" id="L1090">                              m_ClusterSizes[k] * 100.0);</span>
+<span class="nc" id="L1091">              percentS = &quot;&quot; + percent + &quot;%)&quot;;</span>
+<span class="nc" id="L1092">              percentS = pad(percentS, &quot; &quot;, 5 - percentS.length(), true);</span>
+<span class="nc" id="L1093">              stdDevVal = &quot;&quot; + count + &quot; (&quot; + percentS;</span>
+<span class="nc" id="L1094">              stdDevVal = </span>
+<span class="nc" id="L1095">                pad(stdDevVal, &quot; &quot;, maxWidth + 1 - stdDevVal.length(), true);</span>
+<span class="nc" id="L1096">              temp.append(stdDevVal);</span>
+            }
+<span class="nc" id="L1098">            temp.append(&quot;\n&quot;);</span>
+          }
+          // missing (if any)
+<span class="nc bnc" id="L1101" title="All 2 branches missed.">          if (m_FullMissingCounts[i] &gt; 0) {</span>
+            // Full data
+<span class="nc" id="L1103">            temp.append(pad(&quot;  missing&quot;, &quot; &quot;, maxAttWidth + 1 - &quot;  missing&quot;.length(), false));</span>
+<span class="nc" id="L1104">            int count = m_FullMissingCounts[i];</span>
+<span class="nc" id="L1105">            int percent = (int)((double)m_FullMissingCounts[i] /</span>
+<span class="nc" id="L1106">                                Utils.sum(m_ClusterSizes) * 100.0);</span>
+<span class="nc" id="L1107">            String percentS = &quot;&quot; + percent + &quot;%)&quot;;</span>
+<span class="nc" id="L1108">            percentS = pad(percentS, &quot; &quot;, 5 - percentS.length(), true);</span>
+<span class="nc" id="L1109">            stdDevVal = &quot;&quot; + count + &quot; (&quot; + percentS;</span>
+<span class="nc" id="L1110">            stdDevVal = </span>
+<span class="nc" id="L1111">              pad(stdDevVal, &quot; &quot;, maxWidth + 1 - stdDevVal.length(), true);</span>
+<span class="nc" id="L1112">            temp.append(stdDevVal);</span>
+           
+            // Clusters
+<span class="nc bnc" id="L1115" title="All 2 branches missed.">            for (int k = 0; k &lt; m_NumClusters; k++) {</span>
+<span class="nc" id="L1116">              count = m_ClusterMissingCounts[k][i];</span>
+<span class="nc" id="L1117">              percent = (int)((double)m_ClusterMissingCounts[k][i] /</span>
+<span class="nc" id="L1118">                              m_ClusterSizes[k] * 100.0);</span>
+<span class="nc" id="L1119">              percentS = &quot;&quot; + percent + &quot;%)&quot;;</span>
+<span class="nc" id="L1120">              percentS = pad(percentS, &quot; &quot;, 5 - percentS.length(), true);</span>
+<span class="nc" id="L1121">              stdDevVal = &quot;&quot; + count + &quot; (&quot; + percentS;</span>
+<span class="nc" id="L1122">              stdDevVal = </span>
+<span class="nc" id="L1123">                pad(stdDevVal, &quot; &quot;, maxWidth + 1 - stdDevVal.length(), true);</span>
+<span class="nc" id="L1124">              temp.append(stdDevVal);</span>
+            }
+
+<span class="nc" id="L1127">            temp.append(&quot;\n&quot;);</span>
+          }
+
+<span class="nc" id="L1130">          temp.append(&quot;\n&quot;);</span>
+        } else {
+          // Full data
+<span class="nc bnc" id="L1133" title="All 2 branches missed.">          if (Double.isNaN(m_FullMeansOrMediansOrModes[i])) {</span>
+<span class="nc" id="L1134">            stdDevVal = pad(&quot;--&quot;, &quot; &quot;, maxAttWidth + maxWidth + 1 - 2, true);</span>
+          } else {
+<span class="nc" id="L1136">            stdDevVal = pad((strVal = plusMinus </span>
+<span class="nc" id="L1137">                             + Utils.doubleToString(m_FullStdDevs[i],</span>
+<span class="nc" id="L1138">                                                    maxWidth,4).trim()), </span>
+<span class="nc" id="L1139">                            &quot; &quot;, maxWidth + maxAttWidth + 1 - strVal.length(), true);</span>
+          }
+<span class="nc" id="L1141">          temp.append(stdDevVal);</span>
+
+          // Clusters
+<span class="nc bnc" id="L1144" title="All 2 branches missed.">          for (int j = 0; j &lt; m_NumClusters; j++) {</span>
+<span class="nc bnc" id="L1145" title="All 2 branches missed.">            if (m_ClusterCentroids.instance(j).isMissing(i)) {</span>
+<span class="nc" id="L1146">              stdDevVal = pad(&quot;--&quot;, &quot; &quot;, maxWidth + 1 - 2, true);</span>
+            } else {
+<span class="nc" id="L1148">              stdDevVal = </span>
+<span class="nc" id="L1149">                pad((strVal = plusMinus </span>
+<span class="nc" id="L1150">                     + Utils.doubleToString(m_ClusterStdDevs.instance(j).value(i),</span>
+<span class="nc" id="L1151">                                            maxWidth,4).trim()), </span>
+<span class="nc" id="L1152">                    &quot; &quot;, maxWidth + 1 - strVal.length(), true);</span>
+            }
+<span class="nc" id="L1154">            temp.append(stdDevVal);</span>
+          }
+<span class="nc" id="L1156">          temp.append(&quot;\n\n&quot;);</span>
+        }
+      }
+    }
+
+<span class="fc" id="L1161">    temp.append(&quot;\n\n&quot;);</span>
+<span class="fc" id="L1162">    return temp.toString();</span>
+  }
+
+  private String pad(String source, String padChar, 
+                     int length, boolean leftPad) {
+<span class="fc" id="L1167">    StringBuffer temp = new StringBuffer();</span>
+
+<span class="fc bfc" id="L1169" title="All 2 branches covered.">    if (leftPad) {</span>
+<span class="fc bfc" id="L1170" title="All 2 branches covered.">      for (int i = 0; i&lt; length; i++) {</span>
+<span class="fc" id="L1171">        temp.append(padChar);</span>
+      }
+<span class="fc" id="L1173">      temp.append(source);</span>
+    } else {
+<span class="fc" id="L1175">      temp.append(source);</span>
+<span class="fc bfc" id="L1176" title="All 2 branches covered.">      for (int i = 0; i&lt; length; i++) {</span>
+<span class="fc" id="L1177">        temp.append(padChar);</span>
+      }
+    }
+<span class="fc" id="L1180">    return temp.toString();</span>
+  }
+
+  /**
+   * Gets the the cluster centroids
+   * 
+   * @return		the cluster centroids
+   */
+  public Instances getClusterCentroids() {
+<span class="nc" id="L1189">    return m_ClusterCentroids;</span>
+  }
+
+  /**
+   * Gets the standard deviations of the numeric attributes in each cluster
+   * 
+   * @return		the standard deviations of the numeric attributes 
+   * 			in each cluster
+   */
+  public Instances getClusterStandardDevs() {
+<span class="nc" id="L1199">    return m_ClusterStdDevs;</span>
+  }
+
+  /**
+   * Returns for each cluster the frequency counts for the values of each 
+   * nominal attribute
+   * 
+   * @return		the counts
+   */
+  public int [][][] getClusterNominalCounts() {
+<span class="nc" id="L1209">    return m_ClusterNominalCounts;</span>
+  }
+
+  /**
+   * Gets the squared error for all clusters
+   * 
+   * @return		the squared error
+   */
+  public double getSquaredError() {
+<span class="nc" id="L1218">    return Utils.sum(m_squaredErrors);</span>
+  }
+
+  /**
+   * Gets the number of instances in each cluster
+   * 
+   * @return		The number of instances in each cluster
+   */
+  public int [] getClusterSizes() {
+<span class="nc" id="L1227">    return m_ClusterSizes;</span>
+  }
+  
+  /**
+   * Gets the assignments for each instance
+   * @return Array of indexes of the centroid assigned to each instance
+   * @throws Exception if order of instances wasn't preserved or no assignments were made
+   */
+  public int [] getAssignments() throws Exception{
+<span class="nc bnc" id="L1236" title="All 2 branches missed.">    if(!m_PreserveOrder){</span>
+<span class="nc" id="L1237">      throw new Exception(&quot;The assignments are only available when order of instances is preserved (-O)&quot;);</span>
+    }
+<span class="nc bnc" id="L1239" title="All 2 branches missed.">    if(m_Assignments == null){</span>
+<span class="nc" id="L1240">      throw new Exception(&quot;No assignments made.&quot;);</span>
+    }
+<span class="nc" id="L1242">    return m_Assignments;</span>
+  }
+	
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1251">    return RevisionUtils.extract(&quot;$Revision: 9758 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain the following arguments: &lt;p&gt;
+   * -t training file [-N number of clusters]
+   */
+  public static void main (String[] argv) {
+<span class="nc" id="L1261">    runClusterer(new SimpleKMeans(), argv);</span>
+<span class="nc" id="L1262">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

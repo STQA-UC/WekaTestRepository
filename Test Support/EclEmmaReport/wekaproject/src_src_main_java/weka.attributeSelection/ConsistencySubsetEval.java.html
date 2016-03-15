@@ -1,0 +1,523 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>ConsistencySubsetEval.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">ConsistencySubsetEval.java</span></div><h1>ConsistencySubsetEval.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    ConsistencySubsetEval.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package  weka.attributeSelection;
+
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.supervised.attribute.Discretize;
+
+import java.io.Serializable;
+import java.util.BitSet;
+import java.util.Enumeration;
+import java.util.Hashtable;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * ConsistencySubsetEval :&lt;br/&gt;
+ * &lt;br/&gt;
+ * Evaluates the worth of a subset of attributes by the level of consistency in the class values when the training instances are projected onto the subset of attributes. &lt;br/&gt;
+ * &lt;br/&gt;
+ * Consistency of any subset can never be lower than that of the full set of attributes, hence the usual practice is to use this subset evaluator in conjunction with a Random or Exhaustive search which looks for the smallest subset with consistency equal to that of the full set of attributes.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * H. Liu, R. Setiono: A probabilistic approach to feature selection - A filter solution. In: 13th International Conference on Machine Learning, 319-327, 1996.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Liu1996,
+ *    author = {H. Liu and R. Setiono},
+ *    booktitle = {13th International Conference on Machine Learning},
+ *    pages = {319-327},
+ *    title = {A probabilistic approach to feature selection - A filter solution},
+ *    year = {1996}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version $Revision: 5511 $
+ * @see Discretize
+ */
+public class ConsistencySubsetEval 
+  extends ASEvaluation
+  implements SubsetEvaluator,
+             TechnicalInformationHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = -2880323763295270402L;
+  
+  /** training instances */
+  private Instances m_trainInstances;
+
+  /** class index */
+  private int m_classIndex;
+
+  /** number of attributes in the training data */
+  private int m_numAttribs;
+
+  /** number of instances in the training data */
+  private int m_numInstances;
+
+  /** Discretise numeric attributes */
+  private Discretize m_disTransform;
+
+  /** Hash table for evaluating feature subsets */
+  private Hashtable m_table;
+
+  /**
+   * Class providing keys to the hash table.
+   */
+  public class hashKey 
+    implements Serializable, RevisionHandler {
+    
+    /** for serialization */
+    static final long serialVersionUID = 6144138512017017408L;
+    
+    /** Array of attribute values for an instance */
+    private double [] attributes;
+    
+    /** True for an index if the corresponding attribute value is missing. */
+    private boolean [] missing;
+
+    /** The key */
+    private int key;
+
+    /**
+     * Constructor for a hashKey
+     *
+     * @param t an instance from which to generate a key
+     * @param numAtts the number of attributes
+     * @throws Exception if something goes wrong
+     */
+<span class="nc" id="L127">    public hashKey(Instance t, int numAtts) throws Exception {</span>
+
+      int i;
+<span class="nc" id="L130">      int cindex = t.classIndex();</span>
+
+<span class="nc" id="L132">      key = -999;</span>
+<span class="nc" id="L133">      attributes = new double [numAtts];</span>
+<span class="nc" id="L134">      missing = new boolean [numAtts];</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">      for (i=0;i&lt;numAtts;i++) {</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">	if (i == cindex) {</span>
+<span class="nc" id="L137">	  missing[i] = true;</span>
+	} else {
+<span class="nc bnc" id="L139" title="All 2 branches missed.">	  if ((missing[i] = t.isMissing(i)) == false) {</span>
+<span class="nc" id="L140">	    attributes[i] = t.value(i);</span>
+	  }
+	}
+      }
+<span class="nc" id="L144">    }</span>
+
+    /**
+     * Convert a hash entry to a string
+     *
+     * @param t the set of instances
+     * @param maxColWidth width to make the fields
+     * @return the hash entry as string
+     */
+    public String toString(Instances t, int maxColWidth) {
+
+      int i;
+<span class="nc" id="L156">      int cindex = t.classIndex();</span>
+<span class="nc" id="L157">      StringBuffer text = new StringBuffer();</span>
+      
+<span class="nc bnc" id="L159" title="All 2 branches missed.">      for (i=0;i&lt;attributes.length;i++) {</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">	if (i != cindex) {</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">	  if (missing[i]) {</span>
+<span class="nc" id="L162">	    text.append(&quot;?&quot;);</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">	    for (int j=0;j&lt;maxColWidth;j++) {</span>
+<span class="nc" id="L164">	      text.append(&quot; &quot;);</span>
+	    }
+	  } else {
+<span class="nc" id="L167">	    String ss = t.attribute(i).value((int)attributes[i]);</span>
+<span class="nc" id="L168">	    StringBuffer sb = new StringBuffer(ss);</span>
+	    
+<span class="nc bnc" id="L170" title="All 2 branches missed.">	    for (int j=0;j &lt; (maxColWidth-ss.length()+1); j++) {</span>
+<span class="nc" id="L171">		sb.append(&quot; &quot;);</span>
+	    }
+<span class="nc" id="L173">	    text.append(sb);</span>
+	  }
+	}
+      }
+<span class="nc" id="L177">      return text.toString();</span>
+    }
+
+    /**
+     * Constructor for a hashKey
+     *
+     * @param t an array of feature values
+     */
+<span class="nc" id="L185">    public hashKey(double [] t) {</span>
+
+      int i;
+<span class="nc" id="L188">      int l = t.length;</span>
+
+<span class="nc" id="L190">      key = -999;</span>
+<span class="nc" id="L191">      attributes = new double [l];</span>
+<span class="nc" id="L192">      missing = new boolean [l];</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">      for (i=0;i&lt;l;i++) {</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">	if (t[i] == Double.MAX_VALUE) {</span>
+<span class="nc" id="L195">	  missing[i] = true;</span>
+	} else {
+<span class="nc" id="L197">	  missing[i] = false;</span>
+<span class="nc" id="L198">	  attributes[i] = t[i];</span>
+	}
+      }
+<span class="nc" id="L201">    }</span>
+    
+    /**
+     * Calculates a hash code
+     *
+     * @return the hash code as an integer
+     */
+    public int hashCode() {
+
+<span class="nc" id="L210">      int hv = 0;</span>
+      
+<span class="nc bnc" id="L212" title="All 2 branches missed.">      if (key != -999)</span>
+<span class="nc" id="L213">	return key;</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">      for (int i=0;i&lt;attributes.length;i++) {</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">	if (missing[i]) {</span>
+<span class="nc" id="L216">	  hv += (i*13);</span>
+	} else {
+<span class="nc" id="L218">	  hv += (i * 5 * (attributes[i]+1));</span>
+	}
+      }
+<span class="nc bnc" id="L221" title="All 2 branches missed.">      if (key == -999) {</span>
+<span class="nc" id="L222">	key = hv;</span>
+      }
+<span class="nc" id="L224">      return hv;</span>
+    }
+
+    /**
+     * Tests if two instances are equal
+     *
+     * @param b a key to compare with
+     * @return true if the objects are equal
+     */
+    public boolean equals(Object b) {
+      
+<span class="nc bnc" id="L235" title="All 4 branches missed.">      if ((b == null) || !(b.getClass().equals(this.getClass()))) {</span>
+<span class="nc" id="L236">        return false;</span>
+      }
+<span class="nc" id="L238">      boolean ok = true;</span>
+      boolean l;
+<span class="nc bnc" id="L240" title="All 2 branches missed.">      if (b instanceof hashKey) {</span>
+<span class="nc" id="L241">	hashKey n = (hashKey)b;</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">	for (int i=0;i&lt;attributes.length;i++) {</span>
+<span class="nc" id="L243">	  l = n.missing[i];</span>
+<span class="nc bnc" id="L244" title="All 4 branches missed.">	  if (missing[i] || l) {</span>
+<span class="nc bnc" id="L245" title="All 8 branches missed.">	    if ((missing[i] &amp;&amp; !l) || (!missing[i] &amp;&amp; l)) {</span>
+<span class="nc" id="L246">	      ok = false;</span>
+<span class="nc" id="L247">	      break;</span>
+	    }
+	  } else {
+<span class="nc bnc" id="L250" title="All 2 branches missed.">	    if (attributes[i] != n.attributes[i]) {</span>
+<span class="nc" id="L251">	      ok = false;</span>
+<span class="nc" id="L252">	      break;</span>
+	    }
+	  }
+	}
+      } else {
+<span class="nc" id="L257">	return false;</span>
+      }
+<span class="nc" id="L259">      return ok;</span>
+    }
+    
+    /**
+     * Prints the hash code
+     */
+    public void print_hash_code() {
+      
+<span class="nc" id="L267">      System.out.println(&quot;Hash val: &quot;+hashCode());</span>
+<span class="nc" id="L268">    }</span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L276">      return RevisionUtils.extract(&quot;$Revision: 5511 $&quot;);</span>
+    }
+  }
+
+  /**
+   * Returns a string describing this search method
+   * @return a description of the search suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L286">    return &quot;ConsistencySubsetEval :\n\nEvaluates the worth of a subset of &quot;</span>
+      +&quot;attributes by the level of consistency in the class values when the &quot;
+      +&quot;training instances are projected onto the subset of attributes. &quot;
+      +&quot;\n\nConsistency of any subset can never be lower than that of the &quot;
+      +&quot;full set of attributes, hence the usual practice is to use this &quot;
+      +&quot;subset evaluator in conjunction with a Random or Exhaustive search &quot;
+      +&quot;which looks for the smallest subset with consistency equal to that &quot;
+      +&quot;of the full set of attributes.\n\n&quot;
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L295">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L308">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L309">    result.setValue(Field.AUTHOR, &quot;H. Liu and R. Setiono&quot;);</span>
+<span class="nc" id="L310">    result.setValue(Field.TITLE, &quot;A probabilistic approach to feature selection - A filter solution&quot;);</span>
+<span class="nc" id="L311">    result.setValue(Field.BOOKTITLE, &quot;13th International Conference on Machine Learning&quot;);</span>
+<span class="nc" id="L312">    result.setValue(Field.YEAR, &quot;1996&quot;);</span>
+<span class="nc" id="L313">    result.setValue(Field.PAGES, &quot;319-327&quot;);</span>
+    
+<span class="nc" id="L315">    return result;</span>
+  }
+
+  /**
+   * Constructor. Calls restOptions to set default options
+   **/
+<span class="nc" id="L321">  public ConsistencySubsetEval () {</span>
+<span class="nc" id="L322">    resetOptions();</span>
+<span class="nc" id="L323">  }</span>
+
+  /**
+   * reset to defaults
+   */
+  private void resetOptions () {
+<span class="nc" id="L329">    m_trainInstances = null;</span>
+<span class="nc" id="L330">  }</span>
+
+  /**
+   * Returns the capabilities of this evaluator.
+   *
+   * @return            the capabilities of this evaluator
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L339">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L340">    result.disableAll();</span>
+    
+    // attributes
+<span class="nc" id="L343">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L344">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L345">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="nc" id="L346">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="nc" id="L349">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="nc" id="L350">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="nc" id="L352">    return result;</span>
+  }
+
+  /**
+   * Generates a attribute evaluator. Has to initialize all fields of the 
+   * evaluator that are not being set via options.
+   *
+   * @param data set of instances serving as training data 
+   * @throws Exception if the evaluator has not been 
+   * generated successfully
+   */
+  public void buildEvaluator (Instances data) throws Exception {
+    
+    // can evaluator handle data?
+<span class="nc" id="L366">    getCapabilities().testWithFail(data);</span>
+
+<span class="nc" id="L368">    m_trainInstances = new Instances(data);</span>
+<span class="nc" id="L369">    m_trainInstances.deleteWithMissingClass();</span>
+<span class="nc" id="L370">    m_classIndex = m_trainInstances.classIndex();</span>
+<span class="nc" id="L371">    m_numAttribs = m_trainInstances.numAttributes();</span>
+<span class="nc" id="L372">    m_numInstances = m_trainInstances.numInstances();</span>
+
+<span class="nc" id="L374">    m_disTransform = new Discretize();</span>
+<span class="nc" id="L375">    m_disTransform.setUseBetterEncoding(true);</span>
+<span class="nc" id="L376">    m_disTransform.setInputFormat(m_trainInstances);</span>
+<span class="nc" id="L377">    m_trainInstances = Filter.useFilter(m_trainInstances, m_disTransform);</span>
+<span class="nc" id="L378">  }</span>
+
+  /**
+   * Evaluates a subset of attributes
+   *
+   * @param subset a bitset representing the attribute subset to be 
+   * evaluated 
+   * @throws Exception if the subset could not be evaluated
+   */
+  public double evaluateSubset (BitSet subset) throws Exception {
+    int [] fs;
+    int i;
+<span class="nc" id="L390">    int count = 0;</span>
+
+<span class="nc bnc" id="L392" title="All 2 branches missed.">    for (i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L393" title="All 2 branches missed.">      if (subset.get(i)) {</span>
+<span class="nc" id="L394">	count++;</span>
+      }
+    }
+
+<span class="nc" id="L398">    double [] instArray = new double[count];</span>
+<span class="nc" id="L399">    int index = 0;</span>
+<span class="nc" id="L400">    fs = new int[count];</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">    for (i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L402" title="All 2 branches missed.">      if (subset.get(i)) {</span>
+<span class="nc" id="L403">	fs[index++] = i;</span>
+      }
+    }
+    
+    // create new hash table
+<span class="nc" id="L408">    m_table = new Hashtable((int)(m_numInstances * 1.5));</span>
+    
+<span class="nc bnc" id="L410" title="All 2 branches missed.">    for (i=0;i&lt;m_numInstances;i++) {</span>
+<span class="nc" id="L411">      Instance inst = m_trainInstances.instance(i);</span>
+<span class="nc bnc" id="L412" title="All 2 branches missed.">      for (int j=0;j&lt;fs.length;j++) {</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">	if (fs[j] == m_classIndex) {</span>
+<span class="nc" id="L414">	  throw new Exception(&quot;A subset should not contain the class!&quot;);</span>
+	}
+<span class="nc bnc" id="L416" title="All 2 branches missed.">	if (inst.isMissing(fs[j])) {</span>
+<span class="nc" id="L417">	  instArray[j] = Double.MAX_VALUE;</span>
+	} else {
+<span class="nc" id="L419">	  instArray[j] = inst.value(fs[j]);</span>
+	}
+      }
+<span class="nc" id="L422">      insertIntoTable(inst, instArray);</span>
+    }
+
+<span class="nc" id="L425">    return consistencyCount();</span>
+  }
+
+  /**
+   * calculates the level of consistency in a dataset using a subset of
+   * features. The consistency of a hash table entry is the total number
+   * of instances hashed to that location minus the number of instances in
+   * the largest class hashed to that location. The total consistency is
+   * 1.0 minus the sum of the individual consistencies divided by the
+   * total number of instances.
+   * @return the consistency of the hash table as a value between 0 and 1.
+   */
+  private double consistencyCount() {
+<span class="nc" id="L438">    Enumeration e = m_table.keys();</span>
+    double [] classDist;
+<span class="nc" id="L440">    double count = 0.0;</span>
+    
+<span class="nc bnc" id="L442" title="All 2 branches missed.">    while (e.hasMoreElements()) {</span>
+<span class="nc" id="L443">      hashKey tt = (hashKey)e.nextElement();</span>
+<span class="nc" id="L444">      classDist = (double []) m_table.get(tt);</span>
+<span class="nc" id="L445">      count += Utils.sum(classDist);</span>
+<span class="nc" id="L446">      int max = Utils.maxIndex(classDist);</span>
+<span class="nc" id="L447">      count -= classDist[max];</span>
+    }
+
+<span class="nc" id="L450">    count /= (double)m_numInstances;</span>
+<span class="nc" id="L451">    return (1.0 - count);</span>
+  }
+
+  /**
+   * Inserts an instance into the hash table
+   *
+   * @param inst instance to be inserted
+   * @param instA the instance to be inserted as an array of attribute
+   * values.
+   * @throws Exception if the instance can't be inserted
+   */
+  private void insertIntoTable(Instance inst, double [] instA)
+       throws Exception {
+
+    double [] tempClassDist2;
+    double [] newDist;
+    hashKey thekey;
+
+<span class="nc" id="L469">    thekey = new hashKey(instA);</span>
+
+    // see if this one is already in the table
+<span class="nc" id="L472">    tempClassDist2 = (double []) m_table.get(thekey);</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">    if (tempClassDist2 == null) {</span>
+<span class="nc" id="L474">      newDist = new double [m_trainInstances.classAttribute().numValues()];</span>
+<span class="nc" id="L475">      newDist[(int)inst.classValue()] = inst.weight();</span>
+      
+      // add to the table
+<span class="nc" id="L478">      m_table.put(thekey, newDist);</span>
+    } else { 
+      // update the distribution for this instance
+<span class="nc" id="L481">      tempClassDist2[(int)inst.classValue()]+=inst.weight();</span>
+      
+      // update the table
+<span class="nc" id="L484">      m_table.put(thekey, tempClassDist2);</span>
+    }
+<span class="nc" id="L486">  }</span>
+
+  /**
+   * returns a description of the evaluator
+   * @return a description of the evaluator as a String.
+   */
+  public String toString() {
+<span class="nc" id="L493">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc bnc" id="L495" title="All 2 branches missed.">    if (m_trainInstances == null) {</span>
+<span class="nc" id="L496">      text.append(&quot;\tConsistency subset evaluator has not been built yet\n&quot;);</span>
+    }
+    else {
+<span class="nc" id="L499">      text.append(&quot;\tConsistency Subset Evaluator\n&quot;);</span>
+    }
+
+<span class="nc" id="L502">    return text.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L511">    return RevisionUtils.extract(&quot;$Revision: 5511 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param args the options
+   */
+  public static void main (String[] args) {
+<span class="nc" id="L520">    runEvaluator(new ConsistencySubsetEval(), args);</span>
+<span class="nc" id="L521">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

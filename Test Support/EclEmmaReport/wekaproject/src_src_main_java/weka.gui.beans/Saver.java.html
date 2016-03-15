@@ -1,0 +1,798 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Saver.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui.beans</a> &gt; <span class="el_source">Saver.java</span></div><h1>Saver.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Saver.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.gui.beans;
+
+import java.io.IOException;
+import java.io.ObjectInputStream;
+
+import weka.core.Environment;
+import weka.core.EnvironmentHandler;
+import weka.core.Instances;
+import weka.core.OptionHandler;
+import weka.core.SerializedObject;
+import weka.core.Utils;
+import weka.core.converters.ArffSaver;
+import weka.core.converters.DatabaseConverter;
+import weka.core.converters.DatabaseSaver;
+
+/**
+ * Saves data sets using weka.core.converter classes
+ * 
+ * @author &lt;a href=&quot;mailto:mutter@cs.waikato.ac.nz&quot;&gt;Stefan Mutter&lt;/a&gt;
+ * @version $Revision: 9217 $
+ * 
+ */
+public class Saver extends AbstractDataSink implements WekaWrapper,
+    EnvironmentHandler {
+
+  /** for serialization */
+  private static final long serialVersionUID = 5371716690308950755L;
+
+  /**
+   * Holds the instances to be saved
+   */
+  private Instances m_dataSet;
+
+  /**
+   * Holds the structure
+   */
+  private Instances m_structure;
+
+  /**
+   * Global info for the wrapped loader (if it exists).
+   */
+  protected String m_globalInfo;
+
+  /**
+   * Thread for doing IO in
+   */
+  private transient SaveBatchThread m_ioThread;
+
+  /**
+   * Saver
+   */
+<span class="nc" id="L74">  private weka.core.converters.Saver m_Saver = new ArffSaver();</span>
+<span class="nc" id="L75">  private weka.core.converters.Saver m_SaverTemplate = m_Saver;</span>
+
+  /**
+   * The relation name that becomes part of the file name
+   */
+  private String m_fileName;
+
+  /**
+   * Flag indicating that instances will be saved to database. Used because
+   * structure information can only be sent after a database has been
+   * configured.
+   */
+  private boolean m_isDBSaver;
+
+  /**
+   * For file-based savers - if true (default), relation name is used as the
+   * primary part of the filename. If false, then the prefix is used as the
+   * filename. Useful for preventing filenames from getting too long when there
+   * are many filters in a flow.
+   */
+<span class="nc" id="L95">  private boolean m_relationNameForFilename = true;</span>
+
+  /**
+   * Count for structure available messages
+   */
+  private int m_count;
+
+  /**
+   * The environment variables.
+   */
+  protected transient Environment m_env;
+
+  private weka.core.converters.Saver makeCopy() throws Exception {
+<span class="nc" id="L108">    return (weka.core.converters.Saver) new SerializedObject(m_SaverTemplate)</span>
+<span class="nc" id="L109">        .getObject();</span>
+  }
+
+  private class SaveBatchThread extends Thread {
+    private final DataSink m_DS;
+
+<span class="nc" id="L115">    public SaveBatchThread(DataSink ds) {</span>
+<span class="nc" id="L116">      m_DS = ds;</span>
+<span class="nc" id="L117">    }</span>
+
+    @Override
+    public void run() {
+      try {
+<span class="nc" id="L122">        m_visual.setAnimated();</span>
+
+<span class="nc" id="L124">        m_Saver.setInstances(m_dataSet);</span>
+<span class="nc bnc" id="L125" title="All 2 branches missed.">        if (m_logger != null) {</span>
+<span class="nc" id="L126">          m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L127">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L128">                  &quot;Saver_SaveBatchThread_Run_StatusMessage_Text_First&quot;)</span>
+<span class="nc" id="L129">              + m_dataSet.relationName()</span>
+<span class="nc" id="L130">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L131">                  &quot;Saver_SaveBatchThread_Run_StatusMessage_Text_Second&quot;));</span>
+        }
+<span class="nc" id="L133">        m_Saver.writeBatch();</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        if (m_logger != null) {</span>
+<span class="nc" id="L135">          m_logger.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L136">              &quot;Saver_SaveBatchThread_Run_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L137">              + statusMessagePrefix()</span>
+<span class="nc" id="L138">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L139">                  &quot;Saver_SaveBatchThread_Run_LogMessage_Text_Second&quot;));</span>
+        }
+
+<span class="nc" id="L142">      } catch (Exception ex) {</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (m_logger != null) {</span>
+<span class="nc" id="L144">          m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L145">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L146">                  &quot;Saver_SaveBatchThread_Run_StatusMessage_Text_Third&quot;));</span>
+<span class="nc" id="L147">          m_logger.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L148">              &quot;Saver_SaveBatchThread_Run_LogMessage_Text_Third&quot;)</span>
+<span class="nc" id="L149">              + statusMessagePrefix()</span>
+<span class="nc" id="L150">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L151">                  &quot;Saver_SaveBatchThread_Run_LogMessage_Text_Fourth&quot;)</span>
+<span class="nc" id="L152">              + ex.getMessage());</span>
+        }
+<span class="nc" id="L154">        ex.printStackTrace();</span>
+<span class="nc" id="L155">      } finally {</span>
+<span class="nc bnc" id="L156" title="All 6 branches missed.">        if (Thread.currentThread().isInterrupted()) {</span>
+<span class="nc bnc" id="L157" title="All 6 branches missed.">          if (m_logger != null) {</span>
+<span class="nc" id="L158">            m_logger.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L159">                &quot;Saver_SaveBatchThread_Run_LogMessage_Text_Fifth&quot;)</span>
+<span class="nc" id="L160">                + statusMessagePrefix()</span>
+<span class="nc" id="L161">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L162">                    &quot;Saver_SaveBatchThread_Run_LogMessage_Text_Sixth&quot;));</span>
+          }
+        }
+<span class="nc bnc" id="L165" title="All 6 branches missed.">        if (m_logger != null) {</span>
+<span class="nc" id="L166">          m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L167">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L168">                  &quot;Saver_SaveBatchThread_Run_StatusMessage_Text_Fourth&quot;));</span>
+        }
+<span class="nc" id="L170">        block(false);</span>
+<span class="nc" id="L171">        m_visual.setStatic();</span>
+<span class="nc" id="L172">        m_ioThread = null;</span>
+<span class="nc" id="L173">      }</span>
+<span class="nc" id="L174">    }</span>
+  }
+
+  /**
+   * Function used to stop code that calls acceptTrainingSet. This is needed as
+   * classifier construction is performed inside a separate thread of execution.
+   * 
+   * @param tf a &lt;code&gt;boolean&lt;/code&gt; value
+   */
+  private synchronized void block(boolean tf) {
+
+<span class="nc bnc" id="L185" title="All 2 branches missed.">    if (tf) {</span>
+      try {
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        if (m_ioThread.isAlive()) {</span>
+<span class="nc" id="L188">          wait();</span>
+        }
+<span class="nc" id="L190">      } catch (InterruptedException ex) {</span>
+      }
+    } else {
+<span class="nc" id="L193">      notifyAll();</span>
+    }
+<span class="nc" id="L195">  }</span>
+
+  /**
+   * Returns true if. at this time, the bean is busy with some (i.e. perhaps a
+   * worker thread is performing some calculation).
+   * 
+   * @return true if the bean is busy.
+   */
+  public boolean isBusy() {
+<span class="nc bnc" id="L204" title="All 2 branches missed.">    return (m_ioThread != null);</span>
+  }
+
+  /**
+   * Global info (if it exists) for the wrapped loader
+   * 
+   * @return the global info
+   */
+  public String globalInfo() {
+<span class="nc" id="L213">    return m_globalInfo;</span>
+  }
+
+  /** Contsructor */
+  public Saver() {
+<span class="nc" id="L218">    super();</span>
+<span class="nc" id="L219">    setSaverTemplate(m_Saver);</span>
+<span class="nc" id="L220">    m_fileName = &quot;&quot;;</span>
+<span class="nc" id="L221">    m_dataSet = null;</span>
+<span class="nc" id="L222">    m_count = 0;</span>
+
+<span class="nc" id="L224">  }</span>
+
+  /**
+   * Set a custom (descriptive) name for this bean
+   * 
+   * @param name the name to use
+   */
+  public void setCustomName(String name) {
+<span class="nc" id="L232">    m_visual.setText(name);</span>
+<span class="nc" id="L233">  }</span>
+
+  /**
+   * Get the custom (descriptive) name for this bean (if one has been set)
+   * 
+   * @return the custom name (or the default name)
+   */
+  public String getCustomName() {
+<span class="nc" id="L241">    return m_visual.getText();</span>
+  }
+
+  /**
+   * Set environment variables to use.
+   * 
+   * @param env the environment variables to use
+   */
+  public void setEnvironment(Environment env) {
+<span class="nc" id="L250">    m_env = env;</span>
+<span class="nc" id="L251">  }</span>
+
+  /**
+   * Pass the environment variables on the the wrapped saver
+   */
+  private void passEnvOnToSaver() {
+    // set environment variables
+<span class="nc bnc" id="L258" title="All 4 branches missed.">    if (m_SaverTemplate instanceof EnvironmentHandler &amp;&amp; m_env != null) {</span>
+<span class="nc" id="L259">      ((EnvironmentHandler) m_Saver).setEnvironment(m_env);</span>
+    }
+<span class="nc" id="L261">  }</span>
+
+  /**
+   * Set the loader to use
+   * 
+   * @param saver a Saver
+   */
+  public void setSaverTemplate(weka.core.converters.Saver saver) {
+<span class="nc" id="L269">    boolean loadImages = true;</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">    if (saver.getClass().getName()</span>
+<span class="nc" id="L271">        .compareTo(m_SaverTemplate.getClass().getName()) == 0) {</span>
+<span class="nc" id="L272">      loadImages = false;</span>
+    }
+<span class="nc" id="L274">    m_SaverTemplate = saver;</span>
+<span class="nc" id="L275">    String saverName = saver.getClass().toString();</span>
+<span class="nc" id="L276">    saverName = saverName.substring(saverName.lastIndexOf('.') + 1,</span>
+<span class="nc" id="L277">        saverName.length());</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">    if (loadImages) {</span>
+
+<span class="nc bnc" id="L280" title="All 2 branches missed.">      if (!m_visual.loadIcons(BeanVisual.ICON_PATH + saverName + &quot;.gif&quot;,</span>
+<span class="nc" id="L281">          BeanVisual.ICON_PATH + saverName + &quot;_animated.gif&quot;)) {</span>
+<span class="nc" id="L282">        useDefaultVisual();</span>
+      }
+    }
+<span class="nc" id="L285">    m_visual.setText(saverName);</span>
+
+    // get global info
+<span class="nc" id="L288">    m_globalInfo = KnowledgeFlowApp.getGlobalInfo(m_SaverTemplate);</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">    if (m_SaverTemplate instanceof DatabaseConverter)</span>
+<span class="nc" id="L290">      m_isDBSaver = true;</span>
+    else
+<span class="nc" id="L292">      m_isDBSaver = false;</span>
+<span class="nc" id="L293">  }</span>
+
+  /**
+   * makes sure that the filename is valid, i.e., replaces slashes, backslashes
+   * and colons with underscores (&quot;_&quot;). Also try to prevent filename from
+   * becoming insanely long by removing package part of class names.
+   * 
+   * @param filename the filename to cleanse
+   * @return the cleansed filename
+   */
+  protected String sanitizeFilename(String filename) {
+<span class="nc" id="L304">    filename = filename.replaceAll(&quot;\\\\&quot;, &quot;_&quot;).replaceAll(&quot;:&quot;, &quot;_&quot;)</span>
+<span class="nc" id="L305">        .replaceAll(&quot;/&quot;, &quot;_&quot;);</span>
+<span class="nc" id="L306">    filename = Utils.removeSubstring(filename,</span>
+<span class="nc" id="L307">        &quot;weka.filters.supervised.instance.&quot;);</span>
+<span class="nc" id="L308">    filename = Utils.removeSubstring(filename,</span>
+<span class="nc" id="L309">        &quot;weka.filters.supervised.attribute.&quot;);</span>
+<span class="nc" id="L310">    filename = Utils.removeSubstring(filename,</span>
+<span class="nc" id="L311">        &quot;weka.filters.unsupervised.instance.&quot;);</span>
+<span class="nc" id="L312">    filename = Utils.removeSubstring(filename,</span>
+<span class="nc" id="L313">        &quot;weka.filters.unsupervised.attribute.&quot;);</span>
+<span class="nc" id="L314">    filename = Utils.removeSubstring(filename, &quot;weka.clusterers.&quot;);</span>
+<span class="nc" id="L315">    filename = Utils.removeSubstring(filename, &quot;weka.associations.&quot;);</span>
+<span class="nc" id="L316">    filename = Utils.removeSubstring(filename, &quot;weka.attributeSelection.&quot;);</span>
+<span class="nc" id="L317">    filename = Utils.removeSubstring(filename, &quot;weka.estimators.&quot;);</span>
+<span class="nc" id="L318">    filename = Utils.removeSubstring(filename, &quot;weka.datagenerators.&quot;);</span>
+
+<span class="nc bnc" id="L320" title="All 4 branches missed.">    if (!m_isDBSaver &amp;&amp; !m_relationNameForFilename) {</span>
+<span class="nc" id="L321">      filename = &quot;&quot;;</span>
+      try {
+<span class="nc bnc" id="L323" title="All 2 branches missed.">        if (m_Saver.filePrefix().equals(&quot;&quot;)) {</span>
+<span class="nc" id="L324">          m_Saver.setFilePrefix(&quot;no-name&quot;);</span>
+        }
+<span class="nc" id="L326">      } catch (Exception ex) {</span>
+<span class="nc" id="L327">        System.err.println(ex);</span>
+      }
+    }
+
+<span class="nc" id="L331">    return filename;</span>
+  }
+
+  /**
+   * Method reacts to a dataset event and starts the writing process in batch
+   * mode
+   * 
+   * @param e a dataset event
+   */
+  @Override
+  public synchronized void acceptDataSet(DataSetEvent e) {
+
+    try {
+<span class="nc" id="L344">      m_Saver = makeCopy();</span>
+<span class="nc" id="L345">    } catch (Exception ex) {</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">      if (m_logger != null) {</span>
+<span class="nc" id="L347">        m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L348">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L349">                &quot;Saver_AcceptDataSet_StatusMessage_Text_First&quot;));</span>
+<span class="nc" id="L350">        m_logger</span>
+<span class="nc" id="L351">            .logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L352">                &quot;Saver_AcceptDataSet_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L353">                + statusMessagePrefix()</span>
+<span class="nc" id="L354">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L355">                    &quot;Saver_AcceptDataSet_LogMessage_Text_Second&quot;)</span>
+<span class="nc" id="L356">                + ex.getMessage());</span>
+      }
+    }
+<span class="nc" id="L359">    passEnvOnToSaver();</span>
+<span class="nc" id="L360">    m_fileName = sanitizeFilename(e.getDataSet().relationName());</span>
+<span class="nc" id="L361">    m_dataSet = e.getDataSet();</span>
+<span class="nc bnc" id="L362" title="All 4 branches missed.">    if (e.isStructureOnly() &amp;&amp; m_isDBSaver</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">        &amp;&amp; ((DatabaseSaver) m_SaverTemplate).getRelationForTableName()) {//</span>
+<span class="nc" id="L364">      ((DatabaseSaver) m_Saver).setTableName(m_fileName);</span>
+    }
+<span class="nc bnc" id="L366" title="All 2 branches missed.">    if (!e.isStructureOnly()) {</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">      if (!m_isDBSaver) {</span>
+        try {
+<span class="nc" id="L369">          m_Saver.setDirAndPrefix(m_fileName, &quot;&quot;);</span>
+<span class="nc" id="L370">        } catch (Exception ex) {</span>
+<span class="nc" id="L371">          System.out.println(ex);</span>
+        }
+      }
+<span class="nc" id="L374">      saveBatch();</span>
+<span class="nc" id="L375">      System.out</span>
+<span class="nc" id="L376">          .println(Messages.getInstance().getString(</span>
+<span class="nc" id="L377">              &quot;Saver_AcceptDataSet_Text_First&quot;)</span>
+<span class="nc" id="L378">              + m_fileName</span>
+<span class="nc" id="L379">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L380">                  &quot;Saver_AcceptDataSet_Text_Second&quot;));</span>
+    }
+<span class="nc" id="L382">  }</span>
+
+  /**
+   * Method reacts to a threshold data event ans starts the writing process in
+   * batch mode.
+   * 
+   * @param e threshold data event.
+   */
+  @Override
+  public synchronized void acceptDataSet(ThresholdDataEvent e) {
+    try {
+<span class="nc" id="L393">      m_Saver = makeCopy();</span>
+<span class="nc" id="L394">    } catch (Exception ex) {</span>
+<span class="nc bnc" id="L395" title="All 2 branches missed.">      if (m_logger != null) {</span>
+<span class="nc" id="L396">        m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L397">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L398">                &quot;Saver_AcceptDataSet_StatusMessage_Text_Second&quot;));</span>
+<span class="nc" id="L399">        m_logger</span>
+<span class="nc" id="L400">            .logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L401">                &quot;Saver_AcceptDataSet_LogMessage_Text_Third&quot;)</span>
+<span class="nc" id="L402">                + statusMessagePrefix()</span>
+<span class="nc" id="L403">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L404">                    &quot;Saver_AcceptDataSet_LogMessage_Text_Fourth&quot;)</span>
+<span class="nc" id="L405">                + ex.getMessage());</span>
+      }
+    }
+
+<span class="nc" id="L409">    passEnvOnToSaver();</span>
+<span class="nc" id="L410">    m_fileName = sanitizeFilename(e.getDataSet().getPlotInstances()</span>
+<span class="nc" id="L411">        .relationName());</span>
+<span class="nc" id="L412">    m_dataSet = e.getDataSet().getPlotInstances();</span>
+
+<span class="nc bnc" id="L414" title="All 2 branches missed.">    if (m_isDBSaver</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">        &amp;&amp; ((DatabaseSaver) m_SaverTemplate).getRelationForTableName()) {//</span>
+<span class="nc" id="L416">      ((DatabaseSaver) m_Saver).setTableName(m_fileName);</span>
+<span class="nc" id="L417">      ((DatabaseSaver) m_Saver).setRelationForTableName(false);</span>
+    }
+
+<span class="nc bnc" id="L420" title="All 2 branches missed.">    if (!m_isDBSaver) {</span>
+      try {
+<span class="nc" id="L422">        m_Saver.setDirAndPrefix(m_fileName, &quot;&quot;);</span>
+<span class="nc" id="L423">      } catch (Exception ex) {</span>
+<span class="nc" id="L424">        System.out.println(ex);</span>
+      }
+    }
+<span class="nc" id="L427">    saveBatch();</span>
+<span class="nc" id="L428">    System.out.println(Messages.getInstance().getString(</span>
+<span class="nc" id="L429">        &quot;Saver_AcceptDataSet_Text_Third&quot;)</span>
+<span class="nc" id="L430">        + m_fileName</span>
+<span class="nc" id="L431">        + Messages.getInstance().getString(&quot;Saver_AcceptDataSet_Text_Fourth&quot;));</span>
+<span class="nc" id="L432">  }</span>
+
+  /**
+   * Method reacts to a test set event and starts the writing process in batch
+   * mode
+   * 
+   * @param e test set event
+   */
+  @Override
+  public synchronized void acceptTestSet(TestSetEvent e) {
+
+    try {
+<span class="nc" id="L444">      m_Saver = makeCopy();</span>
+<span class="nc" id="L445">    } catch (Exception ex) {</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">      if (m_logger != null) {</span>
+<span class="nc" id="L447">        m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L448">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L449">                &quot;Saver_AcceptTestSet_StatusMessage_Text_First&quot;));</span>
+<span class="nc" id="L450">        m_logger</span>
+<span class="nc" id="L451">            .logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L452">                &quot;Saver_AcceptTestSet_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L453">                + statusMessagePrefix()</span>
+<span class="nc" id="L454">                + Messages.getInstance().getString(</span>
+<span class="nc" id="L455">                    &quot;Saver_AcceptTestSet_LogMessage_Text_Second&quot;)</span>
+<span class="nc" id="L456">                + ex.getMessage());</span>
+      }
+    }
+
+<span class="nc" id="L460">    passEnvOnToSaver();</span>
+<span class="nc" id="L461">    m_fileName = sanitizeFilename(e.getTestSet().relationName());</span>
+<span class="nc" id="L462">    m_dataSet = e.getTestSet();</span>
+<span class="nc bnc" id="L463" title="All 4 branches missed.">    if (e.isStructureOnly() &amp;&amp; m_isDBSaver</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">        &amp;&amp; ((DatabaseSaver) m_SaverTemplate).getRelationForTableName()) {</span>
+<span class="nc" id="L465">      ((DatabaseSaver) m_Saver).setTableName(m_fileName);</span>
+    }
+<span class="nc bnc" id="L467" title="All 2 branches missed.">    if (!e.isStructureOnly()) {</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">      if (!m_isDBSaver) {</span>
+        try {
+<span class="nc" id="L470">          m_Saver.setDirAndPrefix(m_fileName, &quot;_test_&quot; + e.getSetNumber()</span>
+<span class="nc" id="L471">              + &quot;_of_&quot; + e.getMaxSetNumber());</span>
+<span class="nc" id="L472">        } catch (Exception ex) {</span>
+<span class="nc" id="L473">          System.out.println(ex);</span>
+        }
+      } else {
+<span class="nc" id="L476">        ((DatabaseSaver) m_Saver).setRelationForTableName(false);</span>
+<span class="nc" id="L477">        String setName = ((DatabaseSaver) m_Saver).getTableName();</span>
+<span class="nc" id="L478">        setName = setName.replaceFirst(</span>
+<span class="nc" id="L479">            &quot;_[tT][eE][sS][tT]_[0-9]+_[oO][fF]_[0-9]+&quot;, &quot;&quot;);</span>
+<span class="nc" id="L480">        ((DatabaseSaver) m_Saver).setTableName(setName + &quot;_test_&quot;</span>
+<span class="nc" id="L481">            + e.getSetNumber() + &quot;_of_&quot; + e.getMaxSetNumber());</span>
+      }
+<span class="nc" id="L483">      saveBatch();</span>
+<span class="nc" id="L484">      System.out</span>
+<span class="nc" id="L485">          .println(Messages.getInstance().getString(</span>
+<span class="nc" id="L486">              &quot;Saver_AcceptTestSet_Text_First&quot;)</span>
+<span class="nc" id="L487">              + e.getSetNumber()</span>
+<span class="nc" id="L488">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L489">                  &quot;Saver_AcceptTestSet_Text_Second&quot;)</span>
+<span class="nc" id="L490">              + e.getMaxSetNumber()</span>
+<span class="nc" id="L491">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L492">                  &quot;Saver_AcceptTestSet_Text_Third&quot;)</span>
+<span class="nc" id="L493">              + m_fileName</span>
+<span class="nc" id="L494">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L495">                  &quot;Saver_AcceptTestSet_Text_Fourth&quot;));</span>
+    }
+<span class="nc" id="L497">  }</span>
+
+  /**
+   * Method reacts to a training set event and starts the writing process in
+   * batch mode
+   * 
+   * @param e a training set event
+   */
+  @Override
+  public synchronized void acceptTrainingSet(TrainingSetEvent e) {
+
+    try {
+<span class="nc" id="L509">      m_Saver = makeCopy();</span>
+<span class="nc" id="L510">    } catch (Exception ex) {</span>
+<span class="nc bnc" id="L511" title="All 2 branches missed.">      if (m_logger != null) {</span>
+<span class="nc" id="L512">        m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L513">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L514">                &quot;Saver_AcceptTrainingSet_StatusMessage_Text_First&quot;));</span>
+<span class="nc" id="L515">        m_logger.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L516">            &quot;Saver_AcceptTrainingSet_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L517">            + statusMessagePrefix()</span>
+<span class="nc" id="L518">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L519">                &quot;Saver_AcceptTrainingSet_LogMessage_Text_Second&quot;)</span>
+<span class="nc" id="L520">            + ex.getMessage());</span>
+      }
+    }
+
+<span class="nc" id="L524">    passEnvOnToSaver();</span>
+<span class="nc" id="L525">    m_fileName = sanitizeFilename(e.getTrainingSet().relationName());</span>
+<span class="nc" id="L526">    m_dataSet = e.getTrainingSet();</span>
+<span class="nc bnc" id="L527" title="All 4 branches missed.">    if (e.isStructureOnly() &amp;&amp; m_isDBSaver</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">        &amp;&amp; ((DatabaseSaver) m_SaverTemplate).getRelationForTableName()) {</span>
+<span class="nc" id="L529">      ((DatabaseSaver) m_Saver).setTableName(m_fileName);</span>
+    }
+<span class="nc bnc" id="L531" title="All 2 branches missed.">    if (!e.isStructureOnly()) {</span>
+<span class="nc bnc" id="L532" title="All 2 branches missed.">      if (!m_isDBSaver) {</span>
+        try {
+<span class="nc" id="L534">          m_Saver.setDirAndPrefix(m_fileName, &quot;_training_&quot; + e.getSetNumber()</span>
+<span class="nc" id="L535">              + &quot;_of_&quot; + e.getMaxSetNumber());</span>
+<span class="nc" id="L536">        } catch (Exception ex) {</span>
+<span class="nc" id="L537">          System.out.println(ex);</span>
+        }
+      } else {
+<span class="nc" id="L540">        ((DatabaseSaver) m_Saver).setRelationForTableName(false);</span>
+<span class="nc" id="L541">        String setName = ((DatabaseSaver) m_Saver).getTableName();</span>
+<span class="nc" id="L542">        setName = setName.replaceFirst(</span>
+<span class="nc" id="L543">            &quot;_[tT][rR][aA][iI][nN][iI][nN][gG]_[0-9]+_[oO][fF]_[0-9]+&quot;, &quot;&quot;);</span>
+<span class="nc" id="L544">        ((DatabaseSaver) m_Saver).setTableName(setName + &quot;_training_&quot;</span>
+<span class="nc" id="L545">            + e.getSetNumber() + &quot;_of_&quot; + e.getMaxSetNumber());</span>
+      }
+<span class="nc" id="L547">      saveBatch();</span>
+<span class="nc" id="L548">      System.out.println(Messages.getInstance().getString(</span>
+<span class="nc" id="L549">          &quot;Saver_AcceptTrainingSet_Text_First&quot;)</span>
+<span class="nc" id="L550">          + e.getSetNumber()</span>
+<span class="nc" id="L551">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L552">              &quot;Saver_AcceptTrainingSet_Text_Second&quot;)</span>
+<span class="nc" id="L553">          + e.getMaxSetNumber()</span>
+<span class="nc" id="L554">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L555">              &quot;Saver_AcceptTrainingSet_Text_Third&quot;)</span>
+<span class="nc" id="L556">          + m_fileName</span>
+<span class="nc" id="L557">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L558">              &quot;Saver_AcceptTrainingSet_Text_Fourth&quot;));</span>
+    }
+<span class="nc" id="L560">  }</span>
+
+  /** Saves instances in batch mode */
+  public synchronized void saveBatch() {
+
+<span class="nc" id="L565">    m_Saver.setRetrieval(m_Saver.BATCH);</span>
+    /*
+     * String visText = this.getName(); try { visText = (m_fileName.length() &gt;
+     * 0) ? m_fileName : m_Saver.filePrefix(); } catch (Exception ex) { }
+     * m_visual.setText(visText);
+     */
+<span class="nc" id="L571">    m_ioThread = new SaveBatchThread(Saver.this);</span>
+<span class="nc" id="L572">    m_ioThread.setPriority(Thread.MIN_PRIORITY);</span>
+<span class="nc" id="L573">    m_ioThread.start();</span>
+<span class="nc" id="L574">    block(true);</span>
+<span class="nc" id="L575">  }</span>
+
+  /**
+   * Methods reacts to instance events and saves instances incrementally. If the
+   * instance to save is null, the file is closed and the saving process is
+   * ended.
+   * 
+   * @param e instance event
+   */
+  @Override
+  public synchronized void acceptInstance(InstanceEvent e) {
+
+<span class="nc bnc" id="L587" title="All 2 branches missed.">    if (e.getStatus() == e.FORMAT_AVAILABLE) {</span>
+      // start of a new stream
+      try {
+<span class="nc" id="L590">        m_Saver = makeCopy();</span>
+<span class="nc" id="L591">      } catch (Exception ex) {</span>
+<span class="nc bnc" id="L592" title="All 2 branches missed.">        if (m_logger != null) {</span>
+<span class="nc" id="L593">          m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L594">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L595">                  &quot;Saver_AcceptInstance_StatusMessage_Text_First&quot;));</span>
+<span class="nc" id="L596">          m_logger.logMessage(Messages.getInstance().getString(</span>
+<span class="nc" id="L597">              &quot;Saver_AcceptInstance_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L598">              + statusMessagePrefix()</span>
+<span class="nc" id="L599">              + Messages.getInstance().getString(</span>
+<span class="nc" id="L600">                  &quot;Saver_AcceptInstance_LogMessage_Text_Second&quot;)</span>
+<span class="nc" id="L601">              + ex.getMessage());</span>
+        }
+      }
+<span class="nc" id="L604">      m_Saver.setRetrieval(m_Saver.INCREMENTAL);</span>
+<span class="nc" id="L605">      m_structure = e.getStructure();</span>
+<span class="nc" id="L606">      m_fileName = sanitizeFilename(m_structure.relationName());</span>
+<span class="nc" id="L607">      m_Saver.setInstances(m_structure);</span>
+<span class="nc bnc" id="L608" title="All 2 branches missed.">      if (m_isDBSaver)</span>
+<span class="nc bnc" id="L609" title="All 2 branches missed.">        if (((DatabaseSaver) m_SaverTemplate).getRelationForTableName()) {</span>
+<span class="nc" id="L610">          ((DatabaseSaver) m_Saver).setTableName(m_fileName);</span>
+<span class="nc" id="L611">          ((DatabaseSaver) m_Saver).setRelationForTableName(false);</span>
+        }
+    }
+<span class="nc bnc" id="L614" title="All 2 branches missed.">    if (e.getStatus() == e.INSTANCE_AVAILABLE) {</span>
+<span class="nc" id="L615">      m_visual.setAnimated();</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">      if (m_count == 0) {</span>
+<span class="nc" id="L617">        passEnvOnToSaver();</span>
+<span class="nc bnc" id="L618" title="All 2 branches missed.">        if (!m_isDBSaver) {</span>
+          try {
+<span class="nc" id="L620">            m_Saver.setDirAndPrefix(m_fileName, &quot;&quot;);</span>
+<span class="nc" id="L621">          } catch (Exception ex) {</span>
+<span class="nc" id="L622">            System.out.println(ex);</span>
+<span class="nc" id="L623">            m_visual.setStatic();</span>
+          }
+        }
+<span class="nc" id="L626">        m_count++;</span>
+      }
+      try {
+        /*
+         * String visText = this.getName(); visText = (m_fileName.length() &gt; 0)
+         * ? m_fileName : m_Saver.filePrefix(); m_visual.setText(m_fileName);
+         */
+<span class="nc" id="L633">        m_Saver.writeIncremental(e.getInstance());</span>
+<span class="nc" id="L634">      } catch (Exception ex) {</span>
+<span class="nc" id="L635">        m_visual.setStatic();</span>
+<span class="nc" id="L636">        System.err.println(Messages.getInstance().getString(</span>
+<span class="nc" id="L637">            &quot;Saver_AcceptInstance_Error_Text_First&quot;)</span>
+<span class="nc" id="L638">            + e.getInstance()</span>
+<span class="nc" id="L639">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L640">                &quot;Saver_AcceptInstance_Error_Text_Second&quot;));</span>
+<span class="nc" id="L641">        ex.printStackTrace();</span>
+      }
+    }
+<span class="nc bnc" id="L644" title="All 2 branches missed.">    if (e.getStatus() == e.BATCH_FINISHED) {</span>
+      try {
+<span class="nc bnc" id="L646" title="All 2 branches missed.">        if (m_count == 0) {</span>
+<span class="nc" id="L647">          passEnvOnToSaver();</span>
+<span class="nc bnc" id="L648" title="All 2 branches missed.">          if (!m_isDBSaver) {</span>
+            try {
+<span class="nc" id="L650">              m_Saver.setDirAndPrefix(m_fileName, &quot;&quot;);</span>
+<span class="nc" id="L651">            } catch (Exception ex) {</span>
+<span class="nc" id="L652">              System.out.println(ex);</span>
+<span class="nc" id="L653">              m_visual.setStatic();</span>
+            }
+          }
+<span class="nc" id="L656">          m_count++;</span>
+        }
+<span class="nc" id="L658">        m_Saver.writeIncremental(e.getInstance());</span>
+<span class="nc bnc" id="L659" title="All 2 branches missed.">        if (e.getInstance() != null) {</span>
+<span class="nc" id="L660">          m_Saver.writeIncremental(null);</span>
+        }
+        // m_firstNotice = true;
+<span class="nc" id="L663">        m_visual.setStatic();</span>
+<span class="nc" id="L664">        System.out.println(Messages.getInstance().getString(</span>
+<span class="nc" id="L665">            &quot;Saver_AcceptInstance_Text_First&quot;)</span>
+<span class="nc" id="L666">            + m_fileName</span>
+<span class="nc" id="L667">            + Messages.getInstance().getString(</span>
+<span class="nc" id="L668">                &quot;Saver_AcceptInstance_Text_Second&quot;));</span>
+        /*
+         * String visText = this.getName(); visText = (m_fileName.length() &gt; 0)
+         * ? m_fileName : m_Saver.filePrefix(); m_visual.setText(visText);
+         */
+<span class="nc" id="L673">        m_count = 0;</span>
+<span class="nc" id="L674">      } catch (Exception ex) {</span>
+<span class="nc" id="L675">        m_visual.setStatic();</span>
+<span class="nc" id="L676">        System.err.println(Messages.getInstance().getString(</span>
+<span class="nc" id="L677">            &quot;Saver_AcceptInstance_Text_Third&quot;));</span>
+<span class="nc" id="L678">        ex.printStackTrace();</span>
+      }
+    }
+<span class="nc" id="L681">  }</span>
+
+  /**
+   * Get the saver
+   * 
+   * @return a &lt;code&gt;weka.core.converters.Saver&lt;/code&gt; value
+   */
+  public weka.core.converters.Saver getSaverTemplate() {
+<span class="nc" id="L689">    return m_SaverTemplate;</span>
+  }
+
+  /**
+   * Set the saver
+   * 
+   * @param algorithm a Saver
+   */
+  public void setWrappedAlgorithm(Object algorithm) {
+<span class="nc bnc" id="L698" title="All 2 branches missed.">    if (!(algorithm instanceof weka.core.converters.Saver)) {</span>
+<span class="nc" id="L699">      throw new IllegalArgumentException(algorithm.getClass()</span>
+<span class="nc" id="L700">          + Messages.getInstance().getString(</span>
+<span class="nc" id="L701">              &quot;Saver_SetWrappedAlgorithm_IllegalArgumentException_Text&quot;));</span>
+    }
+<span class="nc" id="L703">    setSaverTemplate((weka.core.converters.Saver) algorithm);</span>
+<span class="nc" id="L704">  }</span>
+
+  /**
+   * Get the saver
+   * 
+   * @return a Saver
+   */
+  public Object getWrappedAlgorithm() {
+<span class="nc" id="L712">    return getSaverTemplate();</span>
+  }
+
+  /**
+   * Set whether to use the relation name as the primary part of the filename.
+   * If false, then the prefix becomes the filename.
+   * 
+   * @param r true if the relation name is to be part of the filename.
+   */
+  public void setRelationNameForFilename(boolean r) {
+<span class="nc" id="L722">    m_relationNameForFilename = r;</span>
+<span class="nc" id="L723">  }</span>
+
+  /**
+   * Get whether the relation name is the primary part of the filename.
+   * 
+   * @return true if the relation name is part of the filename.
+   */
+  public boolean getRelationNameForFilename() {
+<span class="nc" id="L731">    return m_relationNameForFilename;</span>
+  }
+
+  /** Stops the bean */
+  @Override
+  public void stop() {
+    // tell the listenee (upstream bean) to stop
+<span class="nc bnc" id="L738" title="All 2 branches missed.">    if (m_listenee instanceof BeanCommon) {</span>
+<span class="nc" id="L739">      ((BeanCommon) m_listenee).stop();</span>
+    }
+
+    // stop the io thread
+<span class="nc bnc" id="L743" title="All 2 branches missed.">    if (m_ioThread != null) {</span>
+<span class="nc" id="L744">      m_ioThread.interrupt();</span>
+<span class="nc" id="L745">      m_ioThread.stop();</span>
+<span class="nc" id="L746">      m_ioThread = null;</span>
+<span class="nc" id="L747">      m_visual.setStatic();</span>
+    }
+<span class="nc" id="L749">  }</span>
+
+  private String statusMessagePrefix() {
+<span class="nc" id="L752">    return getCustomName()</span>
+<span class="nc" id="L753">        + &quot;$&quot;</span>
+<span class="nc" id="L754">        + hashCode()</span>
+<span class="nc" id="L755">        + &quot;|&quot;</span>
+<span class="nc bnc" id="L756" title="All 2 branches missed.">        + ((m_Saver instanceof OptionHandler) ? Utils</span>
+<span class="nc" id="L757">            .joinOptions(((OptionHandler) m_Saver).getOptions()) + &quot;|&quot; : &quot;&quot;);</span>
+  }
+
+  // Custom de-serialization in order to set default
+  // environment variables on de-serialization
+  private void readObject(ObjectInputStream aStream) throws IOException,
+      ClassNotFoundException {
+<span class="nc" id="L764">    aStream.defaultReadObject();</span>
+
+    // set a default environment to use
+<span class="nc" id="L767">    m_env = Environment.getSystemWide();</span>
+<span class="nc" id="L768">  }</span>
+
+  /**
+   * The main method for testing
+   * 
+   * @param args
+   */
+  public static void main(String[] args) {
+    try {
+<span class="nc" id="L777">      final javax.swing.JFrame jf = new javax.swing.JFrame();</span>
+<span class="nc" id="L778">      jf.getContentPane().setLayout(new java.awt.BorderLayout());</span>
+
+<span class="nc" id="L780">      final Saver tv = new Saver();</span>
+
+<span class="nc" id="L782">      jf.getContentPane().add(tv, java.awt.BorderLayout.CENTER);</span>
+<span class="nc" id="L783">      jf.addWindowListener(new java.awt.event.WindowAdapter() {</span>
+        @Override
+        public void windowClosing(java.awt.event.WindowEvent e) {
+<span class="nc" id="L786">          jf.dispose();</span>
+<span class="nc" id="L787">          System.exit(0);</span>
+<span class="nc" id="L788">        }</span>
+      });
+<span class="nc" id="L790">      jf.setSize(800, 600);</span>
+<span class="nc" id="L791">      jf.setVisible(true);</span>
+<span class="nc" id="L792">    } catch (Exception ex) {</span>
+<span class="nc" id="L793">      ex.printStackTrace();</span>
+    }
+<span class="nc" id="L795">  }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

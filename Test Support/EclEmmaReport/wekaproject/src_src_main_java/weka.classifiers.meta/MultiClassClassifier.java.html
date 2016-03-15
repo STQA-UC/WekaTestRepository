@@ -1,0 +1,997 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>MultiClassClassifier.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.meta</a> &gt; <span class="el_source">MultiClassClassifier.java</span></div><h1>MultiClassClassifier.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    MultiClassClassifier.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.meta;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.RandomizableSingleClassifierEnhancer;
+import weka.classifiers.rules.ZeroR;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.Range;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.MakeIndicator;
+import weka.filters.unsupervised.instance.RemoveWithValues;
+
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * A metaclassifier for handling multi-class datasets with 2-class classifiers. This classifier is also capable of applying error correcting output codes for increased accuracy.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;num&amp;gt;
+ *  Sets the method to use. Valid values are 0 (1-against-all),
+ *  1 (random codes), 2 (exhaustive code), and 3 (1-against-1). (default 0)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;num&amp;gt;
+ *  Sets the multiplier when using random codes. (default 2.0)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P
+ *  Use pairwise coupling (only has an effect for 1-against1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W
+ *  Full name of base classifier.
+ *  (default: weka.classifiers.functions.Logistic)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to classifier weka.classifiers.functions.Logistic:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Turn on debugging output.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;ridge&amp;gt;
+ *  Set the ridge in the log-likelihood.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;number&amp;gt;
+ *  Set the maximum number of iterations (default -1, until convergence).&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Len Trigg (len@reeltwo.com)
+ * @author Richard Kirkby (rkirkby@cs.waikato.ac.nz)
+ * @version $Revision: 1.48 $
+ */
+<span class="fc" id="L103">public class MultiClassClassifier </span>
+  extends RandomizableSingleClassifierEnhancer 
+  implements OptionHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -3879602011542849141L;
+  
+  /** The classifiers. */
+  private Classifier [] m_Classifiers;
+
+  /** Use pairwise coupling with 1-vs-1 */
+<span class="fc" id="L114">  private boolean m_pairwiseCoupling = false;</span>
+
+  /** Needed for pairwise coupling */
+  private double [] m_SumOfWeights;
+
+  /** The filters used to transform the class. */
+  private Filter[] m_ClassFilters;
+
+  /** ZeroR classifier for when all base classifier return zero probability. */
+  private ZeroR m_ZeroR;
+
+  /** Internal copy of the class attribute for output purposes */
+  private Attribute m_ClassAttribute;
+  
+  /** A transformed dataset header used by the  1-against-1 method */
+  private Instances m_TwoClassDataset;
+
+  /** 
+   * The multiplier when generating random codes. Will generate
+   * numClasses * m_RandomWidthFactor codes
+   */
+<span class="fc" id="L135">  private double m_RandomWidthFactor = 2.0;</span>
+
+  /** The multiclass method to use */
+<span class="fc" id="L138">  private int m_Method = METHOD_1_AGAINST_ALL;</span>
+
+  /** 1-against-all */
+  public static final int METHOD_1_AGAINST_ALL    = 0;
+  /** random correction code */
+  public static final int METHOD_ERROR_RANDOM     = 1;
+  /** exhaustive correction code */
+  public static final int METHOD_ERROR_EXHAUSTIVE = 2;
+  /** 1-against-1 */
+  public static final int METHOD_1_AGAINST_1      = 3;
+  /** The error correction modes */
+<span class="fc" id="L149">  public static final Tag [] TAGS_METHOD = {</span>
+<span class="fc" id="L150">    new Tag(METHOD_1_AGAINST_ALL, &quot;1-against-all&quot;),</span>
+<span class="fc" id="L151">    new Tag(METHOD_ERROR_RANDOM, &quot;Random correction code&quot;),</span>
+<span class="fc" id="L152">    new Tag(METHOD_ERROR_EXHAUSTIVE, &quot;Exhaustive correction code&quot;),</span>
+<span class="fc" id="L153">    new Tag(METHOD_1_AGAINST_1, &quot;1-against-1&quot;)</span>
+  };
+    
+  /**
+   * Constructor.
+   */
+<span class="fc" id="L159">  public MultiClassClassifier() {</span>
+    
+<span class="fc" id="L161">    m_Classifier = new weka.classifiers.functions.Logistic();</span>
+<span class="fc" id="L162">  }</span>
+
+  /**
+   * String describing default classifier.
+   * 
+   * @return the default classifier classname
+   */
+  protected String defaultClassifierString() {
+    
+<span class="fc" id="L171">    return &quot;weka.classifiers.functions.Logistic&quot;;</span>
+  }
+
+  /** 
+   * Interface for the code constructors 
+   */
+<span class="fc" id="L177">  private abstract class Code </span>
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    static final long serialVersionUID = 418095077487120846L;
+    
+    /**
+     * Subclasses must allocate and fill these. 
+     * First dimension is number of codes.
+     * Second dimension is number of classes.
+     */
+    protected boolean [][]m_Codebits;
+
+    /** 
+     * Returns the number of codes. 
+     * @return the number of codes
+     */
+    public int size() {
+<span class="fc" id="L195">      return m_Codebits.length;</span>
+    }
+
+    /** 
+     * Returns the indices of the values set to true for this code, 
+     * using 1-based indexing (for input to Range).
+     * 
+     * @param which the index
+     * @return the 1-based indices
+     */
+    public String getIndices(int which) {
+<span class="fc" id="L206">      StringBuffer sb = new StringBuffer();</span>
+<span class="fc bfc" id="L207" title="All 2 branches covered.">      for (int i = 0; i &lt; m_Codebits[which].length; i++) {</span>
+<span class="fc bfc" id="L208" title="All 2 branches covered.">        if (m_Codebits[which][i]) {</span>
+<span class="pc bpc" id="L209" title="1 of 2 branches missed.">          if (sb.length() != 0) {</span>
+<span class="nc" id="L210">            sb.append(',');</span>
+          }
+<span class="fc" id="L212">          sb.append(i + 1);</span>
+        }
+      }
+<span class="fc" id="L215">      return sb.toString();</span>
+    }
+
+    /** 
+     * Returns a human-readable representation of the codes. 
+     * @return a string representation of the codes
+     */
+    public String toString() {
+<span class="nc" id="L223">      StringBuffer sb = new StringBuffer();</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">      for(int i = 0; i &lt; m_Codebits[0].length; i++) {</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        for (int j = 0; j &lt; m_Codebits.length; j++) {</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">          sb.append(m_Codebits[j][i] ? &quot; 1&quot; : &quot; 0&quot;);</span>
+        }
+<span class="nc" id="L228">        sb.append('\n');</span>
+      }
+<span class="nc" id="L230">      return sb.toString();</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L239">      return RevisionUtils.extract(&quot;$Revision: 1.48 $&quot;);</span>
+    }
+  }
+
+  /** 
+   * Constructs a code with no error correction 
+   */
+  private class StandardCode 
+    extends Code {
+    
+    /** for serialization */
+    static final long serialVersionUID = 3707829689461467358L;
+    
+    /**
+     * constructor
+     * 
+     * @param numClasses the number of classes
+     */
+<span class="fc" id="L257">    public StandardCode(int numClasses) {</span>
+<span class="fc" id="L258">      m_Codebits = new boolean[numClasses][numClasses];</span>
+<span class="fc bfc" id="L259" title="All 2 branches covered.">      for (int i = 0; i &lt; numClasses; i++) {</span>
+<span class="fc" id="L260">        m_Codebits[i][i] = true;</span>
+      }
+      //System.err.println(&quot;Code:\n&quot; + this);
+<span class="fc" id="L263">    }</span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L271">      return RevisionUtils.extract(&quot;$Revision: 1.48 $&quot;);</span>
+    }
+  }
+
+  /** 
+   * Constructs a random code assignment 
+   */
+  private class RandomCode 
+    extends Code {
+
+    /** for serialization */
+    static final long serialVersionUID = 4413410540703926563L;
+    
+    /** random number generator */
+<span class="nc" id="L285">    Random r = null;</span>
+   
+    /**
+     * constructor
+     * 
+     * @param numClasses the number of classes
+     * @param numCodes the number of codes
+     * @param data the data to use
+     */
+<span class="nc" id="L294">    public RandomCode(int numClasses, int numCodes, Instances data) {</span>
+<span class="nc" id="L295">      r = data.getRandomNumberGenerator(m_Seed);</span>
+<span class="nc" id="L296">      numCodes = Math.max(2, numCodes); // Need at least two classes</span>
+<span class="nc" id="L297">      m_Codebits = new boolean[numCodes][numClasses];</span>
+<span class="nc" id="L298">      int i = 0;</span>
+      do {
+<span class="nc" id="L300">        randomize();</span>
+        //System.err.println(this);
+<span class="nc bnc" id="L302" title="All 4 branches missed.">      } while (!good() &amp;&amp; (i++ &lt; 100));</span>
+      //System.err.println(&quot;Code:\n&quot; + this);
+<span class="nc" id="L304">    }</span>
+
+    private boolean good() {
+<span class="nc" id="L307">      boolean [] ninClass = new boolean[m_Codebits[0].length];</span>
+<span class="nc" id="L308">      boolean [] ainClass = new boolean[m_Codebits[0].length];</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">      for (int i = 0; i &lt; ainClass.length; i++) {</span>
+<span class="nc" id="L310">	ainClass[i] = true;</span>
+      }
+
+<span class="nc bnc" id="L313" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Codebits.length; i++) {</span>
+<span class="nc" id="L314">        boolean ninCode = false;</span>
+<span class="nc" id="L315">        boolean ainCode = true;</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">        for (int j = 0; j &lt; m_Codebits[i].length; j++) {</span>
+<span class="nc" id="L317">          boolean current = m_Codebits[i][j];</span>
+<span class="nc bnc" id="L318" title="All 4 branches missed.">          ninCode = ninCode || current;</span>
+<span class="nc bnc" id="L319" title="All 4 branches missed.">          ainCode = ainCode &amp;&amp; current;</span>
+<span class="nc bnc" id="L320" title="All 4 branches missed.">          ninClass[j] = ninClass[j] || current;</span>
+<span class="nc bnc" id="L321" title="All 4 branches missed.">          ainClass[j] = ainClass[j] &amp;&amp; current;</span>
+        }
+<span class="nc bnc" id="L323" title="All 4 branches missed.">        if (!ninCode || ainCode) {</span>
+<span class="nc" id="L324">          return false;</span>
+        }
+      }
+<span class="nc bnc" id="L327" title="All 2 branches missed.">      for (int j = 0; j &lt; ninClass.length; j++) {</span>
+<span class="nc bnc" id="L328" title="All 4 branches missed.">        if (!ninClass[j] || ainClass[j]) {</span>
+<span class="nc" id="L329">          return false;</span>
+        }
+      }
+<span class="nc" id="L332">      return true;</span>
+    }
+
+    /**
+     * randomizes
+     */
+    private void randomize() {
+<span class="nc bnc" id="L339" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Codebits.length; i++) {</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">        for (int j = 0; j &lt; m_Codebits[i].length; j++) {</span>
+<span class="nc" id="L341">	  double temp = r.nextDouble();</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">          m_Codebits[i][j] = (temp &lt; 0.5) ? false : true;</span>
+        }
+      }
+<span class="nc" id="L345">    }</span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L353">      return RevisionUtils.extract(&quot;$Revision: 1.48 $&quot;);</span>
+    }
+  }
+
+  /*
+   * TODO: Constructs codes as per:
+   * Bose, R.C., Ray Chaudhuri (1960), On a class of error-correcting
+   * binary group codes, Information and Control, 3, 68-79.
+   * Hocquenghem, A. (1959) Codes corecteurs d'erreurs, Chiffres, 2, 147-156. 
+   */
+  //private class BCHCode extends Code {...}
+
+  /** Constructs an exhaustive code assignment */
+  private class ExhaustiveCode 
+    extends Code {
+
+    /** for serialization */
+    static final long serialVersionUID = 8090991039670804047L;
+    
+    /**
+     * constructor
+     * 
+     * @param numClasses the number of classes
+     */
+<span class="nc" id="L377">    public ExhaustiveCode(int numClasses) {</span>
+<span class="nc" id="L378">      int width = (int)Math.pow(2, numClasses - 1) - 1;</span>
+<span class="nc" id="L379">      m_Codebits = new boolean[width][numClasses];</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">      for (int j = 0; j &lt; width; j++) {</span>
+<span class="nc" id="L381">        m_Codebits[j][0] = true;</span>
+      }
+<span class="nc bnc" id="L383" title="All 2 branches missed.">      for (int i = 1; i &lt; numClasses; i++) {</span>
+<span class="nc" id="L384">        int skip = (int) Math.pow(2, numClasses - (i + 1));</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">        for(int j = 0; j &lt; width; j++) {</span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">          m_Codebits[j][i] = ((j / skip) % 2 != 0);</span>
+        }
+      }
+      //System.err.println(&quot;Code:\n&quot; + this);
+<span class="nc" id="L390">    }</span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L398">      return RevisionUtils.extract(&quot;$Revision: 1.48 $&quot;);</span>
+    }
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L408">    Capabilities result = super.getCapabilities();</span>
+
+    // class
+<span class="fc" id="L411">    result.disableAllClasses();</span>
+<span class="fc" id="L412">    result.disableAllClassDependencies();</span>
+<span class="fc" id="L413">    result.enable(Capability.NOMINAL_CLASS);</span>
+    
+<span class="fc" id="L415">    return result;</span>
+  }
+
+  /**
+   * Builds the classifiers.
+   *
+   * @param insts the training data.
+   * @throws Exception if a classifier can't be built
+   */
+  public void buildClassifier(Instances insts) throws Exception {
+
+    Instances newInsts;
+
+    // can classifier handle the data?
+<span class="fc" id="L429">    getCapabilities().testWithFail(insts);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L432">    insts = new Instances(insts);</span>
+<span class="fc" id="L433">    insts.deleteWithMissingClass();</span>
+    
+<span class="pc bpc" id="L435" title="1 of 2 branches missed.">    if (m_Classifier == null) {</span>
+<span class="nc" id="L436">      throw new Exception(&quot;No base classifier has been set!&quot;);</span>
+    }
+<span class="fc" id="L438">    m_ZeroR = new ZeroR();</span>
+<span class="fc" id="L439">    m_ZeroR.buildClassifier(insts);</span>
+
+<span class="fc" id="L441">    m_TwoClassDataset = null;</span>
+
+<span class="fc" id="L443">    int numClassifiers = insts.numClasses();</span>
+<span class="fc bfc" id="L444" title="All 2 branches covered.">    if (numClassifiers &lt;= 2) {</span>
+
+<span class="fc" id="L446">      m_Classifiers = Classifier.makeCopies(m_Classifier, 1);</span>
+<span class="fc" id="L447">      m_Classifiers[0].buildClassifier(insts);</span>
+
+<span class="fc" id="L449">      m_ClassFilters = null;</span>
+
+<span class="pc bpc" id="L451" title="1 of 2 branches missed.">    } else if (m_Method == METHOD_1_AGAINST_1) {</span>
+      // generate fastvector of pairs
+<span class="nc" id="L453">      FastVector pairs = new FastVector();</span>
+<span class="nc bnc" id="L454" title="All 2 branches missed.">      for (int i=0; i&lt;insts.numClasses(); i++) {</span>
+<span class="nc bnc" id="L455" title="All 2 branches missed.">	for (int j=0; j&lt;insts.numClasses(); j++) {</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">	  if (j&lt;=i) continue;</span>
+<span class="nc" id="L457">	  int[] pair = new int[2];</span>
+<span class="nc" id="L458">	  pair[0] = i; pair[1] = j;</span>
+<span class="nc" id="L459">	  pairs.addElement(pair);</span>
+	}
+      }
+
+<span class="nc" id="L463">      numClassifiers = pairs.size();</span>
+<span class="nc" id="L464">      m_Classifiers = Classifier.makeCopies(m_Classifier, numClassifiers);</span>
+<span class="nc" id="L465">      m_ClassFilters = new Filter[numClassifiers];</span>
+<span class="nc" id="L466">      m_SumOfWeights = new double[numClassifiers];</span>
+
+      // generate the classifiers
+<span class="nc bnc" id="L469" title="All 2 branches missed.">      for (int i=0; i&lt;numClassifiers; i++) {</span>
+<span class="nc" id="L470">	RemoveWithValues classFilter = new RemoveWithValues();</span>
+<span class="nc" id="L471">	classFilter.setAttributeIndex(&quot;&quot; + (insts.classIndex() + 1));</span>
+<span class="nc" id="L472">	classFilter.setModifyHeader(true);</span>
+<span class="nc" id="L473">	classFilter.setInvertSelection(true);</span>
+<span class="nc" id="L474">	classFilter.setNominalIndicesArr((int[])pairs.elementAt(i));</span>
+<span class="nc" id="L475">	Instances tempInstances = new Instances(insts, 0);</span>
+<span class="nc" id="L476">	tempInstances.setClassIndex(-1);</span>
+<span class="nc" id="L477">	classFilter.setInputFormat(tempInstances);</span>
+<span class="nc" id="L478">	newInsts = Filter.useFilter(insts, classFilter);</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">	if (newInsts.numInstances() &gt; 0) {</span>
+<span class="nc" id="L480">	  newInsts.setClassIndex(insts.classIndex());</span>
+<span class="nc" id="L481">	  m_Classifiers[i].buildClassifier(newInsts);</span>
+<span class="nc" id="L482">	  m_ClassFilters[i] = classFilter;</span>
+<span class="nc" id="L483">          m_SumOfWeights[i] = newInsts.sumOfWeights();</span>
+	} else {
+<span class="nc" id="L485">	  m_Classifiers[i] = null;</span>
+<span class="nc" id="L486">	  m_ClassFilters[i] = null;</span>
+	}
+      }
+
+      // construct a two-class header version of the dataset
+<span class="nc" id="L491">      m_TwoClassDataset = new Instances(insts, 0);</span>
+<span class="nc" id="L492">      int classIndex = m_TwoClassDataset.classIndex();</span>
+<span class="nc" id="L493">      m_TwoClassDataset.setClassIndex(-1);</span>
+<span class="nc" id="L494">      m_TwoClassDataset.deleteAttributeAt(classIndex);</span>
+<span class="nc" id="L495">      FastVector classLabels = new FastVector();</span>
+<span class="nc" id="L496">      classLabels.addElement(&quot;class0&quot;);</span>
+<span class="nc" id="L497">      classLabels.addElement(&quot;class1&quot;);</span>
+<span class="nc" id="L498">      m_TwoClassDataset.insertAttributeAt(new Attribute(&quot;class&quot;, classLabels),</span>
+<span class="nc" id="L499">					  classIndex);</span>
+<span class="nc" id="L500">      m_TwoClassDataset.setClassIndex(classIndex);</span>
+
+    } else { // use error correcting code style methods
+<span class="fc" id="L503">      Code code = null;</span>
+<span class="pc bpc" id="L504" title="3 of 4 branches missed.">      switch (m_Method) {</span>
+      case METHOD_ERROR_EXHAUSTIVE:
+<span class="nc" id="L506">        code = new ExhaustiveCode(numClassifiers);</span>
+<span class="nc" id="L507">        break;</span>
+      case METHOD_ERROR_RANDOM:
+<span class="nc" id="L509">        code = new RandomCode(numClassifiers, </span>
+<span class="nc" id="L510">                              (int)(numClassifiers * m_RandomWidthFactor),</span>
+<span class="nc" id="L511">			      insts);</span>
+<span class="nc" id="L512">        break;</span>
+      case METHOD_1_AGAINST_ALL:
+<span class="fc" id="L514">        code = new StandardCode(numClassifiers);</span>
+<span class="fc" id="L515">        break;</span>
+      default:
+<span class="nc" id="L517">        throw new Exception(&quot;Unrecognized correction code type&quot;);</span>
+      }
+<span class="fc" id="L519">      numClassifiers = code.size();</span>
+<span class="fc" id="L520">      m_Classifiers = Classifier.makeCopies(m_Classifier, numClassifiers);</span>
+<span class="fc" id="L521">      m_ClassFilters = new MakeIndicator[numClassifiers];</span>
+<span class="fc bfc" id="L522" title="All 2 branches covered.">      for (int i = 0; i &lt; m_Classifiers.length; i++) {</span>
+<span class="fc" id="L523">	m_ClassFilters[i] = new MakeIndicator();</span>
+<span class="fc" id="L524">	MakeIndicator classFilter = (MakeIndicator) m_ClassFilters[i];</span>
+<span class="fc" id="L525">	classFilter.setAttributeIndex(&quot;&quot; + (insts.classIndex() + 1));</span>
+<span class="fc" id="L526">	classFilter.setValueIndices(code.getIndices(i));</span>
+<span class="fc" id="L527">	classFilter.setNumeric(false);</span>
+<span class="fc" id="L528">	classFilter.setInputFormat(insts);</span>
+<span class="fc" id="L529">	newInsts = Filter.useFilter(insts, m_ClassFilters[i]);</span>
+<span class="fc" id="L530">	m_Classifiers[i].buildClassifier(newInsts);</span>
+      }
+    }
+<span class="fc" id="L533">    m_ClassAttribute = insts.classAttribute();</span>
+<span class="fc" id="L534">  }</span>
+
+  /**
+   * Returns the individual predictions of the base classifiers
+   * for an instance. Used by StackedMultiClassClassifier.
+   * Returns the probability for the second &quot;class&quot; predicted
+   * by each base classifier.
+   *
+   * @param inst the instance to get the prediction for
+   * @return the individual predictions
+   * @throws Exception if the predictions can't be computed successfully
+   */
+  public double[] individualPredictions(Instance inst) throws Exception {
+    
+<span class="nc" id="L548">    double[] result = null;</span>
+
+<span class="nc bnc" id="L550" title="All 2 branches missed.">    if (m_Classifiers.length == 1) {</span>
+<span class="nc" id="L551">      result = new double[1];</span>
+<span class="nc" id="L552">      result[0] = m_Classifiers[0].distributionForInstance(inst)[1];</span>
+    } else {
+<span class="nc" id="L554">      result = new double[m_ClassFilters.length];</span>
+<span class="nc bnc" id="L555" title="All 2 branches missed.">      for(int i = 0; i &lt; m_ClassFilters.length; i++) {</span>
+<span class="nc bnc" id="L556" title="All 2 branches missed.">	if (m_Classifiers[i] != null) {</span>
+<span class="nc bnc" id="L557" title="All 2 branches missed.">	  if (m_Method == METHOD_1_AGAINST_1) {    </span>
+<span class="nc" id="L558">	    Instance tempInst = (Instance)inst.copy(); </span>
+<span class="nc" id="L559">	    tempInst.setDataset(m_TwoClassDataset);</span>
+<span class="nc" id="L560">	    result[i] = m_Classifiers[i].distributionForInstance(tempInst)[1];  </span>
+	  } else {
+<span class="nc" id="L562">	    m_ClassFilters[i].input(inst);</span>
+<span class="nc" id="L563">	    m_ClassFilters[i].batchFinished();</span>
+<span class="nc" id="L564">	    result[i] = m_Classifiers[i].</span>
+<span class="nc" id="L565">	      distributionForInstance(m_ClassFilters[i].output())[1];</span>
+	  }
+	}
+      }
+    }
+<span class="nc" id="L570">    return result;</span>
+  }
+
+  /**
+   * Returns the distribution for an instance.
+   *
+   * @param inst the instance to get the distribution for
+   * @return the distribution
+   * @throws Exception if the distribution can't be computed successfully
+   */
+  public double[] distributionForInstance(Instance inst) throws Exception {
+    
+<span class="fc bfc" id="L582" title="All 2 branches covered.">    if (m_Classifiers.length == 1) {</span>
+<span class="fc" id="L583">      return m_Classifiers[0].distributionForInstance(inst);</span>
+    }
+    
+<span class="fc" id="L586">    double[] probs = new double[inst.numClasses()];</span>
+
+<span class="pc bpc" id="L588" title="1 of 2 branches missed.">    if (m_Method == METHOD_1_AGAINST_1) {</span>
+<span class="nc" id="L589">      double[][] r = new double[inst.numClasses()][inst.numClasses()];</span>
+<span class="nc" id="L590">      double[][] n = new double[inst.numClasses()][inst.numClasses()];</span>
+
+<span class="nc bnc" id="L592" title="All 2 branches missed.">      for(int i = 0; i &lt; m_ClassFilters.length; i++) {</span>
+<span class="nc bnc" id="L593" title="All 2 branches missed.">	if (m_Classifiers[i] != null) {</span>
+<span class="nc" id="L594">	  Instance tempInst = (Instance)inst.copy(); </span>
+<span class="nc" id="L595">	  tempInst.setDataset(m_TwoClassDataset);</span>
+<span class="nc" id="L596">	  double [] current = m_Classifiers[i].distributionForInstance(tempInst);  </span>
+<span class="nc" id="L597">	  Range range = new Range(((RemoveWithValues)m_ClassFilters[i])</span>
+<span class="nc" id="L598">				  .getNominalIndices());</span>
+<span class="nc" id="L599">	  range.setUpper(m_ClassAttribute.numValues());</span>
+<span class="nc" id="L600">	  int[] pair = range.getSelection();</span>
+<span class="nc bnc" id="L601" title="All 4 branches missed.">          if (m_pairwiseCoupling &amp;&amp; inst.numClasses() &gt; 2) {</span>
+<span class="nc" id="L602">            r[pair[0]][pair[1]] = current[0];</span>
+<span class="nc" id="L603">            n[pair[0]][pair[1]] = m_SumOfWeights[i];</span>
+          } else {
+<span class="nc bnc" id="L605" title="All 2 branches missed.">            if (current[0] &gt; current[1]) {</span>
+<span class="nc" id="L606">              probs[pair[0]] += 1.0;</span>
+            } else {
+<span class="nc" id="L608">              probs[pair[1]] += 1.0;</span>
+            }
+          }
+        }
+      }
+<span class="nc bnc" id="L613" title="All 4 branches missed.">      if (m_pairwiseCoupling &amp;&amp; inst.numClasses() &gt; 2) {</span>
+<span class="nc" id="L614">        return pairwiseCoupling(n, r);</span>
+      }
+    } else {
+      // error correcting style methods
+<span class="fc bfc" id="L618" title="All 2 branches covered.">      for(int i = 0; i &lt; m_ClassFilters.length; i++) {</span>
+<span class="fc" id="L619">	m_ClassFilters[i].input(inst);</span>
+<span class="fc" id="L620">	m_ClassFilters[i].batchFinished();</span>
+<span class="fc" id="L621">	double [] current = m_Classifiers[i].</span>
+<span class="fc" id="L622">	  distributionForInstance(m_ClassFilters[i].output());</span>
+<span class="fc bfc" id="L623" title="All 2 branches covered.">	for (int j = 0; j &lt; m_ClassAttribute.numValues(); j++) {</span>
+<span class="fc bfc" id="L624" title="All 2 branches covered.">	  if (((MakeIndicator)m_ClassFilters[i]).getValueRange().isInRange(j)) {</span>
+<span class="fc" id="L625">	    probs[j] += current[1];</span>
+	  } else {
+<span class="fc" id="L627">	    probs[j] += current[0];</span>
+	  }
+	}
+      }
+    }
+    
+<span class="pc bpc" id="L633" title="1 of 2 branches missed.">    if (Utils.gr(Utils.sum(probs), 0)) {</span>
+<span class="fc" id="L634">      Utils.normalize(probs);</span>
+<span class="fc" id="L635">      return probs;</span>
+    } else {
+<span class="nc" id="L637">      return m_ZeroR.distributionForInstance(inst);</span>
+    }
+  }
+
+  /**
+   * Prints the classifiers.
+   * 
+   * @return a string representation of the classifier
+   */
+  public String toString() {
+
+<span class="pc bpc" id="L648" title="1 of 2 branches missed.">    if (m_Classifiers == null) {</span>
+<span class="fc" id="L649">      return &quot;MultiClassClassifier: No model built yet.&quot;;</span>
+    }
+<span class="nc" id="L651">    StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L652">    text.append(&quot;MultiClassClassifier\n\n&quot;);</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">    for (int i = 0; i &lt; m_Classifiers.length; i++) {</span>
+<span class="nc" id="L654">      text.append(&quot;Classifier &quot;).append(i + 1);</span>
+<span class="nc bnc" id="L655" title="All 2 branches missed.">      if (m_Classifiers[i] != null) {</span>
+<span class="nc bnc" id="L656" title="All 4 branches missed.">        if ((m_ClassFilters != null) &amp;&amp; (m_ClassFilters[i] != null)) {</span>
+<span class="nc bnc" id="L657" title="All 2 branches missed.">	  if (m_ClassFilters[i] instanceof RemoveWithValues) {</span>
+<span class="nc" id="L658">	    Range range = new Range(((RemoveWithValues)m_ClassFilters[i])</span>
+<span class="nc" id="L659">				    .getNominalIndices());</span>
+<span class="nc" id="L660">	    range.setUpper(m_ClassAttribute.numValues());</span>
+<span class="nc" id="L661">	    int[] pair = range.getSelection();</span>
+<span class="nc" id="L662">	    text.append(&quot;, &quot; + (pair[0]+1) + &quot; vs &quot; + (pair[1]+1));</span>
+<span class="nc bnc" id="L663" title="All 2 branches missed.">	  } else if (m_ClassFilters[i] instanceof MakeIndicator) {</span>
+<span class="nc" id="L664">	    text.append(&quot;, using indicator values: &quot;);</span>
+<span class="nc" id="L665">	    text.append(((MakeIndicator)m_ClassFilters[i]).getValueRange());</span>
+	  }
+        }
+<span class="nc" id="L668">        text.append('\n');</span>
+<span class="nc" id="L669">        text.append(m_Classifiers[i].toString() + &quot;\n\n&quot;);</span>
+      } else {
+<span class="nc" id="L671">        text.append(&quot; Skipped (no training examples)\n&quot;);</span>
+      }
+    }
+
+<span class="nc" id="L675">    return text.toString();</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options
+   *
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions()  {
+
+<span class="fc" id="L685">    Vector vec = new Vector(4);</span>
+    
+<span class="fc" id="L687">    vec.addElement(new Option(</span>
+<span class="fc" id="L688">       &quot;\tSets the method to use. Valid values are 0 (1-against-all),\n&quot;</span>
+       +&quot;\t1 (random codes), 2 (exhaustive code), and 3 (1-against-1). (default 0)\n&quot;,
+<span class="fc" id="L690">       &quot;M&quot;, 1, &quot;-M &lt;num&gt;&quot;));</span>
+<span class="fc" id="L691">    vec.addElement(new Option(</span>
+<span class="fc" id="L692">       &quot;\tSets the multiplier when using random codes. (default 2.0)&quot;,</span>
+<span class="fc" id="L693">       &quot;R&quot;, 1, &quot;-R &lt;num&gt;&quot;));</span>
+<span class="fc" id="L694">    vec.addElement(new Option(</span>
+<span class="fc" id="L695">        &quot;\tUse pairwise coupling (only has an effect for 1-against1)&quot;,</span>
+<span class="fc" id="L696">        &quot;P&quot;, 0, &quot;-P&quot;));</span>
+
+<span class="fc" id="L698">    Enumeration enu = super.listOptions();</span>
+<span class="fc bfc" id="L699" title="All 2 branches covered.">    while (enu.hasMoreElements()) {</span>
+<span class="fc" id="L700">      vec.addElement(enu.nextElement());</span>
+    }
+<span class="fc" id="L702">    return vec.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;num&amp;gt;
+   *  Sets the method to use. Valid values are 0 (1-against-all),
+   *  1 (random codes), 2 (exhaustive code), and 3 (1-against-1). (default 0)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;num&amp;gt;
+   *  Sets the multiplier when using random codes. (default 2.0)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P
+   *  Use pairwise coupling (only has an effect for 1-against1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W
+   *  Full name of base classifier.
+   *  (default: weka.classifiers.functions.Logistic)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to classifier weka.classifiers.functions.Logistic:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Turn on debugging output.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;ridge&amp;gt;
+   *  Set the ridge in the log-likelihood.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;number&amp;gt;
+   *  Set the maximum number of iterations (default -1, until convergence).&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+  
+<span class="fc" id="L754">    String errorString = Utils.getOption('M', options);</span>
+<span class="fc bfc" id="L755" title="All 2 branches covered.">    if (errorString.length() != 0) {</span>
+<span class="fc" id="L756">      setMethod(new SelectedTag(Integer.parseInt(errorString), </span>
+<span class="fc" id="L757">                                             TAGS_METHOD));</span>
+    } else {
+<span class="fc" id="L759">      setMethod(new SelectedTag(METHOD_1_AGAINST_ALL, TAGS_METHOD));</span>
+    }
+
+<span class="fc" id="L762">    String rfactorString = Utils.getOption('R', options);</span>
+<span class="fc bfc" id="L763" title="All 2 branches covered.">    if (rfactorString.length() != 0) {</span>
+<span class="fc" id="L764">      setRandomWidthFactor((new Double(rfactorString)).doubleValue());</span>
+    } else {
+<span class="fc" id="L766">      setRandomWidthFactor(2.0);</span>
+    }
+
+<span class="fc" id="L769">    setUsePairwiseCoupling(Utils.getFlag('P', options));</span>
+
+<span class="fc" id="L771">    super.setOptions(options);</span>
+<span class="fc" id="L772">  }</span>
+
+  /**
+   * Gets the current settings of the Classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+
+<span class="fc" id="L781">    String [] superOptions = super.getOptions();</span>
+<span class="fc" id="L782">    String [] options = new String [superOptions.length + 5];</span>
+
+<span class="fc" id="L784">    int current = 0;</span>
+
+
+<span class="fc" id="L787">    options[current++] = &quot;-M&quot;;</span>
+<span class="fc" id="L788">    options[current++] = &quot;&quot; + m_Method;</span>
+
+<span class="pc bpc" id="L790" title="1 of 2 branches missed.">    if (getUsePairwiseCoupling()) {</span>
+<span class="nc" id="L791">      options[current++] = &quot;-P&quot;;</span>
+    }
+    
+<span class="fc" id="L794">    options[current++] = &quot;-R&quot;;</span>
+<span class="fc" id="L795">    options[current++] = &quot;&quot; + m_RandomWidthFactor;</span>
+
+<span class="fc" id="L797">    System.arraycopy(superOptions, 0, options, current, </span>
+<span class="fc" id="L798">		     superOptions.length);</span>
+
+<span class="fc" id="L800">    current += superOptions.length;</span>
+<span class="fc bfc" id="L801" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc" id="L802">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="fc" id="L804">    return options;</span>
+  }
+
+  /**
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L813">    return &quot;A metaclassifier for handling multi-class datasets with 2-class &quot;</span>
+      + &quot;classifiers. This classifier is also capable of &quot;
+      + &quot;applying error correcting output codes for increased accuracy.&quot;;
+  }
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String randomWidthFactorTipText() {
+
+<span class="nc" id="L824">    return &quot;Sets the width multiplier when using random codes. The number &quot;</span>
+      + &quot;of codes generated will be thus number multiplied by the number of &quot;
+      + &quot;classes.&quot;;
+  }
+
+  /**
+   * Gets the multiplier when generating random codes. Will generate
+   * numClasses * m_RandomWidthFactor codes.
+   *
+   * @return the width multiplier
+   */
+  public double getRandomWidthFactor() {
+
+<span class="nc" id="L837">    return m_RandomWidthFactor;</span>
+  }
+  
+  /**
+   * Sets the multiplier when generating random codes. Will generate
+   * numClasses * m_RandomWidthFactor codes.
+   *
+   * @param newRandomWidthFactor the new width multiplier
+   */
+  public void setRandomWidthFactor(double newRandomWidthFactor) {
+
+<span class="fc" id="L848">    m_RandomWidthFactor = newRandomWidthFactor;</span>
+<span class="fc" id="L849">  }</span>
+  
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String methodTipText() {
+<span class="nc" id="L856">    return &quot;Sets the method to use for transforming the multi-class problem into &quot;</span>
+      + &quot;several 2-class ones.&quot;; 
+  }
+
+  /**
+   * Gets the method used. Will be one of METHOD_1_AGAINST_ALL,
+   * METHOD_ERROR_RANDOM, METHOD_ERROR_EXHAUSTIVE, or METHOD_1_AGAINST_1.
+   *
+   * @return the current method.
+   */
+  public SelectedTag getMethod() {
+      
+<span class="nc" id="L868">    return new SelectedTag(m_Method, TAGS_METHOD);</span>
+  }
+
+  /**
+   * Sets the method used. Will be one of METHOD_1_AGAINST_ALL,
+   * METHOD_ERROR_RANDOM, METHOD_ERROR_EXHAUSTIVE, or METHOD_1_AGAINST_1.
+   *
+   * @param newMethod the new method.
+   */
+  public void setMethod(SelectedTag newMethod) {
+    
+<span class="pc bpc" id="L879" title="1 of 2 branches missed.">    if (newMethod.getTags() == TAGS_METHOD) {</span>
+<span class="fc" id="L880">      m_Method = newMethod.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L882">  }</span>
+
+  /**
+   * Set whether to use pairwise coupling with 1-vs-1 
+   * classification to improve probability estimates.
+   *
+   * @param p true if pairwise coupling is to be used
+   */
+  public void setUsePairwiseCoupling(boolean p) {
+<span class="fc" id="L891">    m_pairwiseCoupling = p;</span>
+<span class="fc" id="L892">  }</span>
+
+  /**
+   * Gets whether to use pairwise coupling with 1-vs-1 
+   * classification to improve probability estimates.
+   *
+   * @return true if pairwise coupling is to be used
+   */
+  public boolean getUsePairwiseCoupling() {
+<span class="fc" id="L901">    return m_pairwiseCoupling;</span>
+  }
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String usePairwiseCouplingTipText() {
+<span class="nc" id="L909">    return &quot;Use pairwise coupling (only has an effect for 1-against-1).&quot;;</span>
+  }
+
+  /**
+   * Implements pairwise coupling.
+   *
+   * @param n the sum of weights used to train each model
+   * @param r the probability estimate from each model
+   * @return the coupled estimates
+   */
+  public static double[] pairwiseCoupling(double[][] n, double[][] r) {
+
+    // Initialize p and u array
+<span class="nc" id="L922">    double[] p = new double[r.length];</span>
+<span class="nc bnc" id="L923" title="All 2 branches missed.">    for (int i =0; i &lt; p.length; i++) {</span>
+<span class="nc" id="L924">      p[i] = 1.0 / (double)p.length;</span>
+    }
+<span class="nc" id="L926">    double[][] u = new double[r.length][r.length];</span>
+<span class="nc bnc" id="L927" title="All 2 branches missed.">    for (int i = 0; i &lt; r.length; i++) {</span>
+<span class="nc bnc" id="L928" title="All 2 branches missed.">      for (int j = i + 1; j &lt; r.length; j++) {</span>
+<span class="nc" id="L929">	u[i][j] = 0.5;</span>
+      }
+    }
+
+    // firstSum doesn't change
+<span class="nc" id="L934">    double[] firstSum = new double[p.length];</span>
+<span class="nc bnc" id="L935" title="All 2 branches missed.">    for (int i = 0; i &lt; p.length; i++) {</span>
+<span class="nc bnc" id="L936" title="All 2 branches missed.">      for (int j = i + 1; j &lt; p.length; j++) {</span>
+<span class="nc" id="L937">	firstSum[i] += n[i][j] * r[i][j];</span>
+<span class="nc" id="L938">	firstSum[j] += n[i][j] * (1 - r[i][j]);</span>
+      }
+    }
+
+    // Iterate until convergence
+    boolean changed;
+<span class="nc bnc" id="L944" title="All 2 branches missed.">    do {</span>
+<span class="nc" id="L945">      changed = false;</span>
+<span class="nc" id="L946">      double[] secondSum = new double[p.length];</span>
+<span class="nc bnc" id="L947" title="All 2 branches missed.">      for (int i = 0; i &lt; p.length; i++) {</span>
+<span class="nc bnc" id="L948" title="All 2 branches missed.">	for (int j = i + 1; j &lt; p.length; j++) {</span>
+<span class="nc" id="L949">	  secondSum[i] += n[i][j] * u[i][j];</span>
+<span class="nc" id="L950">	  secondSum[j] += n[i][j] * (1 - u[i][j]);</span>
+	}
+      }
+<span class="nc bnc" id="L953" title="All 2 branches missed.">      for (int i = 0; i &lt; p.length; i++) {</span>
+<span class="nc bnc" id="L954" title="All 4 branches missed.">	if ((firstSum[i] == 0) || (secondSum[i] == 0)) {</span>
+<span class="nc bnc" id="L955" title="All 2 branches missed.">	  if (p[i] &gt; 0) {</span>
+<span class="nc" id="L956">	    changed = true;</span>
+	  }
+<span class="nc" id="L958">	  p[i] = 0;</span>
+	} else {
+<span class="nc" id="L960">	  double factor = firstSum[i] / secondSum[i];</span>
+<span class="nc" id="L961">	  double pOld = p[i];</span>
+<span class="nc" id="L962">	  p[i] *= factor;</span>
+<span class="nc bnc" id="L963" title="All 2 branches missed.">	  if (Math.abs(pOld - p[i]) &gt; 1.0e-3) {</span>
+<span class="nc" id="L964">	    changed = true;</span>
+	  }
+	}
+      }
+<span class="nc" id="L968">      Utils.normalize(p);</span>
+<span class="nc bnc" id="L969" title="All 2 branches missed.">      for (int i = 0; i &lt; r.length; i++) {</span>
+<span class="nc bnc" id="L970" title="All 2 branches missed.">	for (int j = i + 1; j &lt; r.length; j++) {</span>
+<span class="nc" id="L971">	  u[i][j] = p[i] / (p[i] + p[j]);</span>
+	}
+      }
+<span class="nc" id="L974">    } while (changed);</span>
+<span class="nc" id="L975">    return p;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L984">    return RevisionUtils.extract(&quot;$Revision: 1.48 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L993">    runClassifier(new MultiClassClassifier(), argv);</span>
+<span class="nc" id="L994">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

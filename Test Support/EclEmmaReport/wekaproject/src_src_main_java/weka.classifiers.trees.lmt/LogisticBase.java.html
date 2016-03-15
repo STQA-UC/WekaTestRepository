@@ -1,0 +1,1039 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>LogisticBase.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees.lmt</a> &gt; <span class="el_source">LogisticBase.java</span></div><h1>LogisticBase.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    LogisticBase.java
+ *    Copyright (C) 2003 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.trees.lmt;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.Evaluation;
+import weka.classifiers.functions.SimpleLinearRegression;
+import weka.core.Attribute;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+
+/**
+ * Base/helper class for building logistic regression models with the LogitBoost algorithm.
+ * Used for building logistic model trees (weka.classifiers.trees.lmt.LMT)
+ * and standalone logistic regression (weka.classifiers.functions.SimpleLogistic).
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Niels Landwehr
+ * @author Marc Sumner
+ * @version $Revision: 1.9 $
+ */
+<span class="fc" id="L53">public class LogisticBase </span>
+    extends Classifier 
+    implements WeightedInstancesHandler {
+
+    /** for serialization */
+    static final long serialVersionUID = 168765678097825064L;
+  
+    /** Header-only version of the numeric version of the training data*/
+    protected Instances m_numericDataHeader;
+    /** 
+     * Numeric version of the training data. Original class is replaced by a numeric pseudo-class.
+     */
+    protected Instances m_numericData;
+    
+    /** Training data */
+    protected Instances m_train;
+    
+    /** Use cross-validation to determine best number of LogitBoost iterations ?*/
+    protected boolean m_useCrossValidation;
+
+    /**Use error on probabilities for stopping criterion of LogitBoost? */
+    protected boolean m_errorOnProbabilities;
+
+    /**Use fixed number of iterations for LogitBoost? (if negative, cross-validate number of iterations)*/
+    protected int m_fixedNumIterations;
+    
+    /**Use heuristic to stop performing LogitBoost iterations earlier?
+     * If enabled, LogitBoost is stopped if the current (local) minimum of the error on a test set as 
+     * a function of the number of iterations has not changed for m_heuristicStop iterations.
+     */
+<span class="fc" id="L83">    protected int m_heuristicStop = 50;</span>
+ 
+    /**The number of LogitBoost iterations performed.*/
+<span class="fc" id="L86">    protected int m_numRegressions = 0;</span>
+    
+    /**The maximum number of LogitBoost iterations*/
+    protected int m_maxIterations;
+    
+    /**The number of different classes*/
+    protected int m_numClasses;
+
+    /**Array holding the simple regression functions fit by LogitBoost*/
+    protected SimpleLinearRegression[][] m_regressions;
+        
+    /**Number of folds for cross-validating number of LogitBoost iterations*/
+<span class="fc" id="L98">    protected static int m_numFoldsBoosting = 5;</span>
+
+    /**Threshold on the Z-value for LogitBoost*/
+    protected static final double Z_MAX = 3;
+    
+    /** If true, the AIC is used to choose the best iteration*/
+<span class="fc" id="L104">    private boolean m_useAIC = false;</span>
+    
+    /** Effective number of parameters used for AIC / BIC automatic stopping */
+<span class="fc" id="L107">    protected double m_numParameters = 0;</span>
+    
+    /**Threshold for trimming weights. Instances with a weight lower than this (as a percentage
+     * of total weights) are not included in the regression fit.
+     **/
+<span class="fc" id="L112">    protected double m_weightTrimBeta = 0;</span>
+
+    /**
+     * Constructor that creates LogisticBase object with standard options.
+     */
+<span class="fc" id="L117">    public LogisticBase(){</span>
+<span class="fc" id="L118">	m_fixedNumIterations = -1;</span>
+<span class="fc" id="L119">	m_useCrossValidation = true;</span>
+<span class="fc" id="L120">	m_errorOnProbabilities = false;	</span>
+<span class="fc" id="L121">	m_maxIterations = 500;</span>
+<span class="fc" id="L122">        m_useAIC = false;</span>
+<span class="fc" id="L123">        m_numParameters = 0;</span>
+<span class="fc" id="L124">    }</span>
+    
+    /**
+     * Constructor to create LogisticBase object.
+     * @param numBoostingIterations fixed number of iterations for LogitBoost (if negative, use cross-validation or
+     * stopping criterion on the training data).
+     * @param useCrossValidation cross-validate number of LogitBoost iterations (if false, use stopping 
+     * criterion on the training data).
+     * @param errorOnProbabilities if true, use error on probabilities 
+     * instead of misclassification for stopping criterion of LogitBoost
+     */
+<span class="fc" id="L135">    public LogisticBase(int numBoostingIterations, boolean useCrossValidation, boolean errorOnProbabilities){</span>
+<span class="fc" id="L136">	m_fixedNumIterations = numBoostingIterations;</span>
+<span class="fc" id="L137">	m_useCrossValidation = useCrossValidation;</span>
+<span class="fc" id="L138">	m_errorOnProbabilities = errorOnProbabilities;	</span>
+<span class="fc" id="L139">	m_maxIterations = 500;</span>
+<span class="fc" id="L140">        m_useAIC = false;</span>
+<span class="fc" id="L141">        m_numParameters = 0;</span>
+<span class="fc" id="L142">    }    </span>
+
+    /**
+     * Builds the logistic regression model usiing LogitBoost.
+     * 
+     * @param data the training data
+     * @throws Exception if something goes wrong
+     */
+    public void buildClassifier(Instances data) throws Exception {			
+
+<span class="fc" id="L152">	m_train = new Instances(data);</span>
+	
+<span class="fc" id="L154">	m_numClasses = m_train.numClasses();</span>
+	
+	//init the array of simple regression functions
+<span class="fc" id="L157">	m_regressions = initRegressions();</span>
+<span class="fc" id="L158">	m_numRegressions = 0;</span>
+
+	//get numeric version of the training data (class variable replaced  by numeric pseudo-class)
+<span class="fc" id="L161">	m_numericData = getNumericData(m_train);	</span>
+	
+	//save header info
+<span class="fc" id="L164">	m_numericDataHeader = new Instances(m_numericData, 0);</span>
+	
+	
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">	if (m_fixedNumIterations &gt; 0) {</span>
+	    //run LogitBoost for fixed number of iterations
+<span class="nc" id="L169">	    performBoosting(m_fixedNumIterations);</span>
+<span class="pc bpc" id="L170" title="1 of 2 branches missed.">	} else if (m_useAIC) { // Marc had this after the test for m_useCrossValidation. Changed by Eibe.</span>
+            //run LogitBoost using information criterion for stopping
+<span class="nc" id="L172">            performBoostingInfCriterion();</span>
+<span class="pc bpc" id="L173" title="1 of 2 branches missed.">        } else if (m_useCrossValidation) {</span>
+	    //cross-validate number of LogitBoost iterations
+<span class="fc" id="L175">	    performBoostingCV();</span>
+	} else {
+	    //run LogitBoost with number of iterations that minimizes error on the training set
+<span class="nc" id="L178">	    performBoosting();</span>
+	}	
+	
+	//only keep the simple regression functions that correspond to the selected number of LogitBoost iterations
+<span class="fc" id="L182">	m_regressions = selectRegressions(m_regressions);	</span>
+<span class="fc" id="L183">    }   </span>
+
+    /**
+     * Runs LogitBoost, determining the best number of iterations by cross-validation.
+     * 
+     * @throws Exception if something goes wrong
+     */
+    protected void performBoostingCV() throws Exception{			
+	
+	//completed iteration keeps track of the number of iterations that have been
+	//performed in every fold (some might stop earlier than others). 
+	//Best iteration is selected only from these.
+<span class="fc" id="L195">	int completedIterations = m_maxIterations;</span>
+	
+<span class="fc" id="L197">	Instances allData = new Instances(m_train);</span>
+	
+<span class="fc" id="L199">	allData.stratify(m_numFoldsBoosting);	      </span>
+
+<span class="fc" id="L201">	double[] error = new double[m_maxIterations + 1];	</span>
+	
+<span class="fc bfc" id="L203" title="All 2 branches covered.">	for (int i = 0; i &lt; m_numFoldsBoosting; i++) {</span>
+	    //split into training/test data in fold
+<span class="fc" id="L205">	    Instances train = allData.trainCV(m_numFoldsBoosting,i);</span>
+<span class="fc" id="L206">	    Instances test = allData.testCV(m_numFoldsBoosting,i);</span>
+
+	    //initialize LogitBoost
+<span class="fc" id="L209">	    m_numRegressions = 0;</span>
+<span class="fc" id="L210">	    m_regressions = initRegressions();</span>
+
+	    //run LogitBoost iterations
+<span class="fc" id="L213">	    int iterations = performBoosting(train,test,error,completedIterations);	    </span>
+<span class="fc bfc" id="L214" title="All 2 branches covered.">	    if (iterations &lt; completedIterations) completedIterations = iterations;	    </span>
+	}
+	
+	//determine iteration with minimum error over the folds
+<span class="fc" id="L218">	int bestIteration = getBestIteration(error,completedIterations);</span>
+	
+	//rebuild model on all of the training data
+<span class="fc" id="L221">	m_numRegressions = 0;</span>
+<span class="fc" id="L222">	performBoosting(bestIteration);</span>
+<span class="fc" id="L223">    }    </span>
+    
+    /**
+     * Runs LogitBoost, determining the best number of iterations by an information criterion (currently AIC).
+     */
+    protected void performBoostingInfCriterion() throws Exception{
+        
+<span class="nc" id="L230">        double criterion = 0.0;</span>
+<span class="nc" id="L231">        double bestCriterion = Double.MAX_VALUE;</span>
+<span class="nc" id="L232">        int bestIteration = 0;</span>
+<span class="nc" id="L233">        int noMin = 0;</span>
+        
+        // Variable to keep track of criterion values (AIC)
+<span class="nc" id="L236">        double criterionValue = Double.MAX_VALUE;</span>
+        
+        // initialize Ys/Fs/ps
+<span class="nc" id="L239">        double[][] trainYs = getYs(m_train);</span>
+<span class="nc" id="L240">        double[][] trainFs = getFs(m_numericData);</span>
+<span class="nc" id="L241">        double[][] probs = getProbs(trainFs);</span>
+        
+        // Array with true/false if the attribute is included in the model or not
+<span class="nc" id="L244">        boolean[][] attributes = new boolean[m_numClasses][m_numericDataHeader.numAttributes()];</span>
+        
+<span class="nc" id="L246">        int iteration = 0;</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        while (iteration &lt; m_maxIterations) {</span>
+            
+            //perform single LogitBoost iteration
+<span class="nc" id="L250">            boolean foundAttribute = performIteration(iteration, trainYs, trainFs, probs, m_numericData);</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">            if (foundAttribute) {</span>
+<span class="nc" id="L252">                iteration++;</span>
+<span class="nc" id="L253">                m_numRegressions = iteration;</span>
+            } else {
+                //could not fit simple linear regression: stop LogitBoost
+                break;
+            }
+            
+<span class="nc" id="L259">            double numberOfAttributes = m_numParameters + iteration;</span>
+            
+            // Fill criterion array values
+<span class="nc" id="L262">            criterionValue = 2.0 * negativeLogLikelihood(trainYs, probs) +</span>
+<span class="nc" id="L263">              2.0 * numberOfAttributes;</span>
+
+            //heuristic: stop LogitBoost if the current minimum has not changed for &lt;m_heuristicStop&gt; iterations
+<span class="nc bnc" id="L266" title="All 2 branches missed.">            if (noMin &gt; m_heuristicStop) break;</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">            if (criterionValue &lt; bestCriterion) {</span>
+<span class="nc" id="L268">                bestCriterion = criterionValue;</span>
+<span class="nc" id="L269">                bestIteration = iteration;</span>
+<span class="nc" id="L270">                noMin = 0;</span>
+            } else {
+<span class="nc" id="L272">                noMin++;</span>
+            }
+        }
+
+<span class="nc" id="L276">        m_numRegressions = 0;</span>
+<span class="nc" id="L277">        performBoosting(bestIteration);</span>
+<span class="nc" id="L278">    }</span>
+
+    /**
+     * Runs LogitBoost on a training set and monitors the error on a test set.
+     * Used for running one fold when cross-validating the number of LogitBoost iterations.
+     * @param train the training set
+     * @param test the test set
+     * @param error array to hold the logged error values
+     * @param maxIterations the maximum number of LogitBoost iterations to run
+     * @return the number of completed LogitBoost iterations (can be smaller than maxIterations 
+     * if the heuristic for early stopping is active or there is a problem while fitting the regressions 
+     * in LogitBoost).
+     * @throws Exception if something goes wrong
+     */
+    protected int performBoosting(Instances train, Instances test, 
+				  double[] error, int maxIterations) throws Exception{
+	
+	//get numeric version of the (sub)set of training instances
+<span class="fc" id="L296">	Instances numericTrain = getNumericData(train);		</span>
+
+	//initialize Ys/Fs/ps 
+<span class="fc" id="L299">	double[][] trainYs = getYs(train);</span>
+<span class="fc" id="L300">	double[][] trainFs = getFs(numericTrain);		</span>
+<span class="fc" id="L301">	double[][] probs = getProbs(trainFs);	</span>
+
+<span class="fc" id="L303">	int iteration = 0;</span>
+
+<span class="fc" id="L305"> 	int noMin = 0;</span>
+<span class="fc" id="L306">	double lastMin = Double.MAX_VALUE;	</span>
+	
+<span class="pc bpc" id="L308" title="1 of 2 branches missed.">	if (m_errorOnProbabilities) error[0] += getMeanAbsoluteError(test);</span>
+<span class="fc" id="L309">	else error[0] += getErrorRate(test);</span>
+	
+<span class="fc bfc" id="L311" title="All 2 branches covered.">	while (iteration &lt; maxIterations) {</span>
+	  
+	    //perform single LogitBoost iteration
+<span class="fc" id="L314">	    boolean foundAttribute = performIteration(iteration, trainYs, trainFs, probs, numericTrain);</span>
+<span class="fc bfc" id="L315" title="All 2 branches covered.">	    if (foundAttribute) {</span>
+<span class="fc" id="L316">		iteration++;</span>
+<span class="fc" id="L317">		m_numRegressions = iteration;</span>
+	    } else {
+		//could not fit simple linear regression: stop LogitBoost
+		break;
+	    }
+	    
+<span class="pc bpc" id="L323" title="1 of 2 branches missed.">	    if (m_errorOnProbabilities) error[iteration] += getMeanAbsoluteError(test);</span>
+<span class="fc" id="L324">	    else error[iteration] += getErrorRate(test);</span>
+	  
+	    //heuristic: stop LogitBoost if the current minimum has not changed for &lt;m_heuristicStop&gt; iterations
+<span class="fc bfc" id="L327" title="All 2 branches covered.">	    if (noMin &gt; m_heuristicStop) break;</span>
+<span class="fc bfc" id="L328" title="All 2 branches covered.">	    if (error[iteration] &lt; lastMin) {</span>
+<span class="fc" id="L329">		lastMin = error[iteration];</span>
+<span class="fc" id="L330">		noMin = 0;</span>
+	    } else {
+<span class="fc" id="L332">		noMin++;</span>
+	    }	    	      	    
+	}
+
+<span class="fc" id="L336">	return iteration;</span>
+    }
+
+    /**
+     * Runs LogitBoost with a fixed number of iterations.
+     * @param numIterations the number of iterations to run
+     * @throws Exception if something goes wrong
+     */
+    protected void performBoosting(int numIterations) throws Exception{
+
+	//initialize Ys/Fs/ps 
+<span class="fc" id="L347">	double[][] trainYs = getYs(m_train);</span>
+<span class="fc" id="L348">	double[][] trainFs = getFs(m_numericData);		</span>
+<span class="fc" id="L349">	double[][] probs = getProbs(trainFs);</span>
+	
+<span class="fc" id="L351">	int iteration = 0;</span>
+
+	//run iterations
+<span class="fc bfc" id="L354" title="All 2 branches covered.">	while (iteration &lt; numIterations) {</span>
+<span class="fc" id="L355">	    boolean foundAttribute = performIteration(iteration, trainYs, trainFs, probs, m_numericData);</span>
+<span class="fc bfc" id="L356" title="All 2 branches covered.">	    if (foundAttribute) iteration++;</span>
+	    else break;
+	}
+	
+<span class="fc" id="L360">	m_numRegressions = iteration;</span>
+<span class="fc" id="L361">    }</span>
+    
+    /**
+     * Runs LogitBoost using the stopping criterion on the training set.
+     * The number of iterations is used that gives the lowest error on the training set, either misclassification
+     * or error on probabilities (depending on the errorOnProbabilities option).
+     * @throws Exception if something goes wrong
+     */
+    protected void performBoosting() throws Exception{
+	
+	//initialize Ys/Fs/ps
+<span class="nc" id="L372">	double[][] trainYs = getYs(m_train);</span>
+<span class="nc" id="L373">	double[][] trainFs = getFs(m_numericData);		</span>
+<span class="nc" id="L374">	double[][] probs = getProbs(trainFs);	</span>
+
+<span class="nc" id="L376">	int iteration = 0;</span>
+
+<span class="nc" id="L378">	double[] trainErrors = new double[m_maxIterations+1];</span>
+<span class="nc" id="L379">	trainErrors[0] = getErrorRate(m_train);</span>
+	
+<span class="nc" id="L381">	int noMin = 0;</span>
+<span class="nc" id="L382">	double lastMin = Double.MAX_VALUE;</span>
+	
+<span class="nc bnc" id="L384" title="All 2 branches missed.">	while (iteration &lt; m_maxIterations) {</span>
+<span class="nc" id="L385">	    boolean foundAttribute = performIteration(iteration, trainYs, trainFs, probs, m_numericData);</span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">	    if (foundAttribute) {</span>
+<span class="nc" id="L387">		iteration++;</span>
+<span class="nc" id="L388">		m_numRegressions = iteration;</span>
+	    } else {		
+		//could not fit simple regression
+		break;
+	    }
+	    
+<span class="nc" id="L394">	    trainErrors[iteration] = getErrorRate(m_train);	    </span>
+	 
+	    //heuristic: stop LogitBoost if the current minimum has not changed for &lt;m_heuristicStop&gt; iterations
+<span class="nc bnc" id="L397" title="All 2 branches missed.">	    if (noMin &gt; m_heuristicStop) break;	    </span>
+<span class="nc bnc" id="L398" title="All 2 branches missed.">	    if (trainErrors[iteration] &lt; lastMin) {</span>
+<span class="nc" id="L399">		lastMin = trainErrors[iteration];</span>
+<span class="nc" id="L400">		noMin = 0;</span>
+	    } else {
+<span class="nc" id="L402">		noMin++;</span>
+	    }
+	}
+	
+	//find iteration with best error
+<span class="nc" id="L407">        m_numRegressions = getBestIteration(trainErrors, iteration);	</span>
+<span class="nc" id="L408">    }</span>
+
+    /**
+     * Returns the misclassification error of the current model on a set of instances.
+     * @param data the set of instances
+     * @return the error rate
+     * @throws Exception if something goes wrong
+     */
+    protected double getErrorRate(Instances data) throws Exception {
+<span class="fc" id="L417">	Evaluation eval = new Evaluation(data);</span>
+<span class="fc" id="L418">	eval.evaluateModel(this,data);</span>
+<span class="fc" id="L419">	return eval.errorRate();</span>
+    }
+
+    /**
+     * Returns the error of the probability estimates for the current model on a set of instances.
+     * @param data the set of instances
+     * @return the error
+     * @throws Exception if something goes wrong
+     */
+    protected double getMeanAbsoluteError(Instances data) throws Exception {
+<span class="nc" id="L429">	Evaluation eval = new Evaluation(data);</span>
+<span class="nc" id="L430">	eval.evaluateModel(this,data);</span>
+<span class="nc" id="L431">	return eval.meanAbsoluteError();</span>
+    }
+
+    /**
+     * Helper function to find the minimum in an array of error values.
+     * 
+     * @param errors an array containing errors
+     * @param maxIteration the maximum of iterations
+     * @return the minimum
+     */
+    protected int getBestIteration(double[] errors, int maxIteration) {
+<span class="fc" id="L442">	double bestError = errors[0];</span>
+<span class="fc" id="L443">	int bestIteration = 0;</span>
+<span class="fc bfc" id="L444" title="All 2 branches covered.">	for (int i = 1; i &lt;= maxIteration; i++) {	    </span>
+<span class="fc bfc" id="L445" title="All 2 branches covered.">	    if (errors[i] &lt; bestError) {</span>
+<span class="fc" id="L446">		bestError = errors[i];</span>
+<span class="fc" id="L447">		bestIteration = i;		</span>
+	    }
+	} 
+<span class="fc" id="L450">	return bestIteration;</span>
+    }
+
+    /**
+     * Performs a single iteration of LogitBoost, and updates the model accordingly.
+     * A simple regression function is fit to the response and added to the m_regressions array.
+     * @param iteration the current iteration 
+     * @param trainYs the y-values (see description of LogitBoost) for the model trained so far
+     * @param trainFs the F-values (see description of LogitBoost) for the model trained so far
+     * @param probs the p-values (see description of LogitBoost) for the model trained so far
+     * @param trainNumeric numeric version of the training data
+     * @return returns true if iteration performed successfully, false if no simple regression function 
+     * could be fitted.
+     * @throws Exception if something goes wrong
+     */
+    protected boolean performIteration(int iteration, 
+				       double[][] trainYs,
+				       double[][] trainFs,
+				       double[][] probs,
+				       Instances trainNumeric) throws Exception {
+	
+<span class="fc bfc" id="L471" title="All 2 branches covered.">	for (int j = 0; j &lt; m_numClasses; j++) {</span>
+            // Keep track of sum of weights
+<span class="fc" id="L473">            double[] weights = new double[trainNumeric.numInstances()];</span>
+<span class="fc" id="L474">            double weightSum = 0.0;</span>
+	    
+	    //make copy of data (need to save the weights) 
+<span class="fc" id="L477">	    Instances boostData = new Instances(trainNumeric);</span>
+	    
+<span class="fc bfc" id="L479" title="All 2 branches covered.">	    for (int i = 0; i &lt; trainNumeric.numInstances(); i++) {</span>
+		
+		//compute response and weight
+<span class="fc" id="L482">		double p = probs[i][j];</span>
+<span class="fc" id="L483">		double actual = trainYs[i][j];</span>
+<span class="fc" id="L484">		double z = getZ(actual, p);</span>
+<span class="fc" id="L485">		double w = (actual - p) / z;</span>
+		
+		//set values for instance 
+<span class="fc" id="L488">		Instance current = boostData.instance(i);</span>
+<span class="fc" id="L489">		current.setValue(boostData.classIndex(), z);</span>
+<span class="fc" id="L490">		current.setWeight(current.weight() * w);				</span>
+                
+<span class="fc" id="L492">                weights[i] = current.weight();</span>
+<span class="fc" id="L493">                weightSum += current.weight();</span>
+	    }
+            
+<span class="fc" id="L496">            Instances instancesCopy = new Instances(boostData);</span>
+            
+<span class="fc bfc" id="L498" title="All 2 branches covered.">            if (weightSum &gt; 0) {</span>
+                // Only the (1-beta)th quantile of instances are sent to the base classifier
+<span class="pc bpc" id="L500" title="1 of 2 branches missed.">                if (m_weightTrimBeta &gt; 0) {</span>
+<span class="nc" id="L501">                    double weightPercentage = 0.0;</span>
+<span class="nc" id="L502">                    int[] weightsOrder = new int[trainNumeric.numInstances()];</span>
+<span class="nc" id="L503">                    weightsOrder = Utils.sort(weights);</span>
+<span class="nc" id="L504">                    instancesCopy.delete();</span>
+                    
+                    
+<span class="nc bnc" id="L507" title="All 4 branches missed.">                    for (int i = weightsOrder.length-1; (i &gt;= 0) &amp;&amp; (weightPercentage &lt; (1-m_weightTrimBeta)); i--) {</span>
+<span class="nc" id="L508">                        instancesCopy.add(boostData.instance(weightsOrder[i]));</span>
+<span class="nc" id="L509">                        weightPercentage += (weights[weightsOrder[i]] / weightSum);</span>
+                        
+                    }
+                }
+                
+                //Scale the weights
+<span class="fc" id="L515">                weightSum = instancesCopy.sumOfWeights();</span>
+<span class="fc bfc" id="L516" title="All 2 branches covered.">                for (int i = 0; i &lt; instancesCopy.numInstances(); i++) {</span>
+<span class="fc" id="L517">                    Instance current = instancesCopy.instance(i);</span>
+<span class="fc" id="L518">                    current.setWeight(current.weight() * (double)instancesCopy.numInstances() / weightSum);</span>
+                }
+            }
+	    
+	    //fit simple regression function
+<span class="fc" id="L523">	    m_regressions[j][iteration].buildClassifier(instancesCopy);</span>
+	    
+<span class="fc" id="L525">	    boolean foundAttribute = m_regressions[j][iteration].foundUsefulAttribute();</span>
+<span class="fc bfc" id="L526" title="All 2 branches covered.">	    if (!foundAttribute) {</span>
+		//could not fit simple regression function
+<span class="fc" id="L528">		return false;</span>
+	    }
+	    
+	}
+	
+	// Evaluate / increment trainFs from the classifier
+<span class="fc bfc" id="L534" title="All 2 branches covered.">	for (int i = 0; i &lt; trainFs.length; i++) {</span>
+<span class="fc" id="L535">	    double [] pred = new double [m_numClasses];</span>
+<span class="fc" id="L536">	    double predSum = 0;</span>
+<span class="fc bfc" id="L537" title="All 2 branches covered.">	    for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="fc" id="L538">		pred[j] = m_regressions[j][iteration]</span>
+<span class="fc" id="L539">		    .classifyInstance(trainNumeric.instance(i));</span>
+<span class="fc" id="L540">		predSum += pred[j];</span>
+	    }
+<span class="fc" id="L542">	    predSum /= m_numClasses;</span>
+<span class="fc bfc" id="L543" title="All 2 branches covered.">	    for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="fc" id="L544">		trainFs[i][j] += (pred[j] - predSum) * (m_numClasses - 1) </span>
+<span class="fc" id="L545">		    / m_numClasses;</span>
+	    }
+	}
+	
+	// Compute the current probability estimates
+<span class="fc bfc" id="L550" title="All 2 branches covered.">	for (int i = 0; i &lt; trainYs.length; i++) {</span>
+<span class="fc" id="L551">	    probs[i] = probs(trainFs[i]);</span>
+	}
+<span class="fc" id="L553">	return true;</span>
+    }    
+
+    /**
+     * Helper function to initialize m_regressions.
+     * 
+     * @return the generated classifiers
+     */
+    protected SimpleLinearRegression[][] initRegressions(){
+<span class="fc" id="L562">	SimpleLinearRegression[][] classifiers =   </span>
+<span class="fc" id="L563">	    new SimpleLinearRegression[m_numClasses][m_maxIterations];</span>
+<span class="fc bfc" id="L564" title="All 2 branches covered.">	for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="fc bfc" id="L565" title="All 2 branches covered.">	    for (int i = 0; i &lt; m_maxIterations; i++) {</span>
+<span class="fc" id="L566">		classifiers[j][i] = new SimpleLinearRegression();</span>
+<span class="fc" id="L567">		classifiers[j][i].setSuppressErrorMessage(true);</span>
+	    }
+	}
+<span class="fc" id="L570">	return classifiers;</span>
+    }
+
+    /**
+     * Converts training data to numeric version. The class variable is replaced by a pseudo-class 
+     * used by LogitBoost.
+     * 
+     * @param data the data to convert
+     * @return the converted data
+     * @throws Exception if something goes wrong
+     */
+    protected Instances getNumericData(Instances data) throws Exception{
+<span class="fc" id="L582">	Instances numericData = new Instances(data);</span>
+	
+<span class="fc" id="L584">	int classIndex = numericData.classIndex();</span>
+<span class="fc" id="L585">	numericData.setClassIndex(-1);</span>
+<span class="fc" id="L586">	numericData.deleteAttributeAt(classIndex);</span>
+<span class="fc" id="L587">	numericData.insertAttributeAt(new Attribute(&quot;'pseudo class'&quot;), classIndex);</span>
+<span class="fc" id="L588">	numericData.setClassIndex(classIndex);</span>
+<span class="fc" id="L589">	return numericData;</span>
+    }
+    
+    /**
+     * Helper function for cutting back m_regressions to the set of classifiers 
+     * (corresponsing to the number of LogitBoost iterations) that gave the 
+     * smallest error.
+     * 
+     * @param classifiers the original set of classifiers
+     * @return the cut back set of classifiers
+     */
+    protected SimpleLinearRegression[][] selectRegressions(SimpleLinearRegression[][] classifiers){
+<span class="fc" id="L601">	SimpleLinearRegression[][] goodClassifiers = </span>
+<span class="fc" id="L602">	    new SimpleLinearRegression[m_numClasses][m_numRegressions];</span>
+	
+<span class="fc bfc" id="L604" title="All 2 branches covered.">	for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="fc bfc" id="L605" title="All 2 branches covered.">	    for (int i = 0; i &lt; m_numRegressions; i++) {</span>
+<span class="fc" id="L606">		goodClassifiers[j][i] = classifiers[j][i];</span>
+	    }
+	}
+<span class="fc" id="L609">	return goodClassifiers;</span>
+    }		
+    
+    /**
+     * Computes the LogitBoost response variable from y/p values 
+     * (actual/estimated class probabilities).
+     * 
+     * @param actual the actual class probability
+     * @param p the estimated class probability
+     * @return the LogitBoost response
+     */
+    protected double getZ(double actual, double p) {
+	double z;
+<span class="fc bfc" id="L622" title="All 2 branches covered.">	if (actual == 1) {</span>
+<span class="fc" id="L623">	    z = 1.0 / p;</span>
+<span class="fc bfc" id="L624" title="All 2 branches covered.">	    if (z &gt; Z_MAX) { // threshold</span>
+<span class="fc" id="L625">		z = Z_MAX;</span>
+	    }
+	} else {
+<span class="fc" id="L628">	    z = -1.0 / (1.0 - p);</span>
+<span class="fc bfc" id="L629" title="All 2 branches covered.">	    if (z &lt; -Z_MAX) { // threshold</span>
+<span class="fc" id="L630">		z = -Z_MAX;</span>
+	    }
+	}
+<span class="fc" id="L633">	return z;</span>
+    }
+    
+    /**
+     * Computes the LogitBoost response for an array of y/p values 
+     * (actual/estimated class probabilities).
+     * 
+     * @param dataYs the actual class probabilities
+     * @param probs the estimated class probabilities
+     * @return the LogitBoost response
+     */
+    protected double[][] getZs(double[][] probs, double[][] dataYs) {
+	
+<span class="nc" id="L646">	double[][] dataZs = new double[probs.length][m_numClasses];</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">	for (int j = 0; j &lt; m_numClasses; j++) </span>
+<span class="nc bnc" id="L648" title="All 2 branches missed.">	    for (int i = 0; i &lt; probs.length; i++) dataZs[i][j] = getZ(dataYs[i][j], probs[i][j]);</span>
+<span class="nc" id="L649">	return dataZs;</span>
+    }
+    
+    /**
+     * Computes the LogitBoost weights from an array of y/p values 
+     * (actual/estimated class probabilities).
+     * 
+     * @param dataYs the actual class probabilities
+     * @param probs the estimated class probabilities
+     * @return the LogitBoost weights
+     */
+    protected double[][] getWs(double[][] probs, double[][] dataYs) {
+	
+<span class="nc" id="L662">	double[][] dataWs = new double[probs.length][m_numClasses];</span>
+<span class="nc bnc" id="L663" title="All 2 branches missed.">	for (int j = 0; j &lt; m_numClasses; j++) </span>
+<span class="nc bnc" id="L664" title="All 2 branches missed.">	    for (int i = 0; i &lt; probs.length; i++){</span>
+<span class="nc" id="L665">	    double z = getZ(dataYs[i][j], probs[i][j]);</span>
+<span class="nc" id="L666">	    dataWs[i][j] = (dataYs[i][j] - probs[i][j]) / z;</span>
+	    }
+<span class="nc" id="L668">	return dataWs;</span>
+    }
+
+    /**
+     * Computes the p-values (probabilities for the classes) from the F-values 
+     * of the logistic model.
+     * 
+     * @param Fs the F-values
+     * @return the p-values
+     */
+    protected double[] probs(double[] Fs) {
+	
+<span class="fc" id="L680">	double maxF = -Double.MAX_VALUE;</span>
+<span class="fc bfc" id="L681" title="All 2 branches covered.">	for (int i = 0; i &lt; Fs.length; i++) {</span>
+<span class="fc bfc" id="L682" title="All 2 branches covered.">	    if (Fs[i] &gt; maxF) {</span>
+<span class="fc" id="L683">		maxF = Fs[i];</span>
+	    }
+	}   
+<span class="fc" id="L686">	double sum = 0;</span>
+<span class="fc" id="L687">	double[] probs = new double[Fs.length];</span>
+<span class="fc bfc" id="L688" title="All 2 branches covered.">	for (int i = 0; i &lt; Fs.length; i++) {</span>
+<span class="fc" id="L689">	    probs[i] = Math.exp(Fs[i] - maxF);   </span>
+<span class="fc" id="L690">	    sum += probs[i];</span>
+	}
+	
+<span class="fc" id="L693">	Utils.normalize(probs, sum);</span>
+<span class="fc" id="L694">	return probs;</span>
+    }
+
+    /**
+     * Computes the Y-values (actual class probabilities) for a set of instances.
+     * 
+     * @param data the data to compute the Y-values from
+     * @return the Y-values
+     */
+    protected double[][] getYs(Instances data){
+	
+<span class="fc" id="L705">	double [][] dataYs = new double [data.numInstances()][m_numClasses];</span>
+<span class="fc bfc" id="L706" title="All 2 branches covered.">	for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="fc bfc" id="L707" title="All 2 branches covered.">	    for (int k = 0; k &lt; data.numInstances(); k++) {</span>
+<span class="fc bfc" id="L708" title="All 2 branches covered.">		dataYs[k][j] = (data.instance(k).classValue() == j) ? </span>
+<span class="fc" id="L709">		    1.0: 0.0;</span>
+	    }
+	}
+<span class="fc" id="L712">	return dataYs;</span>
+    }
+
+    /**
+     * Computes the F-values for a single instance.
+     * 
+     * @param instance the instance to compute the F-values for
+     * @return the F-values
+     * @throws Exception if something goes wrong
+     */
+    protected double[] getFs(Instance instance) throws Exception{
+	
+<span class="fc" id="L724">	double [] pred = new double [m_numClasses];</span>
+<span class="fc" id="L725">	double [] instanceFs = new double [m_numClasses]; </span>
+	
+	//add up the predictions from the simple regression functions
+<span class="fc bfc" id="L728" title="All 2 branches covered.">	for (int i = 0; i &lt; m_numRegressions; i++) {</span>
+<span class="fc" id="L729">	    double predSum = 0;</span>
+<span class="fc bfc" id="L730" title="All 2 branches covered.">	    for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="fc" id="L731">		pred[j] = m_regressions[j][i].classifyInstance(instance);</span>
+<span class="fc" id="L732">		predSum += pred[j];</span>
+	    }
+<span class="fc" id="L734">	    predSum /= m_numClasses;</span>
+<span class="fc bfc" id="L735" title="All 2 branches covered.">	    for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="fc" id="L736">		instanceFs[j] += (pred[j] - predSum) * (m_numClasses - 1) </span>
+<span class="fc" id="L737">		    / m_numClasses;</span>
+	    }
+	}	
+	
+<span class="fc" id="L741">	return instanceFs; </span>
+    } 
+    
+    /**
+     * Computes the F-values for a set of instances.
+     * 
+     * @param data the data to work on
+     * @return the F-values
+     * @throws Exception if something goes wrong
+     */
+    protected double[][] getFs(Instances data) throws Exception{
+	
+<span class="fc" id="L753">	double[][] dataFs = new double[data.numInstances()][];</span>
+       
+<span class="fc bfc" id="L755" title="All 2 branches covered.">	for (int k = 0; k &lt; data.numInstances(); k++) {</span>
+<span class="fc" id="L756">	    dataFs[k] = getFs(data.instance(k));</span>
+	}
+	
+<span class="fc" id="L759">	return dataFs;	</span>
+    }   
+
+    /**
+     * Computes the p-values (probabilities for the different classes) from 
+     * the F-values for a set of instances.
+     * 
+     * @param dataFs the F-values
+     * @return the p-values
+     */
+    protected double[][] getProbs(double[][] dataFs){
+	
+<span class="fc" id="L771">	int numInstances = dataFs.length;</span>
+<span class="fc" id="L772">	double[][] probs = new double[numInstances][];</span>
+	
+<span class="fc bfc" id="L774" title="All 2 branches covered.">	for (int k = 0; k &lt; numInstances; k++) {       </span>
+<span class="fc" id="L775">	    probs[k] = probs(dataFs[k]);</span>
+	}
+<span class="fc" id="L777">	return probs;</span>
+    }
+    
+    /**
+     * Returns the negative loglikelihood of the Y-values (actual class probabilities) given the 
+     * p-values (current probability estimates).
+     * 
+     * @param dataYs the Y-values
+     * @param probs the p-values
+     * @return the likelihood
+     */
+    protected double negativeLogLikelihood(double[][] dataYs, double[][] probs) {
+	
+<span class="nc" id="L790">	double logLikelihood = 0;</span>
+<span class="nc bnc" id="L791" title="All 2 branches missed.">	for (int i = 0; i &lt; dataYs.length; i++) {</span>
+<span class="nc bnc" id="L792" title="All 2 branches missed.">	    for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="nc bnc" id="L793" title="All 2 branches missed.">		if (dataYs[i][j] == 1.0) {</span>
+<span class="nc" id="L794">		    logLikelihood -= Math.log(probs[i][j]);</span>
+		}
+	    }
+	}
+<span class="nc" id="L798">	return logLikelihood;// / (double)dataYs.length;</span>
+    }
+
+    /**
+     * Returns an array of the indices of the attributes used in the logistic model.
+     * The first dimension is the class, the second dimension holds a list of attribute indices.
+     * Attribute indices start at zero.
+     * @return the array of attribute indices
+     */
+    public int[][] getUsedAttributes(){
+	
+<span class="nc" id="L809">	int[][] usedAttributes = new int[m_numClasses][];</span>
+	
+	//first extract coefficients
+<span class="nc" id="L812">	double[][] coefficients = getCoefficients();</span>
+	
+<span class="nc bnc" id="L814" title="All 2 branches missed.">	for (int j = 0; j &lt; m_numClasses; j++){</span>
+	    
+	    //boolean array indicating if attribute used
+<span class="nc" id="L817">	    boolean[] attributes = new boolean[m_numericDataHeader.numAttributes()];</span>
+<span class="nc bnc" id="L818" title="All 2 branches missed.">	    for (int i = 0; i &lt; attributes.length; i++) {</span>
+		//attribute used if coefficient &gt; 0
+<span class="nc bnc" id="L820" title="All 2 branches missed.">		if (!Utils.eq(coefficients[j][i + 1],0)) attributes[i] = true;</span>
+	    }
+	    	    
+<span class="nc" id="L823">	    int numAttributes = 0;</span>
+<span class="nc bnc" id="L824" title="All 4 branches missed.">	    for (int i = 0; i &lt; m_numericDataHeader.numAttributes(); i++) if (attributes[i]) numAttributes++;</span>
+	    
+	    //&quot;collect&quot; all attributes into array of indices
+<span class="nc" id="L827">	    int[] usedAttributesClass = new int[numAttributes];</span>
+<span class="nc" id="L828">	    int count = 0;</span>
+<span class="nc bnc" id="L829" title="All 2 branches missed.">	    for (int i = 0; i &lt; m_numericDataHeader.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L830" title="All 2 branches missed.">		if (attributes[i]) {</span>
+<span class="nc" id="L831">		usedAttributesClass[count] = i;</span>
+<span class="nc" id="L832">		count++;</span>
+		} 
+	    }
+	    
+<span class="nc" id="L836">	    usedAttributes[j] = usedAttributesClass;</span>
+	}
+	
+<span class="nc" id="L839">	return usedAttributes;</span>
+    }
+
+    /**
+     * The number of LogitBoost iterations performed (= the number of simple 
+     * regression functions fit).
+     * 
+     * @return the number of LogitBoost iterations performed 
+     */
+    public int getNumRegressions() {
+<span class="fc" id="L849">	return m_numRegressions;</span>
+    }
+    
+    /**
+     * Get the value of weightTrimBeta.
+     *
+     * @return Value of weightTrimBeta.
+     */
+    public double getWeightTrimBeta(){
+<span class="fc" id="L858">        return m_weightTrimBeta;</span>
+    }
+    
+    /**
+     * Get the value of useAIC.
+     *
+     * @return Value of useAIC.
+     */
+    public boolean getUseAIC(){
+<span class="fc" id="L867">        return m_useAIC;</span>
+    }
+
+    /**
+     * Sets the parameter &quot;maxIterations&quot;.
+     * 
+     * @param maxIterations the maximum iterations
+     */
+    public void setMaxIterations(int maxIterations) {
+<span class="fc" id="L876">	m_maxIterations = maxIterations;</span>
+<span class="fc" id="L877">    }</span>
+    
+    /**
+     * Sets the option &quot;heuristicStop&quot;.
+     * 
+     * @param heuristicStop the heuristic stop to use
+     */
+    public void setHeuristicStop(int heuristicStop){
+<span class="fc" id="L885">	m_heuristicStop = heuristicStop;</span>
+<span class="fc" id="L886">    }</span>
+    
+    /**
+     * Sets the option &quot;weightTrimBeta&quot;.
+     */
+    public void setWeightTrimBeta(double w){
+<span class="fc" id="L892">        m_weightTrimBeta = w;</span>
+<span class="fc" id="L893">    }</span>
+    
+    /**
+     * Set the value of useAIC.
+     *
+     * @param c Value to assign to useAIC.
+     */
+    public void setUseAIC(boolean c){
+<span class="fc" id="L901">        m_useAIC = c;</span>
+<span class="fc" id="L902">    }</span>
+
+    /**
+     * Returns the maxIterations parameter.
+     * 
+     * @return the maximum iteration
+     */
+    public int getMaxIterations(){
+<span class="nc" id="L910">	return m_maxIterations;</span>
+    }
+        
+    /**
+     * Returns an array holding the coefficients of the logistic model.
+     * First dimension is the class, the second one holds a list of coefficients.
+     * At position zero, the constant term of the model is stored, then, the coefficients for
+     * the attributes in ascending order.
+     * @return the array of coefficients
+     */
+    protected double[][] getCoefficients(){
+<span class="nc" id="L921">	double[][] coefficients = new double[m_numClasses][m_numericDataHeader.numAttributes() + 1];</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">	for (int j = 0; j &lt; m_numClasses; j++) {</span>
+	    //go through simple regression functions and add their coefficient to the coefficient of
+	    //the attribute they are built on.
+<span class="nc bnc" id="L925" title="All 2 branches missed.">	    for (int i = 0; i &lt; m_numRegressions; i++) {</span>
+		
+<span class="nc" id="L927">		double slope = m_regressions[j][i].getSlope();</span>
+<span class="nc" id="L928">		double intercept = m_regressions[j][i].getIntercept();</span>
+<span class="nc" id="L929">		int attribute = m_regressions[j][i].getAttributeIndex();</span>
+		
+<span class="nc" id="L931">		coefficients[j][0] += intercept;</span>
+<span class="nc" id="L932">		coefficients[j][attribute + 1] += slope;</span>
+	    }
+	}
+        
+        // Need to multiply all coefficients by (J-1) / J
+<span class="nc bnc" id="L937" title="All 2 branches missed.">        for (int j = 0; j &lt; coefficients.length; j++) {</span>
+<span class="nc bnc" id="L938" title="All 2 branches missed.">          for (int i = 0; i &lt; coefficients[0].length; i++) {</span>
+<span class="nc" id="L939">            coefficients[j][i] *= (double)(m_numClasses - 1) / (double)m_numClasses;</span>
+          }
+        }
+
+<span class="nc" id="L943">	return coefficients;</span>
+    }
+
+    /**
+     * Returns the fraction of all attributes in the data that are used in the 
+     * logistic model (in percent). 
+     * An attribute is used in the model if it is used in any of the models for 
+     * the different classes.
+     * 
+     * @return the fraction of all attributes that are used
+     */
+    public double percentAttributesUsed(){	
+<span class="nc" id="L955">	boolean[] attributes = new boolean[m_numericDataHeader.numAttributes()];</span>
+	
+<span class="nc" id="L957">	double[][] coefficients = getCoefficients();</span>
+<span class="nc bnc" id="L958" title="All 2 branches missed.">	for (int j = 0; j &lt; m_numClasses; j++){</span>
+<span class="nc bnc" id="L959" title="All 2 branches missed.">	    for (int i = 1; i &lt; m_numericDataHeader.numAttributes() + 1; i++) {</span>
+		//attribute used if it is used in any class, note coefficients are shifted by one (because
+		//of constant term).
+<span class="nc bnc" id="L962" title="All 2 branches missed.">		if (!Utils.eq(coefficients[j][i],0)) attributes[i - 1] = true;</span>
+	    }
+	}
+	
+	//count number of used attributes (without the class attribute)
+<span class="nc" id="L967">	double count = 0;</span>
+<span class="nc bnc" id="L968" title="All 4 branches missed.">	for (int i = 0; i &lt; attributes.length; i++) if (attributes[i]) count++;</span>
+<span class="nc" id="L969">	return count / (double)(m_numericDataHeader.numAttributes() - 1) * 100.0;</span>
+    }
+    
+    /**
+     * Returns a description of the logistic model (i.e., attributes and 
+     * coefficients).
+     * 
+     * @return the description of the model
+     */
+    public String toString(){
+	
+<span class="nc" id="L980">	StringBuffer s = new StringBuffer();	</span>
+
+	//get used attributes
+<span class="nc" id="L983">	int[][] attributes = getUsedAttributes();</span>
+	
+	//get coefficients
+<span class="nc" id="L986">	double[][] coefficients = getCoefficients();</span>
+	
+<span class="nc bnc" id="L988" title="All 2 branches missed.">	for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="nc" id="L989">	    s.append(&quot;\nClass &quot;+j+&quot; :\n&quot;);</span>
+	    //constant term
+<span class="nc" id="L991">	    s.append(Utils.doubleToString(coefficients[j][0],4,2)+&quot; + \n&quot;);</span>
+<span class="nc bnc" id="L992" title="All 2 branches missed.">	    for (int i = 0; i &lt; attributes[j].length; i++) {		</span>
+		//attribute/coefficient pairs
+<span class="nc" id="L994">		s.append(&quot;[&quot;+m_numericDataHeader.attribute(attributes[j][i]).name()+&quot;]&quot;);</span>
+<span class="nc" id="L995">		s.append(&quot; * &quot; + Utils.doubleToString(coefficients[j][attributes[j][i]+1],4,2));</span>
+<span class="nc bnc" id="L996" title="All 2 branches missed.">		if (i != attributes[j].length - 1) s.append(&quot; +&quot;);</span>
+<span class="nc" id="L997">		s.append(&quot;\n&quot;);	    </span>
+	    }
+	}	
+<span class="nc" id="L1000">	return new String(s);</span>
+    }
+
+    /** 
+     * Returns class probabilities for an instance.
+     *
+     * @param instance the instance to compute the distribution for
+     * @return the class probabilities
+     * @throws Exception if distribution can't be computed successfully
+     */
+    public double[] distributionForInstance(Instance instance) throws Exception {
+	
+<span class="fc" id="L1012">	instance = (Instance)instance.copy();	</span>
+
+	//set to numeric pseudo-class
+<span class="fc" id="L1015">      	instance.setDataset(m_numericDataHeader);		</span>
+	
+	//calculate probs via Fs
+<span class="fc" id="L1018">	return probs(getFs(instance));</span>
+    }
+
+    /**
+     * Cleanup in order to save memory.
+     */
+    public void cleanup() {
+	//save just header info
+<span class="fc" id="L1026">	m_train = new Instances(m_train,0);</span>
+<span class="fc" id="L1027">	m_numericData = null;	</span>
+<span class="fc" id="L1028">    }</span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L1036">      return RevisionUtils.extract(&quot;$Revision: 1.9 $&quot;);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

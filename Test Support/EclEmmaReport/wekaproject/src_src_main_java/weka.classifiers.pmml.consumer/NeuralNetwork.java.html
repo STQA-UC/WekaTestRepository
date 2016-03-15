@@ -1,0 +1,937 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>NeuralNetwork.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.pmml.consumer</a> &gt; <span class="el_source">NeuralNetwork.java</span></div><h1>NeuralNetwork.java</h1><pre class="source lang-java linenums"><span class="pc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    NeuralNetwork.java
+ *    Copyright (C) 2008 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.pmml.consumer;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.HashMap;
+
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+import weka.core.Attribute;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.pmml.*;
+
+/**
+ * Class implementing import of PMML Neural Network model. Can be used as a Weka
+ * classifier for prediction (buildClassifier() raises an Exception).
+ * 
+ * @author Mark Hall (mhall{[at]}pentaho{[dot]}com)
+ * @version $Revision 1.0 $
+ */
+public class NeuralNetwork extends PMMLClassifier {
+  
+  /**
+   * For serialization
+   */
+  private static final long serialVersionUID = -4545904813133921249L;
+
+  /**
+   * Small inner class for a NeuralInput (essentially just
+   * wraps a DerivedField and adds an ID)
+   */
+  static class NeuralInput implements Serializable {
+    
+    /**
+     * For serialization
+     */
+    private static final long serialVersionUID = -1902233762824835563L;
+    
+    /** Field that this input refers to */
+    private DerivedFieldMetaInfo m_field;
+    
+    /** ID string */
+<span class="fc" id="L69">    private String m_ID = null;</span>
+    
+    private String getID() {
+<span class="fc" id="L72">      return m_ID;</span>
+    }
+    
+<span class="fc" id="L75">    protected NeuralInput(Element input, MiningSchema miningSchema) throws Exception {</span>
+<span class="fc" id="L76">      m_ID = input.getAttribute(&quot;id&quot;);</span>
+      
+<span class="fc" id="L78">      NodeList fL = input.getElementsByTagName(&quot;DerivedField&quot;);</span>
+<span class="pc bpc" id="L79" title="1 of 2 branches missed.">      if (fL.getLength() != 1) {</span>
+<span class="nc" id="L80">        throw new Exception(&quot;[NeuralInput] expecting just one derived field!&quot;);</span>
+      }
+      
+<span class="fc" id="L83">      Element dF = (Element)fL.item(0);</span>
+<span class="fc" id="L84">      Instances allFields = miningSchema.getFieldsAsInstances();</span>
+<span class="fc" id="L85">      ArrayList&lt;Attribute&gt; fieldDefs = new ArrayList&lt;Attribute&gt;();</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">      for (int i = 0; i &lt; allFields.numAttributes(); i++) {</span>
+<span class="fc" id="L87">        fieldDefs.add(allFields.attribute(i));</span>
+      }
+<span class="fc" id="L89">      m_field = new DerivedFieldMetaInfo(dF, fieldDefs, miningSchema.getTransformationDictionary());</span>
+<span class="fc" id="L90">    }</span>
+    
+    protected double getValue(double[] incoming) throws Exception {
+<span class="fc" id="L93">      return m_field.getDerivedValue(incoming);</span>
+    }
+    
+    public String toString() {
+<span class="nc" id="L97">      StringBuffer temp = new StringBuffer();</span>
+      
+<span class="nc" id="L99">      temp.append(&quot;Nueral input (&quot; + getID() + &quot;)\n&quot;);</span>
+<span class="nc" id="L100">      temp.append(m_field);</span>
+      
+<span class="nc" id="L102">      return temp.toString();</span>
+    }
+  }
+  
+  /**
+   * Inner class representing a layer in the network.
+   */
+  class NeuralLayer implements Serializable {
+    
+    /**
+     * For serialization
+     */
+    private static final long serialVersionUID = -8386042001675763922L;
+
+    /** The number of neurons in this layer */
+<span class="fc" id="L117">    private int m_numNeurons = 0;</span>
+    
+    /** Activation function (if defined, overrides one in NeuralNetwork) */
+<span class="fc" id="L120">    private ActivationFunction m_layerActivationFunction = null;</span>
+    
+    /** Threshold (if defined overrides one in NeuralNetwork) */
+<span class="fc" id="L123">    private double m_layerThreshold = Double.NaN; </span>
+    
+    /** Width (if defined overrides one in NeuralNetwork) */
+<span class="fc" id="L126">    private double m_layerWidth = Double.NaN;</span>
+    
+    /** Altitude (if defined overrides one in NeuralNetwork) */
+<span class="fc" id="L129">    private double m_layerAltitude = Double.NaN;</span>
+    
+    /** Normalization (if defined overrides one in NeuralNetwork) */
+<span class="fc" id="L132">    private Normalization m_layerNormalization = null;</span>
+    
+    /** The neurons at this hidden layer */
+<span class="fc" id="L135">    private Neuron[] m_layerNeurons = null;</span>
+    
+    /** Stores the output of this layer (for given inputs) */
+<span class="fc" id="L138">    private HashMap&lt;String, Double&gt; m_layerOutput = new HashMap&lt;String, Double&gt;();</span>
+    
+<span class="fc" id="L140">    protected NeuralLayer(Element layerE) {</span>
+      
+<span class="fc" id="L142">      String activationFunction = layerE.getAttribute(&quot;activationFunction&quot;);</span>
+<span class="pc bpc" id="L143" title="1 of 4 branches missed.">      if (activationFunction != null &amp;&amp; activationFunction.length() &gt; 0) {</span>
+<span class="pc bpc" id="L144" title="1 of 2 branches missed.">        for (ActivationFunction a : ActivationFunction.values()) {</span>
+<span class="fc bfc" id="L145" title="All 2 branches covered.">          if (a.toString().equals(activationFunction)) {</span>
+<span class="fc" id="L146">            m_layerActivationFunction = a;</span>
+<span class="fc" id="L147">            break;</span>
+          }
+        }
+      } else {
+        // use the network-level activation function
+<span class="fc" id="L152">        m_layerActivationFunction = m_activationFunction;</span>
+      }
+      
+<span class="fc" id="L155">      String threshold = layerE.getAttribute(&quot;threshold&quot;);</span>
+<span class="pc bpc" id="L156" title="2 of 4 branches missed.">      if (threshold != null &amp;&amp; threshold.length() &gt; 0) {</span>
+<span class="nc" id="L157">        m_layerThreshold = Double.parseDouble(threshold);</span>
+      } else {
+        // use network-level threshold
+<span class="fc" id="L160">        m_layerThreshold = m_threshold;</span>
+      }
+      
+<span class="fc" id="L163">      String width = layerE.getAttribute(&quot;width&quot;);</span>
+<span class="pc bpc" id="L164" title="2 of 4 branches missed.">      if (width != null &amp;&amp; width.length() &gt; 0) {</span>
+<span class="nc" id="L165">        m_layerWidth = Double.parseDouble(width);</span>
+      } else {
+        // use network-level width
+<span class="fc" id="L168">        m_layerWidth = m_width;</span>
+      }
+      
+<span class="fc" id="L171">      String altitude = layerE.getAttribute(&quot;altitude&quot;);</span>
+<span class="pc bpc" id="L172" title="2 of 4 branches missed.">      if (altitude != null &amp;&amp; altitude.length() &gt; 0) {</span>
+<span class="nc" id="L173">        m_layerAltitude = Double.parseDouble(altitude);</span>
+      } else {
+        // use network-level altitude
+<span class="fc" id="L176">        m_layerAltitude = m_altitude;</span>
+      }
+      
+<span class="fc" id="L179">      String normMethod = layerE.getAttribute(&quot;normalizationMethod&quot;);</span>
+<span class="pc bpc" id="L180" title="2 of 4 branches missed.">      if (normMethod != null &amp;&amp; normMethod.length() &gt; 0) {</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        for (Normalization n : Normalization.values()) {</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">          if (n.toString().equals(normMethod)) {</span>
+<span class="nc" id="L183">            m_layerNormalization = n;</span>
+<span class="nc" id="L184">            break;</span>
+          }
+        }
+      } else {
+        // use network-level normalization method
+<span class="fc" id="L189">        m_layerNormalization = m_normalizationMethod;</span>
+      }
+      
+<span class="fc" id="L192">      NodeList neuronL = layerE.getElementsByTagName(&quot;Neuron&quot;);</span>
+<span class="fc" id="L193">      m_numNeurons = neuronL.getLength();</span>
+<span class="fc" id="L194">      m_layerNeurons = new Neuron[m_numNeurons];</span>
+<span class="fc bfc" id="L195" title="All 2 branches covered.">      for (int i = 0; i &lt; neuronL.getLength(); i++) {</span>
+<span class="fc" id="L196">        Node neuronN = neuronL.item(i);</span>
+<span class="pc bpc" id="L197" title="1 of 2 branches missed.">        if (neuronN.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L198">          m_layerNeurons[i] = new Neuron((Element)neuronN, this);</span>
+        }
+      }
+<span class="fc" id="L201">    }</span>
+    
+    protected ActivationFunction getActivationFunction() {
+<span class="fc" id="L204">      return m_layerActivationFunction;</span>
+    }
+    
+    protected double getThreshold() {
+<span class="fc" id="L208">      return m_layerThreshold;</span>
+    }
+    
+    protected double getWidth() {
+<span class="fc" id="L212">      return m_layerWidth;</span>
+    }
+    
+    protected double getAltitude() {
+<span class="fc" id="L216">      return m_layerAltitude;</span>
+    }
+    
+    protected Normalization getNormalization() {
+<span class="nc" id="L220">      return m_layerNormalization;</span>
+    }
+    
+    /**
+     * Compute the output values for this layer.
+     * 
+     * @param incoming the incoming values
+     * @return the output values for this layer
+     * @throws Exception if there is a problem computing the outputs
+     */
+    protected HashMap&lt;String, Double&gt; computeOutput(HashMap&lt;String, Double&gt; incoming) 
+      throws Exception {
+      
+<span class="fc" id="L233">      m_layerOutput.clear();</span>
+      
+<span class="fc" id="L235">      double normSum = 0;</span>
+<span class="fc bfc" id="L236" title="All 2 branches covered.">      for (int i = 0; i &lt; m_layerNeurons.length; i++) {</span>
+<span class="fc" id="L237">        double neuronOut = m_layerNeurons[i].getValue(incoming);</span>
+<span class="fc" id="L238">        String neuronID = m_layerNeurons[i].getID();</span>
+
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">        if (m_layerNormalization == Normalization.SOFTMAX) {</span>
+<span class="nc" id="L241">          normSum += Math.exp(neuronOut);</span>
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">        } else if (m_layerNormalization == Normalization.SIMPLEMAX) {</span>
+<span class="nc" id="L243">          normSum += neuronOut;</span>
+        }
+        //System.err.println(&quot;Inserting ID &quot; + neuronID + &quot; &quot; + neuronOut);
+<span class="fc" id="L246">        m_layerOutput.put(neuronID, neuronOut);</span>
+      }
+      
+      // apply the normalization (if necessary)
+<span class="pc bpc" id="L250" title="1 of 2 branches missed.">      if (m_layerNormalization != Normalization.NONE) {</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">        for (int i = 0; i &lt; m_layerNeurons.length; i++) {</span>
+<span class="nc" id="L252">          double val = m_layerOutput.get(m_layerNeurons[i].getID());</span>
+//          System.err.println(&quot;Normalizing ID &quot; + m_layerNeurons[i].getID() + &quot; &quot; + val);
+<span class="nc bnc" id="L254" title="All 2 branches missed.">          if (m_layerNormalization == Normalization.SOFTMAX) {</span>
+<span class="nc" id="L255">            val = Math.exp(val) / normSum;</span>
+          } else {
+<span class="nc" id="L257">            val = (val / normSum);</span>
+          }
+<span class="nc" id="L259">          m_layerOutput.put(m_layerNeurons[i].getID(), val);</span>
+        }
+      }
+<span class="fc" id="L262">      return m_layerOutput;</span>
+    }
+    
+    public String toString() {
+<span class="nc" id="L266">      StringBuffer temp = new StringBuffer();</span>
+      
+<span class="nc" id="L268">      temp.append(&quot;activation: &quot; + getActivationFunction() + &quot;\n&quot;);</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">      if (!Double.isNaN(getThreshold())) {</span>
+<span class="nc" id="L270">        temp.append(&quot;threshold: &quot; + getThreshold() + &quot;\n&quot;);</span>
+      }
+<span class="nc bnc" id="L272" title="All 2 branches missed.">      if (!Double.isNaN(getWidth())) {</span>
+<span class="nc" id="L273">        temp.append(&quot;width: &quot; + getWidth() + &quot;\n&quot;);</span>
+      }
+<span class="nc bnc" id="L275" title="All 2 branches missed.">      if (!Double.isNaN(getAltitude())) {</span>
+<span class="nc" id="L276">        temp.append(&quot;altitude: &quot; + getAltitude() + &quot;\n&quot;);</span>
+      }
+<span class="nc" id="L278">      temp.append(&quot;normalization: &quot; + m_layerNormalization + &quot;\n&quot;);</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numNeurons; i++) {</span>
+<span class="nc" id="L280">        temp.append(m_layerNeurons[i] + &quot;\n&quot;);</span>
+      }
+
+<span class="nc" id="L283">      return temp.toString();</span>
+    }
+  }
+  
+  /**
+   * Inner class encapsulating a Neuron
+   */
+  static class Neuron implements Serializable {
+    
+    /**
+     * For serialization
+     */
+    private static final long serialVersionUID = -3817434025682603443L;
+
+    /** ID string */
+<span class="fc" id="L298">    private String m_ID = null;</span>
+    
+    /** The layer we belong to (for accessing activation function, threshold etc.) */
+    private NeuralLayer m_layer;
+    
+    /** The bias */
+<span class="fc" id="L304">    private double m_bias = 0.0;</span>
+    
+    /** The width (if defined overrides the one in NeuralLayer or NeuralNetwork) */
+<span class="fc" id="L307">    private double m_neuronWidth = Double.NaN;</span>
+    
+    /** The altitude (if defined overrides the one in NeuralLayer or NeuralNetwork) */
+<span class="fc" id="L310">    private double m_neuronAltitude = Double.NaN;</span>
+    
+    /** The IDs of the neurons/neural inputs that we are connected to */
+<span class="fc" id="L313">    private String[] m_connectionIDs = null;</span>
+    
+    /** The weights corresponding to the connections */
+<span class="fc" id="L316">    private double[] m_weights = null;</span>
+    
+<span class="fc" id="L318">    protected Neuron(Element neuronE, NeuralLayer layer) {</span>
+<span class="fc" id="L319">      m_layer = layer;</span>
+      
+<span class="fc" id="L321">      m_ID = neuronE.getAttribute(&quot;id&quot;);</span>
+      
+<span class="fc" id="L323">      String bias = neuronE.getAttribute(&quot;bias&quot;);</span>
+<span class="pc bpc" id="L324" title="1 of 4 branches missed.">      if (bias != null &amp;&amp; bias.length() &gt; 0) {</span>
+<span class="fc" id="L325">        m_bias = Double.parseDouble(bias);</span>
+      }
+      
+<span class="fc" id="L328">      String width = neuronE.getAttribute(&quot;width&quot;);</span>
+<span class="pc bpc" id="L329" title="1 of 4 branches missed.">      if (width != null &amp;&amp; width.length() &gt; 0) {</span>
+<span class="fc" id="L330">        m_neuronWidth = Double.parseDouble(width);</span>
+      }
+      
+<span class="fc" id="L333">      String altitude = neuronE.getAttribute(&quot;altitude&quot;);</span>
+<span class="pc bpc" id="L334" title="2 of 4 branches missed.">      if (altitude != null &amp;&amp; altitude.length() &gt; 0) {</span>
+<span class="nc" id="L335">        m_neuronAltitude = Double.parseDouble(altitude);</span>
+      }
+      
+      // get the connection details
+<span class="fc" id="L339">      NodeList conL = neuronE.getElementsByTagName(&quot;Con&quot;);</span>
+<span class="fc" id="L340">      m_connectionIDs = new String[conL.getLength()];</span>
+<span class="fc" id="L341">      m_weights = new double[conL.getLength()];</span>
+<span class="fc bfc" id="L342" title="All 2 branches covered.">      for (int i = 0; i &lt; conL.getLength(); i++) {</span>
+<span class="fc" id="L343">        Node conN = conL.item(i);</span>
+<span class="pc bpc" id="L344" title="1 of 2 branches missed.">        if (conN.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L345">          Element conE = (Element)conN;</span>
+<span class="fc" id="L346">          m_connectionIDs[i] = conE.getAttribute(&quot;from&quot;);</span>
+<span class="fc" id="L347">          String weight = conE.getAttribute(&quot;weight&quot;);</span>
+<span class="fc" id="L348">          m_weights[i] = Double.parseDouble(weight);</span>
+        }
+      }
+<span class="fc" id="L351">    }</span>
+    
+    protected String getID() {
+<span class="fc" id="L354">      return m_ID;</span>
+    }    
+    
+    /**
+     * Compute the output of this Neuron.
+     * 
+     * @param incoming a Map of input values. The keys are the IDs
+     * of incoming connections (either neural inputs or neurons) and
+     * the values are the output values of the neural input/neuron in
+     * question.
+     * 
+     * @return the output of this neuron
+     * @throws Exception if any of our incoming connection IDs cannot be
+     * located in the Map
+     */
+    protected double getValue(HashMap&lt;String, Double&gt; incoming) throws Exception {
+      
+<span class="fc" id="L371">      double z = 0;</span>
+<span class="fc" id="L372">      double result = Double.NaN;</span>
+      
+<span class="fc bfc" id="L374" title="All 2 branches covered.">      double width = (Double.isNaN(m_neuronWidth))</span>
+<span class="fc" id="L375">        ? m_layer.getWidth()</span>
+<span class="fc" id="L376">        : m_neuronWidth;</span>
+
+<span class="fc" id="L378">      z = m_bias;</span>
+<span class="fc bfc" id="L379" title="All 2 branches covered.">      for (int i = 0; i &lt; m_connectionIDs.length; i++) {</span>
+<span class="fc" id="L380">        Double inVal = incoming.get(m_connectionIDs[i]);</span>
+<span class="pc bpc" id="L381" title="1 of 2 branches missed.">        if (inVal == null) {</span>
+<span class="nc" id="L382">          throw new Exception(&quot;[Neuron] unable to find connection &quot; </span>
+<span class="nc" id="L383">              + m_connectionIDs[i] + &quot; in input Map!&quot;);</span>
+        }
+
+<span class="fc bfc" id="L386" title="All 2 branches covered.">        if (m_layer.getActivationFunction() != ActivationFunction.RADIALBASIS) {</span>
+          // multiply with weight
+<span class="fc" id="L388">          double inV = inVal.doubleValue() * m_weights[i];</span>
+<span class="fc" id="L389">          z += inV;</span>
+        } else {
+          // Euclidean distance to the center (stored in m_weights)
+<span class="fc" id="L392">          double inV = Math.pow((inVal.doubleValue() - m_weights[i]), 2.0);</span>
+<span class="fc" id="L393">          z += inV;</span>
+        }
+      }
+      
+      // apply the width if necessary
+<span class="fc bfc" id="L398" title="All 2 branches covered.">      if (m_layer.getActivationFunction() == ActivationFunction.RADIALBASIS) {</span>
+<span class="fc" id="L399">        z /= (2.0 * (width * width));</span>
+      }
+
+<span class="fc" id="L402">      double threshold = m_layer.getThreshold();</span>
+<span class="pc bpc" id="L403" title="1 of 2 branches missed.">      double altitude = (Double.isNaN(m_neuronAltitude))</span>
+<span class="fc" id="L404">        ? m_layer.getAltitude()</span>
+<span class="nc" id="L405">        : m_neuronAltitude;</span>
+        
+<span class="fc" id="L407">      double fanIn = m_connectionIDs.length;        </span>
+<span class="fc" id="L408">      result = m_layer.getActivationFunction().eval(z, threshold, altitude, fanIn);</span>
+      
+<span class="fc" id="L410">      return result;</span>
+    }
+    
+    public String toString() {
+<span class="nc" id="L414">      StringBuffer temp = new StringBuffer();</span>
+<span class="nc" id="L415">      temp.append(&quot;Nueron (&quot; + m_ID + &quot;) [bias:&quot; + m_bias);</span>
+<span class="nc bnc" id="L416" title="All 2 branches missed.">      if (!Double.isNaN(m_neuronWidth)) {</span>
+<span class="nc" id="L417">        temp.append(&quot; width:&quot; + m_neuronWidth);</span>
+      }
+<span class="nc bnc" id="L419" title="All 2 branches missed.">      if (!Double.isNaN(m_neuronAltitude)) {</span>
+<span class="nc" id="L420">        temp.append(&quot; altitude:&quot; + m_neuronAltitude);</span>
+      }
+<span class="nc" id="L422">      temp.append(&quot;]\n&quot;);</span>
+<span class="nc" id="L423">      temp.append(&quot;  con. (ID:weight): &quot;);</span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">      for (int i = 0; i &lt; m_connectionIDs.length; i++) {</span>
+<span class="nc" id="L425">        temp.append(m_connectionIDs[i] + &quot;:&quot; + Utils.doubleToString(m_weights[i], 2));</span>
+<span class="nc bnc" id="L426" title="All 4 branches missed.">        if ((i + 1) % 10 == 0 || i == m_connectionIDs.length - 1) {</span>
+<span class="nc" id="L427">          temp.append(&quot;\n                    &quot;);</span>
+        } else {
+<span class="nc" id="L429">          temp.append(&quot;, &quot;);</span>
+        }
+      }
+<span class="nc" id="L432">      return temp.toString();</span>
+    }
+  }
+  
+  static class NeuralOutputs implements Serializable {
+    
+    /**
+     * For serialization
+     */
+    private static final long serialVersionUID = -233611113950482952L;
+
+    /** The neurons we are mapping */
+<span class="fc" id="L444">    private String[] m_outputNeurons = null;</span>
+    
+    /**
+     *  In the case of a nominal class, the index of the value
+     * being predicted by each output neuron
+     */
+<span class="fc" id="L450">    private int[] m_categoricalIndexes = null;</span>
+    
+    /** The class attribute we are mapping to */
+<span class="fc" id="L453">    private Attribute m_classAttribute = null;</span>
+    
+    /** Used when the class is numeric */
+<span class="fc" id="L456">    private NormContinuous m_regressionMapping = null;</span>
+        
+<span class="fc" id="L458">    protected NeuralOutputs(Element outputs, MiningSchema miningSchema) throws Exception {</span>
+<span class="fc" id="L459">      m_classAttribute = miningSchema.getMiningSchemaAsInstances().classAttribute();</span>
+      
+<span class="fc bfc" id="L461" title="All 2 branches covered.">      int vals = (m_classAttribute.isNumeric())</span>
+<span class="fc" id="L462">        ? 1</span>
+<span class="fc" id="L463">        : m_classAttribute.numValues();</span>
+      
+<span class="fc" id="L465">      m_outputNeurons = new String[vals];</span>
+<span class="fc" id="L466">      m_categoricalIndexes = new int[vals];</span>
+      
+<span class="fc" id="L468">      NodeList outputL = outputs.getElementsByTagName(&quot;NeuralOutput&quot;);</span>
+<span class="pc bpc" id="L469" title="1 of 2 branches missed.">      if (outputL.getLength() != m_outputNeurons.length) {</span>
+<span class="nc" id="L470">        throw new Exception(&quot;[NeuralOutputs] the number of neural outputs does not match &quot;</span>
+            + &quot;the number expected!&quot;);
+      }
+      
+<span class="fc bfc" id="L474" title="All 2 branches covered.">      for (int i = 0; i &lt; outputL.getLength(); i++) {</span>
+<span class="fc" id="L475">        Node outputN = outputL.item(i);</span>
+<span class="pc bpc" id="L476" title="1 of 2 branches missed.">        if (outputN.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L477">          Element outputE = (Element)outputN;</span>
+          // get the ID for this output neuron
+<span class="fc" id="L479">          m_outputNeurons[i] = outputE.getAttribute(&quot;outputNeuron&quot;);</span>
+          
+<span class="fc bfc" id="L481" title="All 2 branches covered.">          if (m_classAttribute.isNumeric()) {</span>
+            // get the single norm continuous
+<span class="fc" id="L483">            NodeList contL = outputE.getElementsByTagName(&quot;NormContinuous&quot;);</span>
+<span class="pc bpc" id="L484" title="1 of 2 branches missed.">            if (contL.getLength() != 1) {</span>
+<span class="nc" id="L485">              throw new Exception(&quot;[NeuralOutputs] Should be exactly one norm continuous element &quot;</span>
+                  + &quot;for numeric class!&quot;);
+            }
+<span class="fc" id="L488">            Node normContNode = contL.item(0);</span>
+<span class="fc" id="L489">            String attName = ((Element)normContNode).getAttribute(&quot;field&quot;);</span>
+<span class="fc" id="L490">            Attribute dummyTargetDef = new Attribute(attName);</span>
+<span class="fc" id="L491">            ArrayList&lt;Attribute&gt; dummyFieldDefs = new ArrayList&lt;Attribute&gt;();</span>
+<span class="fc" id="L492">            dummyFieldDefs.add(dummyTargetDef);</span>
+            
+<span class="fc" id="L494">            m_regressionMapping = new NormContinuous((Element)normContNode, </span>
+<span class="fc" id="L495">                FieldMetaInfo.Optype.CONTINUOUS, dummyFieldDefs);</span>
+<span class="fc" id="L496">            break;</span>
+          } else {
+            // we just need to grab the categorical value (out of the NormDiscrete element)
+            // that this output neuron is associated with
+<span class="fc" id="L500">            NodeList discL = outputE.getElementsByTagName(&quot;NormDiscrete&quot;);</span>
+<span class="pc bpc" id="L501" title="1 of 2 branches missed.">            if (discL.getLength() != 1) {</span>
+<span class="nc" id="L502">              throw new Exception(&quot;[NeuralOutputs] Should be only one norm discrete element &quot;</span>
+                  + &quot;per derived field/neural output for a nominal class!&quot;);
+            }
+<span class="fc" id="L505">            Node normDiscNode = discL.item(0);</span>
+<span class="fc" id="L506">            String attValue = ((Element)normDiscNode).getAttribute(&quot;value&quot;);</span>
+<span class="fc" id="L507">            int index = m_classAttribute.indexOfValue(attValue);</span>
+<span class="pc bpc" id="L508" title="1 of 2 branches missed.">            if (index &lt; 0) {</span>
+<span class="nc" id="L509">              throw new Exception(&quot;[NeuralOutputs] Can't find specified target value &quot;</span>
+<span class="nc" id="L510">                  + attValue + &quot; in class attribute &quot; + m_classAttribute.name());</span>
+            }
+<span class="fc" id="L512">            m_categoricalIndexes[i] = index;</span>
+          }
+        }
+      }
+<span class="fc" id="L516">    }</span>
+    
+    /**
+     * Compute the output. Either a probability distribution or a single
+     * value (regression).
+     * 
+     * @param incoming the values from the last hidden layer
+     * @param preds the array to fill with predicted values
+     * @throws Exception if there is a problem computing the output
+     */
+    protected void getOuput(HashMap&lt;String, Double&gt; incoming, double[] preds) throws Exception {
+      
+<span class="pc bpc" id="L528" title="1 of 2 branches missed.">      if (preds.length != m_outputNeurons.length) {</span>
+<span class="nc" id="L529">        throw new Exception(&quot;[NeuralOutputs] Incorrect number of predictions requested: &quot;</span>
+<span class="nc" id="L530">            + preds.length + &quot;requested, &quot; + m_outputNeurons.length + &quot; expected&quot;);</span>
+      }
+<span class="fc bfc" id="L532" title="All 2 branches covered.">      for (int i = 0; i &lt; m_outputNeurons.length; i++) {</span>
+<span class="fc" id="L533">        Double neuronOut = incoming.get(m_outputNeurons[i]);</span>
+<span class="pc bpc" id="L534" title="1 of 2 branches missed.">        if (neuronOut == null) {</span>
+<span class="nc" id="L535">          throw new Exception(&quot;[NeuralOutputs] Unable to find output neuron &quot;</span>
+<span class="nc" id="L536">              + m_outputNeurons[i] + &quot; in the incoming HashMap!!&quot;);</span>
+        }
+<span class="fc bfc" id="L538" title="All 2 branches covered.">        if (m_classAttribute.isNumeric()) {</span>
+          // will be only one output neuron anyway
+<span class="fc" id="L540">          preds[0] = neuronOut.doubleValue();</span>
+          
+<span class="fc" id="L542">          preds[0] = m_regressionMapping.getResultInverse(preds);</span>
+        } else {
+
+          // clip at zero
+          // preds[m_categoricalIndexes[i]] = (neuronOut &lt; 0) ? 0.0 : neuronOut;
+<span class="fc" id="L547">          preds[m_categoricalIndexes[i]] = neuronOut;</span>
+        }
+      }
+      
+<span class="fc bfc" id="L551" title="All 2 branches covered.">      if (m_classAttribute.isNominal()) {</span>
+        // check for negative values and adjust
+<span class="fc" id="L553">        double min = preds[Utils.minIndex(preds)];</span>
+<span class="fc bfc" id="L554" title="All 2 branches covered.">        if (min &lt; 0) {</span>
+<span class="fc bfc" id="L555" title="All 2 branches covered.">          for (int i = 0; i &lt; preds.length; i++) {</span>
+<span class="fc" id="L556">            preds[i] -= min;</span>
+          }
+        }
+        // do a simplemax normalization
+<span class="fc" id="L560">        Utils.normalize(preds);</span>
+      }
+<span class="fc" id="L562">    }</span>
+    
+    public String toString() {
+<span class="nc" id="L565">      StringBuffer temp = new StringBuffer();</span>
+      
+<span class="nc bnc" id="L567" title="All 2 branches missed.">      for (int i = 0; i &lt; m_outputNeurons.length; i++) {</span>
+<span class="nc" id="L568">        temp.append(&quot;Output neuron (&quot; + m_outputNeurons[i] + &quot;)\n&quot;);</span>
+<span class="nc" id="L569">        temp.append(&quot;mapping:\n&quot;);</span>
+<span class="nc bnc" id="L570" title="All 2 branches missed.">        if (m_classAttribute.isNumeric()) {</span>
+<span class="nc" id="L571">          temp.append(m_regressionMapping +&quot;\n&quot;);</span>
+        } else {
+<span class="nc" id="L573">          temp.append(m_classAttribute.name() + &quot; = &quot; </span>
+<span class="nc" id="L574">              + m_classAttribute.value(m_categoricalIndexes[i]) + &quot;\n&quot;);</span>
+        }
+      }
+      
+<span class="nc" id="L578">      return temp.toString();</span>
+    }
+  }
+  
+  /**
+   * Enumerated type for the mining function
+   */
+<span class="fc" id="L585">  enum MiningFunction {</span>
+<span class="fc" id="L586">    CLASSIFICATION,</span>
+<span class="fc" id="L587">    REGRESSION;</span>
+  }
+  
+  /** The mining function */
+<span class="fc" id="L591">  protected MiningFunction m_functionType = MiningFunction.CLASSIFICATION;</span>
+  
+  /**
+   * Enumerated type for the activation function.
+   */
+<span class="fc" id="L596">  enum ActivationFunction {</span>
+<span class="fc" id="L597">    THRESHOLD(&quot;threshold&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="nc bnc" id="L599" title="All 2 branches missed.">        if (z &gt; threshold) {</span>
+<span class="nc" id="L600">          return 1.0;</span>
+        }
+<span class="nc" id="L602">        return 0.0;</span>
+      }
+    },
+<span class="fc" id="L605">    LOGISTIC(&quot;logistic&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="fc" id="L607">        return 1.0 / (1.0 + Math.exp(-z));</span>
+      }
+    },
+<span class="fc" id="L610">    TANH(&quot;tanh&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="fc" id="L612">        double a = Math.exp( z );</span>
+<span class="fc" id="L613">        double b = Math.exp( -z );</span>
+<span class="fc" id="L614">        return ((a-b)/(a+b));</span>
+        //return (1.0 - Math.exp(-2.0 * z)) / (1.0 + Math.exp(-2.0 * z));
+      }
+    },
+<span class="fc" id="L618">    IDENTITY(&quot;identity&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="fc" id="L620">        return z;</span>
+      }
+    },
+<span class="fc" id="L623">    EXPONENTIAL(&quot;exponential&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="nc" id="L625">        return Math.exp(z);</span>
+      }
+    },
+<span class="fc" id="L628">    RECIPROCAL(&quot;reciprocal&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="nc" id="L630">        return 1.0 / z;</span>
+      }
+    },
+<span class="fc" id="L633">    SQUARE(&quot;square&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="nc" id="L635">        return  z * z;</span>
+      }
+    },
+<span class="fc" id="L638">    GAUSS(&quot;gauss&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="nc" id="L640">        return Math.exp(-(z * z));</span>
+      }
+    },
+<span class="fc" id="L643">    SINE(&quot;sine&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="nc" id="L645">        return Math.sin(z);</span>
+      }
+    },
+<span class="fc" id="L648">    COSINE(&quot;cosine&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="nc" id="L650">        return Math.cos(z);</span>
+      }
+    },
+<span class="fc" id="L653">    ELLICOT(&quot;ellicot&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="nc" id="L655">        return z / (1.0 + Math.abs(z));</span>
+      }
+    },
+<span class="fc" id="L658">    ARCTAN(&quot;arctan&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="nc" id="L660">        return 2.0 * Math.atan(z) / Math.PI;</span>
+      }
+    },
+<span class="fc" id="L663">    RADIALBASIS(&quot;radialBasis&quot;) {</span>
+      double eval(double z, double threshold, double altitude, double fanIn) {
+<span class="fc" id="L665">        return Math.exp(fanIn * Math.log(altitude) - z);</span>
+      }
+    };
+    
+    abstract double eval(double z, double threshold, double altitude, double fanIn);
+    
+    private final String m_stringVal;
+    
+<span class="fc" id="L673">    ActivationFunction(String name) {</span>
+<span class="fc" id="L674">      m_stringVal = name;</span>
+<span class="fc" id="L675">    }</span>
+    
+    public String toString() {
+<span class="fc" id="L678">      return m_stringVal;</span>
+    }
+  }
+  
+  /** The activation function to use */
+<span class="fc" id="L683">  protected ActivationFunction m_activationFunction = ActivationFunction.ARCTAN;</span>
+  
+  /**
+   * Enumerated type for the normalization method
+   */
+<span class="fc" id="L688">  enum Normalization {</span>
+<span class="fc" id="L689">    NONE (&quot;none&quot;),</span>
+<span class="fc" id="L690">    SIMPLEMAX (&quot;simplemax&quot;),</span>
+<span class="fc" id="L691">    SOFTMAX (&quot;softmax&quot;);</span>
+    
+    private final String m_stringVal;
+    
+<span class="fc" id="L695">    Normalization(String name) {</span>
+<span class="fc" id="L696">      m_stringVal = name;</span>
+<span class="fc" id="L697">    }</span>
+    
+    public String toString() {
+<span class="nc" id="L700">      return m_stringVal;</span>
+    }
+  }
+    
+  /** The normalization method */
+<span class="fc" id="L705">  protected Normalization m_normalizationMethod = Normalization.NONE;</span>
+  
+  /** Threshold activation */
+<span class="fc" id="L708">  protected double m_threshold = 0.0; // default = 0</span>
+  
+  /** Width for radial basis */
+<span class="fc" id="L711">  protected double m_width = Double.NaN; // no default</span>
+  
+  /** Altitude for radial basis */
+<span class="fc" id="L714">  protected double m_altitude = 1.0; // default = 1</span>
+  
+  /** The number of inputs to the network */
+<span class="fc" id="L717">  protected int m_numberOfInputs = 0;</span>
+  
+  /** Number of hidden layers in the network */
+<span class="fc" id="L720">  protected int m_numberOfLayers = 0;</span>
+  
+  /** The inputs to the network */
+<span class="fc" id="L723">  protected NeuralInput[] m_inputs = null;</span>
+  
+  /** A map for storing network input values (computed from an incoming instance) */
+<span class="fc" id="L726">  protected HashMap&lt;String, Double&gt; m_inputMap = new HashMap&lt;String, Double&gt;();</span>
+    
+  /** The hidden layers in the network */
+<span class="fc" id="L729">  protected NeuralLayer[] m_layers = null;</span>
+  
+  /** The outputs of the network */
+<span class="fc" id="L732">  protected NeuralOutputs m_outputs = null;</span>
+  
+  public NeuralNetwork(Element model, Instances dataDictionary,
+                       MiningSchema miningSchema) throws Exception {
+    
+<span class="fc" id="L737">    super(dataDictionary, miningSchema);</span>
+    
+<span class="fc" id="L739">    String fn = model.getAttribute(&quot;functionName&quot;);</span>
+<span class="fc bfc" id="L740" title="All 2 branches covered.">    if (fn.equals(&quot;regression&quot;)) {</span>
+<span class="fc" id="L741">      m_functionType = MiningFunction.REGRESSION;</span>
+    }
+    
+<span class="fc" id="L744">    String act = model.getAttribute(&quot;activationFunction&quot;);</span>
+<span class="pc bpc" id="L745" title="2 of 4 branches missed.">    if (act == null || act.length() == 0) {</span>
+<span class="nc" id="L746">      throw new Exception(&quot;[NeuralNetwork] no activation functon defined&quot;);</span>
+    }
+    
+    // get the activation function
+<span class="pc bpc" id="L750" title="1 of 2 branches missed.">    for (ActivationFunction a : ActivationFunction.values()) {</span>
+<span class="fc bfc" id="L751" title="All 2 branches covered.">      if (a.toString().equals(act)) {</span>
+<span class="fc" id="L752">        m_activationFunction = a;</span>
+<span class="fc" id="L753">        break;</span>
+      }
+    }
+    
+    // get the normalization method (if specified)
+<span class="fc" id="L758">    String norm = model.getAttribute(&quot;normalizationMethod&quot;);</span>
+<span class="pc bpc" id="L759" title="2 of 4 branches missed.">    if (norm != null &amp;&amp; norm.length() &gt; 0) {</span>
+<span class="nc bnc" id="L760" title="All 2 branches missed.">      for (Normalization n : Normalization.values()) {</span>
+<span class="nc bnc" id="L761" title="All 2 branches missed.">        if (n.toString().equals(norm)) {</span>
+<span class="nc" id="L762">          m_normalizationMethod = n;</span>
+<span class="nc" id="L763">          break;</span>
+        }
+      }
+    }
+    
+<span class="fc" id="L768">    String thresh = model.getAttribute(&quot;threshold&quot;);</span>
+<span class="pc bpc" id="L769" title="2 of 4 branches missed.">    if (thresh != null &amp;&amp; thresh.length() &gt; 0) {</span>
+<span class="nc" id="L770">      m_threshold = Double.parseDouble(thresh);</span>
+    }
+<span class="fc" id="L772">    String width = model.getAttribute(&quot;width&quot;);</span>
+<span class="pc bpc" id="L773" title="2 of 4 branches missed.">    if (width != null &amp;&amp; width.length() &gt; 0) {</span>
+<span class="nc" id="L774">      m_width = Double.parseDouble(width);</span>
+    }
+<span class="fc" id="L776">    String alt = model.getAttribute(&quot;altitude&quot;);</span>
+<span class="pc bpc" id="L777" title="2 of 4 branches missed.">    if (alt != null &amp;&amp; alt.length() &gt; 0) {</span>
+<span class="nc" id="L778">      m_altitude = Double.parseDouble(alt);</span>
+    }
+    
+    // get all the inputs
+<span class="fc" id="L782">    NodeList inputL = model.getElementsByTagName(&quot;NeuralInput&quot;);</span>
+<span class="fc" id="L783">    m_numberOfInputs = inputL.getLength();</span>
+<span class="fc" id="L784">    m_inputs = new NeuralInput[m_numberOfInputs];</span>
+<span class="fc bfc" id="L785" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numberOfInputs; i++) {</span>
+<span class="fc" id="L786">      Node inputN = inputL.item(i);</span>
+<span class="pc bpc" id="L787" title="1 of 2 branches missed.">      if (inputN.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L788">        NeuralInput nI = new NeuralInput((Element)inputN, m_miningSchema);</span>
+<span class="fc" id="L789">        m_inputs[i] = nI;</span>
+      }
+    }
+    
+    // get the layers
+<span class="fc" id="L794">    NodeList layerL = model.getElementsByTagName(&quot;NeuralLayer&quot;);</span>
+<span class="fc" id="L795">    m_numberOfLayers = layerL.getLength();</span>
+<span class="fc" id="L796">    m_layers = new NeuralLayer[m_numberOfLayers];</span>
+<span class="fc bfc" id="L797" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numberOfLayers; i++) {</span>
+<span class="fc" id="L798">      Node layerN = layerL.item(i);</span>
+<span class="pc bpc" id="L799" title="1 of 2 branches missed.">      if (layerN.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L800">        NeuralLayer nL = new NeuralLayer((Element)layerN);</span>
+<span class="fc" id="L801">        m_layers[i] = nL;</span>
+      }
+    }
+    
+    // get the outputs
+<span class="fc" id="L806">    NodeList outputL = model.getElementsByTagName(&quot;NeuralOutputs&quot;);</span>
+<span class="pc bpc" id="L807" title="1 of 2 branches missed.">    if (outputL.getLength() != 1) {</span>
+<span class="nc" id="L808">      throw new Exception(&quot;[NeuralNetwork] Should be just one NeuralOutputs element defined!&quot;);</span>
+    }
+    
+<span class="fc" id="L811">    m_outputs = new NeuralOutputs((Element)outputL.item(0), m_miningSchema);</span>
+<span class="fc" id="L812">  }</span>
+
+  /* (non-Javadoc)
+   * @see weka.core.RevisionHandler#getRevision()
+   */
+  public String getRevision() {
+<span class="nc" id="L818">    return RevisionUtils.extract(&quot;$Revision: 5562 $&quot;);</span>
+  }
+  
+  /**                                                                                                             
+   * Classifies the given test instance. The instance has to belong to a                                          
+   * dataset when it's being classified.                                                          
+   *                                                                                                              
+   * @param inst the instance to be classified                                                                
+   * @return the predicted most likely class for the instance or                                                  
+   * Instance.missingValue() if no prediction is made                                                             
+   * @exception Exception if an error occurred during the prediction                                              
+   */
+  public double[] distributionForInstance(Instance inst) throws Exception {
+<span class="fc bfc" id="L831" title="All 2 branches covered.">    if (!m_initialized) {</span>
+<span class="fc" id="L832">      mapToMiningSchema(inst.dataset());</span>
+    }
+<span class="fc" id="L834">    double[] preds = null;</span>
+    
+<span class="fc bfc" id="L836" title="All 2 branches covered.">    if (m_miningSchema.getFieldsAsInstances().classAttribute().isNumeric()) {</span>
+<span class="fc" id="L837">      preds = new double[1];</span>
+    } else {
+<span class="fc" id="L839">      preds = new double[m_miningSchema.getFieldsAsInstances().classAttribute().numValues()];</span>
+    }
+    
+<span class="fc" id="L842">    double[] incoming = m_fieldsMap.instanceToSchema(inst, m_miningSchema);</span>
+    
+<span class="fc" id="L844">    boolean hasMissing = false;</span>
+<span class="fc bfc" id="L845" title="All 2 branches covered.">    for (int i = 0; i &lt; incoming.length; i++) {</span>
+<span class="fc bfc" id="L846" title="All 2 branches covered.">      if (i != m_miningSchema.getFieldsAsInstances().classIndex() &amp;&amp; </span>
+<span class="fc bfc" id="L847" title="All 2 branches covered.">          Double.isNaN(incoming[i])) {</span>
+<span class="fc" id="L848">        hasMissing = true;</span>
+        //System.err.println(&quot;Missing value for att : &quot; + m_miningSchema.getFieldsAsInstances().attribute(i).name());
+<span class="fc" id="L850">        break;</span>
+      }
+    }
+    
+<span class="fc bfc" id="L854" title="All 2 branches covered.">    if (hasMissing) {</span>
+<span class="pc bpc" id="L855" title="1 of 2 branches missed.">      if (!m_miningSchema.hasTargetMetaData()) {</span>
+<span class="fc" id="L856">        String message = &quot;[NeuralNetwork] WARNING: Instance to predict has missing value(s) but &quot;</span>
+          + &quot;there is no missing value handling meta data and no &quot;
+          + &quot;prior probabilities/default value to fall back to. No &quot;
+          + &quot;prediction will be made (&quot; 
+<span class="pc bpc" id="L860" title="1 of 2 branches missed.">          + ((m_miningSchema.getFieldsAsInstances().classAttribute().isNominal()</span>
+<span class="pc bpc" id="L861" title="1 of 2 branches missed.">              || m_miningSchema.getFieldsAsInstances().classAttribute().isString())</span>
+<span class="nc" id="L862">              ? &quot;zero probabilities output).&quot;</span>
+<span class="fc" id="L863">              : &quot;NaN output).&quot;);</span>
+<span class="pc bpc" id="L864" title="1 of 2 branches missed.">        if (m_log == null) {</span>
+<span class="fc" id="L865">          System.err.println(message);</span>
+        } else {
+<span class="nc" id="L867">          m_log.logMessage(message);</span>
+        }
+        
+<span class="pc bpc" id="L870" title="1 of 2 branches missed.">        if (m_miningSchema.getFieldsAsInstances().classAttribute().isNumeric()) {</span>
+<span class="fc" id="L871">          preds[0] = Instance.missingValue();</span>
+        }
+<span class="fc" id="L873">        return preds;</span>
+      } else {
+        // use prior probablilities/default value
+<span class="nc" id="L876">        TargetMetaInfo targetData = m_miningSchema.getTargetMetaData();</span>
+<span class="nc bnc" id="L877" title="All 2 branches missed.">        if (m_miningSchema.getFieldsAsInstances().classAttribute().isNumeric()) {</span>
+<span class="nc" id="L878">          preds[0] = targetData.getDefaultValue();</span>
+        } else {
+<span class="nc" id="L880">          Instances miningSchemaI = m_miningSchema.getFieldsAsInstances();</span>
+<span class="nc bnc" id="L881" title="All 2 branches missed.">          for (int i = 0; i &lt; miningSchemaI.classAttribute().numValues(); i++) {</span>
+<span class="nc" id="L882">            preds[i] = targetData.getPriorProbability(miningSchemaI.classAttribute().value(i));</span>
+          }
+        }
+<span class="nc" id="L885">        return preds;</span>
+      }
+    } else {
+      
+      // construct the input to the network for this instance
+<span class="fc" id="L890">      m_inputMap.clear();</span>
+<span class="fc bfc" id="L891" title="All 2 branches covered.">      for (int i = 0; i &lt; m_inputs.length; i++) {</span>
+<span class="fc" id="L892">        double networkInVal = m_inputs[i].getValue(incoming);</span>
+<span class="fc" id="L893">        String ID = m_inputs[i].getID();</span>
+<span class="fc" id="L894">        m_inputMap.put(ID, networkInVal);</span>
+      }
+      
+      // now compute the output of each layer
+<span class="fc" id="L898">      HashMap&lt;String, Double&gt; layerOut = m_layers[0].computeOutput(m_inputMap);</span>
+<span class="fc bfc" id="L899" title="All 2 branches covered.">      for (int i = 1; i &lt; m_layers.length; i++) {</span>
+<span class="fc" id="L900">        layerOut = m_layers[i].computeOutput(layerOut);</span>
+      }
+      
+      // now do the output
+<span class="fc" id="L904">      m_outputs.getOuput(layerOut, preds);</span>
+    }
+    
+<span class="fc" id="L907">    return preds;</span>
+  }
+
+  public String toString() {
+<span class="nc" id="L911">    StringBuffer temp = new StringBuffer();</span>
+    
+<span class="nc" id="L913">    temp.append(&quot;PMML version &quot; + getPMMLVersion());</span>
+<span class="nc bnc" id="L914" title="All 2 branches missed.">    if (!getCreatorApplication().equals(&quot;?&quot;)) {</span>
+<span class="nc" id="L915">      temp.append(&quot;\nApplication: &quot; + getCreatorApplication());</span>
+    }
+<span class="nc" id="L917">    temp.append(&quot;\nPMML Model: Neural network&quot;);</span>
+<span class="nc" id="L918">    temp.append(&quot;\n\n&quot;);</span>
+<span class="nc" id="L919">    temp.append(m_miningSchema);</span>
+    
+<span class="nc" id="L921">    temp.append(&quot;Inputs:\n&quot;);</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">    for (int i = 0; i &lt; m_inputs.length; i++) {</span>
+<span class="nc" id="L923">      temp.append(m_inputs[i] + &quot;\n&quot;);</span>
+    }
+
+<span class="nc bnc" id="L926" title="All 2 branches missed.">    for (int i = 0; i &lt; m_layers.length; i++) {</span>
+<span class="nc" id="L927">      temp.append(&quot;Layer: &quot; + (i+1) + &quot;\n&quot;);</span>
+<span class="nc" id="L928">      temp.append(m_layers[i] + &quot;\n&quot;);</span>
+    }
+    
+<span class="nc" id="L931">    temp.append(&quot;Outputs:\n&quot;);</span>
+<span class="nc" id="L932">    temp.append(m_outputs);</span>
+    
+<span class="nc" id="L934">    return temp.toString();</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

@@ -1,0 +1,866 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>CVParameterSelection.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.meta</a> &gt; <span class="el_source">CVParameterSelection.java</span></div><h1>CVParameterSelection.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    CVParameterSelection.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.meta;
+
+import weka.classifiers.Evaluation;
+import weka.classifiers.RandomizableSingleClassifierEnhancer;
+import weka.core.Capabilities;
+import weka.core.Drawable;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Summarizable;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.io.Serializable;
+import java.io.StreamTokenizer;
+import java.io.StringReader;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class for performing parameter selection by cross-validation for any classifier.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * R. Kohavi (1995). Wrappers for Performance Enhancement and Oblivious Decision Graphs. Department of Computer Science, Stanford University.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;phdthesis{Kohavi1995,
+ *    address = {Department of Computer Science, Stanford University},
+ *    author = {R. Kohavi},
+ *    school = {Stanford University},
+ *    title = {Wrappers for Performance Enhancement and Oblivious Decision Graphs},
+ *    year = {1995}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -X &amp;lt;number of folds&amp;gt;
+ *  Number of folds used for cross validation (default 10).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;classifier parameter&amp;gt;
+ *  Classifier parameter options.
+ *  eg: &quot;N 1 5 10&quot; Sets an optimisation parameter for the
+ *  classifier with name -N, with lower bound 1, upper bound
+ *  5, and 10 optimisation steps. The upper bound may be the
+ *  character 'A' or 'I' to substitute the number of
+ *  attributes or instances in the training data,
+ *  respectively. This parameter may be supplied more than
+ *  once to optimise over several classifier options
+ *  simultaneously.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W
+ *  Full name of base classifier.
+ *  (default: weka.classifiers.rules.ZeroR)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to classifier weka.classifiers.rules.ZeroR:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * Options after -- are passed to the designated sub-classifier. &lt;p&gt;
+ *
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 8180 $ 
+*/
+<span class="fc" id="L118">public class CVParameterSelection </span>
+  extends RandomizableSingleClassifierEnhancer
+  implements Drawable, Summarizable, TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -6529603380876641265L;
+  
+  /**
+   * A data structure to hold values associated with a single
+   * cross-validation search parameter
+   */
+  protected class CVParameter 
+    implements Serializable, RevisionHandler {
+    
+    /** for serialization */
+    static final long serialVersionUID = -4668812017709421953L;
+
+    /**  Char used to identify the option of interest */
+    private String m_ParamChar;    
+
+    /**  Lower bound for the CV search */
+    private double m_Lower;      
+
+    /**  Upper bound for the CV search */
+    private double m_Upper;      
+
+    /**  Number of steps during the search */
+    private double m_Steps;      
+
+    /**  The parameter value with the best performance */
+    private double m_ParamValue; 
+
+    /**  True if the parameter should be added at the end of the argument list */
+    private boolean m_AddAtEnd;  
+
+    /**  True if the parameter should be rounded to an integer */
+    private boolean m_RoundParam;
+    
+    /**
+     * Constructs a CVParameter.
+     * 
+     * @param param the parameter definition
+     * @throws Exception if construction of CVParameter fails
+     */
+<span class="nc" id="L162">    public CVParameter(String param) throws Exception {</span>
+<span class="nc" id="L163">      String[] parts = param.split(&quot; &quot;);</span>
+<span class="nc bnc" id="L164" title="All 4 branches missed.">      if (parts.length &lt; 4 || parts.length &gt; 5) {</span>
+<span class="nc" id="L165">        throw new Exception(&quot;CVParameter &quot; + param </span>
+<span class="nc" id="L166">            + &quot;: four or five components expected!&quot;);</span>
+      }
+      
+      try {
+<span class="nc" id="L170">        Double.parseDouble(parts[0]);</span>
+<span class="nc" id="L171">        throw new Exception(&quot;CVParameter &quot; + param </span>
+<span class="nc" id="L172">                            + &quot;: Character parameter identifier expected&quot;);</span>
+<span class="nc" id="L173">      } catch (NumberFormatException n) {</span>
+<span class="nc" id="L174">        m_ParamChar = parts[0];</span>
+      }
+      
+      try {
+<span class="nc" id="L178">        m_Lower = Double.parseDouble(parts[1]);</span>
+<span class="nc" id="L179">      } catch (NumberFormatException n) {</span>
+<span class="nc" id="L180">        throw new Exception(&quot;CVParameter &quot; + param </span>
+<span class="nc" id="L181">            + &quot;: Numeric lower bound expected&quot;);</span>
+      }
+      
+<span class="nc bnc" id="L184" title="All 2 branches missed.">      if (parts[2].equals(&quot;A&quot;)) {</span>
+<span class="nc" id="L185">        m_Upper = m_Lower - 1;</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">      } else if (parts[2].equals(&quot;I&quot;)) {</span>
+<span class="nc" id="L187">        m_Upper = m_Lower - 2;</span>
+      } else {
+        try {
+<span class="nc" id="L190">          m_Upper = Double.parseDouble(parts[2]);</span>
+          
+<span class="nc bnc" id="L192" title="All 2 branches missed.">          if (m_Upper &lt; m_Lower) {</span>
+<span class="nc" id="L193">            throw new Exception(&quot;CVParameter &quot; + param</span>
+<span class="nc" id="L194">                                + &quot;: Upper bound is less than lower bound&quot;);</span>
+          }
+<span class="nc" id="L196">        } catch (NumberFormatException n) {</span>
+<span class="nc" id="L197">          throw new Exception(&quot;CVParameter &quot; + param </span>
+<span class="nc" id="L198">              + &quot;: Upper bound must be numeric, or 'A' or 'N'&quot;);</span>
+        }
+      }
+      
+      try {
+<span class="nc" id="L203">        m_Steps = Double.parseDouble(parts[3]);</span>
+<span class="nc" id="L204">      } catch (NumberFormatException n) {</span>
+<span class="nc" id="L205">        throw new Exception(&quot;CVParameter &quot; + param </span>
+<span class="nc" id="L206">            + &quot;: Numeric number of steps expected&quot;);</span>
+      }
+      
+<span class="nc bnc" id="L209" title="All 4 branches missed.">      if (parts.length == 5 &amp;&amp; parts[4].equals(&quot;R&quot;)) {</span>
+<span class="nc" id="L210">        m_RoundParam = true;</span>
+      }
+<span class="nc" id="L212">    }</span>
+
+    /**
+     * Returns a CVParameter as a string.
+     * 
+     * @return the CVParameter as string
+     */
+    public String toString() {
+
+<span class="nc" id="L221">      String result = m_ParamChar + &quot; &quot; + m_Lower + &quot; &quot;;</span>
+<span class="nc bnc" id="L222" title="All 3 branches missed.">      switch ((int)(m_Lower - m_Upper + 0.5)) {</span>
+      case 1:
+<span class="nc" id="L224">	result += &quot;A&quot;;</span>
+<span class="nc" id="L225">	break;</span>
+      case 2:
+<span class="nc" id="L227">	result += &quot;I&quot;;</span>
+<span class="nc" id="L228">	break;</span>
+      default:
+<span class="nc" id="L230">	result += m_Upper;</span>
+<span class="nc" id="L231">	break;</span>
+      }
+<span class="nc" id="L233">      result += &quot; &quot; + m_Steps;</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">      if (m_RoundParam) {</span>
+<span class="nc" id="L235">	result += &quot; R&quot;;</span>
+      }
+<span class="nc" id="L237">      return result;</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L246">      return RevisionUtils.extract(&quot;$Revision: 8180 $&quot;);</span>
+    }
+  }
+
+  /**
+   * The base classifier options (not including those being set
+   * by cross-validation)
+   */
+  protected String [] m_ClassifierOptions;
+
+  /** The set of all classifier options as determined by cross-validation */
+  protected String [] m_BestClassifierOptions;
+
+  /** The set of all options at initialization time. So that getOptions
+      can return this. */
+  protected String [] m_InitOptions;
+
+  /** The cross-validated performance of the best options */
+  protected double m_BestPerformance;
+
+  /** The set of parameters to cross-validate over */
+<span class="fc" id="L267">  protected FastVector m_CVParams = new FastVector();</span>
+
+  /** The number of attributes in the data */
+  protected int m_NumAttributes;
+
+  /** The number of instances in a training fold */
+  protected int m_TrainFoldSize;
+  
+  /** The number of folds used in cross-validation */
+<span class="fc" id="L276">  protected int m_NumFolds = 10;</span>
+
+  /**
+   * Create the options array to pass to the classifier. The parameter
+   * values and positions are taken from m_ClassifierOptions and
+   * m_CVParams.
+   *
+   * @return the options array
+   */
+  protected String [] createOptions() {
+    
+<span class="nc" id="L287">    String [] options = new String [m_ClassifierOptions.length </span>
+<span class="nc" id="L288">				   + 2 * m_CVParams.size()];</span>
+<span class="nc" id="L289">    int start = 0, end = options.length;</span>
+
+    // Add the cross-validation parameters and their values
+<span class="nc bnc" id="L292" title="All 2 branches missed.">    for (int i = 0; i &lt; m_CVParams.size(); i++) {</span>
+<span class="nc" id="L293">      CVParameter cvParam = (CVParameter)m_CVParams.elementAt(i);</span>
+<span class="nc" id="L294">      double paramValue = cvParam.m_ParamValue;</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">      if (cvParam.m_RoundParam) {</span>
+        //	paramValue = (double)((int) (paramValue + 0.5));
+<span class="nc" id="L297">        paramValue = Math.rint(paramValue);</span>
+      }
+<span class="nc bnc" id="L299" title="All 2 branches missed.">      boolean isInt = ((paramValue - (int)paramValue) == 0);</span>
+      
+      
+<span class="nc bnc" id="L302" title="All 2 branches missed.">      if (cvParam.m_AddAtEnd) {</span>
+<span class="nc bnc" id="L303" title="All 4 branches missed.">	options[--end] = &quot;&quot; + ((cvParam.m_RoundParam || isInt) ? </span>
+<span class="nc" id="L304">            Utils.doubleToString(paramValue,4) : cvParam.m_ParamValue);</span>
+	//Utils.doubleToString(paramValue,4);
+<span class="nc" id="L306">	options[--end] = &quot;-&quot; + cvParam.m_ParamChar;</span>
+      } else {
+<span class="nc" id="L308">	options[start++] = &quot;-&quot; + cvParam.m_ParamChar;</span>
+<span class="nc bnc" id="L309" title="All 4 branches missed.">	options[start++] = &quot;&quot; + ((cvParam.m_RoundParam || isInt) ? </span>
+<span class="nc" id="L310">            Utils.doubleToString(paramValue,4) : cvParam.m_ParamValue);</span>
+	//+ Utils.doubleToString(paramValue,4);
+      }
+    }
+    // Add the static parameters
+<span class="nc" id="L315">    System.arraycopy(m_ClassifierOptions, 0,</span>
+<span class="nc" id="L316">		     options, start,</span>
+<span class="nc" id="L317">		     m_ClassifierOptions.length);</span>
+
+<span class="nc" id="L319">    return options;</span>
+  }
+
+  /**
+   * Finds the best parameter combination. (recursive for each parameter
+   * being optimised).
+   * 
+   * @param depth the index of the parameter to be optimised at this level
+   * @param trainData the data the search is based on
+   * @param random a random number generator
+   * @throws Exception if an error occurs
+   */
+  protected void findParamsByCrossValidation(int depth, Instances trainData,
+					     Random random)
+    throws Exception {
+
+<span class="nc bnc" id="L335" title="All 2 branches missed.">    if (depth &lt; m_CVParams.size()) {</span>
+<span class="nc" id="L336">      CVParameter cvParam = (CVParameter)m_CVParams.elementAt(depth);</span>
+
+      double upper;
+<span class="nc bnc" id="L339" title="All 3 branches missed.">      switch ((int)(cvParam.m_Lower - cvParam.m_Upper + 0.5)) {</span>
+      case 1:
+<span class="nc" id="L341">	upper = m_NumAttributes;</span>
+<span class="nc" id="L342">	break;</span>
+      case 2:
+<span class="nc" id="L344">	upper = m_TrainFoldSize;</span>
+<span class="nc" id="L345">	break;</span>
+      default:
+<span class="nc" id="L347">	upper = cvParam.m_Upper;</span>
+	break;
+      }
+<span class="nc" id="L350">      double increment = (upper - cvParam.m_Lower) / (cvParam.m_Steps - 1);</span>
+<span class="nc" id="L351">      for(cvParam.m_ParamValue = cvParam.m_Lower; </span>
+<span class="nc bnc" id="L352" title="All 2 branches missed.">	  cvParam.m_ParamValue &lt;= upper; </span>
+<span class="nc" id="L353">	  cvParam.m_ParamValue += increment) {</span>
+<span class="nc" id="L354">	findParamsByCrossValidation(depth + 1, trainData, random);</span>
+      }
+    } else {
+      
+<span class="nc" id="L358">      Evaluation evaluation = new Evaluation(trainData);</span>
+
+      // Set the classifier options
+<span class="nc" id="L361">      String [] options = createOptions();</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">      if (m_Debug) {</span>
+<span class="nc" id="L363">	System.err.print(&quot;Setting options for &quot; </span>
+<span class="nc" id="L364">			 + m_Classifier.getClass().getName() + &quot;:&quot;);</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">	for (int i = 0; i &lt; options.length; i++) {</span>
+<span class="nc" id="L366">	  System.err.print(&quot; &quot; + options[i]);</span>
+	}
+<span class="nc" id="L368">	System.err.println(&quot;&quot;);</span>
+      }
+<span class="nc" id="L370">      ((OptionHandler)m_Classifier).setOptions(options);</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">      for (int j = 0; j &lt; m_NumFolds; j++) {</span>
+
+        // We want to randomize the data the same way for every 
+        // learning scheme.
+<span class="nc" id="L375">	Instances train = trainData.trainCV(m_NumFolds, j, new Random(1));</span>
+<span class="nc" id="L376">	Instances test = trainData.testCV(m_NumFolds, j);</span>
+<span class="nc" id="L377">	m_Classifier.buildClassifier(train);</span>
+<span class="nc" id="L378">	evaluation.setPriors(train);</span>
+<span class="nc" id="L379">	evaluation.evaluateModel(m_Classifier, test);</span>
+      }
+<span class="nc" id="L381">      double error = evaluation.errorRate();</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">      if (m_Debug) {</span>
+<span class="nc" id="L383">	System.err.println(&quot;Cross-validated error rate: &quot; </span>
+<span class="nc" id="L384">			   + Utils.doubleToString(error, 6, 4));</span>
+      }
+<span class="nc bnc" id="L386" title="All 4 branches missed.">      if ((m_BestPerformance == -99) || (error &lt; m_BestPerformance)) {</span>
+	
+<span class="nc" id="L388">	m_BestPerformance = error;</span>
+<span class="nc" id="L389">	m_BestClassifierOptions = createOptions();</span>
+      }
+    }
+<span class="nc" id="L392">  }</span>
+
+  /**
+   * Returns a string describing this classifier
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L400">    return    &quot;Class for performing parameter selection by cross-validation &quot;</span>
+	    + &quot;for any classifier.\n\n&quot;
+            + &quot;For more information, see:\n\n&quot;
+<span class="nc" id="L403">            + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L416">    result = new TechnicalInformation(Type.PHDTHESIS);</span>
+<span class="nc" id="L417">    result.setValue(Field.AUTHOR, &quot;R. Kohavi&quot;);</span>
+<span class="nc" id="L418">    result.setValue(Field.YEAR, &quot;1995&quot;);</span>
+<span class="nc" id="L419">    result.setValue(Field.TITLE, &quot;Wrappers for Performance Enhancement and Oblivious Decision Graphs&quot;);</span>
+<span class="nc" id="L420">    result.setValue(Field.SCHOOL, &quot;Stanford University&quot;);</span>
+<span class="nc" id="L421">    result.setValue(Field.ADDRESS, &quot;Department of Computer Science, Stanford University&quot;);</span>
+    
+<span class="nc" id="L423">    return result;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="fc" id="L433">    Vector newVector = new Vector(2);</span>
+
+<span class="fc" id="L435">    newVector.addElement(new Option(</span>
+<span class="fc" id="L436">	      &quot;\tNumber of folds used for cross validation (default 10).&quot;,</span>
+<span class="fc" id="L437">	      &quot;X&quot;, 1, &quot;-X &lt;number of folds&gt;&quot;));</span>
+<span class="fc" id="L438">    newVector.addElement(new Option(</span>
+<span class="fc" id="L439">	      &quot;\tClassifier parameter options.\n&quot;</span>
+	      + &quot;\teg: \&quot;N 1 5 10\&quot; Sets an optimisation parameter for the\n&quot;
+	      + &quot;\tclassifier with name -N, with lower bound 1, upper bound\n&quot;
+	      + &quot;\t5, and 10 optimisation steps. The upper bound may be the\n&quot;
+	      + &quot;\tcharacter 'A' or 'I' to substitute the number of\n&quot;
+	      + &quot;\tattributes or instances in the training data,\n&quot;
+	      + &quot;\trespectively. This parameter may be supplied more than\n&quot;
+	      + &quot;\tonce to optimise over several classifier options\n&quot;
+	      + &quot;\tsimultaneously.&quot;,
+<span class="fc" id="L448">	      &quot;P&quot;, 1, &quot;-P &lt;classifier parameter&gt;&quot;));</span>
+
+
+<span class="fc" id="L451">    Enumeration enu = super.listOptions();</span>
+<span class="fc bfc" id="L452" title="All 2 branches covered.">    while (enu.hasMoreElements()) {</span>
+<span class="fc" id="L453">      newVector.addElement(enu.nextElement());</span>
+    }
+<span class="fc" id="L455">    return newVector.elements();</span>
+  }
+
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -X &amp;lt;number of folds&amp;gt;
+   *  Number of folds used for cross validation (default 10).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;classifier parameter&amp;gt;
+   *  Classifier parameter options.
+   *  eg: &quot;N 1 5 10&quot; Sets an optimisation parameter for the
+   *  classifier with name -N, with lower bound 1, upper bound
+   *  5, and 10 optimisation steps. The upper bound may be the
+   *  character 'A' or 'I' to substitute the number of
+   *  attributes or instances in the training data,
+   *  respectively. This parameter may be supplied more than
+   *  once to optimise over several classifier options
+   *  simultaneously.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W
+   *  Full name of base classifier.
+   *  (default: weka.classifiers.rules.ZeroR)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to classifier weka.classifiers.rules.ZeroR:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * Options after -- are passed to the designated sub-classifier. &lt;p&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="fc" id="L508">    String foldsString = Utils.getOption('X', options);</span>
+<span class="fc bfc" id="L509" title="All 2 branches covered.">    if (foldsString.length() != 0) {</span>
+<span class="fc" id="L510">      setNumFolds(Integer.parseInt(foldsString));</span>
+    } else {
+<span class="fc" id="L512">      setNumFolds(10);</span>
+    }
+
+    String cvParam;
+<span class="fc" id="L516">    m_CVParams = new FastVector();</span>
+    do {
+<span class="fc" id="L518">      cvParam = Utils.getOption('P', options);</span>
+<span class="pc bpc" id="L519" title="1 of 2 branches missed.">      if (cvParam.length() != 0) {</span>
+<span class="nc" id="L520">	addCVParameter(cvParam);</span>
+      }
+<span class="pc bpc" id="L522" title="1 of 2 branches missed.">    } while (cvParam.length() != 0);</span>
+
+<span class="fc" id="L524">    super.setOptions(options);</span>
+<span class="fc" id="L525">  }</span>
+
+  /**
+   * Gets the current settings of the Classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+
+    String[] superOptions;
+
+<span class="pc bpc" id="L536" title="1 of 2 branches missed.">    if (m_InitOptions != null) {</span>
+      try {
+<span class="nc" id="L538">	m_Classifier.setOptions((String[])m_InitOptions.clone());</span>
+<span class="nc" id="L539">	superOptions = super.getOptions();</span>
+<span class="nc" id="L540">	m_Classifier.setOptions((String[])m_BestClassifierOptions.clone());</span>
+<span class="nc" id="L541">      } catch (Exception e) {</span>
+<span class="nc" id="L542">	throw new RuntimeException(&quot;CVParameterSelection: could not set options &quot; +</span>
+				   &quot;in getOptions().&quot;);
+      } 
+    } else {
+<span class="fc" id="L546">      superOptions = super.getOptions();</span>
+    }
+<span class="fc" id="L548">    String [] options = new String [superOptions.length + m_CVParams.size() * 2 + 2];</span>
+
+<span class="fc" id="L550">    int current = 0;</span>
+<span class="pc bpc" id="L551" title="1 of 2 branches missed.">    for (int i = 0; i &lt; m_CVParams.size(); i++) {</span>
+<span class="nc" id="L552">      options[current++] = &quot;-P&quot;; options[current++] = &quot;&quot; + getCVParameter(i);</span>
+    }
+<span class="fc" id="L554">    options[current++] = &quot;-X&quot;; options[current++] = &quot;&quot; + getNumFolds();</span>
+
+<span class="fc" id="L556">    System.arraycopy(superOptions, 0, options, current, </span>
+<span class="fc" id="L557">		     superOptions.length);</span>
+
+<span class="fc" id="L559">    return options;</span>
+  }
+
+  /**
+   * Returns (a copy of) the best options found for the classifier.
+   * 
+   * @return the best options
+   */
+  public String[] getBestClassifierOptions() {
+<span class="nc" id="L568">    return (String[]) m_BestClassifierOptions.clone();</span>
+  }
+  
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L577">    Capabilities result = super.getCapabilities();</span>
+
+<span class="fc" id="L579">    result.setMinimumNumberInstances(m_NumFolds);</span>
+    
+<span class="fc" id="L581">    return result;</span>
+  }
+
+  /**
+   * Generates the classifier.
+   *
+   * @param instances set of instances serving as training data 
+   * @throws Exception if the classifier has not been generated successfully
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L593">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L596">    Instances trainData = new Instances(instances);</span>
+<span class="fc" id="L597">    trainData.deleteWithMissingClass();</span>
+    
+<span class="pc bpc" id="L599" title="1 of 2 branches missed.">    if (!(m_Classifier instanceof OptionHandler)) {</span>
+<span class="nc" id="L600">      throw new IllegalArgumentException(&quot;Base classifier should be OptionHandler.&quot;);</span>
+    }
+<span class="fc" id="L602">    m_InitOptions = ((OptionHandler)m_Classifier).getOptions();</span>
+<span class="fc" id="L603">    m_BestPerformance = -99;</span>
+<span class="fc" id="L604">    m_NumAttributes = trainData.numAttributes();</span>
+<span class="fc" id="L605">    Random random = new Random(m_Seed);</span>
+<span class="fc" id="L606">    trainData.randomize(random);</span>
+<span class="fc" id="L607">    m_TrainFoldSize = trainData.trainCV(m_NumFolds, 0).numInstances();</span>
+
+    // Check whether there are any parameters to optimize
+<span class="pc bpc" id="L610" title="1 of 2 branches missed.">    if (m_CVParams.size() == 0) {</span>
+<span class="fc" id="L611">       m_Classifier.buildClassifier(trainData);</span>
+<span class="fc" id="L612">       m_BestClassifierOptions = m_InitOptions;</span>
+<span class="fc" id="L613">       return;</span>
+    }
+
+<span class="nc bnc" id="L616" title="All 2 branches missed.">    if (trainData.classAttribute().isNominal()) {</span>
+<span class="nc" id="L617">      trainData.stratify(m_NumFolds);</span>
+    }
+<span class="nc" id="L619">    m_BestClassifierOptions = null;</span>
+    
+    // Set up m_ClassifierOptions -- take getOptions() and remove
+    // those being optimised.
+<span class="nc" id="L623">    m_ClassifierOptions = ((OptionHandler)m_Classifier).getOptions();</span>
+<span class="nc bnc" id="L624" title="All 2 branches missed.">    for (int i = 0; i &lt; m_CVParams.size(); i++) {</span>
+<span class="nc" id="L625">      Utils.getOption(((CVParameter)m_CVParams.elementAt(i)).m_ParamChar,</span>
+<span class="nc" id="L626">		      m_ClassifierOptions);</span>
+    }
+<span class="nc" id="L628">    findParamsByCrossValidation(0, trainData, random);</span>
+
+<span class="nc" id="L630">    String [] options = (String [])m_BestClassifierOptions.clone();</span>
+<span class="nc" id="L631">    ((OptionHandler)m_Classifier).setOptions(options);</span>
+<span class="nc" id="L632">    m_Classifier.buildClassifier(trainData);</span>
+<span class="nc" id="L633">  }</span>
+
+
+  /**
+   * Predicts the class distribution for the given test instance.
+   *
+   * @param instance the instance to be classified
+   * @return the predicted class value
+   * @throws Exception if an error occurred during the prediction
+   */
+  public double[] distributionForInstance(Instance instance) throws Exception {
+    
+<span class="fc" id="L645">    return m_Classifier.distributionForInstance(instance);</span>
+  }
+
+  /**
+   * Adds a scheme parameter to the list of parameters to be set
+   * by cross-validation
+   *
+   * @param cvParam the string representation of a scheme parameter. The
+   * format is: &lt;br&gt;
+   * param_char lower_bound upper_bound number_of_steps &lt;br&gt;
+   * eg to search a parameter -P from 1 to 10 by increments of 1: &lt;br&gt;
+   * P 1 10 11 &lt;br&gt;
+   * @throws Exception if the parameter specifier is of the wrong format
+   */
+  public void addCVParameter(String cvParam) throws Exception {
+
+<span class="nc" id="L661">    CVParameter newCV = new CVParameter(cvParam);</span>
+    
+<span class="nc" id="L663">    m_CVParams.addElement(newCV);</span>
+<span class="nc" id="L664">  }</span>
+
+  /**
+   * Gets the scheme paramter with the given index.
+   * 
+   * @param index the index for the parameter
+   * @return the scheme parameter
+   */
+  public String getCVParameter(int index) {
+
+<span class="nc bnc" id="L674" title="All 2 branches missed.">    if (m_CVParams.size() &lt;= index) {</span>
+<span class="nc" id="L675">      return &quot;&quot;;</span>
+    }
+<span class="nc" id="L677">    return ((CVParameter)m_CVParams.elementAt(index)).toString();</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String CVParametersTipText() {
+<span class="nc" id="L686">    return &quot;Sets the scheme parameters which are to be set &quot;+</span>
+	   &quot;by cross-validation.\n&quot;+
+	   &quot;The format for each string should be:\n&quot;+
+	   &quot;param_char lower_bound upper_bound number_of_steps\n&quot;+
+	   &quot;eg to search a parameter -P from 1 to 10 by increments of 1:\n&quot;+
+	   &quot;    \&quot;P 1 10 10\&quot; &quot;;
+  }
+
+  /**
+   * Get method for CVParameters.
+   * 
+   * @return the CVParameters
+   */
+  public Object[] getCVParameters() {
+      
+<span class="nc" id="L701">      Object[] CVParams = m_CVParams.toArray();</span>
+      
+<span class="nc" id="L703">      String params[] = new String[CVParams.length];</span>
+      
+<span class="nc bnc" id="L705" title="All 2 branches missed.">      for(int i=0; i&lt;CVParams.length; i++) </span>
+<span class="nc" id="L706">          params[i] = CVParams[i].toString();</span>
+      
+<span class="nc" id="L708">      return params;</span>
+      
+  }
+  
+  /**
+   * Set method for CVParameters.
+   * 
+   * @param params the CVParameters to use
+   * @throws Exception if the setting of the CVParameters fails
+   */
+  public void setCVParameters(Object[] params) throws Exception {
+      
+<span class="nc" id="L720">      FastVector backup = m_CVParams;</span>
+<span class="nc" id="L721">      m_CVParams = new FastVector();</span>
+      
+<span class="nc bnc" id="L723" title="All 2 branches missed.">      for(int i=0; i&lt;params.length; i++) {</span>
+          try{
+<span class="nc" id="L725">          addCVParameter((String)params[i]);</span>
+          }
+<span class="nc" id="L727">          catch(Exception ex) { m_CVParams = backup; throw ex; }</span>
+      }
+<span class="nc" id="L729">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numFoldsTipText() {
+<span class="nc" id="L737">    return &quot;Get the number of folds used for cross-validation.&quot;;</span>
+  }
+
+  /** 
+   * Gets the number of folds for the cross-validation.
+   *
+   * @return the number of folds for the cross-validation
+   */
+  public int getNumFolds() {
+
+<span class="fc" id="L747">    return m_NumFolds;</span>
+  }
+
+  /**
+   * Sets the number of folds for the cross-validation.
+   *
+   * @param numFolds the number of folds for the cross-validation
+   * @throws Exception if parameter illegal
+   */
+  public void setNumFolds(int numFolds) throws Exception {
+    
+<span class="pc bpc" id="L758" title="1 of 2 branches missed.">    if (numFolds &lt; 0) {</span>
+<span class="nc" id="L759">      throw new IllegalArgumentException(&quot;Stacking: Number of cross-validation &quot; +</span>
+					 &quot;folds must be positive.&quot;);
+    }
+<span class="fc" id="L762">    m_NumFolds = numFolds;</span>
+<span class="fc" id="L763">  }</span>
+ 
+  /**
+   *  Returns the type of graph this classifier
+   *  represents.
+   *  
+   *  @return the type of graph this classifier represents
+   */   
+  public int graphType() {
+    
+<span class="nc bnc" id="L773" title="All 2 branches missed.">    if (m_Classifier instanceof Drawable)</span>
+<span class="nc" id="L774">      return ((Drawable)m_Classifier).graphType();</span>
+    else 
+<span class="nc" id="L776">      return Drawable.NOT_DRAWABLE;</span>
+  }
+
+  /**
+   * Returns graph describing the classifier (if possible).
+   *
+   * @return the graph of the classifier in dotty format
+   * @throws Exception if the classifier cannot be graphed
+   */
+  public String graph() throws Exception {
+    
+<span class="nc bnc" id="L787" title="All 2 branches missed.">    if (m_Classifier instanceof Drawable)</span>
+<span class="nc" id="L788">      return ((Drawable)m_Classifier).graph();</span>
+<span class="nc" id="L789">    else throw new Exception(&quot;Classifier: &quot; + </span>
+<span class="nc" id="L790">			     m_Classifier.getClass().getName() + &quot; &quot; +</span>
+<span class="nc" id="L791">			     Utils.joinOptions(m_BestClassifierOptions)</span>
+<span class="nc" id="L792">			     + &quot; cannot be graphed&quot;);</span>
+  }
+
+  /**
+   * Returns description of the cross-validated classifier.
+   *
+   * @return description of the cross-validated classifier as a string
+   */
+  public String toString() {
+
+<span class="pc bpc" id="L802" title="1 of 2 branches missed.">    if (m_InitOptions == null)</span>
+<span class="fc" id="L803">      return &quot;CVParameterSelection: No model built yet.&quot;;</span>
+
+<span class="nc" id="L805">    String result = &quot;Cross-validated Parameter selection.\n&quot;</span>
+<span class="nc" id="L806">    + &quot;Classifier: &quot; + m_Classifier.getClass().getName() + &quot;\n&quot;;</span>
+    try {
+<span class="nc bnc" id="L808" title="All 2 branches missed.">      for (int i = 0; i &lt; m_CVParams.size(); i++) {</span>
+<span class="nc" id="L809">	CVParameter cvParam = (CVParameter)m_CVParams.elementAt(i);</span>
+<span class="nc" id="L810">	result += &quot;Cross-validation Parameter: '-&quot; </span>
+<span class="nc" id="L811">	  + cvParam.m_ParamChar + &quot;'&quot;</span>
+<span class="nc" id="L812">	  + &quot; ranged from &quot; + cvParam.m_Lower </span>
+<span class="nc" id="L813">	  + &quot; to &quot;;</span>
+<span class="nc bnc" id="L814" title="All 3 branches missed.">	switch ((int)(cvParam.m_Lower - cvParam.m_Upper + 0.5)) {</span>
+	case 1:
+<span class="nc" id="L816">	  result += m_NumAttributes;</span>
+<span class="nc" id="L817">	  break;</span>
+	case 2:
+<span class="nc" id="L819">	  result += m_TrainFoldSize;</span>
+<span class="nc" id="L820">	  break;</span>
+	default:
+<span class="nc" id="L822">	  result += cvParam.m_Upper;</span>
+<span class="nc" id="L823">	  break;</span>
+	}
+<span class="nc" id="L825">	result += &quot; with &quot; + cvParam.m_Steps + &quot; steps\n&quot;;</span>
+      }
+<span class="nc" id="L827">    } catch (Exception ex) {</span>
+<span class="nc" id="L828">      result += ex.getMessage();</span>
+    }
+<span class="nc" id="L830">    result += &quot;Classifier Options: &quot;</span>
+<span class="nc" id="L831">      + Utils.joinOptions(m_BestClassifierOptions)</span>
+<span class="nc" id="L832">      + &quot;\n\n&quot; + m_Classifier.toString();</span>
+<span class="nc" id="L833">    return result;</span>
+  }
+
+  /**
+   * A concise description of the model.
+   * 
+   * @return a concise description of the model
+   */
+  public String toSummaryString() {
+
+<span class="nc" id="L843">    String result = &quot;Selected values: &quot;</span>
+<span class="nc" id="L844">      + Utils.joinOptions(m_BestClassifierOptions);</span>
+<span class="nc" id="L845">    return result + '\n';</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L854">    return RevisionUtils.extract(&quot;$Revision: 8180 $&quot;);</span>
+  }
+  
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L863">    runClassifier(new CVParameterSelection(), argv);</span>
+<span class="nc" id="L864">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

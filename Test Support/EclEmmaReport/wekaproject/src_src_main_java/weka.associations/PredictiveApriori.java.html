@@ -1,0 +1,797 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>PredictiveApriori.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.associations</a> &gt; <span class="el_source">PredictiveApriori.java</span></div><h1>PredictiveApriori.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    PredictiveApriori.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.associations;
+
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.TreeSet;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class implementing the predictive apriori algorithm to mine association rules.&lt;br/&gt;
+ * It searches with an increasing support threshold for the best 'n' rules concerning a support-based corrected confidence value.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Tobias Scheffer: Finding Association Rules That Trade Support Optimally against Confidence. In: 5th European Conference on Principles of Data Mining and Knowledge Discovery, 424-435, 2001.&lt;br/&gt;
+ * &lt;br/&gt;
+ * The implementation follows the paper expect for adding a rule to the output of the 'n' best rules. A rule is added if:&lt;br/&gt;
+ * the expected predictive accuracy of this rule is among the 'n' best and it is not subsumed by a rule with at least the same expected predictive accuracy (out of an unpublished manuscript from T. Scheffer).
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Scheffer2001,
+ *    author = {Tobias Scheffer},
+ *    booktitle = {5th European Conference on Principles of Data Mining and Knowledge Discovery},
+ *    pages = {424-435},
+ *    publisher = {Springer},
+ *    title = {Finding Association Rules That Trade Support Optimally against Confidence},
+ *    year = {2001}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;required number of rules output&amp;gt;
+ *  The required number of rules. (default = 100)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A
+ *  If set class association rules are mined. (default = no)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -c &amp;lt;the class index&amp;gt;
+ *  The class index. (default = last)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Stefan Mutter (mutter@cs.waikato.ac.nz)
+ * @version $Revision: 6365 $ */
+
+public class PredictiveApriori 
+  extends AbstractAssociator 
+  implements OptionHandler, CARuleMiner, TechnicalInformationHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = 8109088846865075341L;
+  
+  /** The minimum support. */
+  protected int m_premiseCount;
+ 
+  /** The maximum number of rules that are output. */
+  protected int m_numRules;
+
+  /** The number of rules created for the prior estimation. */
+  protected static final int m_numRandRules = 1000;
+ 
+  /** The number of intervals used for the prior estimation. */
+  protected static final int m_numIntervals = 100;
+  
+  /** The set of all sets of itemsets. */
+  protected FastVector m_Ls;
+
+  /** The same information stored in hash tables. */
+  protected FastVector m_hashtables;
+
+  /** The list of all generated rules. */
+  protected FastVector[] m_allTheRules;
+
+  /** The instances (transactions) to be used for generating 
+      the association rules. */
+  protected Instances m_instances;
+
+  /** The hashtable containing the prior probabilities. */
+  protected Hashtable m_priors;
+  
+  /** The mid points of the intervals used for the prior estimation. */
+  protected double[] m_midPoints;
+
+  /** The expected predictive accuracy a rule needs to be a candidate for the output. */
+  protected double m_expectation;
+  
+  /** The n best rules. */
+  protected TreeSet m_best;
+  
+  /** Flag keeping track if the list of the n best rules has changed. */
+  protected boolean m_bestChanged;
+  
+  /** Counter for the time of generation for an association rule. */
+  protected int m_count;
+  
+  /** The prior estimator. */
+  protected PriorEstimation m_priorEstimator;
+  
+   /** The class index. */  
+  protected int m_classIndex;
+  
+  /** Flag indicating whether class association rules are mined. */
+  protected boolean m_car;
+
+  /**
+   * Returns a string describing this associator
+   * @return a description of the evaluator suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L154">    return </span>
+<span class="nc" id="L155">        &quot;Class implementing the predictive apriori algorithm to mine &quot;</span>
+      + &quot;association rules.\n&quot;
+      + &quot;It searches with an increasing support threshold for the best 'n' &quot;
+      + &quot;rules concerning a support-based corrected confidence value.\n\n&quot;
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L160">      + getTechnicalInformation().toString() + &quot;\n\n&quot;</span>
+<span class="nc" id="L161">      + &quot;The implementation follows the paper expect for adding a rule to the &quot;</span>
+<span class="nc" id="L162">      + &quot;output of the 'n' best rules. A rule is added if:\n&quot;</span>
+<span class="nc" id="L163">      + &quot;the expected predictive accuracy of this rule is among the 'n' best &quot;</span>
+<span class="nc" id="L164">      + &quot;and it is not subsumed by a rule with at least the same expected &quot;</span>
+<span class="nc" id="L165">      + &quot;predictive accuracy (out of an unpublished manuscript from T. &quot;</span>
+<span class="nc" id="L166">      + &quot;Scheffer).&quot;;</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L179">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L180">    result.setValue(Field.AUTHOR, &quot;Tobias Scheffer&quot;);</span>
+<span class="nc" id="L181">    result.setValue(Field.TITLE, &quot;Finding Association Rules That Trade Support Optimally against Confidence&quot;);</span>
+<span class="nc" id="L182">    result.setValue(Field.BOOKTITLE, &quot;5th European Conference on Principles of Data Mining and Knowledge Discovery&quot;);</span>
+<span class="nc" id="L183">    result.setValue(Field.YEAR, &quot;2001&quot;);</span>
+<span class="nc" id="L184">    result.setValue(Field.PAGES, &quot;424-435&quot;);</span>
+<span class="nc" id="L185">    result.setValue(Field.PUBLISHER, &quot;Springer&quot;);</span>
+    
+<span class="nc" id="L187">    return result;</span>
+  }
+
+  /**
+   * Constructor that allows to sets default values for the 
+   * minimum confidence and the maximum number of rules
+   * the minimum confidence.
+   */
+<span class="nc" id="L195">  public PredictiveApriori() {</span>
+
+<span class="nc" id="L197">    resetOptions();</span>
+<span class="nc" id="L198">  }</span>
+
+  /**
+   * Resets the options to the default values.
+   */
+  public void resetOptions() {
+    
+<span class="nc" id="L205">    m_numRules = 105;</span>
+<span class="nc" id="L206">    m_premiseCount = 1;</span>
+<span class="nc" id="L207">    m_best = new TreeSet();</span>
+<span class="nc" id="L208">    m_bestChanged = false;</span>
+<span class="nc" id="L209">    m_expectation = 0;</span>
+<span class="nc" id="L210">    m_count = 1;</span>
+<span class="nc" id="L211">    m_car = false;</span>
+<span class="nc" id="L212">    m_classIndex = -1;</span>
+<span class="nc" id="L213">    m_priors = new Hashtable();</span>
+    
+    
+   
+<span class="nc" id="L217">  }</span>
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L225">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L226">    result.disableAll();</span>
+
+    // attributes
+<span class="nc" id="L229">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L230">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="nc" id="L233">    result.enable(Capability.NO_CLASS);</span>
+<span class="nc" id="L234">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="nc" id="L235">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="nc" id="L237">    return result;</span>
+  }
+  
+  /**
+   * Method that generates all large itemsets with a minimum support, and from
+   * these all association rules.
+   *
+   * @param instances the instances to be used for generating the associations
+   * @throws Exception if rules can't be built successfully
+   */
+  public void buildAssociations(Instances instances) throws Exception {
+      
+<span class="nc" id="L249">    int temp = m_premiseCount, exactNumber = m_numRules-5; </span>
+
+<span class="nc" id="L251">    m_premiseCount = 1;</span>
+<span class="nc" id="L252">    m_best = new TreeSet();</span>
+<span class="nc" id="L253">    m_bestChanged = false;</span>
+<span class="nc" id="L254">    m_expectation = 0;</span>
+<span class="nc" id="L255">    m_count = 1;</span>
+<span class="nc" id="L256">    m_instances = new Instances(instances);</span>
+
+<span class="nc bnc" id="L258" title="All 2 branches missed.">    if (m_classIndex == -1)</span>
+<span class="nc" id="L259">      m_instances.setClassIndex(m_instances.numAttributes()-1);     </span>
+<span class="nc bnc" id="L260" title="All 4 branches missed.">    else if (m_classIndex &lt; m_instances.numAttributes() &amp;&amp; m_classIndex &gt;= 0)</span>
+<span class="nc" id="L261">      m_instances.setClassIndex(m_classIndex);</span>
+    else
+<span class="nc" id="L263">      throw new Exception(&quot;Invalid class index.&quot;);</span>
+    
+    // can associator handle the data?
+<span class="nc" id="L266">    getCapabilities().testWithFail(m_instances);</span>
+    
+    //prior estimation
+<span class="nc" id="L269">    m_priorEstimator = new PriorEstimation(m_instances,m_numRandRules,m_numIntervals,m_car);</span>
+<span class="nc" id="L270">    m_priors = m_priorEstimator.estimatePrior();</span>
+<span class="nc" id="L271">    m_midPoints = m_priorEstimator.getMidPoints();</span>
+    
+<span class="nc" id="L273">    m_Ls = new FastVector();</span>
+<span class="nc" id="L274">    m_hashtables = new FastVector();</span>
+    
+<span class="nc bnc" id="L276" title="All 2 branches missed.">    for(int i =1; i &lt; m_instances.numAttributes();i++){</span>
+<span class="nc" id="L277">      m_bestChanged = false;</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">      if(!m_car){</span>
+        // find large item sets
+<span class="nc" id="L280">        findLargeItemSets(i);</span>
+      
+        //find association rules (rule generation procedure)
+<span class="nc" id="L283">        findRulesQuickly();</span>
+      }
+      else{
+<span class="nc" id="L286">        findLargeCarItemSets(i);</span>
+<span class="nc" id="L287">        findCaRulesQuickly();</span>
+      }
+      
+<span class="nc bnc" id="L290" title="All 2 branches missed.">      if(m_bestChanged){</span>
+<span class="nc" id="L291">        temp =m_premiseCount;</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">        while(RuleGeneration.expectation(m_premiseCount, m_premiseCount,m_midPoints,m_priors) &lt;= m_expectation){</span>
+<span class="nc" id="L293">            m_premiseCount++; </span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">            if(m_premiseCount &gt; m_instances.numInstances())</span>
+<span class="nc" id="L295">                break;</span>
+        }
+      }
+<span class="nc bnc" id="L298" title="All 2 branches missed.">      if(m_premiseCount &gt; m_instances.numInstances()){</span>
+          
+         // Reserve space for variables
+<span class="nc" id="L301">        m_allTheRules = new FastVector[3];</span>
+<span class="nc" id="L302">        m_allTheRules[0] = new FastVector();</span>
+<span class="nc" id="L303">        m_allTheRules[1] = new FastVector();</span>
+<span class="nc" id="L304">        m_allTheRules[2] = new FastVector();</span>
+      
+<span class="nc" id="L306">        int k = 0;</span>
+<span class="nc bnc" id="L307" title="All 4 branches missed.">        while(m_best.size()&gt;0 &amp;&amp; exactNumber &gt; 0){</span>
+<span class="nc" id="L308">            m_allTheRules[0].insertElementAt((ItemSet)((RuleItem)m_best.last()).premise(),k);</span>
+<span class="nc" id="L309">            m_allTheRules[1].insertElementAt((ItemSet)((RuleItem)m_best.last()).consequence(),k);</span>
+<span class="nc" id="L310">            m_allTheRules[2].insertElementAt(new Double(((RuleItem)m_best.last()).accuracy()),k);</span>
+<span class="nc" id="L311">            m_best.remove(m_best.last());</span>
+<span class="nc" id="L312">            k++;</span>
+<span class="nc" id="L313">            exactNumber--;</span>
+        }
+<span class="nc" id="L315">        return;    </span>
+      }
+      
+<span class="nc bnc" id="L318" title="All 4 branches missed.">      if(temp != m_premiseCount &amp;&amp; m_Ls.size() &gt; 0){</span>
+<span class="nc" id="L319">        FastVector kSets = (FastVector)m_Ls.lastElement();</span>
+<span class="nc" id="L320">        m_Ls.removeElementAt(m_Ls.size()-1);</span>
+<span class="nc" id="L321">        kSets = ItemSet.deleteItemSets(kSets, m_premiseCount,Integer.MAX_VALUE);</span>
+<span class="nc" id="L322">        m_Ls.addElement(kSets);</span>
+      }
+    }
+    
+    // Reserve space for variables
+<span class="nc" id="L327">    m_allTheRules = new FastVector[3];</span>
+<span class="nc" id="L328">    m_allTheRules[0] = new FastVector();</span>
+<span class="nc" id="L329">    m_allTheRules[1] = new FastVector();</span>
+<span class="nc" id="L330">    m_allTheRules[2] = new FastVector();</span>
+      
+<span class="nc" id="L332">    int k = 0;</span>
+<span class="nc bnc" id="L333" title="All 4 branches missed.">    while(m_best.size()&gt;0 &amp;&amp; exactNumber &gt; 0){</span>
+<span class="nc" id="L334">        m_allTheRules[0].insertElementAt((ItemSet)((RuleItem)m_best.last()).premise(),k);</span>
+<span class="nc" id="L335">        m_allTheRules[1].insertElementAt((ItemSet)((RuleItem)m_best.last()).consequence(),k);</span>
+<span class="nc" id="L336">        m_allTheRules[2].insertElementAt(new Double(((RuleItem)m_best.last()).accuracy()),k);</span>
+<span class="nc" id="L337">        m_best.remove(m_best.last());</span>
+<span class="nc" id="L338">        k++;</span>
+<span class="nc" id="L339">        exactNumber--;</span>
+    }
+<span class="nc" id="L341">  }</span>
+  
+  /**
+     * Method that mines the n best class association rules.
+     * @return an sorted array of FastVector (depending on the expected predictive accuracy) containing the rules and metric information
+     * @param data the instances for which class association rules should be mined
+     * @throws Exception if rules can't be built successfully
+     */
+    public FastVector[] mineCARs(Instances data) throws Exception{
+	 
+<span class="nc" id="L351">        m_car = true;</span>
+<span class="nc" id="L352">        m_best = new TreeSet();</span>
+<span class="nc" id="L353">        m_premiseCount = 1;</span>
+<span class="nc" id="L354">        m_bestChanged = false;</span>
+<span class="nc" id="L355">        m_expectation = 0;</span>
+<span class="nc" id="L356">        m_count = 1;</span>
+<span class="nc" id="L357">	buildAssociations(data);</span>
+<span class="nc" id="L358">        FastVector[] allCARRules = new FastVector[3];</span>
+<span class="nc" id="L359">        allCARRules[0] = new FastVector();</span>
+<span class="nc" id="L360">        allCARRules[1] = new FastVector();</span>
+<span class="nc" id="L361">        allCARRules[2] = new FastVector();</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">        for(int k =0; k &lt; m_allTheRules[0].size();k++){</span>
+<span class="nc" id="L363">            int[] newPremiseArray = new int[m_instances.numAttributes()-1];</span>
+<span class="nc" id="L364">            int help = 0;</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">            for(int j = 0;j &lt; m_instances.numAttributes();j++){</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">                if(j != m_instances.classIndex()){</span>
+<span class="nc" id="L367">                    newPremiseArray[help] = ((ItemSet)m_allTheRules[0].elementAt(k)).itemAt(j);</span>
+<span class="nc" id="L368">                    help++;</span>
+                }
+            }
+<span class="nc" id="L371">            ItemSet newPremise = new ItemSet(m_instances.numInstances(), newPremiseArray);</span>
+<span class="nc" id="L372">            newPremise.setCounter (((ItemSet)m_allTheRules[0].elementAt(k)).counter());</span>
+<span class="nc" id="L373">            allCARRules[0].addElement(newPremise);</span>
+<span class="nc" id="L374">            int[] newConsArray = new int[1];</span>
+<span class="nc" id="L375">            newConsArray[0] =((ItemSet)m_allTheRules[1].elementAt(k)).itemAt(m_instances.classIndex());</span>
+<span class="nc" id="L376">            ItemSet newCons = new ItemSet(m_instances.numInstances(), newConsArray);</span>
+<span class="nc" id="L377">            newCons.setCounter(((ItemSet)m_allTheRules[1].elementAt(k)).counter());</span>
+<span class="nc" id="L378">            allCARRules[1].addElement(newCons);</span>
+<span class="nc" id="L379">            allCARRules[2].addElement(m_allTheRules[2].elementAt(k));</span>
+        }
+        
+<span class="nc" id="L382">	return allCARRules;</span>
+    }
+    
+    /**
+     * Gets the instances without the class attribute
+     * @return instances without class attribute
+     */    
+    public Instances getInstancesNoClass() {
+      
+<span class="nc" id="L391">      Instances noClass = null;</span>
+      try{
+<span class="nc" id="L393">        noClass = LabeledItemSet.divide(m_instances,false);</span>
+      } 
+<span class="nc" id="L395">      catch(Exception e){</span>
+<span class="nc" id="L396">        e.printStackTrace();</span>
+<span class="nc" id="L397">        System.out.println(&quot;\n&quot;+e.getMessage());</span>
+      }
+      //System.out.println(noClass);
+<span class="nc" id="L400">      return noClass;</span>
+  }  
+  
+    /**
+     * Gets the class attribute of all instances
+     * @return Instances containing only the class attribute
+     */    
+  public Instances getInstancesOnlyClass() {
+      
+<span class="nc" id="L409">      Instances onlyClass = null;</span>
+      try{
+<span class="nc" id="L411">        onlyClass = LabeledItemSet.divide(m_instances,true);</span>
+      } 
+<span class="nc" id="L413">      catch(Exception e){</span>
+<span class="nc" id="L414">        e.printStackTrace();</span>
+<span class="nc" id="L415">        System.out.println(&quot;\n&quot;+e.getMessage());</span>
+      }
+<span class="nc" id="L417">      return onlyClass;</span>
+      
+  }  
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="nc" id="L428">    String string1 = &quot;\tThe required number of rules. (default = &quot; + (m_numRules-5) + &quot;)&quot;,</span>
+<span class="nc" id="L429">      string2 = &quot;\tIf set class association rules are mined. (default = no)&quot;,</span>
+<span class="nc" id="L430">      string3 = &quot;\tThe class index. (default = last)&quot;;</span>
+<span class="nc" id="L431">    FastVector newVector = new FastVector(3);</span>
+
+<span class="nc" id="L433">    newVector.addElement(new Option(string1, &quot;N&quot;, 1, </span>
+<span class="nc" id="L434">				    &quot;-N &lt;required number of rules output&gt;&quot;));</span>
+<span class="nc" id="L435">    newVector.addElement(new Option(string2, &quot;A&quot;, 0,</span>
+<span class="nc" id="L436">				    &quot;-A&quot;));</span>
+<span class="nc" id="L437">    newVector.addElement(new Option(string3, &quot;c&quot;, 1,</span>
+<span class="nc" id="L438">				    &quot;-c &lt;the class index&gt;&quot;));</span>
+<span class="nc" id="L439">    return newVector.elements();</span>
+  }
+
+ 
+/**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;required number of rules output&amp;gt;
+   *  The required number of rules. (default = 100)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -A
+   *  If set class association rules are mined. (default = no)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -c &amp;lt;the class index&amp;gt;
+   *  The class index. (default = last)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported 
+   */
+  public void setOptions(String[] options) throws Exception {
+    
+<span class="nc" id="L465">    resetOptions();</span>
+    
+<span class="nc" id="L467">    String numRulesString = Utils.getOption('N', options);</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">    if (numRulesString.length() != 0) </span>
+<span class="nc" id="L469">      m_numRules = Integer.parseInt(numRulesString)+5;</span>
+    else
+<span class="nc" id="L471">      m_numRules = Integer.MAX_VALUE;</span>
+
+<span class="nc" id="L473">    String classIndexString = Utils.getOption('c',options);</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">    if (classIndexString.length() != 0) </span>
+<span class="nc" id="L475">      m_classIndex = Integer.parseInt(classIndexString);</span>
+
+<span class="nc" id="L477">    m_car = Utils.getFlag('A', options);</span>
+<span class="nc" id="L478">  }</span>
+
+  /**
+   * Gets the current settings of the PredictiveApriori object.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+    Vector    	result;
+
+<span class="nc" id="L488">    result = new Vector();</span>
+
+<span class="nc" id="L490">    result.add(&quot;-N&quot;);</span>
+<span class="nc" id="L491">    result.add(&quot;&quot; + (m_numRules-5));</span>
+    
+<span class="nc bnc" id="L493" title="All 2 branches missed.">    if (m_car)</span>
+<span class="nc" id="L494">      result.add(&quot;-A&quot;);</span>
+    
+<span class="nc" id="L496">    result.add(&quot;-c&quot;);</span>
+<span class="nc" id="L497">    result.add(&quot;&quot; + m_classIndex);</span>
+
+<span class="nc" id="L499">    return (String[]) result.toArray(new String[result.size()]);	  </span>
+  }
+
+
+  /**
+   * Outputs the association rules.
+   * 
+   * @return a string representation of the model
+   */
+  public String toString() {
+
+<span class="nc" id="L510">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc bnc" id="L512" title="All 2 branches missed.">    if (m_allTheRules[0].size() == 0)</span>
+<span class="nc" id="L513">      return &quot;\nNo large itemsets and rules found!\n&quot;;</span>
+<span class="nc" id="L514">    text.append(&quot;\nPredictiveApriori\n===================\n\n&quot;);</span>
+<span class="nc" id="L515">    text.append(&quot;\nBest rules found:\n\n&quot;);</span>
+    
+<span class="nc bnc" id="L517" title="All 2 branches missed.">    for (int i = 0; i &lt; m_allTheRules[0].size(); i++) {</span>
+<span class="nc" id="L518">	    text.append(Utils.doubleToString((double)i+1, </span>
+<span class="nc" id="L519">					     (int)(Math.log(m_numRules)/Math.log(10)+1),0)+</span>
+<span class="nc" id="L520">			&quot;. &quot; + ((ItemSet)m_allTheRules[0].elementAt(i)).</span>
+<span class="nc" id="L521">			toString(m_instances) </span>
+<span class="nc" id="L522">			+ &quot; ==&gt; &quot; + ((ItemSet)m_allTheRules[1].elementAt(i)).</span>
+<span class="nc" id="L523">			toString(m_instances) +&quot;    acc:(&quot;+  </span>
+<span class="nc" id="L524">			Utils.doubleToString(((Double)m_allTheRules[2].</span>
+<span class="nc" id="L525">					      elementAt(i)).doubleValue(),5)+&quot;)&quot;);</span>
+      
+<span class="nc" id="L527">      text.append('\n');</span>
+    }
+    
+    
+<span class="nc" id="L531">    return text.toString();</span>
+  }
+
+ 
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numRulesTipText() {
+<span class="nc" id="L541">    return &quot;Number of rules to find.&quot;;</span>
+  }
+
+  /**
+   * Get the value of the number of required rules.
+   *
+   * @return Value of the number of required rules.
+   */
+  public int getNumRules() {
+      
+<span class="nc" id="L551">    return m_numRules-5;</span>
+  }
+  
+  /**
+   * Set the value of required rules.
+   *
+   * @param v  Value to assign to number of required rules.
+   */
+  public void setNumRules(int v) {
+	 
+<span class="nc" id="L561">      m_numRules = v+5;</span>
+<span class="nc" id="L562">  }</span>
+  
+    /**
+   * Sets the class index
+   * @param index the index of the class attribute
+   */  
+  public void setClassIndex(int index){
+      
+<span class="nc" id="L570">      m_classIndex = index;</span>
+<span class="nc" id="L571">  }</span>
+  
+  /**
+   * Gets the index of the class attribute
+   * @return the index of the class attribute
+   */  
+  public int getClassIndex(){
+      
+<span class="nc" id="L579">      return m_classIndex;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String classIndexTipText() {
+<span class="nc" id="L588">    return &quot;Index of the class attribute.\n If set to -1, the last attribute will be taken as the class attribute.&quot;;</span>
+  }
+
+    /**
+   * Sets class association rule mining
+   * @param flag if class association rules are mined, false otherwise
+   */  
+  public void setCar(boolean flag){
+      
+<span class="nc" id="L597">      m_car = flag;</span>
+<span class="nc" id="L598">  }</span>
+  
+  /**
+   * Gets whether class association ruels are mined
+   * @return true if class association rules are mined, false otherwise
+   */  
+  public boolean getCar(){
+      
+<span class="nc" id="L606">      return m_car;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String carTipText() {
+<span class="nc" id="L615">    return &quot;If enabled class association rules are mined instead of (general) association rules.&quot;;</span>
+  }
+  
+    /**
+   * Returns the metric string for the chosen metric type.
+   * Predictive apriori uses the estimated predictive accuracy.
+   * Therefore the metric string is &quot;acc&quot;.
+   * @return string &quot;acc&quot;
+   */
+  public String metricString() {
+      
+<span class="nc" id="L626">      return &quot;acc&quot;;</span>
+  }
+
+ 
+  /** 
+   * Method that finds all large itemsets for the given set of instances.
+   *
+   * @param index the instances to be used
+   * @throws Exception if an attribute is numeric
+   */
+  private void findLargeItemSets(int index) throws Exception {
+    
+<span class="nc" id="L638">    FastVector kMinusOneSets, kSets = new FastVector();</span>
+    Hashtable hashtable;
+<span class="nc" id="L640">    int i = 0;</span>
+    // Find large itemsets
+    //of length 1
+<span class="nc bnc" id="L643" title="All 2 branches missed.">    if(index == 1){</span>
+<span class="nc" id="L644">        kSets = ItemSet.singletons(m_instances);</span>
+<span class="nc" id="L645">        ItemSet.upDateCounters(kSets, m_instances);</span>
+<span class="nc" id="L646">        kSets = ItemSet.deleteItemSets(kSets, m_premiseCount,Integer.MAX_VALUE);</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">        if (kSets.size() == 0)</span>
+<span class="nc" id="L648">            return;</span>
+<span class="nc" id="L649">        m_Ls.addElement(kSets);</span>
+    }
+    //of length &gt; 1
+<span class="nc bnc" id="L652" title="All 2 branches missed.">    if(index &gt;1){</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">        if(m_Ls.size() &gt; 0)</span>
+<span class="nc" id="L654">            kSets = (FastVector)m_Ls.lastElement();</span>
+<span class="nc" id="L655">        m_Ls.removeAllElements();</span>
+<span class="nc" id="L656">        i = index-2;</span>
+<span class="nc" id="L657">        kMinusOneSets = kSets;</span>
+<span class="nc" id="L658">        kSets = ItemSet.mergeAllItemSets(kMinusOneSets, i, m_instances.numInstances());</span>
+<span class="nc" id="L659">        hashtable = ItemSet.getHashtable(kMinusOneSets, kMinusOneSets.size());</span>
+<span class="nc" id="L660">        m_hashtables.addElement(hashtable);</span>
+<span class="nc" id="L661">        kSets = ItemSet.pruneItemSets(kSets, hashtable);</span>
+<span class="nc" id="L662">        ItemSet.upDateCounters(kSets, m_instances);</span>
+<span class="nc" id="L663">        kSets = ItemSet.deleteItemSets(kSets, m_premiseCount,Integer.MAX_VALUE);</span>
+<span class="nc bnc" id="L664" title="All 2 branches missed.">        if(kSets.size() == 0)</span>
+<span class="nc" id="L665">            return;</span>
+<span class="nc" id="L666">        m_Ls.addElement(kSets);</span>
+    }
+<span class="nc" id="L668">  } </span>
+
+
+  
+
+  /** 
+   * Method that finds all association rules.
+   *
+   * @throws Exception if an attribute is numeric
+   */
+  private void findRulesQuickly() throws Exception {
+
+    RuleGeneration currentItemSet;
+    
+    // Build rules
+<span class="nc bnc" id="L683" title="All 2 branches missed.">    for (int j = 0; j &lt; m_Ls.size(); j++) {</span>
+<span class="nc" id="L684">      FastVector currentItemSets = (FastVector)m_Ls.elementAt(j);</span>
+<span class="nc" id="L685">      Enumeration enumItemSets = currentItemSets.elements();</span>
+<span class="nc bnc" id="L686" title="All 2 branches missed.">      while (enumItemSets.hasMoreElements()) { </span>
+<span class="nc" id="L687">        currentItemSet = new RuleGeneration((ItemSet)enumItemSets.nextElement());</span>
+<span class="nc" id="L688">        m_best = currentItemSet.generateRules(m_numRules-5, m_midPoints,m_priors,m_expectation,</span>
+<span class="nc" id="L689">                                        m_instances,m_best,m_count);</span>
+          
+<span class="nc" id="L691">        m_count = currentItemSet.m_count;</span>
+<span class="nc bnc" id="L692" title="All 4 branches missed.">        if(!m_bestChanged &amp;&amp; currentItemSet.m_change)</span>
+<span class="nc" id="L693">           m_bestChanged = true;</span>
+        //update minimum expected predictive accuracy to get into the n best
+<span class="nc bnc" id="L695" title="All 2 branches missed.">        if(m_best.size() &gt;= m_numRules-5)</span>
+<span class="nc" id="L696">            m_expectation = ((RuleItem)m_best.first()).accuracy();</span>
+<span class="nc" id="L697">        else m_expectation =0;</span>
+      }
+    }
+<span class="nc" id="L700">  }</span>
+  
+  
+  /**
+   * Method that finds all large itemsets for class association rule mining for the given set of instances.
+   * @param index the size of the large item sets
+   * @throws Exception if an attribute is numeric
+   */
+  private void findLargeCarItemSets(int index) throws Exception {
+    
+<span class="nc" id="L710">    FastVector kMinusOneSets, kSets = new FastVector();</span>
+    Hashtable hashtable;
+<span class="nc" id="L712">    int i = 0;</span>
+    // Find large itemsets
+<span class="nc bnc" id="L714" title="All 2 branches missed.">    if(index == 1){</span>
+<span class="nc" id="L715">        kSets = CaRuleGeneration.singletons(m_instances);</span>
+<span class="nc" id="L716">        ItemSet.upDateCounters(kSets, m_instances);</span>
+<span class="nc" id="L717">        kSets = ItemSet.deleteItemSets(kSets, m_premiseCount,Integer.MAX_VALUE);</span>
+<span class="nc bnc" id="L718" title="All 2 branches missed.">        if (kSets.size() == 0)</span>
+<span class="nc" id="L719">            return;</span>
+<span class="nc" id="L720">        m_Ls.addElement(kSets);</span>
+    }
+    
+<span class="nc bnc" id="L723" title="All 2 branches missed.">    if(index &gt;1){</span>
+<span class="nc bnc" id="L724" title="All 2 branches missed.">        if(m_Ls.size() &gt; 0)</span>
+<span class="nc" id="L725">            kSets = (FastVector)m_Ls.lastElement();</span>
+<span class="nc" id="L726">        m_Ls.removeAllElements();</span>
+<span class="nc" id="L727">        i = index-2;</span>
+<span class="nc" id="L728">        kMinusOneSets = kSets;</span>
+<span class="nc" id="L729">        kSets = ItemSet.mergeAllItemSets(kMinusOneSets, i, m_instances.numInstances());</span>
+<span class="nc" id="L730">        hashtable = ItemSet.getHashtable(kMinusOneSets, kMinusOneSets.size());</span>
+<span class="nc" id="L731">        m_hashtables.addElement(hashtable);</span>
+<span class="nc" id="L732">        kSets = ItemSet.pruneItemSets(kSets, hashtable);</span>
+<span class="nc" id="L733">        ItemSet.upDateCounters(kSets, m_instances);</span>
+<span class="nc" id="L734">        kSets = ItemSet.deleteItemSets(kSets, m_premiseCount,Integer.MAX_VALUE);</span>
+<span class="nc bnc" id="L735" title="All 2 branches missed.">        if(kSets.size() == 0)</span>
+<span class="nc" id="L736">          return;</span>
+<span class="nc" id="L737">        m_Ls.addElement(kSets);</span>
+    }
+<span class="nc" id="L739">  } </span>
+  
+  /** 
+   * Method that finds all class association rules.
+   *
+   * @throws Exception if an attribute is numeric
+   */
+  private void findCaRulesQuickly() throws Exception {
+    
+    CaRuleGeneration currentLItemSet;
+    // Build rules
+<span class="nc bnc" id="L750" title="All 2 branches missed.">    for (int j = 0; j &lt; m_Ls.size(); j++) {</span>
+<span class="nc" id="L751">      FastVector currentItemSets = (FastVector)m_Ls.elementAt(j);</span>
+<span class="nc" id="L752">      Enumeration enumItemSets = currentItemSets.elements();</span>
+<span class="nc bnc" id="L753" title="All 2 branches missed.">      while (enumItemSets.hasMoreElements()) {</span>
+<span class="nc" id="L754">        currentLItemSet = new CaRuleGeneration((ItemSet)enumItemSets.nextElement());</span>
+<span class="nc" id="L755">        m_best = currentLItemSet.generateRules(m_numRules-5, m_midPoints,m_priors,m_expectation,</span>
+<span class="nc" id="L756">                                        m_instances,m_best,m_count);</span>
+<span class="nc" id="L757">        m_count = currentLItemSet.count();</span>
+<span class="nc bnc" id="L758" title="All 4 branches missed.">        if(!m_bestChanged &amp;&amp; currentLItemSet.change())</span>
+<span class="nc" id="L759">                m_bestChanged = true;</span>
+<span class="nc bnc" id="L760" title="All 2 branches missed.">        if(m_best.size() == m_numRules-5)</span>
+<span class="nc" id="L761">            m_expectation = ((RuleItem)m_best.first()).accuracy();</span>
+        else 
+<span class="nc" id="L763">            m_expectation = 0;</span>
+      }
+    }
+<span class="nc" id="L766">  }</span>
+
+  /**
+   * returns all the rules
+   *
+   * @return		all the rules
+   * @see		#m_allTheRules
+   */
+  public FastVector[] getAllTheRules() {
+<span class="nc" id="L775">    return m_allTheRules;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L784">    return RevisionUtils.extract(&quot;$Revision: 6365 $&quot;);</span>
+  }
+
+  /**
+   * Main method.
+   * 
+   * @param args the commandline parameters
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L793">    runAssociator(new PredictiveApriori(), args);</span>
+<span class="nc" id="L794">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

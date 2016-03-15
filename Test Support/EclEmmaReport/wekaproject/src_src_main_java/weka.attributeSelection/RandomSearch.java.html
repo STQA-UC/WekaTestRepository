@@ -1,0 +1,715 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RandomSearch.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">RandomSearch.java</span></div><h1>RandomSearch.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RandomSearch.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.attributeSelection;
+
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.Range;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformation.Type;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+
+import java.util.BitSet;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * RandomSearch : &lt;br/&gt;
+ * &lt;br/&gt;
+ * Performs a Random search in the space of attribute subsets. If no start set is supplied, Random search starts from a random point and reports the best subset found. If a start set is supplied, Random searches randomly for subsets that are as good or better than the start point with the same or or fewer attributes. Using RandomSearch in conjunction with a start set containing all attributes equates to the LVF algorithm of Liu and Setiono (ICML-96).&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * H. Liu, R. Setiono: A probabilistic approach to feature selection - A filter solution. In: 13th International Conference on Machine Learning, 319-327, 1996.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Liu1996,
+ *    author = {H. Liu and R. Setiono},
+ *    booktitle = {13th International Conference on Machine Learning},
+ *    pages = {319-327},
+ *    title = {A probabilistic approach to feature selection - A filter solution},
+ *    year = {1996}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;start set&amp;gt;
+ *  Specify a starting set of attributes.
+ *  Eg. 1,3,5-7.
+ *  If a start point is supplied,
+ *  random search evaluates the start
+ *  point and then randomly looks for
+ *  subsets that are as good as or better
+ *  than the start point with the same
+ *  or lower cardinality.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -F &amp;lt;percent&amp;gt; 
+ *  Percent of search space to consider.
+ *  (default = 25%).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V
+ *  Output subsets as the search progresses.
+ *  (default = false).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -seed &amp;lt;num&amp;gt;
+ *  Random seed
+ *  (default = 1)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version $Revision: 8949 $
+ */
+public class RandomSearch 
+  extends ASSearch 
+  implements StartSetHandler, OptionHandler, TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 7479392617377425484L;
+  
+  /** 
+   * holds a starting set as an array of attributes.
+   */
+  private int[] m_starting;
+  
+  /** holds the start set as a range */
+  private Range m_startRange;
+
+  /** the best feature set found during the search */
+  private BitSet m_bestGroup;
+
+  /** the merit of the best subset found */
+  private double m_bestMerit;
+
+  /** 
+   * only accept a feature set as being &quot;better&quot; than the best if its
+   * merit is better or equal to the best, and it contains as many or fewer
+   * features than the best (this allows LVF to be implemented).
+   */
+  private boolean m_onlyConsiderBetterAndSmaller;
+
+ /** does the data have a class */
+  private boolean m_hasClass;
+ 
+  /** holds the class index */
+  private int m_classIndex;
+ 
+  /** number of attributes in the data */
+  private int m_numAttribs;
+
+  /** seed for random number generation */
+  private int m_seed;
+
+  /** percentage of the search space to consider */
+  private double m_searchSize;
+
+  /** the number of iterations performed */
+  private int m_iterations;
+
+  /** random number object */
+  private Random m_random;
+
+  /** output new best subsets as the search progresses */
+  private boolean m_verbose;
+
+  /**
+   * Returns a string describing this search method
+   * @return a description of the search suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L155">    return &quot;RandomSearch : \n\nPerforms a Random search in &quot;</span>
+      +&quot;the space of attribute subsets. If no start set is supplied, Random &quot;
+      +&quot;search starts from a random point and reports the best subset found. &quot;
+      +&quot;If a start set is supplied, Random searches randomly for subsets &quot;
+      +&quot;that are as good or better than the start point with the same or &quot;
+      +&quot;or fewer attributes. Using RandomSearch in conjunction with a start &quot;
+      +&quot;set containing all attributes equates to the LVF algorithm of Liu &quot;
+      +&quot;and Setiono (ICML-96).\n\n&quot;
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L164">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L177">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L178">    result.setValue(Field.AUTHOR, &quot;H. Liu and R. Setiono&quot;);</span>
+<span class="nc" id="L179">    result.setValue(Field.TITLE, &quot;A probabilistic approach to feature selection - A filter solution&quot;);</span>
+<span class="nc" id="L180">    result.setValue(Field.BOOKTITLE, &quot;13th International Conference on Machine Learning&quot;);</span>
+<span class="nc" id="L181">    result.setValue(Field.YEAR, &quot;1996&quot;);</span>
+<span class="nc" id="L182">    result.setValue(Field.PAGES, &quot;319-327&quot;);</span>
+    
+<span class="nc" id="L184">    return result;</span>
+  }
+
+  /**
+   * Constructor
+   */
+<span class="nc" id="L190">  public RandomSearch () {</span>
+<span class="nc" id="L191">    resetOptions();</span>
+<span class="nc" id="L192">  }</span>
+
+  /**
+   * Returns an enumeration describing the available options.
+   * @return an enumeration of all the available options.
+   **/
+  public Enumeration listOptions () {
+<span class="nc" id="L199">    Vector newVector = new Vector(3);</span>
+    
+<span class="nc" id="L201">    newVector.addElement(new Option(&quot;\tSpecify a starting set of attributes.&quot; </span>
+				    + &quot;\n\tEg. 1,3,5-7.&quot;
+				    +&quot;\n\tIf a start point is supplied,&quot;
+				    +&quot;\n\trandom search evaluates the start&quot;
+				    +&quot;\n\tpoint and then randomly looks for&quot;
+				    +&quot;\n\tsubsets that are as good as or better&quot;
+				    +&quot;\n\tthan the start point with the same&quot;
+				    +&quot;\n\tor lower cardinality.&quot;
+<span class="nc" id="L209">				    ,&quot;P&quot;,1</span>
+<span class="nc" id="L210">				    , &quot;-P &lt;start set&gt;&quot;));</span>
+
+<span class="nc" id="L212">    newVector.addElement(new Option(&quot;\tPercent of search space to consider.&quot;</span>
+				    +&quot;\n\t(default = 25%).&quot;
+<span class="nc" id="L214">				    , &quot;F&quot;, 1</span>
+<span class="nc" id="L215">				    , &quot;-F &lt;percent&gt; &quot;));</span>
+<span class="nc" id="L216">    newVector.addElement(new Option(&quot;\tOutput subsets as the search progresses.&quot;</span>
+				    +&quot;\n\t(default = false).&quot;
+<span class="nc" id="L218">				    , &quot;V&quot;, 0</span>
+<span class="nc" id="L219">				    , &quot;-V&quot;));</span>
+<span class="nc" id="L220">    newVector.addElement(new Option(&quot;\tRandom seed\n\t(default = 1)&quot;, </span>
+<span class="nc" id="L221">        &quot;seed&quot;, 1, &quot;-seed &lt;num&gt;&quot;));</span>
+<span class="nc" id="L222">    return  newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;start set&amp;gt;
+   *  Specify a starting set of attributes.
+   *  Eg. 1,3,5-7.
+   *  If a start point is supplied,
+   *  random search evaluates the start
+   *  point and then randomly looks for
+   *  subsets that are as good as or better
+   *  than the start point with the same
+   *  or lower cardinality.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -F &amp;lt;percent&amp;gt; 
+   *  Percent of search space to consider.
+   *  (default = 25%).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V
+   *  Output subsets as the search progresses.
+   *  (default = false).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -seed &amp;lt;num&amp;gt;
+   *  Random seed
+   *  (default = 1)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   *
+   **/
+  public void setOptions (String[] options)
+    throws Exception {
+    String optionString;
+<span class="nc" id="L262">    resetOptions();</span>
+    
+<span class="nc" id="L264">    optionString = Utils.getOption('P', options);</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L266">      setStartSet(optionString);</span>
+    }
+
+<span class="nc" id="L269">    optionString = Utils.getOption('F',options);</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L271">      setSearchPercent((new Double(optionString)).doubleValue());</span>
+    }        
+
+<span class="nc" id="L274">    setVerbose(Utils.getFlag('V',options));</span>
+    
+<span class="nc" id="L276">    optionString = Utils.getOption(&quot;seed&quot;, options);</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">    if (optionString.length() &gt; 0) {</span>
+<span class="nc" id="L278">      setSeed(Integer.parseInt(optionString));</span>
+    }
+<span class="nc" id="L280">  }</span>
+
+  /**
+   * Gets the current settings of RandomSearch.
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions () {
+<span class="nc" id="L287">    String[] options = new String[7];</span>
+<span class="nc" id="L288">    int current = 0;</span>
+
+<span class="nc bnc" id="L290" title="All 2 branches missed.">    if (m_verbose) {</span>
+<span class="nc" id="L291">      options[current++] = &quot;-V&quot;;</span>
+    }
+
+<span class="nc bnc" id="L294" title="All 2 branches missed.">    if (!(getStartSet().equals(&quot;&quot;))) {</span>
+<span class="nc" id="L295">      options[current++] = &quot;-P&quot;;</span>
+<span class="nc" id="L296">      options[current++] = &quot;&quot; + startSetToString();</span>
+    }
+
+<span class="nc" id="L299">    options[current++] = &quot;-F&quot;;</span>
+<span class="nc" id="L300">    options[current++] = &quot;&quot; + getSearchPercent();</span>
+    
+<span class="nc" id="L302">    options[current++] = &quot;-seed&quot;;</span>
+<span class="nc" id="L303">    options[current++] = &quot;&quot; + getSeed();</span>
+
+<span class="nc bnc" id="L305" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L306">      options[current++] = &quot;&quot;;</span>
+    }
+
+<span class="nc" id="L309">    return  options;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String startSetTipText() {
+<span class="nc" id="L318">    return &quot;Set the start point for the search. This is specified as a comma &quot;</span>
+      +&quot;seperated list off attribute indexes starting at 1. It can include &quot;
+      +&quot;ranges. Eg. 1,2,5-9,17. If specified, Random searches for subsets &quot;
+      +&quot;of attributes that are as good as or better than the start set with &quot;
+      +&quot;the same or lower cardinality.&quot;;
+  }
+
+  /**
+   * Sets a starting set of attributes for the search. It is the
+   * search method's responsibility to report this start set (if any)
+   * in its toString() method.
+   * @param startSet a string containing a list of attributes (and or ranges),
+   * eg. 1,2,6,10-15. &quot;&quot; indicates no start point.
+   * If a start point is supplied, random search evaluates the
+   * start point and then looks for subsets that are as good as or better 
+   * than the start point with the same or lower cardinality.
+   * @throws Exception if start set can't be set.
+   */
+  public void setStartSet (String startSet) throws Exception {
+<span class="nc" id="L337">    m_startRange.setRanges(startSet);</span>
+<span class="nc" id="L338">  }</span>
+
+  /**
+   * Returns a list of attributes (and or attribute ranges) as a String
+   * @return a list of attributes (and or attribute ranges)
+   */
+  public String getStartSet () {
+<span class="nc" id="L345">    return m_startRange.getRanges();</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String verboseTipText() {
+<span class="nc" id="L354">    return &quot;Print progress information. Sends progress info to the terminal &quot;</span>
+      +&quot;as the search progresses.&quot;;
+  }
+
+  /**
+   * set whether or not to output new best subsets as the search proceeds
+   * @param v true if output is to be verbose
+   */
+  public void setVerbose(boolean v) {
+<span class="nc" id="L363">    m_verbose = v;</span>
+<span class="nc" id="L364">  }</span>
+
+  /**
+   * get whether or not output is verbose
+   * @return true if output is set to verbose
+   */
+  public boolean getVerbose() {
+<span class="nc" id="L371">    return m_verbose;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String searchPercentTipText() {
+<span class="nc" id="L380">    return &quot;Percentage of the search space to explore.&quot;;</span>
+  }
+
+  /**
+   * set the percentage of the search space to consider
+   * @param p percent of the search space ( 0 &lt; p &lt;= 100)
+   */
+  public void setSearchPercent(double p) {
+<span class="nc" id="L388">    p = Math.abs(p);</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">    if (p == 0) {</span>
+<span class="nc" id="L390">      p = 25;</span>
+    }
+
+<span class="nc bnc" id="L393" title="All 2 branches missed.">    if (p &gt; 100.0) {</span>
+<span class="nc" id="L394">      p = 100;</span>
+    }
+
+<span class="nc" id="L397">    m_searchSize = (p/100.0);</span>
+<span class="nc" id="L398">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String seedTipText() {
+<span class="nc" id="L406">    return &quot;Seed for the random number generator&quot;;</span>
+  }
+  
+  /**
+   * Set the random seed to use
+   * 
+   * @param seed the seed to use
+   */
+  public void setSeed(int seed) {
+<span class="nc" id="L415">    m_seed = seed;</span>
+<span class="nc" id="L416">  }</span>
+  
+  /**
+   * Get the random seed to use
+   * 
+   * @return the random seed
+   */
+  public int getSeed() {
+<span class="nc" id="L424">    return m_seed;</span>
+  }
+
+  /**
+   * get the percentage of the search space to consider
+   * @return the percent of the search space explored
+   */
+  public double getSearchPercent() {
+<span class="nc" id="L432">    return m_searchSize * 100;</span>
+  }
+
+  /**
+   * converts the array of starting attributes to a string. This is
+   * used by getOptions to return the actual attributes specified
+   * as the starting set. This is better than using m_startRanges.getRanges()
+   * as the same start set can be specified in different ways from the
+   * command line---eg 1,2,3 == 1-3. This is to ensure that stuff that
+   * is stored in a database is comparable.
+   * @return a comma seperated list of individual attribute numbers as a String
+   */
+  private String startSetToString() {
+<span class="nc" id="L445">    StringBuffer FString = new StringBuffer();</span>
+    boolean didPrint;
+    
+<span class="nc bnc" id="L448" title="All 2 branches missed.">    if (m_starting == null) {</span>
+<span class="nc" id="L449">      return getStartSet();</span>
+    }
+
+<span class="nc bnc" id="L452" title="All 2 branches missed.">    for (int i = 0; i &lt; m_starting.length; i++) {</span>
+<span class="nc" id="L453">      didPrint = false;</span>
+      
+<span class="nc bnc" id="L455" title="All 2 branches missed.">      if ((m_hasClass == false) || </span>
+<span class="nc bnc" id="L456" title="All 4 branches missed.">	  (m_hasClass == true &amp;&amp; i != m_classIndex)) {</span>
+<span class="nc" id="L457">	FString.append((m_starting[i] + 1));</span>
+<span class="nc" id="L458">	didPrint = true;</span>
+      }
+      
+<span class="nc bnc" id="L461" title="All 2 branches missed.">      if (i == (m_starting.length - 1)) {</span>
+<span class="nc" id="L462">	FString.append(&quot;&quot;);</span>
+      }
+      else {
+<span class="nc bnc" id="L465" title="All 2 branches missed.">	if (didPrint) {</span>
+<span class="nc" id="L466">	  FString.append(&quot;,&quot;);</span>
+	  }
+      }
+    }
+
+<span class="nc" id="L471">    return FString.toString();</span>
+  }
+
+  /**
+   * prints a description of the search
+   * @return a description of the search as a string
+   */
+  public String toString() {
+<span class="nc" id="L479">    StringBuffer text = new StringBuffer();</span>
+    
+<span class="nc" id="L481">    text.append(&quot;\tRandom search.\n\tStart set: &quot;);</span>
+<span class="nc bnc" id="L482" title="All 2 branches missed.">    if (m_starting == null) {</span>
+<span class="nc" id="L483">      text.append(&quot;no attributes\n&quot;);</span>
+    }
+    else {
+<span class="nc" id="L486">      text.append(startSetToString()+&quot;\n&quot;);</span>
+    }
+<span class="nc" id="L488">    text.append(&quot;\tNumber of iterations: &quot;+m_iterations+&quot; (&quot;</span>
+<span class="nc" id="L489">		+(m_searchSize * 100.0)+&quot;% of the search space)\n&quot;);</span>
+<span class="nc" id="L490">    text.append(&quot;\tMerit of best subset found: &quot;</span>
+<span class="nc" id="L491">		+Utils.doubleToString(Math.abs(m_bestMerit),8,3)+&quot;\n&quot;);</span>
+
+<span class="nc" id="L493">    return text.toString();</span>
+  }
+
+  /**
+   * Searches the attribute subset space randomly.
+   *
+   * @param ASEval the attribute evaluator to guide the search
+   * @param data the training instances.
+   * @return an array (not necessarily ordered) of selected attribute indexes
+   * @throws Exception if the search can't be completed
+   */
+   public int[] search (ASEvaluation ASEval, Instances data)
+     throws Exception {
+     double best_merit;
+<span class="nc" id="L507">     int sizeOfBest = m_numAttribs;</span>
+     BitSet temp;
+<span class="nc" id="L509">     m_bestGroup = new BitSet(m_numAttribs);</span>
+     
+<span class="nc" id="L511">     m_onlyConsiderBetterAndSmaller = false;</span>
+<span class="nc bnc" id="L512" title="All 2 branches missed.">     if (!(ASEval instanceof SubsetEvaluator)) {</span>
+<span class="nc" id="L513">       throw  new Exception(ASEval.getClass().getName() </span>
+<span class="nc" id="L514">			    + &quot; is not a &quot; </span>
+<span class="nc" id="L515">			    + &quot;Subset evaluator!&quot;);</span>
+     }
+
+<span class="nc" id="L518">     m_random = new Random(m_seed);</span>
+     
+<span class="nc bnc" id="L520" title="All 2 branches missed.">     if (ASEval instanceof UnsupervisedSubsetEvaluator) {</span>
+<span class="nc" id="L521">       m_hasClass = false;</span>
+     }
+     else {
+<span class="nc" id="L524">       m_hasClass = true;</span>
+<span class="nc" id="L525">       m_classIndex = data.classIndex();</span>
+     }
+     
+<span class="nc" id="L528">     SubsetEvaluator ASEvaluator = (SubsetEvaluator)ASEval;</span>
+<span class="nc" id="L529">     m_numAttribs = data.numAttributes();</span>
+
+<span class="nc" id="L531">     m_startRange.setUpper(m_numAttribs-1);</span>
+<span class="nc bnc" id="L532" title="All 2 branches missed.">     if (!(getStartSet().equals(&quot;&quot;))) {</span>
+<span class="nc" id="L533">       m_starting = m_startRange.getSelection();</span>
+     }
+
+     // If a starting subset has been supplied, then initialise the bitset
+<span class="nc bnc" id="L537" title="All 2 branches missed.">     if (m_starting != null) {</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">       for (int i = 0; i &lt; m_starting.length; i++) {</span>
+<span class="nc bnc" id="L539" title="All 2 branches missed.">	 if ((m_starting[i]) != m_classIndex) {</span>
+<span class="nc" id="L540">	   m_bestGroup.set(m_starting[i]);</span>
+	 }
+       }
+<span class="nc" id="L543">       m_onlyConsiderBetterAndSmaller = true;</span>
+<span class="nc" id="L544">       best_merit = ASEvaluator.evaluateSubset(m_bestGroup);</span>
+<span class="nc" id="L545">       sizeOfBest = countFeatures(m_bestGroup);</span>
+     } else {
+       // do initial random subset
+<span class="nc" id="L548">       m_bestGroup = generateRandomSubset();</span>
+<span class="nc" id="L549">       best_merit = ASEvaluator.evaluateSubset(m_bestGroup);</span>
+     }
+     
+<span class="nc bnc" id="L552" title="All 2 branches missed.">     if (m_verbose) {</span>
+<span class="nc" id="L553">       System.out.println(&quot;Initial subset (&quot;</span>
+<span class="nc" id="L554">			  +Utils.doubleToString(Math.</span>
+<span class="nc" id="L555">						abs(best_merit),8,5)</span>
+<span class="nc" id="L556">			  +&quot;): &quot;+printSubset(m_bestGroup));</span>
+     }
+
+     int i;
+<span class="nc bnc" id="L560" title="All 2 branches missed.">     if (m_hasClass) {</span>
+<span class="nc" id="L561">       i = m_numAttribs -1;</span>
+     } else {
+<span class="nc" id="L563">       i = m_numAttribs;</span>
+     }
+<span class="nc" id="L565">     m_iterations = (int)((m_searchSize * Math.pow(2, i)));</span>
+     
+     int tempSize;
+     double tempMerit;
+     // main loop
+<span class="nc bnc" id="L570" title="All 2 branches missed.">     for (i=0;i&lt;m_iterations;i++) {</span>
+<span class="nc" id="L571">       temp = generateRandomSubset();</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">       if (m_onlyConsiderBetterAndSmaller) {</span>
+<span class="nc" id="L573">	 tempSize = countFeatures(temp);</span>
+<span class="nc bnc" id="L574" title="All 2 branches missed.">	 if (tempSize &lt;= sizeOfBest) {</span>
+<span class="nc" id="L575">	   tempMerit = ASEvaluator.evaluateSubset(temp);</span>
+<span class="nc bnc" id="L576" title="All 2 branches missed.">	   if (tempMerit &gt;= best_merit) {</span>
+<span class="nc" id="L577">	     sizeOfBest = tempSize;</span>
+<span class="nc" id="L578">	     m_bestGroup = temp;</span>
+<span class="nc" id="L579">	     best_merit = tempMerit;</span>
+<span class="nc bnc" id="L580" title="All 2 branches missed.">	     if (m_verbose) {</span>
+<span class="nc" id="L581">	       System.out.print(&quot;New best subset (&quot;</span>
+<span class="nc" id="L582">				  +Utils.doubleToString(Math.</span>
+<span class="nc" id="L583">							abs(best_merit),8,5)</span>
+<span class="nc" id="L584">				  +&quot;): &quot;+printSubset(m_bestGroup) + &quot; :&quot;);</span>
+<span class="nc" id="L585">	       System.out.println(Utils.</span>
+<span class="nc" id="L586">				  doubleToString((((double)i)/</span>
+<span class="nc" id="L587">						  ((double)m_iterations)*</span>
+<span class="nc" id="L588">						  100.0),5,1)</span>
+<span class="nc" id="L589">				  +&quot;% done&quot;);</span>
+	     }
+	   }
+	 }
+       } else {
+<span class="nc" id="L594">	 tempMerit = ASEvaluator.evaluateSubset(temp);</span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">	 if (tempMerit &gt; best_merit) {</span>
+<span class="nc" id="L596">	   m_bestGroup = temp;</span>
+<span class="nc" id="L597">	   best_merit = tempMerit;</span>
+<span class="nc bnc" id="L598" title="All 2 branches missed.">	   if (m_verbose) {</span>
+<span class="nc" id="L599">	     System.out.print(&quot;New best subset (&quot;</span>
+<span class="nc" id="L600">				+Utils.doubleToString(Math.abs(best_merit),8,5)</span>
+<span class="nc" id="L601">				+&quot;): &quot;+printSubset(m_bestGroup) + &quot; :&quot;);</span>
+<span class="nc" id="L602">	     System.out.println(Utils.</span>
+<span class="nc" id="L603">				doubleToString((((double)i)/</span>
+<span class="nc" id="L604">						((double)m_iterations)</span>
+<span class="nc" id="L605">						*100.0),5,1)</span>
+<span class="nc" id="L606">				+&quot;% done&quot;);</span>
+	   }
+	 }
+       }
+     }
+<span class="nc" id="L611">     m_bestMerit = best_merit;</span>
+<span class="nc" id="L612">     return attributeList(m_bestGroup);</span>
+   }
+
+  /**
+   * prints a subset as a series of attribute numbers
+   * @param temp the subset to print
+   * @return a subset as a String of attribute numbers
+   */
+  private String printSubset(BitSet temp) {
+<span class="nc" id="L621">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc bnc" id="L623" title="All 2 branches missed.">    for (int j=0;j&lt;m_numAttribs;j++) {</span>
+<span class="nc bnc" id="L624" title="All 2 branches missed.">      if (temp.get(j)) {</span>
+<span class="nc" id="L625">        text.append((j+1)+&quot; &quot;);</span>
+      }
+    }
+<span class="nc" id="L628">    return text.toString();</span>
+  }
+
+  /**
+   * converts a BitSet into a list of attribute indexes 
+   * @param group the BitSet to convert
+   * @return an array of attribute indexes
+   **/
+  private int[] attributeList (BitSet group) {
+<span class="nc" id="L637">    int count = 0;</span>
+    
+    // count how many were selected
+<span class="nc bnc" id="L640" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">      if (group.get(i)) {</span>
+<span class="nc" id="L642">	count++;</span>
+      }
+    }
+    
+<span class="nc" id="L646">    int[] list = new int[count];</span>
+<span class="nc" id="L647">    count = 0;</span>
+    
+<span class="nc bnc" id="L649" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="nc bnc" id="L650" title="All 2 branches missed.">      if (group.get(i)) {</span>
+<span class="nc" id="L651">	list[count++] = i;</span>
+      }
+    }
+    
+<span class="nc" id="L655">    return  list;</span>
+  }
+
+  /**
+   * generates a random subset
+   * @return a random subset as a BitSet
+   */
+  private BitSet generateRandomSubset() {
+<span class="nc" id="L663">    BitSet temp = new BitSet(m_numAttribs);</span>
+    double r;
+
+<span class="nc bnc" id="L666" title="All 2 branches missed.">    for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc" id="L667">      r = m_random.nextDouble();</span>
+<span class="nc bnc" id="L668" title="All 2 branches missed.">      if (r &lt;= 0.5) {</span>
+<span class="nc bnc" id="L669" title="All 4 branches missed.">	if (m_hasClass &amp;&amp; i == m_classIndex) {</span>
+	} else {
+<span class="nc" id="L671">	  temp.set(i);</span>
+	}
+      }
+    }
+<span class="nc" id="L675">    return temp;</span>
+  }
+
+  /**
+   * counts the number of features in a subset
+   * @param featureSet the feature set for which to count the features
+   * @return the number of features in the subset
+   */
+  private int countFeatures(BitSet featureSet) {
+<span class="nc" id="L684">    int count = 0;</span>
+<span class="nc bnc" id="L685" title="All 2 branches missed.">    for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L686" title="All 2 branches missed.">      if (featureSet.get(i)) {</span>
+<span class="nc" id="L687">	count++;</span>
+      }
+    }
+<span class="nc" id="L690">    return count;</span>
+  }
+
+  /**
+   * resets to defaults
+   */
+  private void resetOptions() {
+<span class="nc" id="L697">    m_starting = null;</span>
+<span class="nc" id="L698">    m_startRange = new Range();</span>
+<span class="nc" id="L699">    m_searchSize = 0.25;</span>
+<span class="nc" id="L700">    m_seed = 1;</span>
+<span class="nc" id="L701">    m_onlyConsiderBetterAndSmaller = false;</span>
+<span class="nc" id="L702">    m_verbose = false;</span>
+<span class="nc" id="L703">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L711">    return RevisionUtils.extract(&quot;$Revision: 8949 $&quot;);</span>
+  }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

@@ -1,0 +1,425 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>MultiBoostAB.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.meta</a> &gt; <span class="el_source">MultiBoostAB.java</span></div><h1>MultiBoostAB.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    MultiBoostAB.java
+ *
+ *    MultiBoosting is an extension to the highly successful AdaBoost
+ *    technique for forming decision committees. MultiBoosting can be
+ *    viewed as combining AdaBoost with wagging. It is able to harness
+ *    both AdaBoost's high bias and variance reduction with wagging's
+ *    superior variance reduction. Using C4.5 as the base learning
+ *    algorithm, Multi-boosting is demonstrated to produce decision
+ *    committees with lower error than either AdaBoost or wagging
+ *    significantly more often than the reverse over a large
+ *    representative cross-section of UCI data sets. It offers the
+ *    further advantage over AdaBoost of suiting parallel execution.
+ *    
+ *    For more info refer to :
+ &lt;!-- technical-plaintext-start --&gt;
+ * Geoffrey I. Webb (2000). MultiBoosting: A Technique for Combining Boosting and Wagging. Machine Learning. Vol.40(No.2).
+ &lt;!-- technical-plaintext-end --&gt;
+ *
+ *    Originally based on AdaBoostM1.java
+ *    
+ *    http://www.cm.deakin.edu.au/webb
+ *
+ *    School of Computing and Mathematics
+ *    Deakin University
+ *    Geelong, Vic, 3217, Australia
+ *    Copyright (C) 2001 Deakin University
+ * 
+ */
+
+package weka.classifiers.meta;
+
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class for boosting a classifier using the MultiBoosting method.&lt;br/&gt;
+ * &lt;br/&gt;
+ * MultiBoosting is an extension to the highly successful AdaBoost technique for forming decision committees. MultiBoosting can be viewed as combining AdaBoost with wagging. It is able to harness both AdaBoost's high bias and variance reduction with wagging's superior variance reduction. Using C4.5 as the base learning algorithm, Multi-boosting is demonstrated to produce decision committees with lower error than either AdaBoost or wagging significantly more often than the reverse over a large representative cross-section of UCI data sets. It offers the further advantage over AdaBoost of suiting parallel execution.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see&lt;br/&gt;
+ * &lt;br/&gt;
+ * Geoffrey I. Webb (2000). MultiBoosting: A Technique for Combining Boosting and Wagging. Machine Learning. Vol.40(No.2).
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;article{Webb2000,
+ *    address = {Boston},
+ *    author = {Geoffrey I. Webb},
+ *    journal = {Machine Learning},
+ *    number = {No.2},
+ *    publisher = {Kluwer Academic Publishers},
+ *    title = {MultiBoosting: A Technique for Combining Boosting and Wagging},
+ *    volume = {Vol.40},
+ *    year = {2000}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+ *  Number of sub-committees. (Default 3)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;num&amp;gt;
+ *  Percentage of weight mass to base training on.
+ *  (default 100, reduce to around 90 speed up)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Q
+ *  Use resampling for boosting.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;num&amp;gt;
+ *  Number of iterations.
+ *  (default 10)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W
+ *  Full name of base classifier.
+ *  (default: weka.classifiers.trees.DecisionStump)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to classifier weka.classifiers.trees.DecisionStump:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * Options after -- are passed to the designated classifier.&lt;p&gt;
+ *
+ * @author Shane Butler (sbutle@deakin.edu.au)
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 1.16 $ 
+ */
+<span class="fc" id="L137">public class MultiBoostAB </span>
+  extends AdaBoostM1
+  implements TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -6681619178187935148L;
+  
+  /** The number of sub-committees to use */
+<span class="fc" id="L145">  protected int m_NumSubCmtys = 3;</span>
+
+  /** Random number generator */
+<span class="fc" id="L148">  protected Random m_Random = null;</span>
+    
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L157">    return  &quot;Class for boosting a classifier using the MultiBoosting method.\n\n&quot;</span>
+      + &quot;MultiBoosting is an extension to the highly successful AdaBoost &quot;
+      + &quot;technique for forming decision committees. MultiBoosting can be &quot;
+      + &quot;viewed as combining AdaBoost with wagging. It is able to harness &quot;
+      + &quot;both AdaBoost's high bias and variance reduction with wagging's &quot;
+      + &quot;superior variance reduction. Using C4.5 as the base learning &quot;
+      + &quot;algorithm, Multi-boosting is demonstrated to produce decision &quot;
+      + &quot;committees with lower error than either AdaBoost or wagging &quot;
+      + &quot;significantly more often than the reverse over a large &quot;
+      + &quot;representative cross-section of UCI data sets. It offers the &quot;
+      + &quot;further advantage over AdaBoost of suiting parallel execution.\n\n&quot;
+      + &quot;For more information, see\n\n&quot;
+<span class="nc" id="L169">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L182">    result = new TechnicalInformation(Type.ARTICLE);</span>
+<span class="nc" id="L183">    result.setValue(Field.AUTHOR, &quot;Geoffrey I. Webb&quot;);</span>
+<span class="nc" id="L184">    result.setValue(Field.YEAR, &quot;2000&quot;);</span>
+<span class="nc" id="L185">    result.setValue(Field.TITLE, &quot;MultiBoosting: A Technique for Combining Boosting and Wagging&quot;);</span>
+<span class="nc" id="L186">    result.setValue(Field.JOURNAL, &quot;Machine Learning&quot;);</span>
+<span class="nc" id="L187">    result.setValue(Field.VOLUME, &quot;Vol.40&quot;);</span>
+<span class="nc" id="L188">    result.setValue(Field.NUMBER, &quot;No.2&quot;);</span>
+<span class="nc" id="L189">    result.setValue(Field.PUBLISHER, &quot;Kluwer Academic Publishers&quot;);</span>
+<span class="nc" id="L190">    result.setValue(Field.ADDRESS, &quot;Boston&quot;);</span>
+    
+<span class="nc" id="L192">    return result;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options
+   *
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+
+<span class="fc" id="L202">    Enumeration enu = super.listOptions();</span>
+<span class="fc" id="L203">    Vector vec = new Vector(1);</span>
+
+<span class="fc" id="L205">    vec.addElement(new Option(</span>
+<span class="fc" id="L206">	      &quot;\tNumber of sub-committees. (Default 3)&quot;,</span>
+<span class="fc" id="L207">	      &quot;C&quot;, 1, &quot;-C &lt;num&gt;&quot;));</span>
+<span class="fc bfc" id="L208" title="All 2 branches covered.">    while (enu.hasMoreElements()) {</span>
+<span class="fc" id="L209">      vec.addElement(enu.nextElement());</span>
+    }
+<span class="fc" id="L211">    return vec.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+   *  Number of sub-committees. (Default 3)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;num&amp;gt;
+   *  Percentage of weight mass to base training on.
+   *  (default 100, reduce to around 90 speed up)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -Q
+   *  Use resampling for boosting.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -I &amp;lt;num&amp;gt;
+   *  Number of iterations.
+   *  (default 10)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W
+   *  Full name of base classifier.
+   *  (default: weka.classifiers.trees.DecisionStump)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to classifier weka.classifiers.trees.DecisionStump:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * Options after -- are passed to the designated classifier.&lt;p&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="fc" id="L263">    String subcmtyString = Utils.getOption('C', options);</span>
+<span class="fc bfc" id="L264" title="All 2 branches covered.">    if (subcmtyString.length() != 0) {</span>
+<span class="fc" id="L265">      setNumSubCmtys(Integer.parseInt(subcmtyString));</span>
+    } else {
+<span class="fc" id="L267">      setNumSubCmtys(3);</span>
+    }
+
+<span class="fc" id="L270">    super.setOptions(options);</span>
+<span class="fc" id="L271">  }</span>
+
+  /**
+   * Gets the current settings of the Classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+
+<span class="fc" id="L280">    String [] ops = super.getOptions();</span>
+<span class="fc" id="L281">    String [] options = new String[ops.length + 2];</span>
+<span class="fc" id="L282">    options[0] = &quot;-C&quot;; options[1] = &quot;&quot; + getNumSubCmtys();</span>
+<span class="fc" id="L283">    System.arraycopy(ops, 0, options, 2, ops.length);</span>
+<span class="fc" id="L284">    return options;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numSubCmtysTipText() {
+<span class="nc" id="L293">    return &quot;Sets the (approximate) number of subcommittees.&quot;;</span>
+  }
+
+
+  /**
+   * Set the number of sub committees to use
+   *
+   * @param subc the number of sub committees
+   */
+  public void setNumSubCmtys(int subc) {
+
+<span class="fc" id="L304">    m_NumSubCmtys = subc;</span>
+<span class="fc" id="L305">  }</span>
+
+  /**
+   * Get the number of sub committees to use
+   *
+   * @return the seed for resampling
+   */
+  public int getNumSubCmtys() {
+
+<span class="fc" id="L314">    return m_NumSubCmtys;</span>
+  }
+
+  /**
+   * Method for building this classifier.
+   * 
+   * @param training the data to train with
+   * @throws Exception if the training fails
+   */
+  public void buildClassifier(Instances training) throws Exception {
+
+<span class="fc" id="L325">    m_Random = new Random(m_Seed);</span>
+
+<span class="fc" id="L327">    super.buildClassifier(training);</span>
+
+<span class="fc" id="L329">    m_Random = null;</span>
+<span class="fc" id="L330">  }</span>
+
+  /**
+   * Sets the weights for the next iteration.
+   * 
+   * @param training the data to train with
+   * @param reweight the reweighting factor
+   * @throws Exception in case of an error
+   */
+  protected void setWeights(Instances training, double reweight) 
+    throws Exception {
+
+<span class="fc" id="L342">    int subCmtySize = m_Classifiers.length / m_NumSubCmtys;</span>
+
+<span class="fc bfc" id="L344" title="All 2 branches covered.">    if ((m_NumIterationsPerformed + 1) % subCmtySize == 0) {</span>
+
+<span class="pc bpc" id="L346" title="1 of 2 branches missed.">      if (getDebug())</span>
+<span class="nc" id="L347">	System.err.println(m_NumIterationsPerformed + &quot; &quot; + subCmtySize);</span>
+
+<span class="fc" id="L349">      double oldSumOfWeights = training.sumOfWeights();</span>
+
+      // Randomly set the weights of the training instances to the poisson distributon
+<span class="fc bfc" id="L352" title="All 2 branches covered.">      for (int i = 0; i &lt; training.numInstances(); i++) {</span>
+<span class="fc" id="L353">	training.instance(i).setWeight( - Math.log((m_Random.nextDouble() * 9999) / 10000) );</span>
+      }
+
+      // Renormailise weights
+<span class="fc" id="L357">      double sumProbs = training.sumOfWeights();</span>
+<span class="fc bfc" id="L358" title="All 2 branches covered.">      for (int i = 0; i &lt; training.numInstances(); i++) {</span>
+<span class="fc" id="L359">	training.instance(i).setWeight(training.instance(i).weight() * oldSumOfWeights / sumProbs);</span>
+      }
+    } else {
+<span class="fc" id="L362">      super.setWeights(training, reweight);</span>
+    }
+<span class="fc" id="L364">  }</span>
+  
+  /**
+   * Returns description of the boosted classifier.
+   *
+   * @return description of the boosted classifier as a string
+   */
+  public String toString() {
+    
+    // only ZeroR model?
+<span class="pc bpc" id="L374" title="1 of 2 branches missed.">    if (m_ZeroR != null) {</span>
+<span class="nc" id="L375">      StringBuffer buf = new StringBuffer();</span>
+<span class="nc" id="L376">      buf.append(this.getClass().getName().replaceAll(&quot;.*\\.&quot;, &quot;&quot;) + &quot;\n&quot;);</span>
+<span class="nc" id="L377">      buf.append(this.getClass().getName().replaceAll(&quot;.*\\.&quot;, &quot;&quot;).replaceAll(&quot;.&quot;, &quot;=&quot;) + &quot;\n\n&quot;);</span>
+<span class="nc" id="L378">      buf.append(&quot;Warning: No model could be built, hence ZeroR model is used:\n\n&quot;);</span>
+<span class="nc" id="L379">      buf.append(m_ZeroR.toString());</span>
+<span class="nc" id="L380">      return buf.toString();</span>
+    }
+    
+<span class="fc" id="L383">    StringBuffer text = new StringBuffer();</span>
+    
+<span class="pc bpc" id="L385" title="1 of 2 branches missed.">    if (m_NumIterations == 0) {</span>
+<span class="nc" id="L386">      text.append(&quot;MultiBoostAB: No model built yet.\n&quot;);</span>
+<span class="pc bpc" id="L387" title="1 of 2 branches missed.">    } else if (m_NumIterations == 1) {</span>
+<span class="nc" id="L388">      text.append(&quot;MultiBoostAB: No boosting possible, one classifier used!\n&quot;);</span>
+<span class="nc" id="L389">      text.append(m_Classifiers[0].toString() + &quot;\n&quot;);</span>
+    } else {
+<span class="fc" id="L391">      text.append(&quot;MultiBoostAB: Base classifiers and their weights: \n\n&quot;);</span>
+<span class="fc bfc" id="L392" title="All 2 branches covered.">      for (int i = 0; i &lt; m_NumIterations ; i++) {</span>
+<span class="pc bpc" id="L393" title="3 of 4 branches missed.">        if ( (m_Classifiers != null) &amp;&amp; (m_Classifiers[i] != null) ) {</span>
+<span class="nc" id="L394">          text.append(m_Classifiers[i].toString() + &quot;\n\n&quot;);</span>
+<span class="nc" id="L395">          text.append(&quot;Weight: &quot; + Utils.roundDouble(m_Betas[i], 2) + &quot;\n\n&quot;);</span>
+        }
+        else {
+<span class="fc" id="L398">          text.append(&quot;not yet initialized!\n\n&quot;);</span>
+        }
+      }
+<span class="fc" id="L401">      text.append(&quot;Number of performed Iterations: &quot; + m_NumIterations + &quot;\n&quot;);</span>
+    }
+    
+<span class="fc" id="L404">    return text.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L413">    return RevisionUtils.extract(&quot;$Revision: 1.16 $&quot;);</span>
+  }
+  
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L422">    runClassifier(new MultiBoostAB(), argv);</span>
+<span class="nc" id="L423">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

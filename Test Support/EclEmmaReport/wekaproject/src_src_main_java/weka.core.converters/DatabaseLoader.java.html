@@ -1,0 +1,1407 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>DatabaseLoader.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core.converters</a> &gt; <span class="el_source">DatabaseLoader.java</span></div><h1>DatabaseLoader.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    DatabaseLoader.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.core.converters;
+
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.FastVector;
+import weka.core.Attribute;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.Option;
+import weka.experiment.InstanceQuery;
+
+import java.io.IOException;
+import java.sql.*;
+import java.util.Hashtable;
+import java.util.Properties;
+import java.util.StringTokenizer;
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Reads Instances from a Database. Can read a database in batch or incremental mode.&lt;br/&gt;
+ * In inremental mode MySQL and HSQLDB are supported.&lt;br/&gt;
+ * For all other DBMS set a pseudoincremental mode is used:&lt;br/&gt;
+ * In pseudo incremental mode the instances are read into main memory all at once and then incrementally provided to the user.&lt;br/&gt;
+ * For incremental loading the rows in the database table have to be ordered uniquely.&lt;br/&gt;
+ * The reason for this is that every time only a single row is fetched by extending the user query by a LIMIT clause.&lt;br/&gt;
+ * If this extension is impossible instances will be loaded pseudoincrementally. To ensure that every row is fetched exaclty once, they have to ordered.&lt;br/&gt;
+ * Therefore a (primary) key is necessary.This approach is chosen, instead of using JDBC driver facilities, because the latter one differ betweeen different drivers.&lt;br/&gt;
+ * If you use the DatabaseSaver and save instances by generating automatically a primary key (its name is defined in DtabaseUtils), this primary key will be used for ordering but will not be part of the output. The user defined SQL query to extract the instances should not contain LIMIT and ORDER BY clauses (see -Q option).&lt;br/&gt;
+ * In addition, for incremental loading,  you can define in the DatabaseUtils file how many distinct values a nominal attribute is allowed to have. If this number is exceeded, the column will become a string attribute.&lt;br/&gt;
+ * In batch mode no string attributes will be created.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -url &amp;lt;JDBC URL&amp;gt;
+ *  The JDBC URL to connect to.
+ *  (default: from DatabaseUtils.props file)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -user &amp;lt;name&amp;gt;
+ *  The user to connect with to the database.
+ *  (default: none)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -password &amp;lt;password&amp;gt;
+ *  The password to connect with to the database.
+ *  (default: none)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Q &amp;lt;query&amp;gt;
+ *  SQL query of the form
+ *   SELECT &amp;lt;list of columns&amp;gt;|* FROM &amp;lt;table&amp;gt; [WHERE]
+ *  to execute.
+ *  (default: Select * From Results0)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;list of column names&amp;gt;
+ *  List of column names uniquely defining a DB row
+ *  (separated by ', ').
+ *  Used for incremental loading.
+ *  If not specified, the key will be determined automatically,
+ *  if possible with the used JDBC driver.
+ *  The auto ID column created by the DatabaseSaver won't be loaded.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I
+ *  Sets incremental loading&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Stefan Mutter (mutter@cs.waikato.ac.nz)
+ * @version $Revision: 9100 $
+ * @see Loader
+ */
+<span class="fc" id="L97">public class DatabaseLoader </span>
+  extends AbstractLoader 
+  implements BatchConverter, IncrementalConverter, DatabaseConverter, OptionHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -7936159015338318659L;
+  
+  /** The header information that is retrieved in the beginning of incremental loading */
+  protected Instances m_structure;
+  
+  /** Used in pseudoincremental mode. The whole dataset from which instances will be read incrementally.*/
+  private Instances m_datasetPseudoInc;
+  
+  /** Set of instances that equals m_structure except that the auto_generated_id column is not included as an attribute*/
+  private Instances m_oldStructure;
+  
+  /** The database connection */
+  private DatabaseConnection m_DataBaseConnection;
+  
+  /** The user defined query to load instances. (form: SELECT *|&amp;ltcolumn-list&amp;gt; FROM &amp;lttable&amp;gt; [WHERE &amp;lt;condition&amp;gt;]) */
+<span class="fc" id="L117">  private String m_query = &quot;Select * from Results0&quot;;</span>
+  
+  /** Flag indicating that pseudo incremental mode is used (all instances load at once into main memeory and then incrementally from main memory instead of the database) */
+  private boolean m_pseudoIncremental;
+  
+  /** If true it checks whether or not the table exists in the database before loading depending on jdbc metadata information.
+   *  Set flag to false if no check is required or if jdbc metadata is not complete. */
+  private boolean m_checkForTable;
+  
+  /** Limit when an attribute is treated as string attribute and not as a nominal one because it has to many values. */
+  private int m_nominalToStringLimit;
+  
+  /** The number of rows obtained by m_query, eg the size of the ResultSet to load*/
+  private int m_rowCount;
+  
+  /** Indicates how many rows has already been loaded incrementally */
+  private int m_counter;
+  
+  /** Decides which SQL statement to limit the number of rows should be used. DBMS dependent. Algorithm just tries several possibilities. */
+  private int m_choice;
+  
+  /** Flag indicating that incremental process wants to read first instance*/
+  private boolean m_firstTime;
+  
+  /** Flag indicating that incremental mode is chosen (for command line use only)*/
+  private boolean m_inc;
+  
+  /** Contains the name of the columns that uniquely define a row in the ResultSet. Ensures a unique ordering of instances for indremental loading.*/
+  private FastVector m_orderBy;
+  
+  /** Stores the index of a nominal value */
+  private Hashtable [] m_nominalIndexes;
+  
+  /**  Stores the nominal value*/
+  private FastVector [] m_nominalStrings;
+  
+  /** Name of the primary key column that will allow unique ordering necessary for incremental loading. The name is specified in the DatabaseUtils file.*/
+  private String m_idColumn;
+  
+  /** The property file for the database connection */
+<span class="fc" id="L157">  protected static String PROPERTY_FILE = DatabaseConnection.PROPERTY_FILE;</span>
+  
+  /** Properties associated with the database connection */
+  protected static Properties PROPERTIES;
+
+  /** the JDBC URL to use */
+<span class="fc" id="L163">  protected String m_URL = null;</span>
+
+  /** the database user to use */
+<span class="fc" id="L166">  protected String m_User = null;</span>
+
+  /** the database password to use */
+<span class="fc" id="L169">  protected String m_Password = null;</span>
+  
+  /** the keys for unique ordering */
+<span class="fc" id="L172">  protected String m_Keys = null;</span>
+  
+  /** reads the property file */
+  static {
+
+    try {
+<span class="fc" id="L178">      PROPERTIES = Utils.readProperties(PROPERTY_FILE);</span>
+   
+<span class="nc" id="L180">    } catch (Exception ex) {</span>
+<span class="nc" id="L181">      System.err.println(&quot;Problem reading properties. Fix before continuing.&quot;);</span>
+<span class="nc" id="L182">      System.err.println(ex);</span>
+    }
+  }
+  
+  /**
+   * Constructor
+   * 
+   * @throws Exception if initialization fails
+   */
+<span class="fc" id="L191">  public DatabaseLoader() throws Exception{</span>
+  
+<span class="fc" id="L193">      reset();</span>
+<span class="fc" id="L194">      m_pseudoIncremental=false;</span>
+<span class="fc" id="L195">      m_checkForTable=true;</span>
+<span class="fc" id="L196">      String props=PROPERTIES.getProperty(&quot;nominalToStringLimit&quot;);</span>
+<span class="fc" id="L197">      m_nominalToStringLimit = Integer.parseInt(props);</span>
+<span class="fc" id="L198">      m_idColumn=PROPERTIES.getProperty(&quot;idColumn&quot;);</span>
+<span class="pc bpc" id="L199" title="1 of 2 branches missed.">      if (PROPERTIES.getProperty(&quot;checkForTable&quot;, &quot;&quot;).equalsIgnoreCase(&quot;FALSE&quot;))</span>
+<span class="nc" id="L200">	m_checkForTable=false;</span>
+<span class="fc" id="L201">  }</span>
+
+  /**
+   * Returns a string describing this Loader
+   * 
+   * @return a description of the Loader suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L210">    return </span>
+<span class="nc" id="L211">        &quot;Reads Instances from a Database. &quot;</span>
+      + &quot;Can read a database in batch or incremental mode.\n&quot;
+      + &quot;In inremental mode MySQL and HSQLDB are supported.\n&quot;
+      + &quot;For all other DBMS set a pseudoincremental mode is used:\n&quot;
+      + &quot;In pseudo incremental mode the instances are read into main memory all at once and then incrementally provided to the user.\n&quot;
+      + &quot;For incremental loading the rows in the database table have to be ordered uniquely.\n&quot;
+      + &quot;The reason for this is that every time only a single row is fetched by extending the user query by a LIMIT clause.\n&quot;
+      + &quot;If this extension is impossible instances will be loaded pseudoincrementally. To ensure that every row is fetched exaclty once, they have to ordered.\n&quot;
+      + &quot;Therefore a (primary) key is necessary.This approach is chosen, instead of using JDBC driver facilities, because the latter one differ betweeen different drivers.\n&quot;
+      + &quot;If you use the DatabaseSaver and save instances by generating automatically a primary key (its name is defined in DtabaseUtils), this primary key will &quot;
+      + &quot;be used for ordering but will not be part of the output. The user defined SQL query to extract the instances should not contain LIMIT and ORDER BY clauses (see -Q option).\n&quot;
+      + &quot;In addition, for incremental loading,  you can define in the DatabaseUtils file how many distinct values a nominal attribute is allowed to have. If this number is exceeded, the column will become a string attribute.\n&quot;
+      + &quot;In batch mode no string attributes will be created.&quot;;
+  }
+
+  
+
+  /** Resets the Loader ready to read a new data set
+   * @throws Exception if an error occurs while disconnecting from the database
+   */
+  public void reset() throws Exception{
+
+<span class="fc" id="L233">    resetStructure();</span>
+<span class="pc bpc" id="L234" title="3 of 4 branches missed.">    if(m_DataBaseConnection != null &amp;&amp; m_DataBaseConnection.isConnected())</span>
+<span class="nc" id="L235">        m_DataBaseConnection.disconnectFromDatabase();</span>
+<span class="fc" id="L236">    m_DataBaseConnection = new DatabaseConnection();</span>
+
+    // don't lose previously set connection data!
+<span class="pc bpc" id="L239" title="1 of 2 branches missed.">    if (m_URL != null)</span>
+<span class="nc" id="L240">      m_DataBaseConnection.setDatabaseURL(m_URL);</span>
+<span class="pc bpc" id="L241" title="1 of 2 branches missed.">    if (m_User != null)</span>
+<span class="nc" id="L242">      m_DataBaseConnection.setUsername(m_User);</span>
+<span class="pc bpc" id="L243" title="1 of 2 branches missed.">    if (m_Password != null)</span>
+<span class="nc" id="L244">      m_DataBaseConnection.setPassword(m_Password);</span>
+
+<span class="fc" id="L246">    m_orderBy = new FastVector();</span>
+    // don't lose previously set key columns!
+<span class="pc bpc" id="L248" title="1 of 2 branches missed.">    if (m_Keys != null)</span>
+<span class="nc" id="L249">      setKeys(m_Keys);</span>
+      
+<span class="fc" id="L251">    m_inc = false;</span>
+    
+<span class="fc" id="L253">  }</span>
+  
+  
+  /** 
+   * Resets the structure of instances
+   */
+  public void resetStructure(){
+  
+<span class="fc" id="L261">      m_structure = null;</span>
+<span class="fc" id="L262">      m_datasetPseudoInc = null;</span>
+<span class="fc" id="L263">      m_oldStructure = null;</span>
+<span class="fc" id="L264">      m_rowCount = 0;</span>
+<span class="fc" id="L265">      m_counter = 0;</span>
+<span class="fc" id="L266">      m_choice = 0;</span>
+<span class="fc" id="L267">      m_firstTime = true;</span>
+<span class="fc" id="L268">      setRetrieval(NONE);</span>
+<span class="fc" id="L269">  }</span>
+  
+  
+  /**
+   * Sets the query to execute against the database
+   * 
+   * @param q the query to execute
+   */
+  public void setQuery(String q) {
+<span class="nc" id="L278">    q = q.replaceAll(&quot;[fF][rR][oO][mM]&quot;,&quot;FROM&quot;);</span>
+<span class="nc" id="L279">    q = q.replaceFirst(&quot;[sS][eE][lL][eE][cC][tT]&quot;,&quot;SELECT&quot;);  </span>
+<span class="nc" id="L280">    m_query = q;</span>
+<span class="nc" id="L281">  }</span>
+
+  /**
+   * Gets the query to execute against the database
+   * 
+   * @return the query
+   */
+  public String getQuery() {
+<span class="nc" id="L289">    return m_query;</span>
+  }
+  
+  /**
+   * the tip text for this property
+   * 
+   * @return the tip text
+   */
+  public String queryTipText(){
+  
+<span class="nc" id="L299">      return &quot;The query that should load the instances.&quot;</span>
+        +&quot;\n The query has to be of the form SELECT &lt;column-list&gt;|* FROM &lt;table&gt; [WHERE &lt;conditions&gt;]&quot;;
+  }
+  
+  /**
+   * Sets the key columns of a database table
+   * 
+   * @param keys a String containing the key columns in a comma separated list.
+   */
+  public void setKeys(String keys){
+  
+<span class="nc" id="L310">    m_Keys = keys;</span>
+<span class="nc" id="L311">    m_orderBy.removeAllElements();</span>
+<span class="nc" id="L312">    StringTokenizer st = new StringTokenizer(keys, &quot;,&quot;);</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">    while (st.hasMoreTokens()) {</span>
+<span class="nc" id="L314">        String column = st.nextToken();</span>
+<span class="nc" id="L315">        column = column.replaceAll(&quot; &quot;,&quot;&quot;);</span>
+<span class="nc" id="L316">        m_orderBy.addElement(column);</span>
+    }
+<span class="nc" id="L318">  }</span>
+  
+   /**
+   * Gets the key columns' name
+   * 
+   * @return name of the key columns'
+   */
+  public String getKeys(){
+  
+<span class="nc" id="L327">      StringBuffer key = new StringBuffer();</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">      for(int i = 0;i &lt; m_orderBy.size(); i++){</span>
+<span class="nc" id="L329">        key.append((String)m_orderBy.elementAt(i));</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">        if(i != m_orderBy.size()-1)</span>
+<span class="nc" id="L331">          key.append(&quot;, &quot;);</span>
+      }
+<span class="nc" id="L333">      return key.toString();</span>
+  }
+  
+  /**
+   * the tip text for this property
+   * 
+   * @return the tip text
+   */
+  public String keysTipText(){
+  
+<span class="nc" id="L343">      return &quot;For incremental loading a unique identiefer has to be specified.&quot;</span>
+        +&quot;\nIf the query includes all columns of a table (SELECT *...) a primary key&quot;
+        +&quot;\ncan be detected automatically depending on the JDBC driver. If that is not possible&quot;
+        +&quot;\nspecify the key columns here in a comma separated list.&quot;;
+  }
+  
+  /**
+   * Sets the database URL
+   * 
+   * @param url string with the database URL
+   */
+  public void setUrl(String url){
+      
+<span class="nc" id="L356">      m_URL = url;</span>
+<span class="nc" id="L357">      m_DataBaseConnection.setDatabaseURL(url);</span>
+    
+<span class="nc" id="L359">  }</span>
+  
+  /**
+   * Gets the URL
+   * 
+   * @return the URL
+   */
+  public String getUrl(){
+  
+<span class="nc" id="L368">      return m_DataBaseConnection.getDatabaseURL();</span>
+  }
+  
+  /**
+   * the tip text for this property
+   * 
+   * @return the tip text
+   */
+  public String urlTipText(){
+  
+<span class="nc" id="L378">      return &quot;The URL of the database&quot;;</span>
+  }
+  
+  /**
+   * Sets the database user
+   * 
+   * @param user the database user name
+   */
+  public void setUser(String user){
+   
+<span class="nc" id="L388">      m_User = user;</span>
+<span class="nc" id="L389">      m_DataBaseConnection.setUsername(user);</span>
+<span class="nc" id="L390">  }</span>
+  
+  /**
+   * Gets the user name
+   * 
+   * @return name of database user
+   */
+  public String getUser(){
+   
+<span class="nc" id="L399">      return m_DataBaseConnection.getUsername();</span>
+  }
+  
+  /**
+   * the tip text for this property
+   * 
+   * @return the tip text
+   */
+  public String userTipText(){
+  
+<span class="nc" id="L409">      return &quot;The user name for the database&quot;;</span>
+  }
+  
+  /**
+   * Sets user password for the database
+   * 
+   * @param password the password
+   */
+  public void setPassword(String password){
+   
+<span class="nc" id="L419">      m_Password = password;</span>
+<span class="nc" id="L420">      m_DataBaseConnection.setPassword(password);</span>
+<span class="nc" id="L421">  }</span>
+
+  /**
+   * Returns the database password
+   *
+   * @return the database password
+   */
+  public String getPassword() {
+<span class="nc" id="L429">    return m_DataBaseConnection.getPassword();</span>
+  }
+  
+  /**
+   * the tip text for this property
+   * 
+   * @return the tip text
+   */
+  public String passwordTipText(){
+  
+<span class="nc" id="L439">      return &quot;The database password&quot;;</span>
+  }
+  
+  
+  /** 
+   * Sets the database url, user and pw
+   * 
+   * @param url the database url
+   * @param userName the user name
+   * @param password the password
+   */  
+  public void setSource(String url, String userName, String password){
+  
+      try{
+<span class="nc" id="L453">        m_DataBaseConnection = new DatabaseConnection();</span>
+<span class="nc" id="L454">        setUrl(url);</span>
+<span class="nc" id="L455">        setUser(userName);</span>
+<span class="nc" id="L456">        setPassword(password);</span>
+<span class="nc" id="L457">      } catch(Exception ex) {</span>
+<span class="nc" id="L458">            printException(ex);</span>
+      }    
+<span class="nc" id="L460">  }</span>
+  
+  /** 
+   * Sets the database url
+   * 
+   * @param url the database url
+   */  
+  public void setSource(String url){
+  
+      try{
+<span class="nc" id="L470">        m_DataBaseConnection = new DatabaseConnection();</span>
+<span class="nc" id="L471">        setUrl(url);</span>
+<span class="nc" id="L472">        m_User = m_DataBaseConnection.getUsername();</span>
+<span class="nc" id="L473">        m_Password = m_DataBaseConnection.getPassword();</span>
+<span class="nc" id="L474">      } catch(Exception ex) {</span>
+<span class="nc" id="L475">            printException(ex);</span>
+       }    
+<span class="nc" id="L477">  }</span>
+  
+  /** 
+   * Sets the database url using the DatabaseUtils file
+   * 
+   * @throws Exception if something goes wrong
+   */  
+  public void setSource() throws Exception{
+  
+<span class="nc" id="L486">        m_DataBaseConnection = new DatabaseConnection();</span>
+<span class="nc" id="L487">        m_URL = m_DataBaseConnection.getDatabaseURL();</span>
+<span class="nc" id="L488">        m_User = m_DataBaseConnection.getUsername();</span>
+<span class="nc" id="L489">        m_Password = m_DataBaseConnection.getPassword();</span>
+<span class="nc" id="L490">  }</span>
+  
+  /**
+   * Opens a connection to the database
+   */
+  public void connectToDatabase() {
+   
+      try{
+<span class="nc bnc" id="L498" title="All 2 branches missed.">        if(!m_DataBaseConnection.isConnected()){</span>
+<span class="nc" id="L499">            m_DataBaseConnection.connectToDatabase();</span>
+        }
+<span class="nc" id="L501">      } catch(Exception ex) {</span>
+<span class="nc" id="L502">	printException(ex);</span>
+       }    
+<span class="nc" id="L504">  }</span>
+  
+  
+  /** 
+   * Returns the table name or all after the FROM clause of the user specified query
+   * to retrieve instances.
+   * 
+   * @param onlyTableName true if only the table name should be returned, false otherwise
+   * @return the end of the query
+   */  
+  private String endOfQuery(boolean onlyTableName){
+      String table;
+      int beginIndex, endIndex;
+      
+<span class="nc" id="L518">      beginIndex = m_query.indexOf(&quot;FROM &quot;)+5;</span>
+<span class="nc bnc" id="L519" title="All 2 branches missed.">      while(m_query.charAt(beginIndex) == ' ')</span>
+<span class="nc" id="L520">          beginIndex++;</span>
+<span class="nc" id="L521">      endIndex = m_query.indexOf(&quot; &quot;,beginIndex);</span>
+<span class="nc bnc" id="L522" title="All 4 branches missed.">      if(endIndex != -1 &amp;&amp; onlyTableName)</span>
+<span class="nc" id="L523">          table = m_query.substring(beginIndex,endIndex);</span>
+      else
+<span class="nc" id="L525">          table = m_query.substring(beginIndex);</span>
+<span class="nc bnc" id="L526" title="All 2 branches missed.">      if(m_DataBaseConnection.getUpperCase())</span>
+<span class="nc" id="L527">          table = table.toUpperCase();</span>
+<span class="nc" id="L528">      return table;</span>
+  }
+  
+  /** 
+   * Checks for a unique key using the JDBC driver's method:
+   * getPrimaryKey(), getBestRowIdentifier().
+   * Depending on their implementation a key can be detected.
+   * The key is needed to order the instances uniquely for an inremental loading.
+   * If an existing key cannot be detected, use -P option.
+   * 
+   * @throws Exception if database error occurs
+   * @return true, if a key could have been detected, false otherwise
+   */  
+  private boolean checkForKey() throws Exception {
+  
+<span class="nc" id="L543">      String query = m_query;</span>
+      
+<span class="nc" id="L545">      query = query.replaceAll(&quot; +&quot;,&quot; &quot;);</span>
+      //query has to use all columns
+<span class="nc bnc" id="L547" title="All 2 branches missed.">      if(!query.startsWith(&quot;SELECT *&quot;))</span>
+<span class="nc" id="L548">          return false;</span>
+<span class="nc" id="L549">      m_orderBy.removeAllElements();</span>
+<span class="nc bnc" id="L550" title="All 2 branches missed.">      if(!m_DataBaseConnection.isConnected())</span>
+<span class="nc" id="L551">            m_DataBaseConnection.connectToDatabase();</span>
+<span class="nc" id="L552">      DatabaseMetaData dmd = m_DataBaseConnection.getMetaData();</span>
+<span class="nc" id="L553">      String table = endOfQuery(true);</span>
+      //System.out.println(table);
+      //check for primary keys
+<span class="nc" id="L556">      ResultSet rs = dmd.getPrimaryKeys(null,null,table);</span>
+<span class="nc bnc" id="L557" title="All 2 branches missed.">      while(rs.next()){</span>
+<span class="nc" id="L558">          m_orderBy.addElement(rs.getString(4));</span>
+      }
+<span class="nc" id="L560">      rs.close();</span>
+<span class="nc bnc" id="L561" title="All 2 branches missed.">      if(m_orderBy.size() != 0)</span>
+<span class="nc" id="L562">          return true;</span>
+      //check for unique keys
+<span class="nc" id="L564">      rs = dmd.getBestRowIdentifier(null,null,table,DatabaseMetaData.bestRowSession,false);</span>
+<span class="nc" id="L565">      ResultSetMetaData rmd = rs.getMetaData();</span>
+<span class="nc" id="L566">      int help = 0;</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">      while(rs.next()){</span>
+<span class="nc" id="L568">          m_orderBy.addElement(rs.getString(2));</span>
+<span class="nc" id="L569">          help++;</span>
+      }
+<span class="nc" id="L571">      rs.close();</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">      if(help == rmd.getColumnCount()){</span>
+<span class="nc" id="L573">          m_orderBy.removeAllElements();</span>
+      }
+<span class="nc bnc" id="L575" title="All 2 branches missed.">      if(m_orderBy.size() != 0)</span>
+<span class="nc" id="L576">          return true;</span>
+      
+<span class="nc" id="L578">      return false;</span>
+  }
+  
+  /** 
+   * Converts string attribute into nominal ones for an instance read during
+   * incremental loading
+   * 
+   * @param rs The result set
+   * @param i the index of the nominal attribute
+   * @throws Exception exception if it cannot be converted
+   */  
+  private void stringToNominal(ResultSet rs, int i) throws Exception{
+  
+<span class="nc bnc" id="L591" title="All 2 branches missed.">      while(rs.next()){</span>
+<span class="nc" id="L592">        String str = rs.getString(1);</span>
+<span class="nc bnc" id="L593" title="All 2 branches missed.">        if(!rs.wasNull()){</span>
+<span class="nc" id="L594">            Double index = (Double)m_nominalIndexes[i - 1].get(str);</span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">            if (index == null) {</span>
+<span class="nc" id="L596">                index = new Double(m_nominalStrings[i - 1].size());</span>
+<span class="nc" id="L597">                m_nominalIndexes[i - 1].put(str, index);</span>
+<span class="nc" id="L598">                m_nominalStrings[i - 1].addElement(str);</span>
+            }
+        }
+      }
+<span class="nc" id="L602">  }</span>
+  
+  /** 
+   * Used in incremental loading. Modifies the SQL statement,
+   * so that only one instance per time is tretieved and the instances are ordered
+   * uniquely.
+   * 
+   * @param query the query to modify for incremental loading
+   * @param offset sets which tuple out of the uniquely ordered ones should be returned
+   * @param choice the kind of query that is suitable for the used DBMS
+   * @return the modified query that returns only one result tuple.
+   */  
+  private String limitQuery(String query, int offset, int choice){
+  
+      String limitedQuery;
+<span class="nc" id="L617">      StringBuffer order = new StringBuffer();</span>
+<span class="nc" id="L618">      String orderByString = &quot;&quot;;</span>
+      
+<span class="nc bnc" id="L620" title="All 2 branches missed.">      if(m_orderBy.size() != 0){</span>
+<span class="nc" id="L621">        order.append(&quot; ORDER BY &quot;);</span>
+<span class="nc bnc" id="L622" title="All 2 branches missed.">        for(int i = 0; i &lt; m_orderBy.size()-1; i++){</span>
+<span class="nc bnc" id="L623" title="All 2 branches missed.">            if(m_DataBaseConnection.getUpperCase())</span>
+<span class="nc" id="L624">                order.append(((String)m_orderBy.elementAt(i)).toUpperCase());</span>
+            else
+<span class="nc" id="L626">                order.append((String)m_orderBy.elementAt(i));</span>
+<span class="nc" id="L627">            order.append(&quot;, &quot;);</span>
+        }
+<span class="nc bnc" id="L629" title="All 2 branches missed.">        if(m_DataBaseConnection.getUpperCase())</span>
+<span class="nc" id="L630">            order.append(((String)m_orderBy.elementAt(m_orderBy.size()-1)).toUpperCase());</span>
+        else
+<span class="nc" id="L632">            order.append((String)m_orderBy.elementAt(m_orderBy.size()-1));</span>
+<span class="nc" id="L633">        orderByString = order.toString();</span>
+      }
+<span class="nc bnc" id="L635" title="All 2 branches missed.">      if(choice == 0){</span>
+<span class="nc" id="L636">          limitedQuery = query.replaceFirst(&quot;SELECT&quot;,&quot;SELECT LIMIT &quot;+offset+&quot; 1&quot;);</span>
+<span class="nc" id="L637">          limitedQuery = limitedQuery.concat(orderByString);</span>
+<span class="nc" id="L638">          return limitedQuery;</span>
+      }
+<span class="nc bnc" id="L640" title="All 2 branches missed.">      if(choice == 1){</span>
+<span class="nc" id="L641">          limitedQuery = query.concat(orderByString+&quot; LIMIT 1 OFFSET &quot;+offset);</span>
+<span class="nc" id="L642">          return limitedQuery;</span>
+      }
+<span class="nc" id="L644">      limitedQuery = query.concat(orderByString+&quot; LIMIT &quot;+offset+&quot;, 1&quot;);</span>
+      //System.out.println(limitedQuery);
+<span class="nc" id="L646">      return limitedQuery;</span>
+  }
+  
+  /** 
+   * Counts the number of rows that are loaded from the database
+   * 
+   * @throws Exception if the number of rows cannot be calculated
+   * @return the entire number of rows
+   */  
+  private int getRowCount() throws Exception{
+  
+<span class="nc" id="L657">    String query = &quot;SELECT COUNT(*) FROM &quot;+endOfQuery(false);</span>
+<span class="nc bnc" id="L658" title="All 2 branches missed.">    if(m_DataBaseConnection.execute(query) == false) {</span>
+<span class="nc" id="L659">        throw new Exception(&quot;Cannot count results tuples.&quot;);</span>
+    }
+<span class="nc" id="L661">    ResultSet rs = m_DataBaseConnection.getResultSet();</span>
+<span class="nc" id="L662">    rs.next();</span>
+<span class="nc" id="L663">    int i = rs.getInt(1);</span>
+<span class="nc" id="L664">    rs.close();</span>
+<span class="nc" id="L665">    return i;</span>
+  }
+
+
+  /**
+   * Determines and returns (if possible) the structure (internally the 
+   * header) of the data set as an empty set of instances.
+   *
+   * @return the structure of the data set as an empty set of Instances
+   * @throws IOException if an error occurs
+   */
+  public Instances getStructure() throws IOException {
+<span class="nc bnc" id="L677" title="All 2 branches missed.">    if (m_DataBaseConnection == null) {</span>
+<span class="nc" id="L678">      throw new IOException(&quot;No source database has been specified&quot;);</span>
+    }
+<span class="nc" id="L680">    connectToDatabase();</span>
+  pseudo:
+      try{
+<span class="nc bnc" id="L683" title="All 4 branches missed.">    if(m_pseudoIncremental &amp;&amp; m_structure == null){</span>
+<span class="nc bnc" id="L684" title="All 2 branches missed.">        if (getRetrieval() == BATCH) {</span>
+<span class="nc" id="L685">            throw new IOException(&quot;Cannot mix getting instances in both incremental and batch modes&quot;);</span>
+        }
+<span class="nc" id="L687">        setRetrieval(NONE);  </span>
+<span class="nc" id="L688">        m_datasetPseudoInc = getDataSet();</span>
+<span class="nc" id="L689">        m_structure = new Instances(m_datasetPseudoInc,0);</span>
+<span class="nc" id="L690">        setRetrieval(NONE);</span>
+<span class="nc" id="L691">        return m_structure;</span>
+    }
+<span class="nc bnc" id="L693" title="All 2 branches missed.">    if (m_structure == null) {</span>
+<span class="nc bnc" id="L694" title="All 2 branches missed.">      if(m_checkForTable) {</span>
+<span class="nc bnc" id="L695" title="All 2 branches missed.">        if(!m_DataBaseConnection.tableExists(endOfQuery(true)))</span>
+<span class="nc" id="L696">          throw new IOException(</span>
+<span class="nc" id="L697">              &quot;Table does not exist according to metadata from JDBC driver. &quot;</span>
+              + &quot;If you are convinced the table exists, set 'checkForTable' &quot;
+              + &quot;to 'False' in your DatabaseUtils.props file and try again.&quot;);
+      }
+        //finds out which SQL statement to use for the DBMS to limit the number of resulting rows to one
+<span class="nc" id="L702">        int choice = 0;</span>
+<span class="nc" id="L703">        boolean rightChoice = false;</span>
+<span class="nc bnc" id="L704" title="All 2 branches missed.">        while (!rightChoice){</span>
+            try{
+<span class="nc bnc" id="L706" title="All 2 branches missed.">                if (m_DataBaseConnection.execute(limitQuery(m_query,0,choice)) == false) {</span>
+<span class="nc" id="L707">                    throw new IOException(&quot;Query didn't produce results&quot;);</span>
+                }
+<span class="nc" id="L709">                m_choice = choice;</span>
+<span class="nc" id="L710">                rightChoice = true;</span>
+            }
+<span class="nc" id="L712">            catch (SQLException ex) {</span>
+<span class="nc" id="L713">                choice++;</span>
+<span class="nc bnc" id="L714" title="All 2 branches missed.">                if(choice == 3){</span>
+<span class="nc" id="L715">                    System.out.println(&quot;Incremental loading not supported for that DBMS. Pseudoincremental mode is used if you use incremental loading.\nAll rows are loaded into memory once and retrieved incrementally from memory instead of from the database.&quot;);</span>
+<span class="nc" id="L716">                    m_pseudoIncremental = true;</span>
+<span class="nc" id="L717">                    break pseudo;</span>
+                }
+            }
+        }
+<span class="nc" id="L721">        String end = endOfQuery(false);</span>
+<span class="nc" id="L722">        ResultSet rs = m_DataBaseConnection.getResultSet();</span>
+<span class="nc" id="L723">        ResultSetMetaData md = rs.getMetaData();</span>
+
+<span class="nc" id="L725">        int numAttributes = md.getColumnCount();</span>
+<span class="nc" id="L726">        int [] attributeTypes = new int [numAttributes];</span>
+<span class="nc" id="L727">        m_nominalIndexes = new Hashtable [numAttributes];</span>
+<span class="nc" id="L728">        m_nominalStrings = new FastVector [numAttributes];</span>
+<span class="nc bnc" id="L729" title="All 2 branches missed.">        for (int i = 1; i &lt;= numAttributes; i++) {</span>
+<span class="nc bnc" id="L730" title="All 12 branches missed.">            switch (m_DataBaseConnection.translateDBColumnType(md.getColumnTypeName(i))) {</span>
+                case DatabaseConnection.STRING :
+                    //System.err.println(&quot;String --&gt; nominal&quot;);
+                    ResultSet rs1;
+<span class="nc" id="L734">                    String columnName = md.getColumnLabel(i);</span>
+<span class="nc bnc" id="L735" title="All 2 branches missed.">                    if(m_DataBaseConnection.getUpperCase())</span>
+<span class="nc" id="L736">                        columnName = columnName.toUpperCase();</span>
+<span class="nc" id="L737">                    m_nominalIndexes[i - 1] = new Hashtable();</span>
+<span class="nc" id="L738">                    m_nominalStrings[i - 1] = new FastVector();</span>
+                    
+                    // fast incomplete structure for batch mode - actual 
+                    // structure is determined by InstanceQuery in getDataSet()
+<span class="nc bnc" id="L742" title="All 2 branches missed.">                    if (getRetrieval() != INCREMENTAL) {</span>
+<span class="nc" id="L743">                      attributeTypes[i - 1] = Attribute.STRING;</span>
+<span class="nc" id="L744">                      break;</span>
+                    }                    
+                    
+<span class="nc" id="L747">                    String query = &quot;SELECT COUNT(DISTINCT( &quot;+columnName+&quot; )) FROM &quot; + end;</span>
+<span class="nc bnc" id="L748" title="All 2 branches missed.">                    if (m_DataBaseConnection.execute(query) == true){</span>
+<span class="nc" id="L749">                        rs1 = m_DataBaseConnection.getResultSet();</span>
+<span class="nc" id="L750">                        rs1.next();</span>
+<span class="nc" id="L751">                        int count = rs1.getInt(1);</span>
+<span class="nc" id="L752">                        rs1.close();</span>
+                        //                        if(count &gt; m_nominalToStringLimit || m_DataBaseConnection.execute(&quot;SELECT DISTINCT ( &quot;+columnName+&quot; ) FROM &quot;+ end) == false){
+<span class="nc bnc" id="L754" title="All 2 branches missed.">                        if(count &gt; m_nominalToStringLimit || </span>
+<span class="nc bnc" id="L755" title="All 2 branches missed.">                           m_DataBaseConnection.execute(&quot;SELECT DISTINCT ( &quot;</span>
+<span class="nc" id="L756">                                                        + columnName</span>
+<span class="nc" id="L757">                                                        + &quot; ) FROM &quot;</span>
+<span class="nc" id="L758">                                                        + end</span>
+<span class="nc" id="L759">                                                        + &quot; ORDER BY &quot;</span>
+<span class="nc" id="L760">                                                        + columnName) == false){</span>
+<span class="nc" id="L761">                            attributeTypes[i - 1] = Attribute.STRING;</span>
+<span class="nc" id="L762">                            break;</span>
+                        }
+<span class="nc" id="L764">                        rs1 = m_DataBaseConnection.getResultSet();</span>
+                    }
+                    else{
+                        //System.err.println(&quot;Count for nominal values cannot be calculated. Attribute &quot;+columnName+&quot; treated as String.&quot;);
+<span class="nc" id="L768">                        attributeTypes[i - 1] = Attribute.STRING;</span>
+<span class="nc" id="L769">                        break;</span>
+                    }
+<span class="nc" id="L771">                    attributeTypes[i - 1] = Attribute.NOMINAL;</span>
+<span class="nc" id="L772">                    stringToNominal(rs1,i);</span>
+<span class="nc" id="L773">                    rs1.close();</span>
+<span class="nc" id="L774">                    break;</span>
+                case DatabaseConnection.TEXT:
+                    //System.err.println(&quot;boolean --&gt; string&quot;);
+<span class="nc" id="L777">                    columnName = md.getColumnLabel(i);</span>
+<span class="nc bnc" id="L778" title="All 2 branches missed.">                    if(m_DataBaseConnection.getUpperCase())</span>
+<span class="nc" id="L779">                      columnName = columnName.toUpperCase();</span>
+<span class="nc" id="L780">                    m_nominalIndexes[i - 1] = new Hashtable();</span>
+<span class="nc" id="L781">                    m_nominalStrings[i - 1] = new FastVector();</span>
+                    
+                    // fast incomplete structure for batch mode - actual 
+                    // structure is determined by InstanceQuery in getDataSet()
+<span class="nc bnc" id="L785" title="All 2 branches missed.">                    if (getRetrieval() != INCREMENTAL) {</span>
+<span class="nc" id="L786">                      attributeTypes[i - 1] = Attribute.STRING;</span>
+<span class="nc" id="L787">                      break;</span>
+                    }
+                    
+<span class="nc" id="L790">                    query = &quot;SELECT COUNT(DISTINCT( &quot;+columnName+&quot; )) FROM &quot; + end;</span>
+<span class="nc bnc" id="L791" title="All 2 branches missed.">                    if (m_DataBaseConnection.execute(query) == true){</span>
+<span class="nc" id="L792">                      rs1 = m_DataBaseConnection.getResultSet();</span>
+<span class="nc" id="L793">                      stringToNominal(rs1,i);</span>
+<span class="nc" id="L794">                      rs1.close();</span>
+                    }
+<span class="nc" id="L796">                    attributeTypes[i - 1] = Attribute.STRING;</span>
+<span class="nc" id="L797">                    break;</span>
+                case DatabaseConnection.BOOL:
+                    //System.err.println(&quot;boolean --&gt; nominal&quot;);
+<span class="nc" id="L800">                    attributeTypes[i - 1] = Attribute.NOMINAL;</span>
+<span class="nc" id="L801">                    m_nominalIndexes[i - 1] = new Hashtable();</span>
+<span class="nc" id="L802">                    m_nominalIndexes[i - 1].put(&quot;false&quot;, new Double(0));</span>
+<span class="nc" id="L803">                    m_nominalIndexes[i - 1].put(&quot;true&quot;, new Double(1));</span>
+<span class="nc" id="L804">                    m_nominalStrings[i - 1] = new FastVector();</span>
+<span class="nc" id="L805">                    m_nominalStrings[i - 1].addElement(&quot;false&quot;);</span>
+<span class="nc" id="L806">                    m_nominalStrings[i - 1].addElement(&quot;true&quot;);</span>
+<span class="nc" id="L807">                    break;</span>
+                case DatabaseConnection.DOUBLE:
+                    //System.err.println(&quot;BigDecimal --&gt; numeric&quot;);
+<span class="nc" id="L810">                    attributeTypes[i - 1] = Attribute.NUMERIC;</span>
+<span class="nc" id="L811">                    break;</span>
+                case DatabaseConnection.BYTE:
+                    //System.err.println(&quot;byte --&gt; numeric&quot;);
+<span class="nc" id="L814">                    attributeTypes[i - 1] = Attribute.NUMERIC;</span>
+<span class="nc" id="L815">                    break;</span>
+                case DatabaseConnection.SHORT:
+                    //System.err.println(&quot;short --&gt; numeric&quot;);
+<span class="nc" id="L818">                    attributeTypes[i - 1] = Attribute.NUMERIC;</span>
+<span class="nc" id="L819">                    break;</span>
+                case DatabaseConnection.INTEGER:
+                    //System.err.println(&quot;int --&gt; numeric&quot;);
+<span class="nc" id="L822">                    attributeTypes[i - 1] = Attribute.NUMERIC;</span>
+<span class="nc" id="L823">                    break;</span>
+                case DatabaseConnection.LONG:
+                    //System.err.println(&quot;long --&gt; numeric&quot;);
+<span class="nc" id="L826">                    attributeTypes[i - 1] = Attribute.NUMERIC;</span>
+<span class="nc" id="L827">                    break;</span>
+                case DatabaseConnection.FLOAT:
+                    //System.err.println(&quot;float --&gt; numeric&quot;);
+<span class="nc" id="L830">                    attributeTypes[i - 1] = Attribute.NUMERIC;</span>
+<span class="nc" id="L831">                    break;</span>
+                case DatabaseConnection.DATE:
+<span class="nc" id="L833">                    attributeTypes[i - 1] = Attribute.DATE;</span>
+<span class="nc" id="L834">                    break;</span>
+                case DatabaseConnection.TIME:
+<span class="nc" id="L836">                  attributeTypes[i - 1] = Attribute.DATE;</span>
+<span class="nc" id="L837">                  break;</span>
+                default:
+                    //System.err.println(&quot;Unknown column type&quot;);
+<span class="nc" id="L840">                    attributeTypes[i - 1] = Attribute.STRING;</span>
+            }
+        }
+<span class="nc" id="L843">        FastVector attribInfo = new FastVector();</span>
+<span class="nc bnc" id="L844" title="All 2 branches missed.">        for (int i = 0; i &lt; numAttributes; i++) {</span>
+            /* Fix for databases that uppercase column names */
+            //String attribName = attributeCaseFix(md.getColumnName(i + 1));
+<span class="nc" id="L847">            String attribName = md.getColumnLabel(i + 1);</span>
+<span class="nc bnc" id="L848" title="All 5 branches missed.">            switch (attributeTypes[i]) {</span>
+                case Attribute.NOMINAL:
+<span class="nc" id="L850">                    attribInfo.addElement(new Attribute(attribName, m_nominalStrings[i]));</span>
+<span class="nc" id="L851">                    break;</span>
+                case Attribute.NUMERIC:
+<span class="nc" id="L853">                    attribInfo.addElement(new Attribute(attribName));</span>
+<span class="nc" id="L854">                    break;</span>
+                case Attribute.STRING:
+<span class="nc" id="L856">                    Attribute att = new Attribute(attribName, (FastVector)null);</span>
+<span class="nc bnc" id="L857" title="All 2 branches missed.">                    for (int n = 0; n &lt; m_nominalStrings[i].size(); n++) {</span>
+<span class="nc" id="L858">                      att.addStringValue((String) m_nominalStrings[i].elementAt(n));</span>
+                    }
+<span class="nc" id="L860">                    attribInfo.addElement(att);</span>
+<span class="nc" id="L861">                    break;</span>
+                case Attribute.DATE:
+<span class="nc" id="L863">                    attribInfo.addElement(new Attribute(attribName, (String)null));</span>
+<span class="nc" id="L864">                    break;</span>
+                default:
+<span class="nc" id="L866">                    throw new IOException(&quot;Unknown attribute type&quot;);</span>
+            }
+        }
+<span class="nc" id="L869">        m_structure = new Instances(endOfQuery(true), attribInfo,0);</span>
+        //get rid of m_idColumn
+<span class="nc bnc" id="L871" title="All 2 branches missed.">        if(m_DataBaseConnection.getUpperCase())</span>
+<span class="nc" id="L872">              m_idColumn = m_idColumn.toUpperCase();</span>
+        //System.out.println(m_structure.attribute(0).name().equals(idColumn));
+<span class="nc bnc" id="L874" title="All 2 branches missed.">        if(m_structure.attribute(0).name().equals(m_idColumn)){</span>
+<span class="nc" id="L875">            m_oldStructure = new Instances(m_structure,0);</span>
+<span class="nc" id="L876">            m_oldStructure.deleteAttributeAt(0);</span>
+            //System.out.println(m_structure);
+        }
+        else
+<span class="nc" id="L880">            m_oldStructure = new Instances(m_structure,0);</span>
+        
+<span class="nc bnc" id="L882" title="All 2 branches missed.">        if (m_DataBaseConnection.getResultSet() != null) {</span>
+<span class="nc" id="L883">          rs.close();</span>
+        }
+
+    }
+    else{
+<span class="nc bnc" id="L888" title="All 2 branches missed.">        if(m_oldStructure == null)</span>
+<span class="nc" id="L889">            m_oldStructure = new Instances(m_structure,0);</span>
+    }
+<span class="nc" id="L891">    m_DataBaseConnection.disconnectFromDatabase();</span>
+    }
+<span class="nc" id="L893">    catch(Exception ex) {</span>
+<span class="nc" id="L894">        ex.printStackTrace();</span>
+<span class="nc" id="L895">	printException(ex);</span>
+    }
+    
+<span class="nc" id="L898">    return m_oldStructure;</span>
+    
+  }
+  
+  /**
+   * Return the full data set in batch mode (header and all intances at once).
+   *
+   * @return the structure of the data set as an empty set of Instances
+   * @throws IOException if there is no source or parsing fails
+   */
+  public Instances getDataSet() throws IOException {
+
+<span class="nc bnc" id="L910" title="All 2 branches missed.">    if (m_DataBaseConnection == null) {</span>
+<span class="nc" id="L911">      throw new IOException(&quot;No source database has been specified&quot;);</span>
+    }
+<span class="nc bnc" id="L913" title="All 2 branches missed.">    if (getRetrieval() == INCREMENTAL) {</span>
+<span class="nc" id="L914">      throw new IOException(&quot;Cannot mix getting Instances in both incremental and batch modes&quot;);</span>
+    }
+<span class="nc" id="L916">    setRetrieval(BATCH);</span>
+   
+    
+<span class="nc" id="L919">    Instances result = null;</span>
+    
+    // TODO perhaps add option for sparse data
+    try {
+<span class="nc" id="L923">      InstanceQuery iq = new InstanceQuery();</span>
+<span class="nc" id="L924">      iq.setDatabaseURL(m_URL);</span>
+<span class="nc" id="L925">      iq.setUsername(m_User);</span>
+<span class="nc" id="L926">      iq.setPassword(m_Password);</span>
+<span class="nc" id="L927">      iq.setQuery(m_query);</span>
+      
+<span class="nc" id="L929">      result = iq.retrieveInstances();</span>
+      
+<span class="nc bnc" id="L931" title="All 2 branches missed.">      if(m_DataBaseConnection.getUpperCase()) {</span>
+<span class="nc" id="L932">        m_idColumn = m_idColumn.toUpperCase();</span>
+      }
+      
+<span class="nc bnc" id="L935" title="All 2 branches missed.">      if(result.attribute(0).name().equals(m_idColumn)){</span>
+<span class="nc" id="L936">        result.deleteAttributeAt(0);</span>
+      }
+      
+<span class="nc" id="L939">      m_structure = new Instances(result,0);</span>
+<span class="nc" id="L940">      iq.disconnectFromDatabase();</span>
+      
+<span class="nc" id="L942">    } catch (Exception ex) {</span>
+<span class="nc" id="L943">      printException(ex);</span>
+<span class="nc" id="L944">      StringBuffer text = new StringBuffer();</span>
+<span class="nc bnc" id="L945" title="All 2 branches missed.">      if(m_query.equals(&quot;Select * from Results0&quot;)){</span>
+<span class="nc" id="L946">        text.append(&quot;\n\nDatabaseLoader options:\n&quot;);</span>
+<span class="nc" id="L947">        Enumeration enumi = listOptions();</span>
+        
+<span class="nc bnc" id="L949" title="All 2 branches missed.">        while (enumi.hasMoreElements()) {</span>
+<span class="nc" id="L950">          Option option = (Option)enumi.nextElement();</span>
+<span class="nc" id="L951">          text.append(option.synopsis()+'\n');</span>
+<span class="nc" id="L952">          text.append(option.description()+'\n');</span>
+        }
+<span class="nc" id="L954">        System.out.println(text);</span>
+      }
+    }
+    
+<span class="nc" id="L958">    return result;</span>
+  }
+
+  
+  /** 
+   * Reads an instance from a database.
+   * 
+   * @param rs the ReusltSet to load
+   * @throws Exception if instance cannot be read
+   * @return an instance read from the database
+   */  
+  private Instance readInstance(ResultSet rs) throws Exception{
+  
+<span class="nc" id="L971">      ResultSetMetaData md = rs.getMetaData();</span>
+<span class="nc" id="L972">      int numAttributes = md.getColumnCount();</span>
+<span class="nc" id="L973">      double[] vals = new double[numAttributes];</span>
+<span class="nc" id="L974">      m_structure.delete();</span>
+<span class="nc bnc" id="L975" title="All 2 branches missed.">      for(int i = 1; i &lt;= numAttributes; i++) {</span>
+<span class="nc bnc" id="L976" title="All 12 branches missed.">	switch (m_DataBaseConnection.translateDBColumnType(md.getColumnTypeName(i))) {</span>
+	case DatabaseConnection.STRING :
+<span class="nc" id="L978">	  String str = rs.getString(i);</span>
+<span class="nc bnc" id="L979" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L980">	    vals[i - 1] = Instance.missingValue();</span>
+	  } else {
+<span class="nc" id="L982">	    Double index = (Double)m_nominalIndexes[i - 1].get(str);</span>
+<span class="nc bnc" id="L983" title="All 2 branches missed.">	    if (index == null) {</span>
+<span class="nc" id="L984">              index = new Double(m_structure.attribute(i-1).addStringValue(str));</span>
+	    }
+<span class="nc" id="L986">	    vals[i - 1] = index.doubleValue();</span>
+	  }
+<span class="nc" id="L988">	  break;</span>
+	case DatabaseConnection.TEXT:
+<span class="nc" id="L990">	  str = rs.getString(i);</span>
+<span class="nc bnc" id="L991" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L992">	    vals[i - 1] = Instance.missingValue();</span>
+	  }
+	  else {
+<span class="nc" id="L995">	    Double index = (Double)m_nominalIndexes[i - 1].get(str);</span>
+<span class="nc bnc" id="L996" title="All 2 branches missed.">	    if (index == null) {</span>
+<span class="nc" id="L997">              index = new Double(m_structure.attribute(i-1).addStringValue(str));</span>
+	    }
+<span class="nc" id="L999">	    vals[i - 1] = index.doubleValue();</span>
+	  }
+<span class="nc" id="L1001">	  break;</span>
+	case DatabaseConnection.BOOL:
+<span class="nc" id="L1003">	  boolean boo = rs.getBoolean(i);</span>
+<span class="nc bnc" id="L1004" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L1005">	    vals[i - 1] = Instance.missingValue();</span>
+	  } else {
+<span class="nc bnc" id="L1007" title="All 2 branches missed.">	    vals[i - 1] = (boo ? 1.0 : 0.0);</span>
+	  }
+<span class="nc" id="L1009">	  break;</span>
+	case DatabaseConnection.DOUBLE:
+	  //	  BigDecimal bd = rs.getBigDecimal(i, 4); 
+<span class="nc" id="L1012">	  double dd = rs.getDouble(i);</span>
+	  // Use the column precision instead of 4?
+<span class="nc bnc" id="L1014" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L1015">	    vals[i - 1] = Instance.missingValue();</span>
+	  } else {
+	    //	    newInst.setValue(i - 1, bd.doubleValue());
+<span class="nc" id="L1018">	    vals[i - 1] =  dd;</span>
+	  }
+<span class="nc" id="L1020">	  break;</span>
+	case DatabaseConnection.BYTE:
+<span class="nc" id="L1022">	  byte by = rs.getByte(i);</span>
+<span class="nc bnc" id="L1023" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L1024">	    vals[i - 1] = Instance.missingValue();</span>
+	  } else {
+<span class="nc" id="L1026">	    vals[i - 1] = (double)by;</span>
+	  }
+<span class="nc" id="L1028">	  break;</span>
+	case DatabaseConnection.SHORT:
+<span class="nc" id="L1030">	  short sh = rs.getShort(i);</span>
+<span class="nc bnc" id="L1031" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L1032">	    vals[i - 1] = Instance.missingValue();</span>
+	  } else {
+<span class="nc" id="L1034">	    vals[i - 1] = (double)sh;</span>
+	  }
+<span class="nc" id="L1036">	  break;</span>
+	case DatabaseConnection.INTEGER:
+<span class="nc" id="L1038">	  int in = rs.getInt(i);</span>
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L1040">	    vals[i - 1] = Instance.missingValue();</span>
+	  } else {
+<span class="nc" id="L1042">	    vals[i - 1] = (double)in;</span>
+	  }
+<span class="nc" id="L1044">	  break;</span>
+	case DatabaseConnection.LONG:
+<span class="nc" id="L1046">	  long lo = rs.getLong(i);</span>
+<span class="nc bnc" id="L1047" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L1048">	    vals[i - 1] = Instance.missingValue();</span>
+	  } else {
+<span class="nc" id="L1050">	    vals[i - 1] = (double)lo;</span>
+	  }
+<span class="nc" id="L1052">	  break;</span>
+	case DatabaseConnection.FLOAT:
+<span class="nc" id="L1054">	  float fl = rs.getFloat(i);</span>
+<span class="nc bnc" id="L1055" title="All 2 branches missed.">	  if (rs.wasNull()) {</span>
+<span class="nc" id="L1056">	    vals[i - 1] = Instance.missingValue();</span>
+	  } else {
+<span class="nc" id="L1058">	    vals[i - 1] = (double)fl;</span>
+	  }
+<span class="nc" id="L1060">	  break;</span>
+	case DatabaseConnection.DATE:
+<span class="nc" id="L1062">          Date date = rs.getDate(i);</span>
+<span class="nc bnc" id="L1063" title="All 2 branches missed.">          if (rs.wasNull()) {</span>
+<span class="nc" id="L1064">	    vals[i - 1] = Instance.missingValue();</span>
+	  } else {
+            // TODO: Do a value check here.
+<span class="nc" id="L1067">            vals[i - 1] = (double)date.getTime();</span>
+          }
+<span class="nc" id="L1069">          break;</span>
+	case DatabaseConnection.TIME:
+<span class="nc" id="L1071">          Time time = rs.getTime(i);</span>
+<span class="nc bnc" id="L1072" title="All 2 branches missed.">          if (rs.wasNull()) {</span>
+<span class="nc" id="L1073">	    vals[i - 1] = Instance.missingValue();</span>
+	  } else {
+            // TODO: Do a value check here.
+<span class="nc" id="L1076">            vals[i - 1] = (double) time.getTime();</span>
+          }
+<span class="nc" id="L1078">          break;</span>
+	default:
+<span class="nc" id="L1080">	  vals[i - 1] = Instance.missingValue();</span>
+	}
+      }
+<span class="nc" id="L1083">       Instance inst = new Instance(1.0, vals);</span>
+       //get rid of m_idColumn
+<span class="nc bnc" id="L1085" title="All 2 branches missed.">       if(m_DataBaseConnection.getUpperCase())</span>
+<span class="nc" id="L1086">              m_idColumn = m_idColumn.toUpperCase();</span>
+<span class="nc bnc" id="L1087" title="All 2 branches missed.">       if(m_structure.attribute(0).name().equals(m_idColumn)){</span>
+<span class="nc" id="L1088">            inst.deleteAttributeAt(0);</span>
+<span class="nc" id="L1089">            m_oldStructure.add(inst);</span>
+<span class="nc" id="L1090">            inst = m_oldStructure.instance(0);</span>
+<span class="nc" id="L1091">            m_oldStructure.delete(0);</span>
+       }
+       else{
+        //instances is added to and deleted from the structure to get the true nominal values instead of the index of the values.
+<span class="nc" id="L1095">        m_structure.add(inst);</span>
+<span class="nc" id="L1096">        inst = m_structure.instance(0);</span>
+<span class="nc" id="L1097">        m_structure.delete(0);</span>
+       }
+<span class="nc" id="L1099">       return inst;</span>
+       
+  }
+
+  /**
+   * Read the data set incrementally---get the next instance in the data 
+   * set or returns null if there are no
+   * more instances to get. If the structure hasn't yet been 
+   * determined by a call to getStructure then method does so before
+   * returning the next instance in the data set.
+   *
+   * @param structure the dataset header information, will get updated in 
+   * case of string or relational attributes
+   * @return the next instance in the data set as an Instance object or null
+   * if there are no more instances to be read
+   * @throws IOException if there is an error during parsing
+   */
+  public Instance getNextInstance(Instances structure) throws IOException {
+
+<span class="nc" id="L1118">    m_structure = structure;</span>
+      
+<span class="nc bnc" id="L1120" title="All 2 branches missed.">    if (m_DataBaseConnection == null) </span>
+<span class="nc" id="L1121">      throw new IOException(&quot;No source database has been specified&quot;); </span>
+<span class="nc bnc" id="L1122" title="All 2 branches missed.">    if (getRetrieval() == BATCH) {</span>
+<span class="nc" id="L1123">      throw new IOException(&quot;Cannot mix getting Instances in both incremental and batch modes&quot;);</span>
+    }
+    //pseudoInremental: Load all instances into main memory in batch mode and give them incrementally to user
+<span class="nc bnc" id="L1126" title="All 2 branches missed.">    if(m_pseudoIncremental){</span>
+<span class="nc" id="L1127">        setRetrieval(INCREMENTAL);</span>
+<span class="nc bnc" id="L1128" title="All 2 branches missed.">        if(m_datasetPseudoInc.numInstances() &gt; 0){</span>
+<span class="nc" id="L1129">            Instance current = m_datasetPseudoInc.instance(0);</span>
+<span class="nc" id="L1130">            m_datasetPseudoInc.delete(0);</span>
+<span class="nc" id="L1131">            return current;</span>
+        }
+        else{
+<span class="nc" id="L1134">            resetStructure();</span>
+<span class="nc" id="L1135">            return null;</span>
+        }
+    }
+    //real incremental mode. At the moment(version 1.0) only for MySQL and HSQLDB (Postgres not tested, should work)
+<span class="nc" id="L1139">    setRetrieval(INCREMENTAL);</span>
+    try{
+<span class="nc bnc" id="L1141" title="All 2 branches missed.">        if(!m_DataBaseConnection.isConnected())</span>
+<span class="nc" id="L1142">            connectToDatabase();</span>
+        //if no key columns specified by user, try to detect automatically
+<span class="nc bnc" id="L1144" title="All 4 branches missed.">        if(m_firstTime &amp;&amp; m_orderBy.size() == 0){</span>
+<span class="nc bnc" id="L1145" title="All 2 branches missed.">            if(!checkForKey())</span>
+<span class="nc" id="L1146">                throw new Exception(&quot;A unique order cannot be detected automatically.\nYou have to use SELECT * in your query to enable this feature.\nMaybe JDBC driver is not able to detect key.\nDefine primary key in your database or use -P option (command line) or enter key columns in the GUI.&quot;);</span>
+        }
+<span class="nc bnc" id="L1148" title="All 2 branches missed.">        if(m_firstTime){</span>
+<span class="nc" id="L1149">            m_firstTime = false;</span>
+<span class="nc" id="L1150">            m_rowCount = getRowCount();</span>
+        }
+        //as long as not all rows has been loaded
+<span class="nc bnc" id="L1153" title="All 2 branches missed.">        if(m_counter &lt; m_rowCount){</span>
+<span class="nc bnc" id="L1154" title="All 2 branches missed.">            if (m_DataBaseConnection.execute(limitQuery(m_query,m_counter,m_choice)) == false) {</span>
+<span class="nc" id="L1155">                throw new Exception(&quot;Tuple could not be retrieved.&quot;);</span>
+            }
+<span class="nc" id="L1157">            m_counter++;</span>
+<span class="nc" id="L1158">            ResultSet rs = m_DataBaseConnection.getResultSet();</span>
+<span class="nc" id="L1159">            rs.next();</span>
+<span class="nc" id="L1160">            Instance current = readInstance(rs);</span>
+<span class="nc" id="L1161">            rs.close();</span>
+<span class="nc" id="L1162">            return current;</span>
+        }
+        else{
+<span class="nc" id="L1165">            m_DataBaseConnection.disconnectFromDatabase();</span>
+<span class="nc" id="L1166">            resetStructure();</span>
+<span class="nc" id="L1167">            return null;</span>
+        }
+<span class="nc" id="L1169">    }catch(Exception ex) {</span>
+<span class="nc" id="L1170">        printException(ex);</span>
+    }
+<span class="nc" id="L1172">    return null;</span>
+  }
+  
+  
+  
+  /** 
+   * Gets the setting
+   * 
+   * @return the current setting
+   */  
+  public String[] getOptions() {
+      
+<span class="nc" id="L1184">    Vector options = new Vector();</span>
+
+<span class="nc bnc" id="L1186" title="All 4 branches missed.">    if ( (getUrl() != null) &amp;&amp; (getUrl().length() != 0) ) {</span>
+<span class="nc" id="L1187">      options.add(&quot;-url&quot;);</span>
+<span class="nc" id="L1188">      options.add(getUrl());</span>
+    }
+    
+<span class="nc bnc" id="L1191" title="All 4 branches missed.">    if ( (getUser() != null) &amp;&amp; (getUser().length() != 0) ) {</span>
+<span class="nc" id="L1192">      options.add(&quot;-user&quot;);</span>
+<span class="nc" id="L1193">      options.add(getUser());</span>
+    }
+    
+<span class="nc bnc" id="L1196" title="All 4 branches missed.">    if ( (getPassword() != null) &amp;&amp; (getPassword().length() != 0) ) {</span>
+<span class="nc" id="L1197">      options.add(&quot;-password&quot;);</span>
+<span class="nc" id="L1198">      options.add(getPassword());</span>
+    }
+
+<span class="nc" id="L1201">    options.add(&quot;-Q&quot;); </span>
+<span class="nc" id="L1202">    options.add(getQuery());</span>
+    
+<span class="nc" id="L1204">    StringBuffer text = new StringBuffer();</span>
+<span class="nc bnc" id="L1205" title="All 2 branches missed.">    for (int i = 0; i &lt; m_orderBy.size(); i++) {</span>
+<span class="nc bnc" id="L1206" title="All 2 branches missed.">      if (i &gt; 0)</span>
+<span class="nc" id="L1207">        text.append(&quot;, &quot;);</span>
+<span class="nc" id="L1208">      text.append((String) m_orderBy.elementAt(i));</span>
+    }
+<span class="nc" id="L1210">    options.add(&quot;-P&quot;); </span>
+<span class="nc" id="L1211">    options.add(text.toString());</span>
+    
+<span class="nc bnc" id="L1213" title="All 2 branches missed.">    if (m_inc)</span>
+<span class="nc" id="L1214">      options.add(&quot;-I&quot;);</span>
+    
+<span class="nc" id="L1216">    return (String[]) options.toArray(new String[options.size()]);</span>
+  }
+  
+  /** 
+   * Lists the available options
+   * 
+   * @return an enumeration of the available options
+   */  
+  public java.util.Enumeration listOptions() {
+      
+<span class="nc" id="L1226">     FastVector newVector = new FastVector();</span>
+
+<span class="nc" id="L1228">     newVector.addElement(new Option(</span>
+<span class="nc" id="L1229">           &quot;\tThe JDBC URL to connect to.\n&quot;</span>
+           + &quot;\t(default: from DatabaseUtils.props file)&quot;,
+<span class="nc" id="L1231">           &quot;url&quot;, 1, &quot;-url &lt;JDBC URL&gt;&quot;));</span>
+     
+<span class="nc" id="L1233">     newVector.addElement(new Option(</span>
+<span class="nc" id="L1234">           &quot;\tThe user to connect with to the database.\n&quot;</span>
+           + &quot;\t(default: none)&quot;,
+<span class="nc" id="L1236">           &quot;user&quot;, 1, &quot;-user &lt;name&gt;&quot;));</span>
+     
+<span class="nc" id="L1238">     newVector.addElement(new Option(</span>
+<span class="nc" id="L1239">           &quot;\tThe password to connect with to the database.\n&quot;</span>
+           + &quot;\t(default: none)&quot;,
+<span class="nc" id="L1241">           &quot;password&quot;, 1, &quot;-password &lt;password&gt;&quot;));</span>
+     
+<span class="nc" id="L1243">     newVector.addElement(new Option(</span>
+<span class="nc" id="L1244">	 &quot;\tSQL query of the form\n&quot;</span>
+	 + &quot;\t\tSELECT &lt;list of columns&gt;|* FROM &lt;table&gt; [WHERE]\n&quot;
+	 + &quot;\tto execute.\n&quot;
+         + &quot;\t(default: Select * From Results0)&quot;,
+<span class="nc" id="L1248">	 &quot;Q&quot;,1,&quot;-Q &lt;query&gt;&quot;));</span>
+     
+<span class="nc" id="L1250">     newVector.addElement(new Option(</span>
+<span class="nc" id="L1251">	 &quot;\tList of column names uniquely defining a DB row\n&quot;</span>
+	 + &quot;\t(separated by ', ').\n&quot;
+         + &quot;\tUsed for incremental loading.\n&quot;
+	 + &quot;\tIf not specified, the key will be determined automatically,\n&quot;
+	 + &quot;\tif possible with the used JDBC driver.\n&quot;
+	 + &quot;\tThe auto ID column created by the DatabaseSaver won't be loaded.&quot;,
+<span class="nc" id="L1257">	 &quot;P&quot;,1,&quot;-P &lt;list of column names&gt;&quot;));</span>
+
+<span class="nc" id="L1259">     newVector.addElement(new Option(</span>
+<span class="nc" id="L1260">	 &quot;\tSets incremental loading&quot;, </span>
+<span class="nc" id="L1261">	 &quot;I&quot;, 0, &quot;-I&quot;));</span>
+     
+<span class="nc" id="L1263">     return  newVector.elements();</span>
+  }
+  
+  /** 
+   * Sets the options.
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -url &amp;lt;JDBC URL&amp;gt;
+   *  The JDBC URL to connect to.
+   *  (default: from DatabaseUtils.props file)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -user &amp;lt;name&amp;gt;
+   *  The user to connect with to the database.
+   *  (default: none)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -password &amp;lt;password&amp;gt;
+   *  The password to connect with to the database.
+   *  (default: none)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -Q &amp;lt;query&amp;gt;
+   *  SQL query of the form
+   *   SELECT &amp;lt;list of columns&amp;gt;|* FROM &amp;lt;table&amp;gt; [WHERE]
+   *  to execute.
+   *  (default: Select * From Results0)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;list of column names&amp;gt;
+   *  List of column names uniquely defining a DB row
+   *  (separated by ', ').
+   *  Used for incremental loading.
+   *  If not specified, the key will be determined automatically,
+   *  if possible with the used JDBC driver.
+   *  The auto ID column created by the DatabaseSaver won't be loaded.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -I
+   *  Sets incremental loading&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the options
+   * @throws Exception if options cannot be set
+   */  
+  public void setOptions(String[] options) throws Exception {
+      
+    String optionString, keyString, tmpStr;
+    
+<span class="nc" id="L1310">    optionString = Utils.getOption('Q', options);</span>
+    
+<span class="nc" id="L1312">    keyString = Utils.getOption('P', options);</span>
+    
+<span class="nc" id="L1314">    reset();</span>
+    
+<span class="nc" id="L1316">    tmpStr = Utils.getOption(&quot;url&quot;, options);</span>
+<span class="nc bnc" id="L1317" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L1318">      setUrl(tmpStr);</span>
+
+<span class="nc" id="L1320">    tmpStr = Utils.getOption(&quot;user&quot;, options);</span>
+<span class="nc bnc" id="L1321" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L1322">      setUser(tmpStr);</span>
+    
+<span class="nc" id="L1324">    tmpStr = Utils.getOption(&quot;password&quot;, options);</span>
+<span class="nc bnc" id="L1325" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L1326">      setPassword(tmpStr);</span>
+    
+<span class="nc bnc" id="L1328" title="All 2 branches missed.">    if (optionString.length() != 0)</span>
+<span class="nc" id="L1329">      setQuery(optionString);</span>
+    
+<span class="nc" id="L1331">    m_orderBy.removeAllElements();</span>
+    
+<span class="nc" id="L1333">    m_inc = Utils.getFlag('I', options);</span>
+    
+<span class="nc bnc" id="L1335" title="All 2 branches missed.">    if(m_inc){</span>
+<span class="nc" id="L1336">        StringTokenizer st = new StringTokenizer(keyString, &quot;,&quot;);</span>
+<span class="nc bnc" id="L1337" title="All 2 branches missed.">        while (st.hasMoreTokens()) {</span>
+<span class="nc" id="L1338">            String column = st.nextToken();</span>
+<span class="nc" id="L1339">            column = column.replaceAll(&quot; &quot;,&quot;&quot;);</span>
+<span class="nc" id="L1340">            m_orderBy.addElement(column);</span>
+        }
+    }
+<span class="nc" id="L1343">  }</span>
+  
+  /**Prints an exception
+   * @param ex the exception to print
+   */  
+  private void printException(Exception ex){
+  
+<span class="nc" id="L1350">      System.out.println(&quot;\n--- Exception caught ---\n&quot;);</span>
+<span class="nc bnc" id="L1351" title="All 2 branches missed.">	while (ex != null) {</span>
+<span class="nc" id="L1352">		System.out.println(&quot;Message:   &quot;</span>
+<span class="nc" id="L1353">                                   + ex.getMessage ());</span>
+<span class="nc bnc" id="L1354" title="All 2 branches missed.">                if(ex instanceof SQLException){</span>
+<span class="nc" id="L1355">                    System.out.println(&quot;SQLState:  &quot;</span>
+<span class="nc" id="L1356">                                   + ((SQLException)ex).getSQLState ());</span>
+<span class="nc" id="L1357">                    System.out.println(&quot;ErrorCode: &quot;</span>
+<span class="nc" id="L1358">                                   + ((SQLException)ex).getErrorCode ());</span>
+<span class="nc" id="L1359">                    ex = ((SQLException)ex).getNextException();</span>
+                }
+                else
+<span class="nc" id="L1362">                    ex = null;</span>
+<span class="nc" id="L1363">		System.out.println(&quot;&quot;);</span>
+	}
+      
+      
+<span class="nc" id="L1367">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1375">    return RevisionUtils.extract(&quot;$Revision: 9100 $&quot;);</span>
+  }
+
+  /** Main method.
+   * @param options the options
+   */
+  public static void main(String [] options) {
+    
+      DatabaseLoader atf;
+      try {
+<span class="nc" id="L1385">	atf = new DatabaseLoader();</span>
+<span class="nc" id="L1386">        atf.setOptions(options);</span>
+<span class="nc" id="L1387">        atf.setSource(atf.getUrl(), atf.getUser(), atf.getPassword());</span>
+<span class="nc bnc" id="L1388" title="All 2 branches missed.">        if(!atf.m_inc)</span>
+<span class="nc" id="L1389">            System.out.println(atf.getDataSet());</span>
+        else{
+<span class="nc" id="L1391">            Instances structure = atf.getStructure();</span>
+<span class="nc" id="L1392">            System.out.println(structure);</span>
+            Instance temp;
+            do {
+<span class="nc" id="L1395">            temp = atf.getNextInstance(structure);</span>
+<span class="nc bnc" id="L1396" title="All 2 branches missed.">            if (temp != null) {</span>
+<span class="nc" id="L1397">                System.out.println(temp);</span>
+            }
+<span class="nc bnc" id="L1399" title="All 2 branches missed.">            } while (temp != null);</span>
+        }
+<span class="nc" id="L1401">      } catch (Exception e) {</span>
+<span class="nc" id="L1402">	e.printStackTrace();</span>
+<span class="nc" id="L1403">        System.out.println(&quot;\n&quot;+e.getMessage());</span>
+      }
+<span class="nc" id="L1405">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

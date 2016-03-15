@@ -1,0 +1,544 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>GlobalScoreSearchAlgorithm.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.bayes.net.search.global</a> &gt; <span class="el_source">GlobalScoreSearchAlgorithm.java</span></div><h1>GlobalScoreSearchAlgorithm.java</h1><pre class="source lang-java linenums">/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * GlobalScoreSearchAlgorithm.java
+ * Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ * 
+ */
+
+package weka.classifiers.bayes.net.search.global;
+
+import weka.classifiers.bayes.BayesNet;
+import weka.classifiers.bayes.net.ParentSet;
+import weka.classifiers.bayes.net.search.SearchAlgorithm;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.Utils;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * This Bayes Network learning algorithm uses cross validation to estimate classification accuracy.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -mbc
+ *  Applies a Markov Blanket correction to the network structure, 
+ *  after a network structure is learned. This ensures that all 
+ *  nodes in the network are part of the Markov blanket of the 
+ *  classifier node.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S [LOO-CV|k-Fold-CV|Cumulative-CV]
+ *  Score type (LOO-CV,k-Fold-CV,Cumulative-CV)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Q
+ *  Use probabilistic or 0/1 scoring.
+ *  (default probabilistic scoring)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ * 
+ * @author Remco Bouckaert
+ * @version $Revision: 1.10 $
+ */
+<span class="pc" id="L66">public class GlobalScoreSearchAlgorithm </span>
+	extends SearchAlgorithm {
+
+  	/** for serialization */
+  	static final long serialVersionUID = 7341389867906199781L;
+	
+	/** points to Bayes network for which a structure is searched for **/
+	BayesNet m_BayesNet;
+	
+	/** toggle between scoring using accuracy = 0-1 loss (when false) or class probabilities (when true) **/
+<span class="nc" id="L76">	boolean m_bUseProb = true;</span>
+	
+	/** number of folds for k-fold cross validation **/
+<span class="nc" id="L79">	int m_nNrOfFolds = 10;</span>
+
+	/** constant for score type: LOO-CV */
+	final static int LOOCV = 0;
+	/** constant for score type: k-fold-CV */
+	final static int KFOLDCV = 1;
+	/** constant for score type: Cumulative-CV */
+	final static int CUMCV = 2;
+
+	/** the score types **/
+<span class="fc" id="L89">	public static final Tag[] TAGS_CV_TYPE =</span>
+<span class="fc" id="L90">		{</span>
+<span class="fc" id="L91">			new Tag(LOOCV, &quot;LOO-CV&quot;),</span>
+<span class="fc" id="L92">			new Tag(KFOLDCV, &quot;k-Fold-CV&quot;),</span>
+<span class="fc" id="L93">			new Tag(CUMCV, &quot;Cumulative-CV&quot;)</span>
+		};
+	/**
+	 * Holds the cross validation strategy used to measure quality of network
+	 */
+<span class="nc" id="L98">	int m_nCVType = LOOCV;</span>
+
+	/**
+	 * performCV returns the accuracy calculated using cross validation.  
+	 * The dataset used is m_Instances associated with the Bayes Network.
+	 * 
+	 * @param bayesNet : Bayes Network containing structure to evaluate
+	 * @return accuracy (in interval 0..1) measured using cv.
+	 * @throws Exception whn m_nCVType is invalided + exceptions passed on by updateClassifier
+	 */
+	public double calcScore(BayesNet bayesNet) throws Exception {
+<span class="nc bnc" id="L109" title="All 4 branches missed.">		switch (m_nCVType) {</span>
+			case LOOCV: 
+<span class="nc" id="L111">				return leaveOneOutCV(bayesNet);</span>
+			case CUMCV: 
+<span class="nc" id="L113">				return cumulativeCV(bayesNet);</span>
+			case KFOLDCV: 
+<span class="nc" id="L115">				return kFoldCV(bayesNet, m_nNrOfFolds);</span>
+			default:
+<span class="nc" id="L117">				throw new Exception(&quot;Unrecognized cross validation type encountered: &quot; + m_nCVType);</span>
+		}
+	} // calcScore
+
+	/**
+	 * Calc Node Score With Added Parent
+	 * 
+	 * @param nNode node for which the score is calculate
+	 * @param nCandidateParent candidate parent to add to the existing parent set
+	 * @return log score
+	 * @throws Exception if something goes wrong
+	 */
+	public double calcScoreWithExtraParent(int nNode, int nCandidateParent) throws Exception {
+<span class="nc" id="L130">		ParentSet oParentSet = m_BayesNet.getParentSet(nNode);</span>
+<span class="nc" id="L131">		Instances instances = m_BayesNet.m_Instances;</span>
+
+		// sanity check: nCandidateParent should not be in parent set already
+<span class="nc bnc" id="L134" title="All 2 branches missed.">		for (int iParent = 0; iParent &lt; oParentSet.getNrOfParents(); iParent++) {</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">			if (oParentSet.getParent(iParent) == nCandidateParent) {</span>
+<span class="nc" id="L136">				return -1e100;</span>
+			}
+		}
+
+		// set up candidate parent
+<span class="nc" id="L141">		oParentSet.addParent(nCandidateParent, instances);</span>
+
+		// calculate the score
+<span class="nc" id="L144">		double fAccuracy = calcScore(m_BayesNet);</span>
+
+		// delete temporarily added parent
+<span class="nc" id="L147">		oParentSet.deleteLastParent(instances);</span>
+
+<span class="nc" id="L149">		return fAccuracy;</span>
+	} // calcScoreWithExtraParent
+
+
+	/**
+	 * Calc Node Score With Parent Deleted
+	 * 
+	 * @param nNode node for which the score is calculate
+	 * @param nCandidateParent candidate parent to delete from the existing parent set
+	 * @return log score
+	 * @throws Exception if something goes wrong
+	 */
+	public double calcScoreWithMissingParent(int nNode, int nCandidateParent) throws Exception {
+<span class="nc" id="L162">		ParentSet oParentSet = m_BayesNet.getParentSet(nNode);</span>
+<span class="nc" id="L163">		Instances instances = m_BayesNet.m_Instances;</span>
+
+		// sanity check: nCandidateParent should be in parent set already
+<span class="nc bnc" id="L166" title="All 2 branches missed.">		if (!oParentSet.contains( nCandidateParent)) {</span>
+<span class="nc" id="L167">				return -1e100;</span>
+		}
+
+		// set up candidate parent
+<span class="nc" id="L171">		int iParent = oParentSet.deleteParent(nCandidateParent, instances);</span>
+
+		// calculate the score
+<span class="nc" id="L174">		double fAccuracy = calcScore(m_BayesNet);</span>
+
+		// reinsert temporarily deleted parent
+<span class="nc" id="L177">		oParentSet.addParent(nCandidateParent, iParent, instances);</span>
+
+<span class="nc" id="L179">		return fAccuracy;</span>
+	} // calcScoreWithMissingParent
+
+	/**
+	 * Calc Node Score With Arrow reversed
+	 * 
+	 * @param nNode node for which the score is calculate
+	 * @param nCandidateParent candidate parent to delete from the existing parent set
+	 * @return log score
+	 * @throws Exception if something goes wrong
+	 */
+	public double calcScoreWithReversedParent(int nNode, int nCandidateParent) throws Exception {
+<span class="nc" id="L191">		ParentSet oParentSet = m_BayesNet.getParentSet(nNode);</span>
+<span class="nc" id="L192">		ParentSet oParentSet2 = m_BayesNet.getParentSet(nCandidateParent);</span>
+<span class="nc" id="L193">		Instances instances = m_BayesNet.m_Instances;</span>
+
+		// sanity check: nCandidateParent should be in parent set already
+<span class="nc bnc" id="L196" title="All 2 branches missed.">		if (!oParentSet.contains( nCandidateParent)) {</span>
+<span class="nc" id="L197">				return -1e100;</span>
+		}
+
+		// set up candidate parent
+<span class="nc" id="L201">		int iParent = oParentSet.deleteParent(nCandidateParent, instances);</span>
+<span class="nc" id="L202">		oParentSet2.addParent(nNode, instances);</span>
+
+		// calculate the score
+<span class="nc" id="L205">		double fAccuracy = calcScore(m_BayesNet);</span>
+
+		// restate temporarily reversed arrow
+<span class="nc" id="L208">		oParentSet2.deleteLastParent(instances);</span>
+<span class="nc" id="L209">		oParentSet.addParent(nCandidateParent, iParent, instances);</span>
+
+<span class="nc" id="L211">		return fAccuracy;</span>
+	} // calcScoreWithReversedParent
+
+	/**
+	 * LeaveOneOutCV returns the accuracy calculated using Leave One Out
+	 * cross validation. The dataset used is m_Instances associated with
+	 * the Bayes Network.
+	 * @param bayesNet : Bayes Network containing structure to evaluate
+	 * @return accuracy (in interval 0..1) measured using leave one out cv.
+	 * @throws Exception passed on by updateClassifier
+	 */
+	public double leaveOneOutCV(BayesNet bayesNet) throws Exception {
+<span class="nc" id="L223">		m_BayesNet = bayesNet;</span>
+<span class="nc" id="L224">		double fAccuracy = 0.0;</span>
+<span class="nc" id="L225">		double fWeight = 0.0;</span>
+<span class="nc" id="L226">		Instances instances = bayesNet.m_Instances;</span>
+<span class="nc" id="L227">		bayesNet.estimateCPTs();</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">		for (int iInstance = 0; iInstance &lt; instances.numInstances(); iInstance++) {</span>
+<span class="nc" id="L229">			Instance instance = instances.instance(iInstance);</span>
+<span class="nc" id="L230">			instance.setWeight(-instance.weight());</span>
+<span class="nc" id="L231">			bayesNet.updateClassifier(instance);</span>
+<span class="nc" id="L232">			fAccuracy += accuracyIncrease(instance);</span>
+<span class="nc" id="L233">			fWeight += instance.weight();</span>
+<span class="nc" id="L234">			instance.setWeight(-instance.weight());</span>
+<span class="nc" id="L235">			bayesNet.updateClassifier(instance);</span>
+		}
+<span class="nc" id="L237">		return fAccuracy / fWeight;</span>
+	} // LeaveOneOutCV
+
+	/**
+	 * CumulativeCV returns the accuracy calculated using cumulative
+	 * cross validation. The idea is to run through the data set and
+	 * try to classify each of the instances based on the previously
+	 * seen data.
+	 * The data set used is m_Instances associated with the Bayes Network.
+	 * @param bayesNet : Bayes Network containing structure to evaluate
+	 * @return accuracy (in interval 0..1) measured using leave one out cv.
+	 * @throws Exception passed on by updateClassifier
+	 */
+	public double cumulativeCV(BayesNet bayesNet) throws Exception {
+<span class="nc" id="L251">		m_BayesNet = bayesNet;</span>
+<span class="nc" id="L252">		double fAccuracy = 0.0;</span>
+<span class="nc" id="L253">		double fWeight = 0.0;</span>
+<span class="nc" id="L254">		Instances instances = bayesNet.m_Instances;</span>
+<span class="nc" id="L255">		bayesNet.initCPTs();</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">		for (int iInstance = 0; iInstance &lt; instances.numInstances(); iInstance++) {</span>
+<span class="nc" id="L257">			Instance instance = instances.instance(iInstance);</span>
+<span class="nc" id="L258">			fAccuracy += accuracyIncrease(instance);</span>
+<span class="nc" id="L259">			bayesNet.updateClassifier(instance);</span>
+<span class="nc" id="L260">			fWeight += instance.weight();</span>
+		}
+<span class="nc" id="L262">		return fAccuracy / fWeight;</span>
+	} // LeaveOneOutCV
+	
+	/**
+	 * kFoldCV uses k-fold cross validation to measure the accuracy of a Bayes
+	 * network classifier.
+	 * @param bayesNet : Bayes Network containing structure to evaluate
+	 * @param nNrOfFolds : the number of folds k to perform k-fold cv
+	 * @return accuracy (in interval 0..1) measured using leave one out cv.
+	 * @throws Exception passed on by updateClassifier
+	 */
+	public double kFoldCV(BayesNet bayesNet, int nNrOfFolds) throws Exception {
+<span class="nc" id="L274">		m_BayesNet = bayesNet;</span>
+<span class="nc" id="L275">		double fAccuracy = 0.0;</span>
+<span class="nc" id="L276">		double fWeight = 0.0;</span>
+<span class="nc" id="L277">		Instances instances = bayesNet.m_Instances;</span>
+		// estimate CPTs based on complete data set
+<span class="nc" id="L279">		bayesNet.estimateCPTs();</span>
+<span class="nc" id="L280">		int nFoldStart = 0;</span>
+<span class="nc" id="L281">		int nFoldEnd = instances.numInstances() / nNrOfFolds;</span>
+<span class="nc" id="L282">		int iFold = 1;</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">		while (nFoldStart &lt; instances.numInstances()) {</span>
+			// remove influence of fold iFold from the probability distribution
+<span class="nc bnc" id="L285" title="All 2 branches missed.">			for (int iInstance = nFoldStart; iInstance &lt; nFoldEnd; iInstance++) {</span>
+<span class="nc" id="L286">				Instance instance = instances.instance(iInstance);</span>
+<span class="nc" id="L287">				instance.setWeight(-instance.weight());</span>
+<span class="nc" id="L288">				bayesNet.updateClassifier(instance);</span>
+			}
+			
+			// measure accuracy on fold iFold
+<span class="nc bnc" id="L292" title="All 2 branches missed.">			for (int iInstance = nFoldStart; iInstance &lt; nFoldEnd; iInstance++) {</span>
+<span class="nc" id="L293">				Instance instance = instances.instance(iInstance);</span>
+<span class="nc" id="L294">				instance.setWeight(-instance.weight());</span>
+<span class="nc" id="L295">				fAccuracy += accuracyIncrease(instance);</span>
+<span class="nc" id="L296">				instance.setWeight(-instance.weight());</span>
+<span class="nc" id="L297">				fWeight += instance.weight();</span>
+			}
+
+			// restore influence of fold iFold from the probability distribution
+<span class="nc bnc" id="L301" title="All 2 branches missed.">			for (int iInstance = nFoldStart; iInstance &lt; nFoldEnd; iInstance++) {</span>
+<span class="nc" id="L302">				Instance instance = instances.instance(iInstance);</span>
+<span class="nc" id="L303">				instance.setWeight(-instance.weight());</span>
+<span class="nc" id="L304">				bayesNet.updateClassifier(instance);</span>
+			}
+
+			// go to next fold
+<span class="nc" id="L308">			nFoldStart = nFoldEnd;</span>
+<span class="nc" id="L309">			iFold++;</span>
+<span class="nc" id="L310">			nFoldEnd = iFold * instances.numInstances() / nNrOfFolds;</span>
+		}
+<span class="nc" id="L312">		return fAccuracy / fWeight;</span>
+	} // kFoldCV
+	
+	/** accuracyIncrease determines how much the accuracy estimate should
+	 * be increased due to the contribution of a single given instance. 
+	 * 
+	 * @param instance : instance for which to calculate the accuracy increase.
+	 * @return increase in accuracy due to given instance. 
+	 * @throws Exception passed on by distributionForInstance and classifyInstance
+	 */
+	double accuracyIncrease(Instance instance) throws Exception {
+<span class="nc bnc" id="L323" title="All 2 branches missed.">		if (m_bUseProb) {</span>
+<span class="nc" id="L324">			double [] fProb = m_BayesNet.distributionForInstance(instance);</span>
+<span class="nc" id="L325">			return fProb[(int) instance.classValue()] * instance.weight();</span>
+		} else {
+<span class="nc bnc" id="L327" title="All 2 branches missed.">			if (m_BayesNet.classifyInstance(instance) == instance.classValue()) {</span>
+<span class="nc" id="L328">				return instance.weight();</span>
+			}
+		}
+<span class="nc" id="L331">		return 0;</span>
+	} // accuracyIncrease
+
+	/**
+	 * @return use probabilities or not in accuracy estimate
+	 */
+	public boolean getUseProb() {
+<span class="nc" id="L338">		return m_bUseProb;</span>
+	} // getUseProb
+
+	/**
+	 * @param useProb : use probabilities or not in accuracy estimate
+	 */
+	public void setUseProb(boolean useProb) {
+<span class="nc" id="L345">		m_bUseProb = useProb;</span>
+<span class="nc" id="L346">	} // setUseProb</span>
+	
+	/**
+	 * set cross validation strategy to be used in searching for networks.
+	 * @param newCVType : cross validation strategy 
+	 */
+	public void setCVType(SelectedTag newCVType) {
+<span class="nc bnc" id="L353" title="All 2 branches missed.">		if (newCVType.getTags() == TAGS_CV_TYPE) {</span>
+<span class="nc" id="L354">			m_nCVType = newCVType.getSelectedTag().getID();</span>
+		}
+<span class="nc" id="L356">	} // setCVType</span>
+
+	/**
+	 * get cross validation strategy to be used in searching for networks.
+	 * @return cross validation strategy 
+	 */
+	public SelectedTag getCVType() {
+<span class="nc" id="L363">		return new SelectedTag(m_nCVType, TAGS_CV_TYPE);</span>
+	} // getCVType
+
+	/**
+	 * 
+	 * @param bMarkovBlanketClassifier
+	 */
+	public void setMarkovBlanketClassifier(boolean bMarkovBlanketClassifier) {
+<span class="nc" id="L371">	  super.setMarkovBlanketClassifier(bMarkovBlanketClassifier);</span>
+<span class="nc" id="L372">	}</span>
+
+	/**
+	 * 
+	 * @return
+	 */
+	public boolean getMarkovBlanketClassifier() {
+<span class="nc" id="L379">	  return super.getMarkovBlanketClassifier();</span>
+	}
+
+	/**
+	 * Returns an enumeration describing the available options
+	 * 
+	 * @return an enumeration of all the available options
+	 */
+	public Enumeration listOptions() {
+<span class="nc" id="L388">		Vector newVector = new Vector();</span>
+
+<span class="nc" id="L390">		newVector.addElement(new Option(</span>
+<span class="nc" id="L391">		    &quot;\tApplies a Markov Blanket correction to the network structure, \n&quot;</span>
+		    + &quot;\tafter a network structure is learned. This ensures that all \n&quot;
+		    + &quot;\tnodes in the network are part of the Markov blanket of the \n&quot;
+		    + &quot;\tclassifier node.&quot;,
+<span class="nc" id="L395">		    &quot;mbc&quot;, 0, &quot;-mbc&quot;));</span>
+      
+<span class="nc" id="L397">		newVector.addElement(</span>
+<span class="nc" id="L398">			new Option(</span>
+<span class="nc" id="L399">				&quot;\tScore type (LOO-CV,k-Fold-CV,Cumulative-CV)&quot;,</span>
+<span class="nc" id="L400">				&quot;S&quot;,</span>
+<span class="nc" id="L401">				1,</span>
+<span class="nc" id="L402">				&quot;-S [LOO-CV|k-Fold-CV|Cumulative-CV]&quot;));</span>
+
+<span class="nc" id="L404">		newVector.addElement(new Option(&quot;\tUse probabilistic or 0/1 scoring.\n\t(default probabilistic scoring)&quot;, &quot;Q&quot;, 0, &quot;-Q&quot;));</span>
+
+<span class="nc" id="L406">		Enumeration enu = super.listOptions();</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">		while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L408">			newVector.addElement(enu.nextElement());</span>
+		}
+<span class="nc" id="L410">		return newVector.elements();</span>
+	} // listOptions
+
+	/**
+	 * Parses a given list of options. &lt;p/&gt;
+	 *
+	 &lt;!-- options-start --&gt;
+	 * Valid options are: &lt;p/&gt;
+	 * 
+	 * &lt;pre&gt; -mbc
+	 *  Applies a Markov Blanket correction to the network structure, 
+	 *  after a network structure is learned. This ensures that all 
+	 *  nodes in the network are part of the Markov blanket of the 
+	 *  classifier node.&lt;/pre&gt;
+	 * 
+	 * &lt;pre&gt; -S [LOO-CV|k-Fold-CV|Cumulative-CV]
+	 *  Score type (LOO-CV,k-Fold-CV,Cumulative-CV)&lt;/pre&gt;
+	 * 
+	 * &lt;pre&gt; -Q
+	 *  Use probabilistic or 0/1 scoring.
+	 *  (default probabilistic scoring)&lt;/pre&gt;
+	 * 
+	 &lt;!-- options-end --&gt;
+	 *
+	 * @param options the list of options as an array of strings
+	 * @throws Exception if an option is not supported
+	 */
+	public void setOptions(String[] options) throws Exception {
+
+<span class="nc" id="L439">	  	setMarkovBlanketClassifier(Utils.getFlag(&quot;mbc&quot;, options));</span>
+
+<span class="nc" id="L441">		String sScore = Utils.getOption('S', options);</span>
+
+<span class="nc bnc" id="L443" title="All 2 branches missed.">		if (sScore.compareTo(&quot;LOO-CV&quot;) == 0) {</span>
+<span class="nc" id="L444">			setCVType(new SelectedTag(LOOCV, TAGS_CV_TYPE));</span>
+		}
+<span class="nc bnc" id="L446" title="All 2 branches missed.">		if (sScore.compareTo(&quot;k-Fold-CV&quot;) == 0) {</span>
+<span class="nc" id="L447">			setCVType(new SelectedTag(KFOLDCV, TAGS_CV_TYPE));</span>
+		}
+<span class="nc bnc" id="L449" title="All 2 branches missed.">		if (sScore.compareTo(&quot;Cumulative-CV&quot;) == 0) {</span>
+<span class="nc" id="L450">			setCVType(new SelectedTag(CUMCV, TAGS_CV_TYPE));</span>
+		}
+<span class="nc bnc" id="L452" title="All 2 branches missed.">		setUseProb(!Utils.getFlag('Q', options));		</span>
+<span class="nc" id="L453">		super.setOptions(options);</span>
+<span class="nc" id="L454">	} // setOptions</span>
+
+	/**
+	 * Gets the current settings of the search algorithm.
+	 *
+	 * @return an array of strings suitable for passing to setOptions
+	 */
+	public String[] getOptions() {
+<span class="nc" id="L462">		String[] superOptions = super.getOptions();</span>
+<span class="nc" id="L463">		String[] options = new String[4 + superOptions.length];</span>
+<span class="nc" id="L464">		int current = 0;</span>
+
+<span class="nc bnc" id="L466" title="All 2 branches missed.">		if (getMarkovBlanketClassifier())</span>
+<span class="nc" id="L467">		  options[current++] = &quot;-mbc&quot;;</span>
+
+<span class="nc" id="L469">		options[current++] = &quot;-S&quot;;</span>
+
+<span class="nc bnc" id="L471" title="All 4 branches missed.">		switch (m_nCVType) {</span>
+			case (LOOCV) :
+<span class="nc" id="L473">				options[current++] = &quot;LOO-CV&quot;;</span>
+<span class="nc" id="L474">				break;</span>
+			case (KFOLDCV) :
+<span class="nc" id="L476">				options[current++] = &quot;k-Fold-CV&quot;;</span>
+<span class="nc" id="L477">				break;</span>
+			case (CUMCV) :
+<span class="nc" id="L479">				options[current++] = &quot;Cumulative-CV&quot;;</span>
+				break;
+		}
+		
+<span class="nc bnc" id="L483" title="All 2 branches missed.">		if (!getUseProb()) {</span>
+<span class="nc" id="L484">		  options[current++] = &quot;-Q&quot;;</span>
+		}
+
+                // insert options from parent class
+<span class="nc bnc" id="L488" title="All 2 branches missed.">                for (int iOption = 0; iOption &lt; superOptions.length; iOption++) {</span>
+<span class="nc" id="L489">                        options[current++] = superOptions[iOption];</span>
+                }
+
+		// Fill up rest with empty strings, not nulls!
+<span class="nc bnc" id="L493" title="All 2 branches missed.">		while (current &lt; options.length) {</span>
+<span class="nc" id="L494">			options[current++] = &quot;&quot;;</span>
+		}
+<span class="nc" id="L496">		return options;</span>
+	} // getOptions
+
+	/**
+	 * @return a string to describe the CVType option.
+	 */
+	public String CVTypeTipText() {
+<span class="nc" id="L503">	  return &quot;Select cross validation strategy to be used in searching for networks.&quot; +</span>
+	  &quot;LOO-CV = Leave one out cross validation\n&quot; +
+	  &quot;k-Fold-CV = k fold cross validation\n&quot; +
+	  &quot;Cumulative-CV = cumulative cross validation.&quot;
+	  ;
+	} // CVTypeTipText
+
+	/**
+	 * @return a string to describe the UseProb option.
+	 */
+	public String useProbTipText() {
+<span class="nc" id="L514">	  return &quot;If set to true, the probability of the class if returned in the estimate of the &quot;+</span>
+	  &quot;accuracy. If set to false, the accuracy estimate is only increased if the classifier returns &quot; +
+	  &quot;exactly the correct class.&quot;;
+	} // useProbTipText
+
+	/**
+	 * This will return a string describing the search algorithm.
+	 * @return The string.
+	 */
+	public String globalInfo() {
+<span class="nc" id="L524">	  return &quot;This Bayes Network learning algorithm uses cross validation to estimate &quot; +</span>
+	  &quot;classification accuracy.&quot;;
+	} // globalInfo
+	
+	/**
+	 * @return a string to describe the MarkovBlanketClassifier option.
+	 */
+	public String markovBlanketClassifierTipText() {
+<span class="nc" id="L532">	  return super.markovBlanketClassifierTipText();</span>
+	}
+
+	/**
+	 * Returns the revision string.
+	 * 
+	 * @return		the revision
+	 */
+	public String getRevision() {
+<span class="nc" id="L541">	  return RevisionUtils.extract(&quot;$Revision: 1.10 $&quot;);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

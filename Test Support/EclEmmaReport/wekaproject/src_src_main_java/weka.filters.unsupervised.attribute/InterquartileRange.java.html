@@ -1,0 +1,959 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>InterquartileRange.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.filters.unsupervised.attribute</a> &gt; <span class="el_source">InterquartileRange.java</span></div><h1>InterquartileRange.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * InterquartileRange.java
+ * Copyright (C) 2006 University of Waikato, Hamilton, New Zealand
+ */
+
+package weka.filters.unsupervised.attribute;
+
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.Range;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.filters.SimpleBatchFilter;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * A filter for detecting outliers and extreme values based on interquartile ranges. The filter skips the class attribute.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Outliers:&lt;br/&gt;
+ *   Q3 + OF*IQR &amp;lt; x &amp;lt;= Q3 + EVF*IQR&lt;br/&gt;
+ *   or&lt;br/&gt;
+ *   Q1 - EVF*IQR &amp;lt;= x &amp;lt; Q1 - OF*IQR&lt;br/&gt;
+ * &lt;br/&gt;
+ * Extreme values:&lt;br/&gt;
+ *   x &amp;gt; Q3 + EVF*IQR&lt;br/&gt;
+ *   or&lt;br/&gt;
+ *   x &amp;lt; Q1 - EVF*IQR&lt;br/&gt;
+ * &lt;br/&gt;
+ * Key:&lt;br/&gt;
+ *   Q1  = 25% quartile&lt;br/&gt;
+ *   Q3  = 75% quartile&lt;br/&gt;
+ *   IQR = Interquartile Range, difference between Q1 and Q3&lt;br/&gt;
+ *   OF  = Outlier Factor&lt;br/&gt;
+ *   EVF = Extreme Value Factor
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Turns on output of debugging information.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;col1,col2-col4,...&amp;gt;
+ *  Specifies list of columns to base outlier/extreme value detection
+ *  on. If an instance is considered in at least one of those
+ *  attributes an outlier/extreme value, it is tagged accordingly.
+ *  'first' and 'last' are valid indexes.
+ *  (default none)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -O &amp;lt;num&amp;gt;
+ *  The factor for outlier detection.
+ *  (default: 3)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -E &amp;lt;num&amp;gt;
+ *  The factor for extreme values detection.
+ *  (default: 2*Outlier Factor)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -E-as-O
+ *  Tags extreme values also as outliers.
+ *  (default: off)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P
+ *  Generates Outlier/ExtremeValue pair for each numeric attribute in
+ *  the range, not just a single indicator pair for all the attributes.
+ *  (default: off)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Generates an additional attribute 'Offset' per Outlier/ExtremeValue
+ *  pair that contains the multiplier that the value is off the median.
+ *     value = median + 'multiplier' * IQR
+ * Note: implicitely sets '-P'. (default: off)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ * 
+ * Thanks to Dale for a few brainstorming sessions.
+ *
+ * @author  Dale Fletcher (dale at cs dot waikato dot ac dot nz)
+ * @author  fracpete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 9529 $
+ */
+<span class="nc" id="L106">public class InterquartileRange</span>
+  extends SimpleBatchFilter {
+
+  /** for serialization */
+  private static final long serialVersionUID = -227879653639723030L;
+
+  /** indicator for non-numeric attributes */
+  public final static int NON_NUMERIC = -1;
+  
+  /** the attribute range to work on */
+<span class="nc" id="L116">  protected Range m_Attributes = new Range(&quot;first-last&quot;);</span>
+  
+  /** the generated indices (only for performance reasons) */
+<span class="nc" id="L119">  protected int[] m_AttributeIndices = null;</span>
+
+  /** the factor for detecting outliers */
+<span class="nc" id="L122">  protected double m_OutlierFactor = 3;</span>
+  
+  /** the factor for detecting extreme values, by default 2*m_OutlierFactor */
+<span class="nc" id="L125">  protected double m_ExtremeValuesFactor = 2*m_OutlierFactor;</span>
+  
+  /** whether extreme values are also tagged as outliers */
+<span class="nc" id="L128">  protected boolean m_ExtremeValuesAsOutliers = false;</span>
+
+  /** the upper extreme value threshold (= Q3 + EVF*IQR) */
+<span class="nc" id="L131">  protected double[] m_UpperExtremeValue = null;</span>
+
+  /** the upper outlier threshold (= Q3 + OF*IQR) */
+<span class="nc" id="L134">  protected double[] m_UpperOutlier = null;</span>
+
+  /** the lower outlier threshold (= Q1 - OF*IQR) */
+<span class="nc" id="L137">  protected double[] m_LowerOutlier = null;</span>
+
+  /** the interquartile range  */
+<span class="nc" id="L140">  protected double[] m_IQR = null;</span>
+
+  /** the median  */
+<span class="nc" id="L143">  protected double[] m_Median = null;</span>
+
+  /** the lower extreme value threshold (= Q1 - EVF*IQR) */
+<span class="nc" id="L146">  protected double[] m_LowerExtremeValue = null;</span>
+  
+  /** whether to generate Outlier/ExtremeValue attributes for each attribute
+   * instead of a general one */
+<span class="nc" id="L150">  protected boolean m_DetectionPerAttribute = false;</span>
+
+  /** the position of the outlier attribute */
+<span class="nc" id="L153">  protected int[] m_OutlierAttributePosition = null;</span>
+
+  /** whether to add another attribute called &quot;Offset&quot;, that lists the 
+   * 'multiplier' by which the outlier/extreme value is away from the median,
+   * i.e., value = median + 'multiplier' * IQR &lt;br/&gt;
+   * automatically enables m_DetectionPerAttribute!
+   */
+<span class="nc" id="L160">  protected boolean m_OutputOffsetMultiplier = false;</span>
+  
+  /**
+   * Returns a string describing this filter
+   *
+   * @return 		a description of the filter suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L169">    return </span>
+<span class="nc" id="L170">        &quot;A filter for detecting outliers and extreme values based on &quot;</span>
+      + &quot;interquartile ranges. The filter skips the class attribute.\n\n&quot;
+      + &quot;Outliers:\n&quot;
+      + &quot;  Q3 + OF*IQR &lt; x &lt;= Q3 + EVF*IQR\n&quot;
+      + &quot;  or\n&quot;
+      + &quot;  Q1 - EVF*IQR &lt;= x &lt; Q1 - OF*IQR\n&quot;
+      + &quot;\n&quot;
+      + &quot;Extreme values:\n&quot;
+      + &quot;  x &gt; Q3 + EVF*IQR\n&quot;
+      + &quot;  or\n&quot;
+      + &quot;  x &lt; Q1 - EVF*IQR\n&quot;
+      + &quot;\n&quot;
+      + &quot;Key:\n&quot;
+      + &quot;  Q1  = 25% quartile\n&quot;
+      + &quot;  Q3  = 75% quartile\n&quot;
+      + &quot;  IQR = Interquartile Range, difference between Q1 and Q3\n&quot;
+      + &quot;  OF  = Outlier Factor\n&quot;
+      + &quot;  EVF = Extreme Value Factor&quot;;
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return 		an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L196">    Vector result = new Vector();</span>
+<span class="nc" id="L197">    Enumeration enm = super.listOptions();</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">    while (enm.hasMoreElements())</span>
+<span class="nc" id="L199">      result.add(enm.nextElement());</span>
+      
+<span class="nc" id="L201">    result.addElement(new Option(</span>
+<span class="nc" id="L202">	&quot;\tSpecifies list of columns to base outlier/extreme value detection\n&quot;</span>
+	+ &quot;\ton. If an instance is considered in at least one of those\n&quot;
+	+ &quot;\tattributes an outlier/extreme value, it is tagged accordingly.\n&quot;
+	+ &quot; 'first' and 'last' are valid indexes.\n&quot;
+	+ &quot;\t(default none)&quot;,
+<span class="nc" id="L207">	&quot;R&quot;, 1, &quot;-R &lt;col1,col2-col4,...&gt;&quot;));</span>
+
+<span class="nc" id="L209">    result.addElement(new Option(</span>
+<span class="nc" id="L210">        &quot;\tThe factor for outlier detection.\n&quot;</span>
+	+ &quot;\t(default: 3)&quot;,
+<span class="nc" id="L212">        &quot;O&quot;, 1, &quot;-O &lt;num&gt;&quot;));</span>
+
+<span class="nc" id="L214">    result.addElement(new Option(</span>
+<span class="nc" id="L215">        &quot;\tThe factor for extreme values detection.\n&quot;</span>
+	+ &quot;\t(default: 2*Outlier Factor)&quot;,
+<span class="nc" id="L217">        &quot;E&quot;, 1, &quot;-E &lt;num&gt;&quot;));</span>
+
+<span class="nc" id="L219">    result.addElement(new Option(</span>
+<span class="nc" id="L220">        &quot;\tTags extreme values also as outliers.\n&quot;</span>
+	+ &quot;\t(default: off)&quot;,
+<span class="nc" id="L222">        &quot;E-as-O&quot;, 0, &quot;-E-as-O&quot;));</span>
+
+<span class="nc" id="L224">    result.addElement(new Option(</span>
+<span class="nc" id="L225">        &quot;\tGenerates Outlier/ExtremeValue pair for each numeric attribute in\n&quot;</span>
+	+ &quot;\tthe range, not just a single indicator pair for all the attributes.\n&quot;
+	+ &quot;\t(default: off)&quot;,
+<span class="nc" id="L228">        &quot;P&quot;, 0, &quot;-P&quot;));</span>
+
+<span class="nc" id="L230">    result.addElement(new Option(</span>
+<span class="nc" id="L231">        &quot;\tGenerates an additional attribute 'Offset' per Outlier/ExtremeValue\n&quot;</span>
+	+ &quot;\tpair that contains the multiplier that the value is off the median.\n&quot;
+	+ &quot;\t   value = median + 'multiplier' * IQR\n&quot;
+	+ &quot;Note: implicitely sets '-P'.&quot;
+	+ &quot;\t(default: off)&quot;,
+<span class="nc" id="L236">        &quot;M&quot;, 0, &quot;-M&quot;));</span>
+
+<span class="nc" id="L238">    return result.elements();</span>
+  }
+
+  /**
+   * Parses a list of options for this object. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Turns on output of debugging information.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;col1,col2-col4,...&amp;gt;
+   *  Specifies list of columns to base outlier/extreme value detection
+   *  on. If an instance is considered in at least one of those
+   *  attributes an outlier/extreme value, it is tagged accordingly.
+   *  'first' and 'last' are valid indexes.
+   *  (default none)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -O &amp;lt;num&amp;gt;
+   *  The factor for outlier detection.
+   *  (default: 3)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -E &amp;lt;num&amp;gt;
+   *  The factor for extreme values detection.
+   *  (default: 2*Outlier Factor)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -E-as-O
+   *  Tags extreme values also as outliers.
+   *  (default: off)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P
+   *  Generates Outlier/ExtremeValue pair for each numeric attribute in
+   *  the range, not just a single indicator pair for all the attributes.
+   *  (default: off)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  Generates an additional attribute 'Offset' per Outlier/ExtremeValue
+   *  pair that contains the multiplier that the value is off the median.
+   *     value = median + 'multiplier' * IQR
+   * Note: implicitely sets '-P'. (default: off)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options 	the list of options as an array of strings
+   * @throws Exception 	if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    String        tmpStr;
+
+<span class="nc" id="L288">    super.setOptions(options);</span>
+
+<span class="nc" id="L290">    tmpStr = Utils.getOption(&quot;R&quot;, options);</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L292">      setAttributeIndices(tmpStr);</span>
+    else
+<span class="nc" id="L294">      setAttributeIndices(&quot;first-last&quot;);</span>
+
+<span class="nc" id="L296">    tmpStr = Utils.getOption(&quot;O&quot;, options);</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L298">      setOutlierFactor(Double.parseDouble(tmpStr));</span>
+    else
+<span class="nc" id="L300">      setOutlierFactor(3);</span>
+
+<span class="nc" id="L302">    tmpStr = Utils.getOption(&quot;E&quot;, options);</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L304">      setExtremeValuesFactor(Double.parseDouble(tmpStr));</span>
+    else
+<span class="nc" id="L306">      setExtremeValuesFactor(2*getOutlierFactor());</span>
+    
+<span class="nc" id="L308">    setExtremeValuesAsOutliers(Utils.getFlag(&quot;E-as-O&quot;, options));</span>
+    
+<span class="nc" id="L310">    setDetectionPerAttribute(Utils.getFlag(&quot;P&quot;, options));</span>
+
+<span class="nc" id="L312">    setOutputOffsetMultiplier(Utils.getFlag(&quot;M&quot;, options));</span>
+<span class="nc" id="L313">  }</span>
+
+  /**
+   * Gets the current settings of the filter.
+   *
+   * @return 		an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    Vector        result;
+    String[]      options;
+    int           i;
+
+<span class="nc" id="L325">    result = new Vector();</span>
+
+<span class="nc" id="L327">    options = super.getOptions();</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L329">      result.add(options[i]);</span>
+
+<span class="nc" id="L331">    result.add(&quot;-R&quot;);</span>
+<span class="nc bnc" id="L332" title="All 2 branches missed.">    if (!getAttributeIndices().equals(&quot;&quot;))</span>
+<span class="nc" id="L333">      result.add(getAttributeIndices());</span>
+    else
+<span class="nc" id="L335">      result.add(&quot;first-last&quot;);</span>
+    
+<span class="nc" id="L337">    result.add(&quot;-O&quot;);</span>
+<span class="nc" id="L338">    result.add(&quot;&quot; + getOutlierFactor());</span>
+
+<span class="nc" id="L340">    result.add(&quot;-E&quot;);</span>
+<span class="nc" id="L341">    result.add(&quot;&quot; + getExtremeValuesFactor());</span>
+
+<span class="nc bnc" id="L343" title="All 2 branches missed.">    if (getExtremeValuesAsOutliers())</span>
+<span class="nc" id="L344">      result.add(&quot;-E-as-O&quot;);</span>
+    
+<span class="nc bnc" id="L346" title="All 2 branches missed.">    if (getDetectionPerAttribute())</span>
+<span class="nc" id="L347">      result.add(&quot;-P&quot;);</span>
+    
+<span class="nc bnc" id="L349" title="All 2 branches missed.">    if (getOutputOffsetMultiplier())</span>
+<span class="nc" id="L350">      result.add(&quot;-M&quot;);</span>
+    
+<span class="nc" id="L352">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String attributeIndicesTipText() {
+<span class="nc" id="L362">    return </span>
+<span class="nc" id="L363">        &quot;Specify range of attributes to act on; &quot;</span>
+      + &quot; this is a comma separated list of attribute indices, with&quot;
+      + &quot; \&quot;first\&quot; and \&quot;last\&quot; valid values; specify an inclusive&quot;
+      + &quot; range with \&quot;-\&quot;, eg: \&quot;first-3,5,6-10,last\&quot;.&quot;;
+  }
+
+  /**
+   * Gets the current range selection
+   *
+   * @return 		a string containing a comma separated list of ranges
+   */
+  public String getAttributeIndices() {
+<span class="nc" id="L375">    return m_Attributes.getRanges();</span>
+  }
+
+  /**
+   * Sets which attributes are to be used for interquartile calculations and
+   * outlier/extreme value detection (only numeric attributes among the 
+   * selection will be used).
+   *
+   * @param value 	a string representing the list of attributes. Since
+   * 			the string will typically come from a user, attributes 
+   * 			are indexed from 1. &lt;br&gt; eg: first-3,5,6-last
+   * @throws IllegalArgumentException if an invalid range list is supplied 
+   */
+  public void setAttributeIndices(String value) {
+<span class="nc" id="L389">    m_Attributes.setRanges(value);</span>
+<span class="nc" id="L390">  }</span>
+
+  /**
+   * Sets which attributes are to be used for interquartile calculations and
+   * outlier/extreme value detection (only numeric attributes among the 
+   * selection will be used).
+   *
+   * @param value 	an array containing indexes of attributes to work on.
+   * 			Since the array will typically come from a program, 
+   * 			attributes are indexed from 0.
+   * @throws IllegalArgumentException if an invalid set of ranges is supplied 
+   */
+  public void setAttributeIndicesArray(int[] value) {
+<span class="nc" id="L403">    setAttributeIndices(Range.indicesToRangeList(value));</span>
+<span class="nc" id="L404">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String outlierFactorTipText() {
+<span class="nc" id="L413">    return &quot;The factor for determining the thresholds for outliers.&quot;;</span>
+  }
+
+  /**
+   * Sets the factor for determining the thresholds for outliers.
+   *
+   * @param value 	the factor.
+   */
+  public void setOutlierFactor(double value) {
+<span class="nc bnc" id="L422" title="All 2 branches missed.">    if (value &gt;= getExtremeValuesFactor())</span>
+<span class="nc" id="L423">      System.err.println(&quot;OutlierFactor must be smaller than ExtremeValueFactor&quot;);</span>
+    else
+<span class="nc" id="L425">      m_OutlierFactor = value;</span>
+<span class="nc" id="L426">  }</span>
+
+  /**
+   * Gets the factor for determining the thresholds for outliers.
+   *
+   * @return 		the factor.
+   */
+  public double getOutlierFactor() {
+<span class="nc" id="L434">    return m_OutlierFactor;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String extremeValuesFactorTipText() {
+<span class="nc" id="L444">    return &quot;The factor for determining the thresholds for extreme values.&quot;;</span>
+  }
+
+  /**
+   * Sets the factor for determining the thresholds for extreme values.
+   *
+   * @param value 	the factor.
+   */
+  public void setExtremeValuesFactor(double value) {
+<span class="nc bnc" id="L453" title="All 2 branches missed.">    if (value &lt;= getOutlierFactor())</span>
+<span class="nc" id="L454">      System.err.println(&quot;ExtremeValuesFactor must be greater than OutlierFactor!&quot;);</span>
+    else
+<span class="nc" id="L456">      m_ExtremeValuesFactor = value;</span>
+<span class="nc" id="L457">  }</span>
+
+  /**
+   * Gets the factor for determining the thresholds for extreme values.
+   *
+   * @return 		the factor.
+   */
+  public double getExtremeValuesFactor() {
+<span class="nc" id="L465">    return m_ExtremeValuesFactor;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String extremeValuesAsOutliersTipText() {
+<span class="nc" id="L475">    return &quot;Whether to tag extreme values also as outliers.&quot;;</span>
+  }
+
+  /**
+   * Set whether extreme values are also tagged as outliers.
+   *
+   * @param value 	whether or not to tag extreme values also as outliers.
+   */
+  public void setExtremeValuesAsOutliers(boolean value) {
+<span class="nc" id="L484">    m_ExtremeValuesAsOutliers = value;</span>
+<span class="nc" id="L485">  }</span>
+
+  /**
+   * Get whether extreme values are also tagged as outliers.
+   *
+   * @return 		true if extreme values are also tagged as outliers.
+   */
+  public boolean getExtremeValuesAsOutliers() {
+<span class="nc" id="L493">    return m_ExtremeValuesAsOutliers;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String detectionPerAttributeTipText() {
+<span class="nc" id="L503">    return </span>
+<span class="nc" id="L504">        &quot;Generates Outlier/ExtremeValue attribute pair for each numeric &quot;</span>
+      + &quot;attribute, not just a single pair for all numeric attributes together.&quot;;
+  }
+
+  /**
+   * Set whether an Outlier/ExtremeValue attribute pair is generated for 
+   * each numeric attribute (&quot;true&quot;) or just one pair for all numeric 
+   * attributes together (&quot;false&quot;).
+   *
+   * @param value 	whether or not to generate indicator attribute pairs 
+   * 			for each numeric attribute.
+   */
+  public void setDetectionPerAttribute(boolean value) {
+<span class="nc" id="L517">    m_DetectionPerAttribute = value;</span>
+<span class="nc bnc" id="L518" title="All 2 branches missed.">    if (!m_DetectionPerAttribute)</span>
+<span class="nc" id="L519">      m_OutputOffsetMultiplier = false;</span>
+<span class="nc" id="L520">  }</span>
+
+  /**
+   * Gets whether an Outlier/ExtremeValue attribute pair is generated for 
+   * each numeric attribute (&quot;true&quot;) or just one pair for all numeric 
+   * attributes together (&quot;false&quot;).
+   *
+   * @return 		true if indicator attribute pairs are generated for
+   * 			each numeric attribute.
+   */
+  public boolean getDetectionPerAttribute() {
+<span class="nc" id="L531">    return m_DetectionPerAttribute;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String outputOffsetMultiplierTipText() {
+<span class="nc" id="L541">    return </span>
+<span class="nc" id="L542">        &quot;Generates an additional attribute 'Offset' that contains the &quot;</span>
+      + &quot;multiplier the value is off the median: &quot;
+      + &quot;value = median + 'multiplier' * IQR&quot;;
+  }
+
+  /**
+   * Set whether an additional attribute &quot;Offset&quot; is generated per 
+   * Outlier/ExtremeValue attribute pair that lists the multiplier the value
+   * is off the median: value = median + 'multiplier' * IQR.
+   *
+   * @param value 	whether or not to generate the additional attribute.
+   */
+  public void setOutputOffsetMultiplier(boolean value) {
+<span class="nc" id="L555">    m_OutputOffsetMultiplier = value;</span>
+<span class="nc bnc" id="L556" title="All 2 branches missed.">    if (m_OutputOffsetMultiplier)</span>
+<span class="nc" id="L557">      m_DetectionPerAttribute = true;</span>
+<span class="nc" id="L558">  }</span>
+
+  /**
+   * Gets whether an additional attribute &quot;Offset&quot; is generated per 
+   * Outlier/ExtremeValue attribute pair that lists the multiplier the value
+   * is off the median: value = median + 'multiplier' * IQR.
+   *
+   * @return 		true if the additional attribute is generated.
+   */
+  public boolean getOutputOffsetMultiplier() {
+<span class="nc" id="L568">    return m_OutputOffsetMultiplier;</span>
+  }
+
+  /** 
+   * Returns the Capabilities of this filter.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L578">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L579">    result.disableAll();</span>
+
+    // attributes
+<span class="nc" id="L582">    result.enableAllAttributes();</span>
+    
+    // class
+<span class="nc" id="L585">    result.enableAllClasses();</span>
+<span class="nc" id="L586">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+<span class="nc" id="L587">    result.enable(Capability.NO_CLASS);</span>
+    
+<span class="nc" id="L589">    return result;</span>
+  }
+
+  /**
+   * Determines the output format based on the input format and returns 
+   * this. In case the output format cannot be returned immediately, i.e.,
+   * hasImmediateOutputFormat() returns false, then this method will called
+   * from batchFinished() after the call of preprocess(Instances), in which,
+   * e.g., statistics for the actual processing step can be gathered.
+   *
+   * @param inputFormat     the input format to base the output format on
+   * @return                the output format
+   * @throws Exception      in case the determination goes wrong
+   * @see                   #hasImmediateOutputFormat()
+   * @see                   #batchFinished()
+   */
+  protected Instances determineOutputFormat(Instances inputFormat)
+      throws Exception {
+    
+    FastVector		atts;
+    FastVector		values;
+    Instances		result;
+    int			i;
+
+    // attributes must be numeric
+<span class="nc" id="L614">    m_Attributes.setUpper(inputFormat.numAttributes() - 1);</span>
+<span class="nc" id="L615">    m_AttributeIndices = m_Attributes.getSelection();</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">    for (i = 0; i &lt; m_AttributeIndices.length; i++) {</span>
+      // ignore class
+<span class="nc bnc" id="L618" title="All 2 branches missed.">      if (m_AttributeIndices[i] == inputFormat.classIndex()) {</span>
+<span class="nc" id="L619">	m_AttributeIndices[i] = NON_NUMERIC;</span>
+<span class="nc" id="L620">	continue;</span>
+      }
+      // not numeric -&gt; ignore it
+<span class="nc bnc" id="L623" title="All 2 branches missed.">      if (!inputFormat.attribute(m_AttributeIndices[i]).isNumeric())</span>
+<span class="nc" id="L624">	m_AttributeIndices[i] = NON_NUMERIC;</span>
+    }
+    
+    // get old attributes
+<span class="nc" id="L628">    atts = new FastVector();</span>
+<span class="nc bnc" id="L629" title="All 2 branches missed.">    for (i = 0; i &lt; inputFormat.numAttributes(); i++)</span>
+<span class="nc" id="L630">      atts.addElement(inputFormat.attribute(i));</span>
+    
+<span class="nc bnc" id="L632" title="All 2 branches missed.">    if (!getDetectionPerAttribute()) {</span>
+<span class="nc" id="L633">      m_OutlierAttributePosition    = new int[1];</span>
+<span class="nc" id="L634">      m_OutlierAttributePosition[0] = atts.size();</span>
+      
+      // add 2 new attributes
+<span class="nc" id="L637">      values = new FastVector();</span>
+<span class="nc" id="L638">      values.addElement(&quot;no&quot;);</span>
+<span class="nc" id="L639">      values.addElement(&quot;yes&quot;);</span>
+<span class="nc" id="L640">      atts.addElement(new Attribute(&quot;Outlier&quot;, values));</span>
+      
+<span class="nc" id="L642">      values = new FastVector();</span>
+<span class="nc" id="L643">      values.addElement(&quot;no&quot;);</span>
+<span class="nc" id="L644">      values.addElement(&quot;yes&quot;);</span>
+<span class="nc" id="L645">      atts.addElement(new Attribute(&quot;ExtremeValue&quot;, values));</span>
+    }
+    else {
+<span class="nc" id="L648">      m_OutlierAttributePosition = new int[m_AttributeIndices.length];</span>
+      
+<span class="nc bnc" id="L650" title="All 2 branches missed.">      for (i = 0; i &lt; m_AttributeIndices.length; i++) {</span>
+<span class="nc bnc" id="L651" title="All 2 branches missed.">	if (m_AttributeIndices[i] == NON_NUMERIC)</span>
+<span class="nc" id="L652">	  continue;</span>
+	
+<span class="nc" id="L654">	m_OutlierAttributePosition[i] = atts.size();</span>
+
+	// add new attributes
+<span class="nc" id="L657">	values = new FastVector();</span>
+<span class="nc" id="L658">	values.addElement(&quot;no&quot;);</span>
+<span class="nc" id="L659">	values.addElement(&quot;yes&quot;);</span>
+<span class="nc" id="L660">	atts.addElement(</span>
+<span class="nc" id="L661">	    new Attribute(</span>
+<span class="nc" id="L662">		inputFormat.attribute(</span>
+<span class="nc" id="L663">		    m_AttributeIndices[i]).name() + &quot;_Outlier&quot;, values));</span>
+	
+<span class="nc" id="L665">	values = new FastVector();</span>
+<span class="nc" id="L666">	values.addElement(&quot;no&quot;);</span>
+<span class="nc" id="L667">	values.addElement(&quot;yes&quot;);</span>
+<span class="nc" id="L668">	atts.addElement(</span>
+<span class="nc" id="L669">	    new Attribute(</span>
+<span class="nc" id="L670">		inputFormat.attribute(</span>
+<span class="nc" id="L671">		    m_AttributeIndices[i]).name() + &quot;_ExtremeValue&quot;, values));</span>
+
+<span class="nc bnc" id="L673" title="All 2 branches missed.">	if (getOutputOffsetMultiplier())</span>
+<span class="nc" id="L674">	  atts.addElement(</span>
+<span class="nc" id="L675">	      new Attribute(</span>
+<span class="nc" id="L676">		  inputFormat.attribute(</span>
+<span class="nc" id="L677">		      m_AttributeIndices[i]).name() + &quot;_Offset&quot;));</span>
+      }
+    }
+
+    // generate header
+<span class="nc" id="L682">    result = new Instances(inputFormat.relationName(), atts, 0);</span>
+<span class="nc" id="L683">    result.setClassIndex(inputFormat.classIndex());</span>
+    
+<span class="nc" id="L685">    return result;</span>
+  }
+
+  /**
+   * computes the thresholds for outliers and extreme values
+   * 
+   * @param instances	the data to work on
+   */
+  protected void computeThresholds(Instances instances) {
+    int		i;
+    double[]	values;
+    int[]	sortedIndices;
+    int		half;
+    int		quarter;
+    double	q1;
+    double	q2;
+    double	q3;
+    
+<span class="nc" id="L703">    m_UpperExtremeValue = new double[m_AttributeIndices.length];</span>
+<span class="nc" id="L704">    m_UpperOutlier      = new double[m_AttributeIndices.length];</span>
+<span class="nc" id="L705">    m_LowerOutlier      = new double[m_AttributeIndices.length];</span>
+<span class="nc" id="L706">    m_LowerExtremeValue = new double[m_AttributeIndices.length];</span>
+<span class="nc" id="L707">    m_Median            = new double[m_AttributeIndices.length];</span>
+<span class="nc" id="L708">    m_IQR               = new double[m_AttributeIndices.length];</span>
+    
+<span class="nc bnc" id="L710" title="All 2 branches missed.">    for (i = 0; i &lt; m_AttributeIndices.length; i++) {</span>
+      // non-numeric attribute?
+<span class="nc bnc" id="L712" title="All 2 branches missed.">      if (m_AttributeIndices[i] == NON_NUMERIC)</span>
+<span class="nc" id="L713">	continue;</span>
+      
+      // sort attribute data
+<span class="nc" id="L716">      values        = instances.attributeToDoubleArray(m_AttributeIndices[i]);</span>
+<span class="nc" id="L717">      sortedIndices = Utils.sort(values);</span>
+      
+      // determine indices
+<span class="nc" id="L720">      half    = sortedIndices.length / 2;</span>
+<span class="nc" id="L721">      quarter = half / 2;</span>
+      
+<span class="nc bnc" id="L723" title="All 2 branches missed.">      if (sortedIndices.length % 2 == 1) {</span>
+<span class="nc" id="L724">	q2 = values[sortedIndices[half]];</span>
+      }
+      else {
+<span class="nc" id="L727">	q2 = (values[sortedIndices[half]] + values[sortedIndices[half + 1]]) / 2;</span>
+      }
+      
+<span class="nc bnc" id="L730" title="All 2 branches missed.">      if (half % 2 == 1) {</span>
+<span class="nc" id="L731">	q1 = values[sortedIndices[quarter]];</span>
+<span class="nc" id="L732">	q3 = values[sortedIndices[sortedIndices.length - quarter - 1]];</span>
+      }
+      else {
+<span class="nc" id="L735">	q1 = (values[sortedIndices[quarter]] + values[sortedIndices[quarter + 1]]) / 2;</span>
+<span class="nc" id="L736">	q3 = (values[sortedIndices[sortedIndices.length - quarter - 1]] + values[sortedIndices[sortedIndices.length - quarter]]) / 2;</span>
+      }
+      
+      // determine thresholds and other values
+<span class="nc" id="L740">      m_Median[i]            = q2;</span>
+<span class="nc" id="L741">      m_IQR[i]               = q3 - q1;</span>
+<span class="nc" id="L742">      m_UpperExtremeValue[i] = q3 + getExtremeValuesFactor() * m_IQR[i];</span>
+<span class="nc" id="L743">      m_UpperOutlier[i]      = q3 + getOutlierFactor()       * m_IQR[i];</span>
+<span class="nc" id="L744">      m_LowerOutlier[i]      = q1 - getOutlierFactor()       * m_IQR[i];</span>
+<span class="nc" id="L745">      m_LowerExtremeValue[i] = q1 - getExtremeValuesFactor() * m_IQR[i];</span>
+    }
+<span class="nc" id="L747">  }</span>
+  
+  /**
+   * returns whether the instance has an outlier in the specified attribute 
+   * or not
+   * 
+   * @param inst	the instance to test
+   * @param index	the attribute index
+   * @return		true if the instance is an outlier
+   */
+  protected boolean isOutlier(Instance inst, int index) {
+    boolean	result;
+    double	value;
+
+<span class="nc" id="L761">    value  = inst.value(m_AttributeIndices[index]);</span>
+<span class="nc bnc" id="L762" title="All 4 branches missed.">    result =    ((m_UpperOutlier[index]      &lt;  value) &amp;&amp; (value &lt;= m_UpperExtremeValue[index]))</span>
+<span class="nc bnc" id="L763" title="All 4 branches missed.">             || ((m_LowerExtremeValue[index] &lt;= value) &amp;&amp; (value &lt;  m_LowerOutlier[index]));</span>
+    
+<span class="nc" id="L765">    return result;</span>
+  }
+  
+  /**
+   * returns whether the instance is an outlier or not
+   * 
+   * @param inst	the instance to test
+   * @return		true if the instance is an outlier
+   */
+  protected boolean isOutlier(Instance inst) {
+    boolean	result;
+    int		i;
+
+<span class="nc" id="L778">    result = false;</span>
+    
+<span class="nc bnc" id="L780" title="All 2 branches missed.">    for (i = 0; i &lt; m_AttributeIndices.length; i++) {</span>
+      // non-numeric attribute?
+<span class="nc bnc" id="L782" title="All 2 branches missed.">      if (m_AttributeIndices[i] == NON_NUMERIC)</span>
+<span class="nc" id="L783">	continue;</span>
+
+<span class="nc" id="L785">      result = isOutlier(inst, i);</span>
+      
+<span class="nc bnc" id="L787" title="All 2 branches missed.">      if (result)</span>
+<span class="nc" id="L788">	break;</span>
+    }
+    
+<span class="nc" id="L791">    return result;</span>
+  }
+  
+  /**
+   * returns whether the instance has an extreme value in the specified 
+   * attribute or not
+   * 
+   * @param inst	the instance to test
+   * @param index	the attribute index
+   * @return		true if the instance is an extreme value
+   */
+  protected boolean isExtremeValue(Instance inst, int index) {
+    boolean	result;
+    double	value;
+
+<span class="nc" id="L806">    value  = inst.value(m_AttributeIndices[index]);</span>
+<span class="nc bnc" id="L807" title="All 2 branches missed.">    result =    (value &gt; m_UpperExtremeValue[index]) </span>
+<span class="nc bnc" id="L808" title="All 2 branches missed.">             || (value &lt; m_LowerExtremeValue[index]);</span>
+      
+<span class="nc" id="L810">    return result;</span>
+  }
+  
+  /**
+   * returns whether the instance is an extreme value or not
+   * 
+   * @param inst	the instance to test
+   * @return		true if the instance is an extreme value
+   */
+  protected boolean isExtremeValue(Instance inst) {
+    boolean	result;
+    int		i;
+
+<span class="nc" id="L823">    result = false;</span>
+    
+<span class="nc bnc" id="L825" title="All 2 branches missed.">    for (i = 0; i &lt; m_AttributeIndices.length; i++) {</span>
+      // non-numeric attribute?
+<span class="nc bnc" id="L827" title="All 2 branches missed.">      if (m_AttributeIndices[i] == NON_NUMERIC)</span>
+<span class="nc" id="L828">	continue;</span>
+      
+<span class="nc" id="L830">      result = isExtremeValue(inst, i);</span>
+      
+<span class="nc bnc" id="L832" title="All 2 branches missed.">      if (result)</span>
+<span class="nc" id="L833">	break;</span>
+    }
+    
+<span class="nc" id="L836">    return result;</span>
+  }
+  
+  /**
+   * returns the mulitplier of the IQR the instance is off the median for this
+   * particular attribute.
+   * 
+   * @param inst	the instance to test
+   * @param index	the attribute index
+   * @return		the multiplier
+   */
+  protected double calculateMultiplier(Instance inst, int index) {
+    double	result;
+    double	value;
+
+<span class="nc" id="L851">    value  = inst.value(m_AttributeIndices[index]);</span>
+<span class="nc" id="L852">    result = (value - m_Median[index]) / m_IQR[index];</span>
+      
+<span class="nc" id="L854">    return result;</span>
+  }
+  
+  /**
+   * Processes the given data (may change the provided dataset) and returns
+   * the modified version. This method is called in batchFinished().
+   * This implementation only calls process(Instance) for each instance
+   * in the given dataset.
+   *
+   * @param instances   the data to process
+   * @return            the modified data
+   * @throws Exception  in case the processing goes wrong
+   * @see               #batchFinished()
+   */
+  protected Instances process(Instances instances) throws Exception {
+    Instances	result;
+    Instance	instOld;
+    Instance	instNew;
+    int		i;
+    int		n;
+    double[]	values;
+    int		numAttNew;
+    int		numAttOld;
+    
+<span class="nc bnc" id="L878" title="All 2 branches missed.">    if (!isFirstBatchDone())</span>
+<span class="nc" id="L879">      computeThresholds(instances);</span>
+    
+<span class="nc" id="L881">    result    = getOutputFormat();</span>
+<span class="nc" id="L882">    numAttOld = instances.numAttributes();</span>
+<span class="nc" id="L883">    numAttNew = result.numAttributes();</span>
+    
+<span class="nc bnc" id="L885" title="All 2 branches missed.">    for (n = 0; n &lt; instances.numInstances(); n++) {</span>
+<span class="nc" id="L886">      instOld = instances.instance(n);</span>
+<span class="nc" id="L887">      values  = new double[numAttNew];</span>
+<span class="nc" id="L888">      System.arraycopy(instOld.toDoubleArray(), 0, values, 0, numAttOld);</span>
+      
+      // generate new instance
+<span class="nc" id="L891">      instNew = new Instance(1.0, values);</span>
+<span class="nc" id="L892">      instNew.setDataset(result);</span>
+
+      // per attribute?
+<span class="nc bnc" id="L895" title="All 2 branches missed.">      if (!getDetectionPerAttribute()) {</span>
+	// outlier?
+<span class="nc bnc" id="L897" title="All 2 branches missed.">	if (isOutlier(instOld))</span>
+<span class="nc" id="L898">	  instNew.setValue(m_OutlierAttributePosition[0], 1);</span>
+	// extreme value?
+<span class="nc bnc" id="L900" title="All 2 branches missed.">	if (isExtremeValue(instOld)) {</span>
+<span class="nc" id="L901">	  instNew.setValue(m_OutlierAttributePosition[0] + 1, 1);</span>
+	  // tag extreme values also as outliers?
+<span class="nc bnc" id="L903" title="All 2 branches missed.">	  if (getExtremeValuesAsOutliers())</span>
+<span class="nc" id="L904">	    instNew.setValue(m_OutlierAttributePosition[0], 1);</span>
+	}
+      }
+      else {
+<span class="nc bnc" id="L908" title="All 2 branches missed.">	for (i = 0; i &lt; m_AttributeIndices.length; i++) {</span>
+	  // non-numeric attribute?
+<span class="nc bnc" id="L910" title="All 2 branches missed.">	  if (m_AttributeIndices[i] == NON_NUMERIC)</span>
+<span class="nc" id="L911">	    continue;</span>
+	  
+	  // outlier?
+<span class="nc bnc" id="L914" title="All 2 branches missed.">	  if (isOutlier(instOld, m_AttributeIndices[i]))</span>
+<span class="nc" id="L915">	    instNew.setValue(m_OutlierAttributePosition[i], 1);</span>
+	  // extreme value?
+<span class="nc bnc" id="L917" title="All 2 branches missed.">	  if (isExtremeValue(instOld, m_AttributeIndices[i])) {</span>
+<span class="nc" id="L918">	    instNew.setValue(m_OutlierAttributePosition[i] + 1, 1);</span>
+	    // tag extreme values also as outliers?
+<span class="nc bnc" id="L920" title="All 2 branches missed.">	    if (getExtremeValuesAsOutliers())</span>
+<span class="nc" id="L921">	      instNew.setValue(m_OutlierAttributePosition[i], 1);</span>
+	  }
+	  // add multiplier?
+<span class="nc bnc" id="L924" title="All 2 branches missed.">	  if (getOutputOffsetMultiplier())</span>
+<span class="nc" id="L925">	    instNew.setValue(</span>
+<span class="nc" id="L926">		m_OutlierAttributePosition[i] + 2, </span>
+<span class="nc" id="L927">		calculateMultiplier(instOld, m_AttributeIndices[i]));</span>
+	}
+      }
+      
+      // copy possible strings, relational values...
+<span class="nc" id="L932">      copyValues(instNew, false, instOld.dataset(), getOutputFormat());</span>
+      
+      // add to output
+<span class="nc" id="L935">      result.add(instNew);</span>
+    }
+    
+<span class="nc" id="L938">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L947">    return RevisionUtils.extract(&quot;$Revision: 9529 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param args should contain arguments to the filter: use -h for help
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L956">    runFilter(new InterquartileRange(), args);</span>
+<span class="nc" id="L957">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

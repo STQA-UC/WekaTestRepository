@@ -1,0 +1,718 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>PART.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.rules</a> &gt; <span class="el_source">PART.java</span></div><h1>PART.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    PART.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.rules;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.rules.part.MakeDecList;
+import weka.classifiers.trees.j48.BinC45ModelSelection;
+import weka.classifiers.trees.j48.C45ModelSelection;
+import weka.classifiers.trees.j48.ModelSelection;
+import weka.core.AdditionalMeasureProducer;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Summarizable;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class for generating a PART decision list. Uses separate-and-conquer. Builds a partial C4.5 decision tree in each iteration and makes the &quot;best&quot; leaf into a rule.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Eibe Frank, Ian H. Witten: Generating Accurate Rule Sets Without Global Optimization. In: Fifteenth International Conference on Machine Learning, 144-151, 1998.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Frank1998,
+ *    author = {Eibe Frank and Ian H. Witten},
+ *    booktitle = {Fifteenth International Conference on Machine Learning},
+ *    editor = {J. Shavlik},
+ *    pages = {144-151},
+ *    publisher = {Morgan Kaufmann},
+ *    title = {Generating Accurate Rule Sets Without Global Optimization},
+ *    year = {1998},
+ *    PS = {http://www.cs.waikato.ac.nz/\~eibe/pubs/ML98-57.ps.gz}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;pruning confidence&amp;gt;
+ *  Set confidence threshold for pruning.
+ *  (default 0.25)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;minimum number of objects&amp;gt;
+ *  Set minimum number of objects per leaf.
+ *  (default 2)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R
+ *  Use reduced error pruning.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;number of folds&amp;gt;
+ *  Set number of folds for reduced error
+ *  pruning. One fold is used as pruning set.
+ *  (default 3)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -B
+ *  Use binary splits only.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -U
+ *  Generate unpruned decision list.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Q &amp;lt;seed&amp;gt;
+ *  Seed for random data shuffling (default 1).&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @version $Revision: 1.10 $
+ */
+<span class="fc" id="L108">public class PART </span>
+  extends Classifier 
+  implements OptionHandler, WeightedInstancesHandler, Summarizable, 
+             AdditionalMeasureProducer, TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 8121455039782598361L;
+  
+  /** The decision list */
+  private MakeDecList m_root;
+
+  /** Confidence level */
+<span class="fc" id="L120">  private float m_CF = 0.25f;</span>
+
+  /** Minimum number of objects */
+<span class="fc" id="L123">  private int m_minNumObj = 2;</span>
+
+  /** Use reduced error pruning? */
+<span class="fc" id="L126">  private boolean m_reducedErrorPruning = false;</span>
+
+  /** Number of folds for reduced error pruning. */
+<span class="fc" id="L129">  private int m_numFolds = 3;</span>
+
+  /** Binary splits on nominal attributes? */
+<span class="fc" id="L132">  private boolean m_binarySplits = false;</span>
+  
+  /** Generate unpruned list? */
+<span class="fc" id="L135">  private boolean m_unpruned = false;</span>
+
+  /** The seed for random number generation. */
+<span class="fc" id="L138">  private int m_Seed = 1;</span>
+    
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L147">    return  &quot;Class for generating a PART decision list. Uses &quot;</span>
+      + &quot;separate-and-conquer. Builds a partial C4.5 decision tree &quot;
+      + &quot;in each iteration and makes the \&quot;best\&quot; leaf into a rule.\n\n&quot;
+      + &quot;For more information, see:\n\n&quot;
+<span class="nc" id="L151">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L164">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L165">    result.setValue(Field.AUTHOR, &quot;Eibe Frank and Ian H. Witten&quot;);</span>
+<span class="nc" id="L166">    result.setValue(Field.TITLE, &quot;Generating Accurate Rule Sets Without Global Optimization&quot;);</span>
+<span class="nc" id="L167">    result.setValue(Field.BOOKTITLE, &quot;Fifteenth International Conference on Machine Learning&quot;);</span>
+<span class="nc" id="L168">    result.setValue(Field.EDITOR, &quot;J. Shavlik&quot;);</span>
+<span class="nc" id="L169">    result.setValue(Field.YEAR, &quot;1998&quot;);</span>
+<span class="nc" id="L170">    result.setValue(Field.PAGES, &quot;144-151&quot;);</span>
+<span class="nc" id="L171">    result.setValue(Field.PUBLISHER, &quot;Morgan Kaufmann&quot;);</span>
+<span class="nc" id="L172">    result.setValue(Field.PS, &quot;http://www.cs.waikato.ac.nz/~eibe/pubs/ML98-57.ps.gz&quot;);</span>
+    
+<span class="nc" id="L174">    return result;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+    Capabilities      result;
+
+<span class="pc bpc" id="L185" title="1 of 2 branches missed.">    if (m_unpruned) </span>
+<span class="nc" id="L186">      result = new MakeDecList(null, m_minNumObj).getCapabilities();</span>
+<span class="pc bpc" id="L187" title="1 of 2 branches missed.">    else if (m_reducedErrorPruning) </span>
+<span class="nc" id="L188">      result = new MakeDecList(null, m_numFolds, m_minNumObj, m_Seed).getCapabilities();</span>
+    else
+<span class="fc" id="L190">      result = new MakeDecList(null, m_CF, m_minNumObj).getCapabilities();</span>
+    
+<span class="fc" id="L192">    return result;</span>
+  }
+
+  /**
+   * Generates the classifier.
+   *
+   * @param instances the data to train with
+   * @throws Exception if classifier can't be built successfully
+   */
+  public void buildClassifier(Instances instances) 
+       throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L205">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L208">    instances = new Instances(instances);</span>
+<span class="fc" id="L209">    instances.deleteWithMissingClass();</span>
+    
+    ModelSelection modSelection;	 
+
+<span class="pc bpc" id="L213" title="1 of 2 branches missed.">    if (m_binarySplits)</span>
+<span class="nc" id="L214">      modSelection = new BinC45ModelSelection(m_minNumObj, instances);</span>
+    else
+<span class="fc" id="L216">      modSelection = new C45ModelSelection(m_minNumObj, instances);</span>
+<span class="pc bpc" id="L217" title="1 of 2 branches missed.">    if (m_unpruned) </span>
+<span class="nc" id="L218">      m_root = new MakeDecList(modSelection, m_minNumObj);</span>
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">    else if (m_reducedErrorPruning) </span>
+<span class="nc" id="L220">      m_root = new MakeDecList(modSelection, m_numFolds, m_minNumObj, m_Seed);</span>
+    else
+<span class="fc" id="L222">      m_root = new MakeDecList(modSelection, m_CF, m_minNumObj);</span>
+<span class="fc" id="L223">    m_root.buildClassifier(instances);</span>
+<span class="pc bpc" id="L224" title="1 of 2 branches missed.">    if (m_binarySplits) {</span>
+<span class="nc" id="L225">      ((BinC45ModelSelection)modSelection).cleanup();</span>
+    } else {
+<span class="fc" id="L227">      ((C45ModelSelection)modSelection).cleanup();</span>
+    }
+<span class="fc" id="L229">  }</span>
+
+  /**
+   * Classifies an instance.
+   *
+   * @param instance the instance to classify
+   * @return the classification
+   * @throws Exception if instance can't be classified successfully
+   */
+  public double classifyInstance(Instance instance) 
+       throws Exception {
+
+<span class="nc" id="L241">    return m_root.classifyInstance(instance);</span>
+  }
+
+  /** 
+   * Returns class probabilities for an instance.
+   *
+   * @param instance the instance to get the distribution for
+   * @return the class probabilities
+   * @throws Exception if the distribution can't be computed successfully
+   */
+  public final double [] distributionForInstance(Instance instance) 
+       throws Exception {
+
+<span class="fc" id="L254">    return m_root.distributionForInstance(instance);</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * Valid options are: &lt;p&gt;
+   *
+   * -C confidence &lt;br&gt;
+   * Set confidence threshold for pruning. (Default: 0.25) &lt;p&gt;
+   *
+   * -M number &lt;br&gt;
+   * Set minimum number of instances per leaf. (Default: 2) &lt;p&gt;
+   *
+   * -R &lt;br&gt;
+   * Use reduced error pruning. &lt;p&gt;
+   *
+   * -N number &lt;br&gt;
+   * Set number of folds for reduced error pruning. One fold is
+   * used as the pruning set. (Default: 3) &lt;p&gt;
+   *
+   * -B &lt;br&gt;
+   * Use binary splits for nominal attributes. &lt;p&gt;
+   *
+   * -U &lt;br&gt;
+   * Generate unpruned decision list. &lt;p&gt;
+   *
+   * -Q &lt;br&gt;
+   * The seed for reduced-error pruning. &lt;p&gt;
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="fc" id="L288">    Vector newVector = new Vector(7);</span>
+
+<span class="fc" id="L290">    newVector.</span>
+<span class="fc" id="L291">	addElement(new Option(&quot;\tSet confidence threshold for pruning.\n&quot; +</span>
+			      &quot;\t(default 0.25)&quot;,
+<span class="fc" id="L293">			      &quot;C&quot;, 1, &quot;-C &lt;pruning confidence&gt;&quot;));</span>
+<span class="fc" id="L294">    newVector.</span>
+<span class="fc" id="L295">	addElement(new Option(&quot;\tSet minimum number of objects per leaf.\n&quot; +</span>
+			      &quot;\t(default 2)&quot;,
+<span class="fc" id="L297">			      &quot;M&quot;, 1, &quot;-M &lt;minimum number of objects&gt;&quot;));</span>
+<span class="fc" id="L298">    newVector.</span>
+<span class="fc" id="L299">	addElement(new Option(&quot;\tUse reduced error pruning.&quot;,</span>
+<span class="fc" id="L300">			      &quot;R&quot;, 0, &quot;-R&quot;));</span>
+<span class="fc" id="L301">    newVector.</span>
+<span class="fc" id="L302">	addElement(new Option(&quot;\tSet number of folds for reduced error\n&quot; +</span>
+			      &quot;\tpruning. One fold is used as pruning set.\n&quot; +
+			      &quot;\t(default 3)&quot;,
+<span class="fc" id="L305">			      &quot;N&quot;, 1, &quot;-N &lt;number of folds&gt;&quot;));</span>
+<span class="fc" id="L306">    newVector.</span>
+<span class="fc" id="L307">	addElement(new Option(&quot;\tUse binary splits only.&quot;,</span>
+<span class="fc" id="L308">			      &quot;B&quot;, 0, &quot;-B&quot;));</span>
+<span class="fc" id="L309">    newVector.</span>
+<span class="fc" id="L310">	addElement(new Option(&quot;\tGenerate unpruned decision list.&quot;,</span>
+<span class="fc" id="L311">			      &quot;U&quot;, 0, &quot;-U&quot;));</span>
+<span class="fc" id="L312">    newVector.</span>
+<span class="fc" id="L313">      addElement(new Option(&quot;\tSeed for random data shuffling (default 1).&quot;,</span>
+<span class="fc" id="L314">			    &quot;Q&quot;, 1, &quot;-Q &lt;seed&gt;&quot;));</span>
+
+<span class="fc" id="L316">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;pruning confidence&amp;gt;
+   *  Set confidence threshold for pruning.
+   *  (default 0.25)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;minimum number of objects&amp;gt;
+   *  Set minimum number of objects per leaf.
+   *  (default 2)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R
+   *  Use reduced error pruning.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;number of folds&amp;gt;
+   *  Set number of folds for reduced error
+   *  pruning. One fold is used as pruning set.
+   *  (default 3)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -B
+   *  Use binary splits only.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -U
+   *  Generate unpruned decision list.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -Q &amp;lt;seed&amp;gt;
+   *  Seed for random data shuffling (default 1).&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+    // Pruning options
+<span class="fc" id="L358">    m_unpruned = Utils.getFlag('U', options);</span>
+<span class="fc" id="L359">    m_reducedErrorPruning = Utils.getFlag('R', options);</span>
+<span class="fc" id="L360">    m_binarySplits = Utils.getFlag('B', options);</span>
+<span class="fc" id="L361">    String confidenceString = Utils.getOption('C', options);</span>
+<span class="fc bfc" id="L362" title="All 2 branches covered.">    if (confidenceString.length() != 0) {</span>
+<span class="pc bpc" id="L363" title="1 of 2 branches missed.">      if (m_reducedErrorPruning) {</span>
+<span class="nc" id="L364">	throw new Exception(&quot;Setting CF doesn't make sense &quot; +</span>
+			    &quot;for reduced error pruning.&quot;);
+      } else {
+<span class="fc" id="L367">	m_CF = (new Float(confidenceString)).floatValue();</span>
+<span class="pc bpc" id="L368" title="2 of 4 branches missed.">	if ((m_CF &lt;= 0) || (m_CF &gt;= 1)) {</span>
+<span class="nc" id="L369">	  throw new Exception(&quot;CF has to be greater than zero and smaller than one!&quot;);</span>
+	} 
+      }
+    } else {
+<span class="fc" id="L373">      m_CF = 0.25f;</span>
+    }
+<span class="fc" id="L375">    String numFoldsString = Utils.getOption('N', options);</span>
+<span class="pc bpc" id="L376" title="1 of 2 branches missed.">    if (numFoldsString.length() != 0) {</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">      if (!m_reducedErrorPruning) {</span>
+<span class="nc" id="L378">	throw new Exception(&quot;Setting the number of folds&quot; +</span>
+			    &quot; does only make sense for&quot; +
+			    &quot; reduced error pruning.&quot;);
+      } else {
+<span class="nc" id="L382">	m_numFolds = Integer.parseInt(numFoldsString);</span>
+      }
+    } else {
+<span class="fc" id="L385">      m_numFolds = 3;</span>
+    }
+
+    // Other options
+<span class="fc" id="L389">    String minNumString = Utils.getOption('M', options);</span>
+<span class="fc bfc" id="L390" title="All 2 branches covered.">    if (minNumString.length() != 0) {</span>
+<span class="fc" id="L391">      m_minNumObj = Integer.parseInt(minNumString);</span>
+    } else {
+<span class="fc" id="L393">      m_minNumObj = 2;</span>
+    }
+<span class="fc" id="L395">    String seedString = Utils.getOption('Q', options);</span>
+<span class="fc bfc" id="L396" title="All 2 branches covered.">    if (seedString.length() != 0) {</span>
+<span class="fc" id="L397">      m_Seed = Integer.parseInt(seedString);</span>
+    } else {
+<span class="fc" id="L399">      m_Seed = 1;</span>
+    }
+<span class="fc" id="L401">  }</span>
+
+  /**
+   * Gets the current settings of the Classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+
+<span class="fc" id="L410">    String [] options = new String [11];</span>
+<span class="fc" id="L411">    int current = 0;</span>
+
+<span class="pc bpc" id="L413" title="1 of 2 branches missed.">    if (m_unpruned) {</span>
+<span class="nc" id="L414">      options[current++] = &quot;-U&quot;;</span>
+    }
+<span class="pc bpc" id="L416" title="1 of 2 branches missed.">    if (m_reducedErrorPruning) {</span>
+<span class="nc" id="L417">      options[current++] = &quot;-R&quot;;</span>
+    }
+<span class="pc bpc" id="L419" title="1 of 2 branches missed.">    if (m_binarySplits) {</span>
+<span class="nc" id="L420">      options[current++] = &quot;-B&quot;;</span>
+    }
+<span class="fc" id="L422">    options[current++] = &quot;-M&quot;; options[current++] = &quot;&quot; + m_minNumObj;</span>
+<span class="pc bpc" id="L423" title="1 of 2 branches missed.">    if (!m_reducedErrorPruning) {</span>
+<span class="fc" id="L424">      options[current++] = &quot;-C&quot;; options[current++] = &quot;&quot; + m_CF;</span>
+    }
+<span class="pc bpc" id="L426" title="1 of 2 branches missed.">    if (m_reducedErrorPruning) {</span>
+<span class="nc" id="L427">      options[current++] = &quot;-N&quot;; options[current++] = &quot;&quot; + m_numFolds;</span>
+    }
+<span class="fc" id="L429">    options[current++] = &quot;-Q&quot;; options[current++] = &quot;&quot; + m_Seed;</span>
+
+<span class="fc bfc" id="L431" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc" id="L432">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="fc" id="L434">    return options;</span>
+  }
+
+  /**
+   * Returns a description of the classifier
+   * 
+   * @return a string representation of the classifier
+   */
+  public String toString() {
+
+<span class="pc bpc" id="L444" title="1 of 2 branches missed.">    if (m_root == null) {</span>
+<span class="fc" id="L445">      return &quot;No classifier built&quot;;</span>
+    }
+<span class="nc" id="L447">    return &quot;PART decision list\n------------------\n\n&quot; + m_root.toString();</span>
+  }
+  
+  /**
+   * Returns a superconcise version of the model
+   * 
+   * @return a concise version of the model
+   */
+  public String toSummaryString() {
+
+<span class="nc" id="L457">    return &quot;Number of rules: &quot; + m_root.numRules() + &quot;\n&quot;;</span>
+  }
+  
+  /**
+   * Return the number of rules.
+   * @return the number of rules
+   */
+  public double measureNumRules() {
+<span class="nc" id="L465">    return m_root.numRules();</span>
+  }
+  
+  /**
+   * Returns an enumeration of the additional measure names
+   * @return an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+<span class="nc" id="L473">    Vector newVector = new Vector(1);</span>
+<span class="nc" id="L474">    newVector.addElement(&quot;measureNumRules&quot;);</span>
+<span class="nc" id="L475">    return newVector.elements();</span>
+  }
+
+  /**
+   * Returns the value of the named measure
+   * @param additionalMeasureName the name of the measure to query for its value
+   * @return the value of the named measure
+   * @throws IllegalArgumentException if the named measure is not supported
+   */
+  public double getMeasure(String additionalMeasureName) {
+<span class="nc bnc" id="L485" title="All 2 branches missed.">    if (additionalMeasureName.compareToIgnoreCase(&quot;measureNumRules&quot;) == 0) {</span>
+<span class="nc" id="L486">      return measureNumRules();</span>
+    } else {
+<span class="nc" id="L488">      throw new IllegalArgumentException(additionalMeasureName </span>
+<span class="nc" id="L489">			  + &quot; not supported (PART)&quot;);</span>
+    }
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String confidenceFactorTipText() {
+<span class="nc" id="L499">    return &quot;The confidence factor used for pruning (smaller values incur &quot;</span>
+      + &quot;more pruning).&quot;;
+  }
+
+  /**
+   * Get the value of CF.
+   *
+   * @return Value of CF.
+   */
+  public float getConfidenceFactor() {
+    
+<span class="nc" id="L510">    return m_CF;</span>
+  }
+  
+  /**
+   * Set the value of CF.
+   *
+   * @param v  Value to assign to CF.
+   */
+  public void setConfidenceFactor(float v) {
+    
+<span class="nc" id="L520">    m_CF = v;</span>
+<span class="nc" id="L521">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String minNumObjTipText() {
+<span class="nc" id="L529">    return &quot;The minimum number of instances per rule.&quot;;</span>
+  }
+
+  /**
+   * Get the value of minNumObj.
+   *
+   * @return Value of minNumObj.
+   */
+  public int getMinNumObj() {
+    
+<span class="nc" id="L539">    return m_minNumObj;</span>
+  }
+  
+  /**
+   * Set the value of minNumObj.
+   *
+   * @param v  Value to assign to minNumObj.
+   */
+  public void setMinNumObj(int v) {
+    
+<span class="nc" id="L549">    m_minNumObj = v;</span>
+<span class="nc" id="L550">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String reducedErrorPruningTipText() {
+<span class="nc" id="L558">    return &quot;Whether reduced-error pruning is used instead of C.4.5 pruning.&quot;;</span>
+  }
+
+  /**
+   * Get the value of reducedErrorPruning.
+   *
+   * @return Value of reducedErrorPruning.
+   */
+  public boolean getReducedErrorPruning() {
+    
+<span class="nc" id="L568">    return m_reducedErrorPruning;</span>
+  }
+  
+  /**
+   * Set the value of reducedErrorPruning.
+   *
+   * @param v  Value to assign to reducedErrorPruning.
+   */
+  public void setReducedErrorPruning(boolean v) {
+    
+<span class="nc" id="L578">    m_reducedErrorPruning = v;</span>
+<span class="nc" id="L579">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String unprunedTipText() {
+<span class="nc" id="L587">    return &quot;Whether pruning is performed.&quot;;</span>
+  }
+
+  /**
+   * Get the value of unpruned.
+   *
+   * @return Value of unpruned.
+   */
+  public boolean getUnpruned() {
+    
+<span class="nc" id="L597">    return m_unpruned;</span>
+  }
+  
+  /**
+   * Set the value of unpruned.
+   *
+   * @param newunpruned Value to assign to unpruned.
+   */
+  public void setUnpruned(boolean newunpruned) {
+    
+<span class="nc" id="L607">    m_unpruned = newunpruned;</span>
+<span class="nc" id="L608">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numFoldsTipText() {
+<span class="nc" id="L616">    return &quot;Determines the amount of data used for reduced-error pruning. &quot;</span>
+      + &quot; One fold is used for pruning, the rest for growing the rules.&quot;;
+  }
+
+  /**
+   * Get the value of numFolds.
+   *
+   * @return Value of numFolds.
+   */
+  public int getNumFolds() {
+    
+<span class="nc" id="L627">    return m_numFolds;</span>
+  }
+  
+  /**
+   * Set the value of numFolds.
+   *
+   * @param v  Value to assign to numFolds.
+   */
+  public void setNumFolds(int v) {
+    
+<span class="nc" id="L637">    m_numFolds = v;</span>
+<span class="nc" id="L638">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String seedTipText() {
+<span class="nc" id="L646">    return &quot;The seed used for randomizing the data &quot; +</span>
+      &quot;when reduced-error pruning is used.&quot;;
+  }
+
+  /**
+   * Get the value of Seed.
+   *
+   * @return Value of Seed.
+   */
+  public int getSeed() {
+    
+<span class="nc" id="L657">    return m_Seed;</span>
+  }
+  
+  /**
+   * Set the value of Seed.
+   *
+   * @param newSeed Value to assign to Seed.
+   */
+  public void setSeed(int newSeed) {
+    
+<span class="nc" id="L667">    m_Seed = newSeed;</span>
+<span class="nc" id="L668">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String binarySplitsTipText() {
+<span class="nc" id="L676">    return &quot;Whether to use binary splits on nominal attributes when &quot;</span>
+      + &quot;building the partial trees.&quot;;
+  }
+  
+  /**
+   * Get the value of binarySplits.
+   *
+   * @return Value of binarySplits.
+   */
+  public boolean getBinarySplits() {
+    
+<span class="nc" id="L687">    return m_binarySplits;</span>
+  }
+  
+  /**
+   * Set the value of binarySplits.
+   *
+   * @param v  Value to assign to binarySplits.
+   */
+  public void setBinarySplits(boolean v) {
+    
+<span class="nc" id="L697">    m_binarySplits = v;</span>
+<span class="nc" id="L698">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L706">    return RevisionUtils.extract(&quot;$Revision: 1.10 $&quot;);</span>
+  }
+  
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv command line options 
+   */
+  public static void main(String [] argv){
+<span class="nc" id="L715">    runClassifier(new PART(), argv);</span>
+<span class="nc" id="L716">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

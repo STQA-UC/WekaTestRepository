@@ -1,0 +1,771 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>ClassDiscovery.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core</a> &gt; <span class="el_source">ClassDiscovery.java</span></div><h1>ClassDiscovery.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * ClassDiscovery.java
+ * Copyright (C) 2005 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.core;
+
+import java.io.File;
+import java.lang.reflect.Modifier;
+import java.net.URL;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Enumeration;
+import java.util.HashSet;
+import java.util.Hashtable;
+import java.util.StringTokenizer;
+import java.util.Vector;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+
+/**
+ * This class is used for discovering classes that implement a certain
+ * interface or a derived from a certain class.
+ *
+ * @author FracPete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 5377 $
+ * @see StringCompare
+ */
+<span class="nc" id="L46">public class ClassDiscovery</span>
+  implements RevisionHandler {
+
+  /** whether to output some debug information. */
+  public final static boolean VERBOSE = false;
+  
+  /** for caching queries (classname+packagename &amp;lt;-&amp;gt; Vector with classnames). */
+  protected static Hashtable&lt;String,Vector&gt; m_Cache;
+  
+  /** notify if VERBOSE is still on */
+  static {
+    if (VERBOSE)
+      System.err.println(ClassDiscovery.class.getName() + &quot;: VERBOSE ON&quot;);
+  }
+  
+  /**
+   * Checks whether the &quot;otherclass&quot; is a subclass of the given &quot;superclass&quot;.
+   * 
+   * @param superclass      the superclass to check against
+   * @param otherclass      this class is checked whether it is a subclass
+   *                        of the the superclass
+   * @return                TRUE if &quot;otherclass&quot; is a true subclass
+   */
+  public static boolean isSubclass(String superclass, String otherclass) {
+    try {
+<span class="nc" id="L71">      return isSubclass(Class.forName(superclass), Class.forName(otherclass));</span>
+    }
+<span class="nc" id="L73">    catch (Exception e) {</span>
+<span class="nc" id="L74">      return false;</span>
+    }
+  }
+  
+  /**
+   * Checks whether the &quot;otherclass&quot; is a subclass of the given &quot;superclass&quot;.
+   * 
+   * @param superclass      the superclass to check against
+   * @param otherclass      this class is checked whether it is a subclass
+   *                        of the the superclass
+   * @return                TRUE if &quot;otherclass&quot; is a true subclass
+   */
+  public static boolean isSubclass(Class superclass, Class otherclass) {
+    Class       currentclass;
+    boolean     result;
+    
+<span class="fc" id="L90">    result       = false;</span>
+<span class="fc" id="L91">    currentclass = otherclass;</span>
+<span class="fc bfc" id="L92" title="All 2 branches covered.">    do {</span>
+<span class="fc" id="L93">      result = currentclass.equals(superclass);</span>
+      
+      // topmost class reached?
+<span class="fc bfc" id="L96" title="All 2 branches covered.">      if (currentclass.equals(Object.class))</span>
+<span class="fc" id="L97">        break;</span>
+      
+<span class="fc bfc" id="L99" title="All 2 branches covered.">      if (!result)</span>
+<span class="fc" id="L100">        currentclass = currentclass.getSuperclass(); </span>
+    } 
+<span class="fc" id="L102">    while (!result);</span>
+    
+<span class="fc" id="L104">    return result;</span>
+  }
+  
+  /**
+   * Checks whether the given class implements the given interface.
+   * 
+   * @param intf      the interface to look for in the given class
+   * @param cls       the class to check for the interface
+   * @return          TRUE if the class contains the interface 
+   */
+  public static boolean hasInterface(String intf, String cls) {
+    try {
+<span class="fc" id="L116">      return hasInterface(Class.forName(intf), Class.forName(cls));</span>
+    }
+<span class="nc" id="L118">    catch (Exception e) {</span>
+<span class="nc" id="L119">      return false;</span>
+    }
+  }
+  
+  /**
+   * Checks whether the given class implements the given interface.
+   * 
+   * @param intf      the interface to look for in the given class
+   * @param cls       the class to check for the interface
+   * @return          TRUE if the class contains the interface 
+   */
+  public static boolean hasInterface(Class intf, Class cls) {
+    Class[]       intfs;
+    int           i;
+    boolean       result;
+    Class         currentclass;
+    
+<span class="fc" id="L136">    result       = false;</span>
+<span class="fc" id="L137">    currentclass = cls;</span>
+<span class="fc bfc" id="L138" title="All 2 branches covered.">    do {</span>
+      // check all the interfaces, this class implements
+<span class="fc" id="L140">      intfs = currentclass.getInterfaces();</span>
+<span class="fc bfc" id="L141" title="All 2 branches covered.">      for (i = 0; i &lt; intfs.length; i++) {</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        if (intfs[i].equals(intf)) {</span>
+<span class="fc" id="L143">          result = true;</span>
+<span class="fc" id="L144">          break;</span>
+        }
+      }
+
+      // get parent class
+<span class="fc bfc" id="L149" title="All 2 branches covered.">      if (!result) {</span>
+<span class="fc" id="L150">        currentclass = currentclass.getSuperclass();</span>
+        
+        // topmost class reached or no superclass?
+<span class="pc bpc" id="L153" title="1 of 4 branches missed.">        if ( (currentclass == null) || (currentclass.equals(Object.class)) )</span>
+<span class="fc" id="L154">          break;</span>
+      }
+    } 
+<span class="fc" id="L157">    while (!result);</span>
+      
+<span class="fc" id="L159">    return result;</span>
+  }
+  
+  /**
+   * If the given package can be found in this part of the classpath then 
+   * an URL object is returned, otherwise &lt;code&gt;null&lt;/code&gt;.
+   * 
+   * @param classpathPart     the part of the classpath to look for the package
+   * @param pkgname           the package to look for
+   * @return                  if found, the url as string, otherwise null
+   */
+  protected static URL getURL(String classpathPart, String pkgname) {
+    String              urlStr;
+    URL                 result;
+    File                classpathFile;
+    File                file;
+    JarFile             jarfile;
+    Enumeration         enm;
+    String              pkgnameTmp;
+    
+<span class="fc" id="L179">    result = null;</span>
+<span class="fc" id="L180">    urlStr = null;</span>
+
+    try {
+<span class="fc" id="L183">      classpathFile = new File(classpathPart);</span>
+      
+      // directory or jar?
+<span class="fc bfc" id="L186" title="All 2 branches covered.">      if (classpathFile.isDirectory()) {</span>
+        // does the package exist in this directory?
+<span class="fc" id="L188">        file = new File(classpathPart + pkgname);</span>
+<span class="fc bfc" id="L189" title="All 2 branches covered.">        if (file.exists())</span>
+<span class="fc" id="L190">          urlStr = &quot;file:&quot; + classpathPart + pkgname;</span>
+      }
+      else {
+        // is package actually included in jar?
+<span class="fc" id="L194">        jarfile    = new JarFile(classpathPart);</span>
+<span class="fc" id="L195">        enm        = jarfile.entries();</span>
+<span class="fc" id="L196">        pkgnameTmp = pkgname.substring(1);   // remove the leading &quot;/&quot;</span>
+<span class="fc bfc" id="L197" title="All 2 branches covered.">        while (enm.hasMoreElements()) {</span>
+<span class="pc bpc" id="L198" title="1 of 2 branches missed.">          if (enm.nextElement().toString().startsWith(pkgnameTmp)) {</span>
+<span class="nc" id="L199">            urlStr = &quot;jar:file:&quot; + classpathPart + &quot;!&quot; + pkgname;</span>
+<span class="nc" id="L200">            break;</span>
+          }
+        }
+      }
+    }
+<span class="nc" id="L205">    catch (Exception e) {</span>
+      // ignore
+    }
+    
+    // try to generate URL from url string
+<span class="fc bfc" id="L210" title="All 2 branches covered.">    if (urlStr != null) {</span>
+      try {
+<span class="fc" id="L212">        result = new URL(urlStr);</span>
+      }
+<span class="nc" id="L214">      catch (Exception e) {</span>
+<span class="nc" id="L215">        System.err.println(</span>
+<span class="nc" id="L216">            &quot;Trying to create URL from '&quot; + urlStr </span>
+<span class="nc" id="L217">            + &quot;' generates this exception:\n&quot; + e);</span>
+<span class="nc" id="L218">        result = null;</span>
+      }
+    }
+
+<span class="fc" id="L222">    return result;</span>
+  }
+
+  /**
+   * Checks the given packages for classes that inherited from the given class,
+   * in case it's a class, or implement this class, in case it's an interface.
+   *
+   * @param classname       the class/interface to look for
+   * @param pkgnames        the packages to search in
+   * @return                a list with all the found classnames
+   */
+  public static Vector find(String classname, String[] pkgnames) {
+    Vector      result;
+    Class       cls;
+
+<span class="nc" id="L237">    result = new Vector();</span>
+
+    try {
+<span class="nc" id="L240">      cls    = Class.forName(classname);</span>
+<span class="nc" id="L241">      result = find(cls, pkgnames);</span>
+    }
+<span class="nc" id="L243">    catch (Exception e) {</span>
+<span class="nc" id="L244">      e.printStackTrace();</span>
+    }
+
+<span class="nc" id="L247">    return result;</span>
+  }
+
+  /**
+   * Checks the given package for classes that inherited from the given class,
+   * in case it's a class, or implement this class, in case it's an interface.
+   *
+   * @param classname       the class/interface to look for
+   * @param pkgname         the package to search in
+   * @return                a list with all the found classnames
+   */
+  public static Vector find(String classname, String pkgname) {
+    Vector      result;
+    Class       cls;
+
+<span class="nc" id="L262">    result = new Vector();</span>
+
+    try {
+<span class="nc" id="L265">      cls    = Class.forName(classname);</span>
+<span class="nc" id="L266">      result = find(cls, pkgname);</span>
+    }
+<span class="nc" id="L268">    catch (Exception e) {</span>
+<span class="nc" id="L269">      e.printStackTrace();</span>
+    }
+
+<span class="nc" id="L272">    return result;</span>
+  }
+
+  /**
+   * Checks the given packages for classes that inherited from the given class,
+   * in case it's a class, or implement this class, in case it's an interface.
+   *
+   * @param cls             the class/interface to look for
+   * @param pkgnames        the packages to search in
+   * @return                a list with all the found classnames
+   */
+  public static Vector find(Class cls, String[] pkgnames) {
+    Vector	result;
+    int		i;
+    HashSet	names;
+
+<span class="nc" id="L288">    result = new Vector();</span>
+
+<span class="nc" id="L290">    names = new HashSet();</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">    for (i = 0; i &lt; pkgnames.length; i++)</span>
+<span class="nc" id="L292">      names.addAll(find(cls, pkgnames[i]));</span>
+
+    // sort result
+<span class="nc" id="L295">    result.addAll(names);</span>
+<span class="nc" id="L296">    Collections.sort(result, new StringCompare());</span>
+
+<span class="nc" id="L298">    return result;</span>
+  }
+
+  /**
+   * Checks the given package for classes that inherited from the given class,
+   * in case it's a class, or implement this class, in case it's an interface.
+   *
+   * @param cls             the class/interface to look for
+   * @param pkgname         the package to search in
+   * @return                a list with all the found classnames
+   */
+  public static Vector find(Class cls, String pkgname) {
+    Vector                result;
+    StringTokenizer       tok;
+    String                part;
+    String                pkgpath;
+    File                  dir;
+    File[]                files;
+    URL                   url;
+    int                   i;
+    Class                 clsNew;
+    String                classname;
+    JarFile               jar;
+    JarEntry              entry;
+    Enumeration           enm;
+
+
+    // already cached?
+<span class="fc" id="L326">    result = getCache(cls, pkgname);</span>
+    
+<span class="fc bfc" id="L328" title="All 2 branches covered.">    if (result == null) {</span>
+<span class="fc" id="L329">      result = new Vector();</span>
+
+      if (VERBOSE)
+	System.out.println(
+	    &quot;Searching for '&quot; + cls.getName() + &quot;' in '&quot; + pkgname + &quot;':&quot;);
+
+      // turn package into path
+<span class="fc" id="L336">      pkgpath = pkgname.replaceAll(&quot;\\.&quot;, &quot;/&quot;);</span>
+
+      // check all parts of the classpath, to include additional classes from
+      // &quot;parallel&quot; directories/jars, not just the first occurence
+<span class="fc" id="L340">      tok = new StringTokenizer(</span>
+<span class="fc" id="L341">	  System.getProperty(&quot;java.class.path&quot;), </span>
+<span class="fc" id="L342">	  System.getProperty(&quot;path.separator&quot;));</span>
+
+<span class="fc bfc" id="L344" title="All 2 branches covered.">      while (tok.hasMoreTokens()) {</span>
+<span class="fc" id="L345">	part = tok.nextToken();</span>
+	if (VERBOSE)
+	  System.out.println(&quot;Classpath-part: &quot; + part);
+
+	// does package exist in this part of the classpath?
+<span class="fc" id="L350">	url = getURL(part, &quot;/&quot; + pkgpath);</span>
+	if (VERBOSE) {
+	  if (url == null)
+	    System.out.println(&quot;   &quot; + pkgpath + &quot; NOT FOUND&quot;);
+	  else
+	    System.out.println(&quot;   &quot; + pkgpath + &quot; FOUND&quot;);
+	}
+<span class="fc bfc" id="L357" title="All 2 branches covered.">	if (url == null)</span>
+<span class="fc" id="L358">	  continue;</span>
+
+	// find classes
+<span class="fc" id="L361">	dir = new File(part + &quot;/&quot; + pkgpath);</span>
+<span class="pc bpc" id="L362" title="1 of 2 branches missed.">	if (dir.exists()) {</span>
+<span class="fc" id="L363">	  files = dir.listFiles();</span>
+<span class="fc bfc" id="L364" title="All 2 branches covered.">	  for (i = 0; i &lt; files.length; i++) {</span>
+	    // only class files
+<span class="fc bfc" id="L366" title="All 2 branches covered.">	    if (    (!files[i].isFile()) </span>
+<span class="fc bfc" id="L367" title="All 2 branches covered.">		|| (!files[i].getName().endsWith(&quot;.class&quot;)) )</span>
+<span class="fc" id="L368">	      continue;</span>
+
+	    try {
+<span class="fc" id="L371">	      classname =   pkgname + &quot;.&quot; </span>
+<span class="fc" id="L372">	      + files[i].getName().replaceAll(&quot;.*/&quot;, &quot;&quot;)</span>
+<span class="fc" id="L373">	      .replaceAll(&quot;\\.class&quot;, &quot;&quot;);</span>
+<span class="fc" id="L374">	      result.add(classname);</span>
+	    }
+<span class="nc" id="L376">	    catch (Exception e) {</span>
+<span class="nc" id="L377">	      e.printStackTrace();</span>
+	    }
+	  }
+	}
+	else {
+	  try {
+<span class="nc" id="L383">	    jar = new JarFile(part);</span>
+<span class="nc" id="L384">	    enm = jar.entries();</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">	    while (enm.hasMoreElements()) {</span>
+<span class="nc" id="L386">	      entry = (JarEntry) enm.nextElement();</span>
+
+	      // only class files
+<span class="nc bnc" id="L389" title="All 2 branches missed.">	      if (    (entry.isDirectory())</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">		  || (!entry.getName().endsWith(&quot;.class&quot;)) )</span>
+<span class="nc" id="L391">		continue;</span>
+
+<span class="nc" id="L393">	      classname = entry.getName().replaceAll(&quot;\\.class&quot;, &quot;&quot;);</span>
+
+	      // only classes in the particular package
+<span class="nc bnc" id="L396" title="All 2 branches missed.">	      if (!classname.startsWith(pkgpath))</span>
+<span class="nc" id="L397">		continue;</span>
+
+	      // no sub-package
+<span class="nc bnc" id="L400" title="All 2 branches missed.">	      if (classname.substring(pkgpath.length() + 1).indexOf(&quot;/&quot;) &gt; -1)</span>
+<span class="nc" id="L401">		continue;</span>
+
+<span class="nc" id="L403">	      result.add(classname.replaceAll(&quot;/&quot;, &quot;.&quot;));</span>
+	    }
+	  }
+<span class="nc" id="L406">	  catch (Exception e) {</span>
+<span class="nc" id="L407">	    e.printStackTrace();</span>
+	  }
+	}
+      }
+
+      // check classes
+<span class="fc" id="L413">      i = 0;</span>
+<span class="fc bfc" id="L414" title="All 2 branches covered.">      while (i &lt; result.size()) {</span>
+	try {
+<span class="fc" id="L416">	  clsNew = Class.forName((String) result.get(i));</span>
+
+	  // no abstract classes
+<span class="fc bfc" id="L419" title="All 2 branches covered.">	  if (Modifier.isAbstract(clsNew.getModifiers()))</span>
+<span class="fc" id="L420">	    result.remove(i);</span>
+	  // must implement interface
+<span class="fc bfc" id="L422" title="All 4 branches covered.">	  else if ( (cls.isInterface()) &amp;&amp; (!hasInterface(cls, clsNew)) )</span>
+<span class="fc" id="L423">	    result.remove(i);</span>
+	  // must be derived from class
+<span class="fc bfc" id="L425" title="All 4 branches covered.">	  else if ( (!cls.isInterface()) &amp;&amp; (!isSubclass(cls, clsNew)) )</span>
+<span class="fc" id="L426">	    result.remove(i);</span>
+	  else
+<span class="fc" id="L428">	    i++;</span>
+	}
+<span class="nc" id="L430">	catch (Throwable e) {</span>
+<span class="nc" id="L431">	  System.err.println(&quot;Checking class: &quot; + result.get(i));</span>
+<span class="nc" id="L432">	  e.printStackTrace();</span>
+<span class="nc" id="L433">	  result.remove(i);</span>
+	}
+      }
+
+      // sort result
+<span class="fc" id="L438">      Collections.sort(result, new StringCompare());</span>
+
+      // add to cache
+<span class="fc" id="L441">      addCache(cls, pkgname, result);</span>
+    }
+
+<span class="fc" id="L444">    return result;</span>
+  }
+
+  /**
+   * adds all the sub-directories recursively to the list.
+   * 
+   * @param prefix	the path prefix
+   * @param dir		the directory to look in for sub-dirs
+   * @param list	the current list of sub-dirs
+   * @return		the new list of sub-dirs
+   */
+  protected static HashSet getSubDirectories(String prefix, File dir, HashSet list) {
+    File[]	files;
+    int		i;
+    String 	newPrefix;
+    
+    // add directory to the list
+<span class="nc bnc" id="L461" title="All 2 branches missed.">    if (prefix == null)</span>
+<span class="nc" id="L462">      newPrefix = &quot;&quot;;</span>
+<span class="nc bnc" id="L463" title="All 2 branches missed.">    else if (prefix.length() == 0)</span>
+<span class="nc" id="L464">      newPrefix = dir.getName();</span>
+    else
+<span class="nc" id="L466">      newPrefix = prefix + &quot;.&quot; + dir.getName();</span>
+
+<span class="nc bnc" id="L468" title="All 2 branches missed.">    if (newPrefix.length() != 0)</span>
+<span class="nc" id="L469">      list.add(newPrefix);</span>
+    
+    // search for sub-directories
+<span class="nc" id="L472">    files = dir.listFiles();</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">    if (files != null) {</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">      for (i = 0; i &lt; files.length; i++) {</span>
+<span class="nc bnc" id="L475" title="All 2 branches missed.">	if (files[i].isDirectory())</span>
+<span class="nc" id="L476">	  list = getSubDirectories(newPrefix, files[i], list);</span>
+      }
+    }
+      
+<span class="nc" id="L480">    return list;</span>
+  }
+  
+  /**
+   * Lists all packages it can find in the classpath.
+   *
+   * @return                a list with all the found packages
+   */
+  public static Vector findPackages() {
+    Vector		result;
+    StringTokenizer	tok;
+    String		part;
+    File		file;
+    JarFile		jar;
+    JarEntry		entry;
+    Enumeration		enm;
+    HashSet		set;
+
+<span class="nc" id="L498">    result = new Vector();</span>
+<span class="nc" id="L499">    set    = new HashSet();</span>
+    
+    // check all parts of the classpath, to include additional classes from
+    // &quot;parallel&quot; directories/jars, not just the first occurence
+<span class="nc" id="L503">    tok = new StringTokenizer(</span>
+<span class="nc" id="L504">        System.getProperty(&quot;java.class.path&quot;), </span>
+<span class="nc" id="L505">        System.getProperty(&quot;path.separator&quot;));</span>
+
+<span class="nc bnc" id="L507" title="All 2 branches missed.">    while (tok.hasMoreTokens()) {</span>
+<span class="nc" id="L508">      part = tok.nextToken();</span>
+      if (VERBOSE)
+        System.out.println(&quot;Classpath-part: &quot; + part);
+      
+      // find classes
+<span class="nc" id="L513">      file = new File(part);</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">      if (file.isDirectory()) {</span>
+<span class="nc" id="L515">	set = getSubDirectories(null, file, set);</span>
+      }
+<span class="nc bnc" id="L517" title="All 2 branches missed.">      else if (file.exists()) {</span>
+        try {
+<span class="nc" id="L519">          jar = new JarFile(part);</span>
+<span class="nc" id="L520">          enm = jar.entries();</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">          while (enm.hasMoreElements()) {</span>
+<span class="nc" id="L522">            entry = (JarEntry) enm.nextElement();</span>
+            
+            // only directories
+<span class="nc bnc" id="L525" title="All 2 branches missed.">            if (entry.isDirectory())</span>
+<span class="nc" id="L526">              set.add(entry.getName().replaceAll(&quot;/&quot;, &quot;.&quot;).replaceAll(&quot;\\.$&quot;, &quot;&quot;));</span>
+          }
+        }
+<span class="nc" id="L529">        catch (Exception e) {</span>
+<span class="nc" id="L530">          e.printStackTrace();</span>
+        }
+      }
+    }
+
+    // sort result
+<span class="nc" id="L536">    set.remove(&quot;META-INF&quot;);</span>
+<span class="nc" id="L537">    result.addAll(set);</span>
+<span class="nc" id="L538">    Collections.sort(result, new StringCompare());</span>
+
+<span class="nc" id="L540">    return result;</span>
+  }
+
+  /**
+   * initializes the cache for the classnames.
+   */
+  protected static void initCache() {
+<span class="fc bfc" id="L547" title="All 2 branches covered.">    if (m_Cache == null)</span>
+<span class="fc" id="L548">      m_Cache = new Hashtable&lt;String,Vector&gt;();</span>
+<span class="fc" id="L549">  }</span>
+  
+  /**
+   * adds the list of classnames to the cache.
+   * 
+   * @param cls		the class to cache the classnames for
+   * @param pkgname	the package name the classes were found in
+   * @param classnames	the list of classnames to cache
+   */
+  protected static void addCache(Class cls, String pkgname, Vector classnames) {
+<span class="fc" id="L559">    initCache();</span>
+<span class="fc" id="L560">    m_Cache.put(cls.getName() + &quot;-&quot; + pkgname, classnames);</span>
+<span class="fc" id="L561">  }</span>
+  
+  /**
+   * returns the list of classnames associated with this class and package, if
+   * available, otherwise null.
+   * 
+   * @param cls		the class to get the classnames for
+   * @param pkgname	the package name for the classes 
+   * @return		the classnames if found, otherwise null
+   */
+  protected static Vector getCache(Class cls, String pkgname) {
+<span class="fc" id="L572">    initCache();</span>
+<span class="fc" id="L573">    return m_Cache.get(cls.getName() + &quot;-&quot; + pkgname);</span>
+  }
+  
+  /**
+   * clears the cache for class/classnames relation.
+   */
+  public static void clearCache() {
+<span class="nc" id="L580">    initCache();</span>
+<span class="nc" id="L581">    m_Cache.clear();</span>
+<span class="nc" id="L582">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L590">    return RevisionUtils.extract(&quot;$Revision: 5377 $&quot;);</span>
+  }
+
+  /**
+   * Possible calls:
+   * &lt;ul&gt;
+   *    &lt;li&gt;
+   *      weka.core.ClassDiscovery &amp;lt;packages&amp;gt;&lt;br/&gt;
+   *      Prints all the packages in the current classpath
+   *    &lt;/li&gt;
+   *    &lt;li&gt;
+   *      weka.core.ClassDiscovery &amp;lt;classname&amp;gt; &amp;lt;packagename(s)&amp;gt;&lt;br/&gt;
+   *      Prints the classes it found.
+   *    &lt;/li&gt;
+   * &lt;/ul&gt;
+   * 
+   * @param args	the commandline arguments
+   */
+  public static void main(String[] args) {
+    Vector      	list;
+    Vector 		packages;
+    int         	i;
+    StringTokenizer	tok;
+    
+<span class="nc bnc" id="L614" title="All 4 branches missed.">    if ((args.length == 1) &amp;&amp; (args[0].equals(&quot;packages&quot;))) {</span>
+<span class="nc" id="L615">      list = findPackages();</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">      for (i = 0; i &lt; list.size(); i++)</span>
+<span class="nc" id="L617">	System.out.println(list.get(i));</span>
+    }
+<span class="nc bnc" id="L619" title="All 2 branches missed.">    else if (args.length == 2) {</span>
+      // packages
+<span class="nc" id="L621">      packages = new Vector();</span>
+<span class="nc" id="L622">      tok = new StringTokenizer(args[1], &quot;,&quot;);</span>
+<span class="nc bnc" id="L623" title="All 2 branches missed.">      while (tok.hasMoreTokens())</span>
+<span class="nc" id="L624">        packages.add(tok.nextToken());</span>
+      
+      // search
+<span class="nc" id="L627">      list = ClassDiscovery.find(</span>
+<span class="nc" id="L628">  		args[0], </span>
+<span class="nc" id="L629">  		(String[]) packages.toArray(new String[packages.size()]));</span>
+
+      // print result, if any
+<span class="nc" id="L632">      System.out.println(</span>
+<span class="nc" id="L633">          &quot;Searching for '&quot; + args[0] + &quot;' in '&quot; + args[1] + &quot;':\n&quot; </span>
+<span class="nc" id="L634">          + &quot;  &quot; + list.size() + &quot; found.&quot;);</span>
+<span class="nc bnc" id="L635" title="All 2 branches missed.">      for (i = 0; i &lt; list.size(); i++)</span>
+<span class="nc" id="L636">        System.out.println(&quot;  &quot; + (i+1) + &quot;. &quot; + list.get(i));</span>
+    }
+    else {
+<span class="nc" id="L639">      System.out.println(&quot;\nUsage:&quot;);</span>
+<span class="nc" id="L640">      System.out.println(</span>
+<span class="nc" id="L641">	  ClassDiscovery.class.getName() + &quot; packages&quot;);</span>
+<span class="nc" id="L642">      System.out.println(&quot;\tlists all packages in the classpath&quot;);</span>
+<span class="nc" id="L643">      System.out.println(</span>
+<span class="nc" id="L644">	  ClassDiscovery.class.getName() + &quot; &lt;classname&gt; &lt;packagename(s)&gt;&quot;);</span>
+<span class="nc" id="L645">      System.out.println(&quot;\tlists classes derived from/implementing 'classname' that&quot;);</span>
+<span class="nc" id="L646">      System.out.println(&quot;\tcan be found in 'packagename(s)' (comma-separated list&quot;);</span>
+<span class="nc" id="L647">      System.out.println();</span>
+<span class="nc" id="L648">      System.exit(1);</span>
+    }
+<span class="nc" id="L650">  }</span>
+  
+  /**
+   * compares two strings. The following order is used:&lt;br/&gt;
+   * &lt;ul&gt;
+   *    &lt;li&gt;case insensitive&lt;/li&gt;
+   *    &lt;li&gt;german umlauts (&amp;auml; , &amp;ouml; etc.) or other non-ASCII letters
+   *    are treated as special chars&lt;/li&gt;
+   *    &lt;li&gt;special chars &amp;lt; numbers &amp;lt; letters&lt;/li&gt;
+   * &lt;/ul&gt;
+   */
+<span class="fc" id="L661">  public static class StringCompare </span>
+    implements Comparator, RevisionHandler {
+
+    /**
+     * appends blanks to the string if its shorter than &lt;code&gt;len&lt;/code&gt;.
+     * 
+     * @param s		the string to pad
+     * @param len	the minimum length for the string to have
+     * @return		the padded string
+     */
+    private String fillUp(String s, int len) {
+<span class="fc bfc" id="L672" title="All 2 branches covered.">      while (s.length() &lt; len)</span>
+<span class="fc" id="L673">        s += &quot; &quot;;</span>
+<span class="fc" id="L674">      return s;</span>
+    }
+    
+    /**
+     * returns the group of the character: 0=special char, 1=number, 2=letter.
+     * 
+     * @param c		the character to check
+     * @return		the group
+     */
+    private int charGroup(char c) {
+      int         result;
+      
+<span class="fc" id="L686">      result = 0;</span>
+      
+<span class="pc bpc" id="L688" title="1 of 4 branches missed.">      if ( (c &gt;= 'a') &amp;&amp; (c &lt;= 'z') )</span>
+<span class="fc" id="L689">        result = 2;</span>
+<span class="pc bpc" id="L690" title="1 of 4 branches missed.">      else if ( (c &gt;= '0') &amp;&amp; (c &lt;= '9') )</span>
+<span class="fc" id="L691">        result = 1;</span>
+      
+<span class="fc" id="L693">      return result;</span>
+    }
+    
+    /**
+     * Compares its two arguments for order.
+     * 
+     * @param o1	the first object
+     * @param o2	the second object
+     * @return		-1 if o1&amp;lt;o2, 0 if o1=o2 and 1 if o1&amp;;gt;o2
+     */    
+    public int compare(Object o1, Object o2) {
+      String        s1;
+      String        s2;
+      int           i;
+      int           result;
+      int           v1;
+      int           v2;
+      
+<span class="fc" id="L711">      result = 0;   // they're equal</span>
+      
+      // get lower case string
+<span class="fc" id="L714">      s1 = o1.toString().toLowerCase();</span>
+<span class="fc" id="L715">      s2 = o2.toString().toLowerCase();</span>
+      
+      // same length
+<span class="fc" id="L718">      s1 = fillUp(s1, s2.length());</span>
+<span class="fc" id="L719">      s2 = fillUp(s2, s1.length());</span>
+      
+<span class="pc bpc" id="L721" title="1 of 2 branches missed.">      for (i = 0; i &lt; s1.length(); i++) {</span>
+        // same char?
+<span class="fc bfc" id="L723" title="All 2 branches covered.">        if (s1.charAt(i) == s2.charAt(i)) {</span>
+<span class="fc" id="L724">          result = 0;</span>
+        }
+        else {
+<span class="fc" id="L727">          v1 = charGroup(s1.charAt(i));</span>
+<span class="fc" id="L728">          v2 = charGroup(s2.charAt(i));</span>
+          
+          // different type (special, number, letter)?
+<span class="fc bfc" id="L731" title="All 2 branches covered.">          if (v1 != v2) {</span>
+<span class="fc bfc" id="L732" title="All 2 branches covered.">            if (v1 &lt; v2)</span>
+<span class="fc" id="L733">              result = -1;</span>
+            else
+<span class="fc" id="L735">              result = 1;</span>
+          }
+          else {
+<span class="fc bfc" id="L738" title="All 2 branches covered.">            if (s1.charAt(i) &lt; s2.charAt(i))</span>
+<span class="fc" id="L739">              result = -1;</span>
+            else
+<span class="fc" id="L741">              result = 1;</span>
+          }
+          
+<span class="fc" id="L744">          break;</span>
+        }
+      }
+      
+<span class="fc" id="L748">      return result;</span>
+    }
+    
+    /**
+     * Indicates whether some other object is &quot;equal to&quot; this Comparator. 
+     * 
+     * @param obj	the object to compare with this Comparator
+     * @return		true if the object is a StringCompare object as well
+     */
+    public boolean equals(Object obj) {
+<span class="nc" id="L758">      return (obj instanceof StringCompare);</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L767">      return RevisionUtils.extract(&quot;$Revision: 5377 $&quot;);</span>
+    }
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

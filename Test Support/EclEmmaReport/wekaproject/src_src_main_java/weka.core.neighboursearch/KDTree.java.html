@@ -1,0 +1,1334 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>KDTree.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core.neighboursearch</a> &gt; <span class="el_source">KDTree.java</span></div><h1>KDTree.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    KDTree.java
+ *    Copyright (C) 2000-2007 University of Waikato
+ *    
+ */
+
+package weka.core.neighboursearch;
+
+import weka.core.DistanceFunction;
+import weka.core.EuclideanDistance;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.core.neighboursearch.kdtrees.KDTreeNode;
+import weka.core.neighboursearch.kdtrees.KDTreeNodeSplitter;
+import weka.core.neighboursearch.kdtrees.SlidingMidPointOfWidestSide;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class implementing the KDTree search algorithm for nearest neighbour search.&lt;br/&gt;
+ * The connection to dataset is only a reference. For the tree structure the indexes are stored in an array. &lt;br/&gt;
+ * Building the tree:&lt;br/&gt;
+ * If a node has &amp;lt;maximal-inst-number&amp;gt; (option -L) instances no further splitting is done. Also if the split would leave one side empty, the branch is not split any further even if the instances in the resulting node are more than &amp;lt;maximal-inst-number&amp;gt; instances.&lt;br/&gt;
+ * **PLEASE NOTE:** The algorithm can not handle missing values, so it is advisable to run ReplaceMissingValues filter if there are any missing values in the dataset.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Jerome H. Friedman, Jon Luis Bentley, Raphael Ari Finkel (1977). An Algorithm for Finding Best Matches in Logarithmic Expected Time. ACM Transactions on Mathematics Software. 3(3):209-226.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Andrew Moore (1991). A tutorial on kd-trees.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;article{Friedman1977,
+ *    author = {Jerome H. Friedman and Jon Luis Bentley and Raphael Ari Finkel},
+ *    journal = {ACM Transactions on Mathematics Software},
+ *    month = {September},
+ *    number = {3},
+ *    pages = {209-226},
+ *    title = {An Algorithm for Finding Best Matches in Logarithmic Expected Time},
+ *    volume = {3},
+ *    year = {1977}
+ * }
+ * 
+ * &amp;#64;techreport{Moore1991,
+ *    author = {Andrew Moore},
+ *    booktitle = {University of Cambridge Computer Laboratory Technical Report No. 209},
+ *    howpublished = {Extract from PhD Thesis},
+ *    title = {A tutorial on kd-trees},
+ *    year = {1991},
+ *    HTTP = {Available from http://www.autonlab.org/autonweb/14665.html}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;classname and options&amp;gt;
+ *  Node splitting method to use.
+ *  (default: weka.core.neighboursearch.kdtrees.SlidingMidPointOfWidestSide)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;value&amp;gt;
+ *  Set minimal width of a box
+ *  (default: 1.0E-2).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -L
+ *  Maximal number of instances in a leaf
+ *  (default: 40).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N
+ *  Normalizing will be done
+ *  (Select dimension for split, with normalising to universe).&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt; 
+ * 
+ * @author Gabi Schmidberger (gabi[at-the-rate]cs[dot]waikato[dot]ac[dot]nz)
+ * @author Malcolm Ware (mfw4[at-the-rate]cs[dot]waikato[dot]ac[dot]nz)
+ * @author Ashraf M. Kibriya (amk14[at-the-rate]cs[dot]waikato[dot]ac[dot]nz)
+ * @version $Revision: 1.3 $
+ */
+public class KDTree
+  extends NearestNeighbourSearch
+  implements TechnicalInformationHandler {
+
+  /** For serialization. */
+  private static final long serialVersionUID = 1505717283763272533L;
+
+  /**
+   * Array holding the distances of the nearest neighbours. It is filled up both
+   * by nearestNeighbour() and kNearestNeighbours().
+   */
+  protected double[] m_DistanceList;
+
+  /**
+   * Indexlist of the instances of this kdtree. Instances get sorted according
+   * to the splits. the nodes of the KDTree just hold their start and end
+   * indices
+   */
+  protected int[] m_InstList;
+
+  /** The root node of the tree. */
+  protected KDTreeNode m_Root;
+
+  /** The node splitter. */
+<span class="nc" id="L135">  protected KDTreeNodeSplitter m_Splitter = new SlidingMidPointOfWidestSide();</span>
+
+  /** Tree stats. */
+  protected int m_NumNodes, m_NumLeaves, m_MaxDepth;
+
+  /** Tree Stats variables. */
+<span class="nc" id="L141">  protected TreePerformanceStats m_TreeStats = null;</span>
+
+  // Constants
+  /** The index of MIN value in attributes' range array. */
+  public static final int MIN = EuclideanDistance.R_MIN;
+  
+  /** The index of MAX value in attributes' range array. */
+  public static final int MAX = EuclideanDistance.R_MAX; 
+  
+  /** The index of WIDTH (MAX-MIN) value in attributes' range array. */
+  public static final int WIDTH = EuclideanDistance.R_WIDTH;
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing detailed
+   * information about the technical background of this class, e.g., paper
+   * reference or book this class is based on.
+   * 
+   * @return		the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation result;
+    TechnicalInformation additional;
+
+<span class="nc" id="L164">    result = new TechnicalInformation(Type.ARTICLE);</span>
+<span class="nc" id="L165">    result.setValue(Field.AUTHOR, &quot;Jerome H. Friedman and Jon Luis Bentley and Raphael Ari Finkel&quot;);</span>
+<span class="nc" id="L166">    result.setValue(Field.YEAR, &quot;1977&quot;);</span>
+<span class="nc" id="L167">    result.setValue(Field.TITLE, &quot;An Algorithm for Finding Best Matches in Logarithmic Expected Time&quot;);</span>
+<span class="nc" id="L168">    result.setValue(Field.JOURNAL, &quot;ACM Transactions on Mathematics Software&quot;);</span>
+<span class="nc" id="L169">    result.setValue(Field.PAGES, &quot;209-226&quot;);</span>
+<span class="nc" id="L170">    result.setValue(Field.MONTH, &quot;September&quot;);</span>
+<span class="nc" id="L171">    result.setValue(Field.VOLUME, &quot;3&quot;);</span>
+<span class="nc" id="L172">    result.setValue(Field.NUMBER, &quot;3&quot;);</span>
+
+<span class="nc" id="L174">    additional = result.add(Type.TECHREPORT);</span>
+<span class="nc" id="L175">    additional.setValue(Field.AUTHOR, &quot;Andrew Moore&quot;);</span>
+<span class="nc" id="L176">    additional.setValue(Field.YEAR, &quot;1991&quot;);</span>
+<span class="nc" id="L177">    additional.setValue(Field.TITLE, &quot;A tutorial on kd-trees&quot;);</span>
+<span class="nc" id="L178">    additional.setValue(Field.HOWPUBLISHED, &quot;Extract from PhD Thesis&quot;);</span>
+<span class="nc" id="L179">    additional.setValue(Field.BOOKTITLE, &quot;University of Cambridge Computer Laboratory Technical Report No. 209&quot;);</span>
+<span class="nc" id="L180">    additional.setValue(Field.HTTP, &quot;Available from http://www.autonlab.org/autonweb/14665.html&quot;);</span>
+
+<span class="nc" id="L182">    return result;</span>
+  }
+
+  /**
+   * Creates a new instance of KDTree.
+   */
+  public KDTree() {
+<span class="nc" id="L189">    super();</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">    if (getMeasurePerformance())</span>
+<span class="nc" id="L191">      m_Stats = m_TreeStats = new TreePerformanceStats();</span>
+<span class="nc" id="L192">  }</span>
+
+  /**
+   * Creates a new instance of KDTree. 
+   * It also builds the tree on supplied set of Instances.
+   * @param insts The instances/points on which the BallTree 
+   * should be built on.
+   */
+  public KDTree(Instances insts) {
+<span class="nc" id="L201">    super(insts);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">    if (getMeasurePerformance())</span>
+<span class="nc" id="L203">      m_Stats = m_TreeStats = new TreePerformanceStats();</span>
+<span class="nc" id="L204">  }</span>
+
+  /**
+   * Builds the KDTree on the supplied set of instances/points. It 
+   * is adviseable to run the replace missing attributes filter 
+   * on the passed instances first.
+   * NOTE: This method should not be called from outside this 
+   * class. Outside classes should call setInstances(Instances)
+   * instead.
+   * 
+   * @param instances	The instances to build the tree on
+   * @throws Exception	if something goes wrong
+   */
+  protected void buildKDTree(Instances instances) throws Exception {
+
+<span class="nc" id="L219">    checkMissing(instances);</span>
+<span class="nc bnc" id="L220" title="All 2 branches missed.">    if (m_EuclideanDistance == null)</span>
+<span class="nc" id="L221">      m_DistanceFunction = m_EuclideanDistance = new EuclideanDistance(</span>
+<span class="nc" id="L222">          instances);</span>
+    else
+<span class="nc" id="L224">      m_EuclideanDistance.setInstances(instances);</span>
+
+<span class="nc" id="L226">    m_Instances = instances;</span>
+<span class="nc" id="L227">    int numInst = m_Instances.numInstances();</span>
+
+    // Make the global index list
+<span class="nc" id="L230">    m_InstList = new int[numInst];</span>
+
+<span class="nc bnc" id="L232" title="All 2 branches missed.">    for (int i = 0; i &lt; numInst; i++) {</span>
+<span class="nc" id="L233">      m_InstList[i] = i;</span>
+    }
+
+<span class="nc" id="L236">    double[][] universe = m_EuclideanDistance.getRanges();</span>
+
+    // initializing internal fields of KDTreeSplitter
+<span class="nc" id="L239">    m_Splitter.setInstances(m_Instances);</span>
+<span class="nc" id="L240">    m_Splitter.setInstanceList(m_InstList);</span>
+<span class="nc" id="L241">    m_Splitter.setEuclideanDistanceFunction(m_EuclideanDistance);</span>
+<span class="nc" id="L242">    m_Splitter.setNodeWidthNormalization(m_NormalizeNodeWidth);</span>
+
+    // building tree
+<span class="nc" id="L245">    m_NumNodes = m_NumLeaves = 1;</span>
+<span class="nc" id="L246">    m_MaxDepth = 0;</span>
+<span class="nc" id="L247">    m_Root = new KDTreeNode(m_NumNodes, 0, m_Instances.numInstances() - 1,</span>
+<span class="nc" id="L248">        universe);</span>
+
+<span class="nc" id="L250">    splitNodes(m_Root, universe, m_MaxDepth + 1);</span>
+<span class="nc" id="L251">  }</span>
+
+  /** 
+   * Recursively splits nodes of a tree starting from the supplied node.
+   * The splitting stops for any node for which the number of instances/points
+   * falls below a given threshold (given by m_MaxInstInLeaf), or if the 
+   * maximum relative width/range of the instances/points 
+   * (i.e. max_i(max(att_i) - min(att_i)) ) falls below a given threshold 
+   * (given by m_MinBoxRelWidth). 
+   * 
+   * @param node The node to start splitting from.
+   * @param universe The attribute ranges of the whole dataset.
+   * @param depth The depth of the supplied node.  
+   * @throws Exception If there is some problem 
+   * splitting.
+   */
+  protected void splitNodes(KDTreeNode node, double[][] universe,
+      int depth) throws Exception {
+<span class="nc" id="L269">    double[][] nodeRanges = m_EuclideanDistance.initializeRanges(m_InstList,</span>
+<span class="nc" id="L270">                                                 node.m_Start, node.m_End);</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">    if (node.numInstances() &lt;= m_MaxInstInLeaf</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">        || getMaxRelativeNodeWidth(nodeRanges, universe) &lt;= m_MinBoxRelWidth)</span>
+<span class="nc" id="L273">      return;</span>
+
+    // splitting a node so it is no longer a leaf
+<span class="nc" id="L276">    m_NumLeaves--;</span>
+
+<span class="nc bnc" id="L278" title="All 2 branches missed.">    if (depth &gt; m_MaxDepth)</span>
+<span class="nc" id="L279">      m_MaxDepth = depth;</span>
+
+<span class="nc" id="L281">    m_Splitter.splitNode(node, m_NumNodes, nodeRanges, universe);</span>
+<span class="nc" id="L282">    m_NumNodes += 2;</span>
+<span class="nc" id="L283">    m_NumLeaves += 2;</span>
+
+<span class="nc" id="L285">    splitNodes(node.m_Left, universe, depth + 1);</span>
+<span class="nc" id="L286">    splitNodes(node.m_Right, universe, depth + 1);</span>
+<span class="nc" id="L287">  }</span>
+
+  /**
+   * Returns (in the supplied heap object) the k nearest 
+   * neighbours of the given instance starting from the give 
+   * tree node. &amp;gt;k neighbours are returned if there are more than 
+   * one neighbours at the kth boundary. NOTE: This method should 
+   * not be used from outside this class. Outside classes should 
+   * call kNearestNeighbours(Instance, int).
+   * 
+   * @param target  The instance to find the nearest neighbours for.
+   * @param node The KDTreeNode to start the search from.
+   * @param k    The number of neighbours to find.
+   * @param heap The MyHeap object to store/update the kNNs found
+   * during the search.
+   * @param distanceToParents The distance of the supplied target 
+   * to the parents of the supplied tree node. 
+   * @throws Exception  if the nearest neighbour could not be found.
+   */
+  protected void findNearestNeighbours(Instance target, KDTreeNode node, int k,
+      MyHeap heap, double distanceToParents) throws Exception {
+<span class="nc bnc" id="L308" title="All 2 branches missed.">    if (node.isALeaf()) {</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">      if (m_TreeStats != null) {</span>
+<span class="nc" id="L310">        m_TreeStats.updatePointCount(node.numInstances());</span>
+<span class="nc" id="L311">        m_TreeStats.incrLeafCount();</span>
+      }
+      double distance;
+      // look at all the instances in this leaf
+<span class="nc bnc" id="L315" title="All 2 branches missed.">      for (int idx = node.m_Start; idx &lt;= node.m_End; idx++) {</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">        if (target == m_Instances.instance(m_InstList[idx])) // for</span>
+                                                              // hold-one-out
+                                                              // cross-validation
+<span class="nc" id="L319">          continue;</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">        if (heap.size() &lt; k) {</span>
+<span class="nc" id="L321">          distance = m_EuclideanDistance.distance(target, m_Instances</span>
+<span class="nc" id="L322">              .instance(m_InstList[idx]), Double.POSITIVE_INFINITY, m_Stats);</span>
+<span class="nc" id="L323">          heap.put(m_InstList[idx], distance);</span>
+        } else {
+<span class="nc" id="L325">          MyHeapElement temp = heap.peek();</span>
+<span class="nc" id="L326">          distance = m_EuclideanDistance.distance(target, m_Instances</span>
+<span class="nc" id="L327">              .instance(m_InstList[idx]), temp.distance, m_Stats);</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">          if (distance &lt; temp.distance) {</span>
+<span class="nc" id="L329">            heap.putBySubstitute(m_InstList[idx], distance);</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">          } else if (distance == temp.distance) {</span>
+<span class="nc" id="L331">            heap.putKthNearest(m_InstList[idx], distance);</span>
+          }
+        }// end else heap.size==k
+      }// end for
+
+    } else {
+<span class="nc bnc" id="L337" title="All 2 branches missed.">      if (m_TreeStats != null) {</span>
+<span class="nc" id="L338">        m_TreeStats.incrIntNodeCount();</span>
+      }
+      KDTreeNode nearer, further;
+<span class="nc" id="L341">      boolean targetInLeft = m_EuclideanDistance.valueIsSmallerEqual(target,</span>
+<span class="nc" id="L342">          node.m_SplitDim, node.m_SplitValue);</span>
+
+<span class="nc bnc" id="L344" title="All 2 branches missed.">      if (targetInLeft) {</span>
+<span class="nc" id="L345">        nearer = node.m_Left;</span>
+<span class="nc" id="L346">        further = node.m_Right;</span>
+      } else {
+<span class="nc" id="L348">        nearer = node.m_Right;</span>
+<span class="nc" id="L349">        further = node.m_Left;</span>
+      }
+<span class="nc" id="L351">      findNearestNeighbours(target, nearer, k, heap, distanceToParents);</span>
+
+      // ... now look in further half if maxDist reaches into it
+<span class="nc bnc" id="L354" title="All 2 branches missed.">      if (heap.size() &lt; k) { // if haven't found the first k</span>
+<span class="nc" id="L355">        double distanceToSplitPlane = distanceToParents</span>
+<span class="nc" id="L356">            + m_EuclideanDistance.sqDifference(node.m_SplitDim, target</span>
+<span class="nc" id="L357">                .value(node.m_SplitDim), node.m_SplitValue);</span>
+<span class="nc" id="L358">        findNearestNeighbours(target, further, k, heap, distanceToSplitPlane);</span>
+<span class="nc" id="L359">        return;</span>
+      } else { // else see if ball centered at query intersects with the other
+                // side.
+<span class="nc" id="L362">        double distanceToSplitPlane = distanceToParents</span>
+<span class="nc" id="L363">            + m_EuclideanDistance.sqDifference(node.m_SplitDim, target</span>
+<span class="nc" id="L364">                .value(node.m_SplitDim), node.m_SplitValue);</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">        if (heap.peek().distance &gt;= distanceToSplitPlane) {</span>
+<span class="nc" id="L366">          findNearestNeighbours(target, further, k, heap, distanceToSplitPlane);</span>
+        }
+      }// end else
+    }// end else_if an internal node
+<span class="nc" id="L370">  }</span>
+
+  /**
+   * Returns the k nearest neighbours of the supplied instance.
+   * &amp;gt;k neighbours are returned if there are more than one 
+   * neighbours at the kth boundary. 
+   * 
+   * @param target	The instance to find the nearest neighbours for.
+   * @param k 		The number of neighbours to find.
+   * @return The k nearest neighbours (or &amp;gt;k if more there are than
+   * one neighbours at the kth boundary). 
+   * @throws Exception 	if the nearest neighbour could not be found.
+   */
+  public Instances kNearestNeighbours(Instance target, int k) throws Exception {
+<span class="nc" id="L384">    checkMissing(target);</span>
+
+<span class="nc bnc" id="L386" title="All 2 branches missed.">    if (m_Stats != null)</span>
+<span class="nc" id="L387">      m_Stats.searchStart();</span>
+
+<span class="nc" id="L389">    MyHeap heap = new MyHeap(k);</span>
+<span class="nc" id="L390">    findNearestNeighbours(target, m_Root, k, heap, 0.0);</span>
+
+<span class="nc bnc" id="L392" title="All 2 branches missed.">    if (m_Stats != null)</span>
+<span class="nc" id="L393">      m_Stats.searchFinish();</span>
+
+<span class="nc" id="L395">    Instances neighbours = new Instances(m_Instances, (heap.size() + heap</span>
+<span class="nc" id="L396">        .noOfKthNearest()));</span>
+<span class="nc" id="L397">    m_DistanceList = new double[heap.size() + heap.noOfKthNearest()];</span>
+<span class="nc" id="L398">    int[] indices = new int[heap.size() + heap.noOfKthNearest()];</span>
+<span class="nc" id="L399">    int i = indices.length - 1;</span>
+    MyHeapElement h;
+<span class="nc bnc" id="L401" title="All 2 branches missed.">    while (heap.noOfKthNearest() &gt; 0) {</span>
+<span class="nc" id="L402">      h = heap.getKthNearest();</span>
+<span class="nc" id="L403">      indices[i] = h.index;</span>
+<span class="nc" id="L404">      m_DistanceList[i] = h.distance;</span>
+<span class="nc" id="L405">      i--;</span>
+    }
+<span class="nc bnc" id="L407" title="All 2 branches missed.">    while (heap.size() &gt; 0) {</span>
+<span class="nc" id="L408">      h = heap.get();</span>
+<span class="nc" id="L409">      indices[i] = h.index;</span>
+<span class="nc" id="L410">      m_DistanceList[i] = h.distance;</span>
+<span class="nc" id="L411">      i--;</span>
+    }
+<span class="nc" id="L413">    m_DistanceFunction.postProcessDistances(m_DistanceList);</span>
+
+<span class="nc bnc" id="L415" title="All 2 branches missed.">    for (int idx = 0; idx &lt; indices.length; idx++) {</span>
+<span class="nc" id="L416">      neighbours.add(m_Instances.instance(indices[idx]));</span>
+    }
+
+<span class="nc" id="L419">    return neighbours;</span>
+  }
+  
+
+  /**
+   * Returns the nearest neighbour of the supplied target 
+   * instance. 
+   *  
+   * @param target	The instance to find the nearest neighbour for.
+   * @return The nearest neighbour from among the previously 
+   * supplied training instances.
+   * @throws Exception 	if the neighbours could not be found.
+   */
+  public Instance nearestNeighbour(Instance target) throws Exception {
+<span class="nc" id="L433">    return (kNearestNeighbours(target, 1)).instance(0);</span>
+  }
+  
+  /**
+   * Returns the distances to the kNearest or 1 nearest neighbour currently
+   * found with either the kNearestNeighbours or the nearestNeighbour method.
+   * 
+   * @return array containing the distances of the
+   *         nearestNeighbours. The length and ordering of the array 
+   *         is the same as that of the instances returned by 
+   *         nearestNeighbour functions.
+   * @throws Exception 	if called before calling kNearestNeighbours or
+   * 			nearestNeighbours.
+   */
+  public double[] getDistances() throws Exception {
+<span class="nc bnc" id="L448" title="All 4 branches missed.">    if (m_Instances == null || m_DistanceList == null)</span>
+<span class="nc" id="L449">      throw new Exception(&quot;The tree has not been supplied with a set of &quot;</span>
+          + &quot;instances or getDistances() has been called &quot;
+          + &quot;before calling kNearestNeighbours().&quot;);
+<span class="nc" id="L452">    return m_DistanceList;</span>
+  }
+  
+
+  /**
+   * Builds the KDTree on the given set of instances.
+   * @param instances The insts on which the KDTree is to be 
+   * built. 
+   * @throws Exception If some error occurs while 
+   * building the KDTree
+   */
+  public void setInstances(Instances instances) throws Exception {
+<span class="nc" id="L464">    super.setInstances(instances);</span>
+<span class="nc" id="L465">    buildKDTree(instances);</span>
+<span class="nc" id="L466">  }</span>
+  
+
+  /**
+   * Adds one instance to the KDTree. This updates the KDTree structure to take
+   * into account the newly added training instance.
+   * 
+   * @param instance 	the instance to be added. Usually the newly added instance in the
+   *          		training set.
+   * @throws Exception If the instance cannot be added.
+   */
+  public void update(Instance instance) throws Exception { // better to change
+                                                            // to addInstance
+<span class="nc bnc" id="L479" title="All 2 branches missed.">    if (m_Instances == null)</span>
+<span class="nc" id="L480">      throw new Exception(&quot;No instances supplied yet. Have to call &quot;</span>
+          + &quot;setInstances(instances) with a set of Instances &quot; + &quot;first.&quot;);
+
+<span class="nc" id="L483">    addInstanceInfo(instance);</span>
+<span class="nc" id="L484">    addInstanceToTree(instance, m_Root);</span>
+<span class="nc" id="L485">  }</span>
+
+  /**
+   * Recursively adds an instance to the tree starting from
+   * the supplied KDTreeNode.
+   * NOTE: This should not be called by outside classes,
+   * outside classes should instead call update(Instance)
+   * method. 
+   *  
+   * @param inst The instance to add to the tree
+   * @param node The node to start the recursive search 
+   * from, for the leaf node where the supplied instance 
+   * would go.
+   * @throws Exception If some error occurs while adding
+   * the instance.
+   */
+  protected void addInstanceToTree(Instance inst, KDTreeNode node)
+      throws Exception {
+<span class="nc bnc" id="L503" title="All 2 branches missed.">    if (node.isALeaf()) {</span>
+<span class="nc" id="L504">      int instList[] = new int[m_Instances.numInstances()];</span>
+      try {
+<span class="nc" id="L506">        System.arraycopy(m_InstList, 0, instList, 0, node.m_End + 1); // m_InstList.squeezeIn(m_End,</span>
+                                                                      // index);
+<span class="nc bnc" id="L508" title="All 2 branches missed.">        if (node.m_End &lt; m_InstList.length - 1)</span>
+<span class="nc" id="L509">          System.arraycopy(m_InstList, node.m_End + 1, instList,</span>
+<span class="nc" id="L510">              node.m_End + 2, m_InstList.length - node.m_End - 1);</span>
+<span class="nc" id="L511">        instList[node.m_End + 1] = m_Instances.numInstances() - 1;</span>
+<span class="nc" id="L512">      } catch (ArrayIndexOutOfBoundsException ex) {</span>
+<span class="nc" id="L513">        System.err.println(&quot;m_InstList.length: &quot; + m_InstList.length</span>
+<span class="nc" id="L514">            + &quot; instList.length: &quot; + instList.length + &quot;node.m_End+1: &quot;</span>
+<span class="nc" id="L515">            + (node.m_End + 1) + &quot;m_InstList.length-node.m_End+1: &quot;</span>
+<span class="nc" id="L516">            + (m_InstList.length - node.m_End - 1));</span>
+<span class="nc" id="L517">        throw ex;</span>
+      }
+<span class="nc" id="L519">      m_InstList = instList;</span>
+
+<span class="nc" id="L521">      node.m_End++;</span>
+<span class="nc" id="L522">      node.m_NodeRanges = m_EuclideanDistance.updateRanges(inst,</span>
+<span class="nc" id="L523">          node.m_NodeRanges);</span>
+
+<span class="nc" id="L525">      m_Splitter.setInstanceList(m_InstList);</span>
+
+      // split this leaf node if necessary
+<span class="nc" id="L528">      double[][] universe = m_EuclideanDistance.getRanges();</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">      if (node.numInstances() &gt; m_MaxInstInLeaf</span>
+<span class="nc bnc" id="L530" title="All 2 branches missed.">          &amp;&amp; getMaxRelativeNodeWidth(node.m_NodeRanges, universe) &gt; m_MinBoxRelWidth) {</span>
+<span class="nc" id="L531">        m_Splitter.splitNode(node, m_NumNodes, node.m_NodeRanges, universe);</span>
+<span class="nc" id="L532">        m_NumNodes += 2;</span>
+      }
+    }// end if node is a leaf
+    else {
+<span class="nc bnc" id="L536" title="All 2 branches missed.">      if (m_EuclideanDistance.valueIsSmallerEqual(inst, node.m_SplitDim,</span>
+<span class="nc" id="L537">          node.m_SplitValue)) {</span>
+<span class="nc" id="L538">        addInstanceToTree(inst, node.m_Left);</span>
+<span class="nc" id="L539">        afterAddInstance(node.m_Right);</span>
+      } else
+<span class="nc" id="L541">        addInstanceToTree(inst, node.m_Right);</span>
+
+<span class="nc" id="L543">      node.m_End++;</span>
+<span class="nc" id="L544">      node.m_NodeRanges = m_EuclideanDistance.updateRanges(inst,</span>
+<span class="nc" id="L545">          node.m_NodeRanges);</span>
+    }
+<span class="nc" id="L547">  }</span>
+
+  /**
+   * Corrects the start and end indices of a 
+   * KDTreeNode after an instance is added to
+   * the tree. The start and end indices for
+   * the master index array (m_InstList) 
+   * stored in the nodes need to be updated
+   * for all nodes in the subtree on the 
+   * right of a node where the instance 
+   * was added. 
+   * NOTE: No outside class should call this
+   * method.
+   * 
+   * @param node KDTreeNode whose start and end indices 
+   * need to be updated.
+   */
+  protected void afterAddInstance(KDTreeNode node) {
+<span class="nc" id="L565">    node.m_Start++;</span>
+<span class="nc" id="L566">    node.m_End++;</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">    if (!node.isALeaf()) {</span>
+<span class="nc" id="L568">      afterAddInstance(node.m_Left);</span>
+<span class="nc" id="L569">      afterAddInstance(node.m_Right);</span>
+    }
+<span class="nc" id="L571">  }</span>
+
+  /**
+   * Adds one instance to KDTree loosly. It only changes the ranges in
+   * EuclideanDistance, and does not affect the structure of the KDTree.
+   * 
+   * @param instance	the new instance. Usually this is the test instance 
+   * 			supplied to update the range of attributes in the distance function.
+   */
+  public void addInstanceInfo(Instance instance) {
+<span class="nc" id="L581">    m_EuclideanDistance.updateRanges(instance);</span>
+<span class="nc" id="L582">  }</span>
+
+  /**
+   * Checks if there is any instance with missing values. Throws an exception if
+   * there is, as KDTree does not handle missing values.
+   * 
+   * @param instances	the instances to check
+   * @throws Exception	if missing values are encountered
+   */
+  protected void checkMissing(Instances instances) throws Exception {
+<span class="nc bnc" id="L592" title="All 2 branches missed.">    for (int i = 0; i &lt; instances.numInstances(); i++) {</span>
+<span class="nc" id="L593">      Instance ins = instances.instance(i);</span>
+<span class="nc bnc" id="L594" title="All 2 branches missed.">      for (int j = 0; j &lt; ins.numValues(); j++) {</span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">        if (ins.index(j) != ins.classIndex())</span>
+<span class="nc bnc" id="L596" title="All 2 branches missed.">          if (ins.isMissingSparse(j)) {</span>
+<span class="nc" id="L597">            throw new Exception(&quot;ERROR: KDTree can not deal with missing &quot;</span>
+                + &quot;values. Please run ReplaceMissingValues filter &quot;
+                + &quot;on the dataset before passing it on to the KDTree.&quot;);
+          }
+      }
+    }
+<span class="nc" id="L603">  }</span>
+
+  /**
+   * Checks if there is any missing value in the given 
+   * instance.
+   * @param ins The instance to check missing values in.
+   * @throws Exception If there is a missing value in the 
+   * instance.
+   */
+  protected void checkMissing(Instance ins) throws Exception {
+<span class="nc bnc" id="L613" title="All 2 branches missed.">    for (int j = 0; j &lt; ins.numValues(); j++) {</span>
+<span class="nc bnc" id="L614" title="All 2 branches missed.">      if (ins.index(j) != ins.classIndex())</span>
+<span class="nc bnc" id="L615" title="All 2 branches missed.">        if (ins.isMissingSparse(j)) {</span>
+<span class="nc" id="L616">          throw new Exception(&quot;ERROR: KDTree can not deal with missing &quot;</span>
+              + &quot;values. Please run ReplaceMissingValues filter &quot;
+              + &quot;on the dataset before passing it on to the KDTree.&quot;);
+        }
+    }
+<span class="nc" id="L621">  }</span>
+  
+  /** 
+   * Returns the maximum attribute width of instances/points 
+   * in a KDTreeNode relative to the whole dataset. 
+   * 
+   * @param nodeRanges The attribute ranges of the 
+   * KDTreeNode whose maximum relative width is to be 
+   * determined.
+   * @param universe The attribute ranges of the whole
+   * dataset (training instances + test instances so 
+   * far encountered).
+   * @return The maximum relative width
+   */
+  protected double getMaxRelativeNodeWidth(double[][] nodeRanges,
+      double[][] universe) {
+<span class="nc" id="L637">    int widest = widestDim(nodeRanges, universe);</span>
+<span class="nc bnc" id="L638" title="All 2 branches missed.">    if(widest &lt; 0)</span>
+<span class="nc" id="L639">    	return 0.0;</span>
+    else
+<span class="nc" id="L641">    	return nodeRanges[widest][WIDTH] / universe[widest][WIDTH];</span>
+  }
+
+  /**
+   * Returns the widest dimension/attribute in a 
+   * KDTreeNode (widest after normalizing).
+   * @param nodeRanges The attribute ranges of 
+   * the KDTreeNode.
+   * @param universe The attribute ranges of the 
+   * whole dataset (training instances + test 
+   * instances so far encountered).
+   * @return The index of the widest 
+   * dimension/attribute.
+   */
+  protected int widestDim(double[][] nodeRanges, double[][] universe) {
+<span class="nc" id="L656">    final int classIdx = m_Instances.classIndex();</span>
+<span class="nc" id="L657">    double widest = 0.0;</span>
+<span class="nc" id="L658">    int w = -1;</span>
+<span class="nc bnc" id="L659" title="All 2 branches missed.">    if (m_NormalizeNodeWidth) {</span>
+<span class="nc bnc" id="L660" title="All 2 branches missed.">      for (int i = 0; i &lt; nodeRanges.length; i++) {</span>
+<span class="nc" id="L661">        double newWidest = nodeRanges[i][WIDTH] / universe[i][WIDTH];</span>
+<span class="nc bnc" id="L662" title="All 2 branches missed.">        if (newWidest &gt; widest) {</span>
+<span class="nc bnc" id="L663" title="All 2 branches missed.">          if (i == classIdx)</span>
+<span class="nc" id="L664">            continue;</span>
+<span class="nc" id="L665">          widest = newWidest;</span>
+<span class="nc" id="L666">          w = i;</span>
+        }
+      }
+    } else {
+<span class="nc bnc" id="L670" title="All 2 branches missed.">      for (int i = 0; i &lt; nodeRanges.length; i++) {</span>
+<span class="nc bnc" id="L671" title="All 2 branches missed.">        if (nodeRanges[i][WIDTH] &gt; widest) {</span>
+<span class="nc bnc" id="L672" title="All 2 branches missed.">          if (i == classIdx)</span>
+<span class="nc" id="L673">            continue;</span>
+<span class="nc" id="L674">          widest = nodeRanges[i][WIDTH];</span>
+<span class="nc" id="L675">          w = i;</span>
+        }
+      }
+    }
+<span class="nc" id="L679">    return w;</span>
+  }
+
+  /**
+   * Returns the size of the tree.
+   * 
+   * @return 		the size of the tree
+   */
+  public double measureTreeSize() {
+<span class="nc" id="L688">    return m_NumNodes;</span>
+  }
+
+  /**
+   * Returns the number of leaves.
+   * 
+   * @return 		the number of leaves
+   */
+  public double measureNumLeaves() {
+<span class="nc" id="L697">    return m_NumLeaves;</span>
+  }
+
+  /**
+   * Returns the depth of the tree.
+   * 
+   * @return The depth of the tree
+   */
+  public double measureMaxDepth() {
+<span class="nc" id="L706">    return m_MaxDepth;</span>
+  }
+
+  /**
+   * Returns an enumeration of the additional measure names.
+   * 
+   * @return 		an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+<span class="nc" id="L715">    Vector newVector = new Vector();</span>
+<span class="nc" id="L716">    newVector.addElement(&quot;measureTreeSize&quot;);</span>
+<span class="nc" id="L717">    newVector.addElement(&quot;measureNumLeaves&quot;);</span>
+<span class="nc" id="L718">    newVector.addElement(&quot;measureMaxDepth&quot;);</span>
+<span class="nc bnc" id="L719" title="All 2 branches missed.">    if (m_Stats != null) {</span>
+<span class="nc bnc" id="L720" title="All 2 branches missed.">      for (Enumeration e = m_Stats.enumerateMeasures(); e.hasMoreElements();) {</span>
+<span class="nc" id="L721">        newVector.addElement(e.nextElement());</span>
+      }
+    }
+<span class="nc" id="L724">    return newVector.elements();</span>
+  }
+
+  /**
+   * Returns the value of the named measure.
+   * 
+   * @param additionalMeasureName	the name of 
+   * the measure to query for its value.
+   * @return The value of the named measure
+   * @throws IllegalArgumentException	If the named measure 
+   * is not supported.
+   */
+  public double getMeasure(String additionalMeasureName) {
+<span class="nc bnc" id="L737" title="All 2 branches missed.">    if (additionalMeasureName.compareToIgnoreCase(&quot;measureMaxDepth&quot;) == 0) {</span>
+<span class="nc" id="L738">      return measureMaxDepth();</span>
+<span class="nc bnc" id="L739" title="All 2 branches missed.">    } else if (additionalMeasureName.compareToIgnoreCase(&quot;measureTreeSize&quot;) == 0) {</span>
+<span class="nc" id="L740">      return measureTreeSize();</span>
+<span class="nc bnc" id="L741" title="All 2 branches missed.">    } else if (additionalMeasureName.compareToIgnoreCase(&quot;measureNumLeaves&quot;) == 0) {</span>
+<span class="nc" id="L742">      return measureNumLeaves();</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">    } else if (m_Stats != null) {</span>
+<span class="nc" id="L744">      return m_Stats.getMeasure(additionalMeasureName);</span>
+    } else {
+<span class="nc" id="L746">      throw new IllegalArgumentException(additionalMeasureName</span>
+<span class="nc" id="L747">          + &quot; not supported (KDTree)&quot;);</span>
+    }
+  }
+
+  /**
+   * Sets whether to calculate the performance statistics or not.
+   * @param measurePerformance Should be true if performance 
+   * statistics are to be measured.
+   */
+  public void setMeasurePerformance(boolean measurePerformance) {
+<span class="nc" id="L757">    m_MeasurePerformance = measurePerformance;</span>
+<span class="nc bnc" id="L758" title="All 2 branches missed.">    if (m_MeasurePerformance) {</span>
+<span class="nc bnc" id="L759" title="All 2 branches missed.">      if (m_Stats == null)</span>
+<span class="nc" id="L760">        m_Stats = m_TreeStats = new TreePerformanceStats();</span>
+    } else
+<span class="nc" id="L762">      m_Stats = m_TreeStats = null;</span>
+<span class="nc" id="L763">  }</span>
+
+  /**
+   * Assigns instances to centers using KDTree.
+   * 
+   * @param centers	the current centers
+   * @param assignments	the centerindex for each instance
+   * @param pc		the threshold value for pruning.
+   * @throws Exception If there is some problem 
+   * assigning instances to centers.
+   */
+  public void centerInstances(Instances centers, int[] assignments, double pc)
+      throws Exception {
+
+<span class="nc" id="L777">    int[] centList = new int[centers.numInstances()];</span>
+<span class="nc bnc" id="L778" title="All 2 branches missed.">    for (int i = 0; i &lt; centers.numInstances(); i++)</span>
+<span class="nc" id="L779">      centList[i] = i;</span>
+
+<span class="nc" id="L781">    determineAssignments(m_Root, centers, centList, assignments, pc);</span>
+<span class="nc" id="L782">  }</span>
+
+  /**
+   * Assigns instances to the current centers called candidates.
+   * 
+   * @param node The node to start assigning the instances from.
+   * @param centers	all the current centers.
+   * @param candidates	the current centers the method works on.
+   * @param assignments	the center index for each instance.
+   * @param pc the threshold value for pruning.
+   * @throws Exception If there is some problem assigning 
+   * instances to centers.
+   */
+  protected void determineAssignments(KDTreeNode node, Instances centers,
+      int[] candidates, int[] assignments, double pc) throws Exception {
+
+    // reduce number of owners for current hyper rectangle
+<span class="nc" id="L799">    int[] owners = refineOwners(node, centers, candidates);</span>
+
+    // only one owner
+<span class="nc bnc" id="L802" title="All 2 branches missed.">    if (owners.length == 1) {</span>
+      // all instances of this node are owned by one center
+<span class="nc bnc" id="L804" title="All 2 branches missed.">      for (int i = node.m_Start; i &lt;= node.m_End; i++) {</span>
+<span class="nc" id="L805">        assignments[m_InstList[i]] // the assignment of this instance</span>
+<span class="nc" id="L806">        = owners[0]; // is the current owner</span>
+      }
+<span class="nc bnc" id="L808" title="All 2 branches missed.">    } else if (!node.isALeaf()) {</span>
+      // more than one owner and it is not a leaf
+<span class="nc" id="L810">      determineAssignments(node.m_Left, centers, owners, assignments, pc);</span>
+<span class="nc" id="L811">      determineAssignments(node.m_Right, centers, owners, assignments, pc);</span>
+    } else {
+      // this is a leaf and there are more than 1 owner
+      // XMeans.
+<span class="nc" id="L815">      assignSubToCenters(node, centers, owners, assignments);</span>
+    }
+<span class="nc" id="L817">  }</span>
+
+  /**
+   * Refines the ownerlist.
+   * 
+   * @param node The current tree node.
+   * @param centers	all centers
+   * @param candidates	the indexes of those centers that are candidates.
+   * @return list of owners
+   * @throws Exception If some problem occurs in refining.
+   */
+  protected int[] refineOwners(KDTreeNode node, Instances centers,
+      int[] candidates) throws Exception {
+
+<span class="nc" id="L831">    int[] owners = new int[candidates.length];</span>
+<span class="nc" id="L832">    double minDistance = Double.POSITIVE_INFINITY;</span>
+<span class="nc" id="L833">    int ownerIndex = -1;</span>
+    Instance owner;
+<span class="nc" id="L835">    int numCand = candidates.length;</span>
+<span class="nc" id="L836">    double[] distance = new double[numCand];</span>
+<span class="nc" id="L837">    boolean[] inside = new boolean[numCand];</span>
+<span class="nc bnc" id="L838" title="All 2 branches missed.">    for (int i = 0; i &lt; numCand; i++) {</span>
+<span class="nc" id="L839">      distance[i] = distanceToHrect(node, centers.instance(candidates[i]));</span>
+<span class="nc bnc" id="L840" title="All 2 branches missed.">      inside[i] = (distance[i] == 0.0);</span>
+<span class="nc bnc" id="L841" title="All 2 branches missed.">      if (distance[i] &lt; minDistance) {</span>
+<span class="nc" id="L842">        minDistance = distance[i];</span>
+<span class="nc" id="L843">        ownerIndex = i;</span>
+      }
+    }
+<span class="nc" id="L846">    owner = new Instance(centers.instance(candidates[ownerIndex]));</span>
+
+    // are there other owners
+    // loop also goes over already found owner, keeps order
+    // in owner list
+<span class="nc" id="L851">    int index = 0;</span>
+<span class="nc bnc" id="L852" title="All 2 branches missed.">    for (int i = 0; i &lt; numCand; i++) {</span>
+      // 1. all centers that are points within rectangle are owners
+<span class="nc bnc" id="L854" title="All 2 branches missed.">      if ((inside[i])</span>
+
+      // 2. take all points with same distance to the rect. as the owner
+<span class="nc bnc" id="L857" title="All 2 branches missed.">          || (distance[i] == distance[ownerIndex])) {</span>
+
+        // add competitor to owners list
+<span class="nc" id="L860">        owners[index++] = candidates[i];</span>
+      } else {
+
+<span class="nc" id="L863">        Instance competitor = new Instance(centers.instance(candidates[i]));</span>
+        if
+
+        // 3. point has larger distance to rectangle but still can compete
+        // with owner for some points in the rectangle
+<span class="nc bnc" id="L868" title="All 2 branches missed.">        (!candidateIsFullOwner(node, owner, competitor))</span>
+
+        {
+          // also add competitor to owners list
+<span class="nc" id="L872">          owners[index++] = candidates[i];</span>
+        }
+      }
+    }
+<span class="nc" id="L876">    int[] result = new int[index];</span>
+<span class="nc bnc" id="L877" title="All 2 branches missed.">    for (int i = 0; i &lt; index; i++)</span>
+<span class="nc" id="L878">      result[i] = owners[i];</span>
+<span class="nc" id="L879">    return result;</span>
+  }
+
+  /**
+   * Returns the distance between a point and an hyperrectangle.
+   * 
+   * @param node The current node from whose hyperrectangle 
+   * the distance is to be measured.
+   * @param x		the point
+   * @return 		the distance
+   * @throws Exception If some problem occurs in determining 
+   * the distance to the hyperrectangle.
+   */
+  protected double distanceToHrect(KDTreeNode node, Instance x) throws Exception {
+<span class="nc" id="L893">    double distance = 0.0;</span>
+
+<span class="nc" id="L895">    Instance closestPoint = new Instance(x);</span>
+    boolean inside;
+<span class="nc" id="L897">    inside = clipToInsideHrect(node, closestPoint);</span>
+<span class="nc bnc" id="L898" title="All 2 branches missed.">    if (!inside)</span>
+<span class="nc" id="L899">      distance = m_EuclideanDistance.distance(closestPoint, x);</span>
+<span class="nc" id="L900">    return distance;</span>
+  }
+
+  /**
+   * Finds the closest point in the hyper rectangle to a given point. Change the
+   * given point to this closest point by clipping of at all the dimensions to
+   * be clipped of. If the point is inside the rectangle it stays unchanged. The
+   * return value is true if the point was not changed, so the the return value
+   * is true if the point was inside the rectangle.
+   * 
+   * @param node The current KDTreeNode in whose hyperrectangle the closest 
+   * point is to be found.
+   * @param x		a point
+   * @return 		true if the input point stayed unchanged.
+   */
+  protected boolean clipToInsideHrect(KDTreeNode node, Instance x) {
+<span class="nc" id="L916">    boolean inside = true;</span>
+<span class="nc bnc" id="L917" title="All 2 branches missed.">    for (int i = 0; i &lt; m_Instances.numAttributes(); i++) {</span>
+      // TODO treat nominals differently!??
+
+<span class="nc bnc" id="L920" title="All 2 branches missed.">      if (x.value(i) &lt; node.m_NodeRanges[i][MIN]) {</span>
+<span class="nc" id="L921">        x.setValue(i, node.m_NodeRanges[i][MIN]);</span>
+<span class="nc" id="L922">        inside = false;</span>
+<span class="nc bnc" id="L923" title="All 2 branches missed.">      } else if (x.value(i) &gt; node.m_NodeRanges[i][MAX]) {</span>
+<span class="nc" id="L924">        x.setValue(i, node.m_NodeRanges[i][MAX]);</span>
+<span class="nc" id="L925">        inside = false;</span>
+      }
+    }
+<span class="nc" id="L928">    return inside;</span>
+  }
+
+  /**
+   * Returns true if candidate is a full owner in respect to a competitor.
+   * &lt;p&gt;
+   * 
+   * The candidate has been the closer point to the current rectangle or even
+   * has been a point within the rectangle. The competitor is competing with the
+   * candidate for a few points out of the rectangle although it is a point
+   * further away from the rectangle then the candidate. The extrem point is the
+   * corner of the rectangle that is furthest away from the candidate towards
+   * the direction of the competitor.
+   * 
+   * If the distance candidate to this extreme point is smaller then the
+   * distance competitor to this extreme point, then it is proven that none of
+   * the points in the rectangle can be owned be the competitor and the
+   * candidate is full owner of the rectangle in respect to this competitor. See
+   * also D. Pelleg and A. Moore's paper 'Accelerating exact k-means Algorithms
+   * with Geometric Reasoning'.
+   * &lt;p&gt;
+   * 
+   * @param node The current KDTreeNode / hyperrectangle.
+   * @param candidate	instance that is candidate to be owner
+   * @param competitor	instance that competes against the candidate
+   * @return 		true if candidate is full owner
+   * @throws Exception If some problem occurs.
+   */
+  protected boolean candidateIsFullOwner(KDTreeNode node, Instance candidate,
+      Instance competitor) throws Exception {
+    // get extreme point
+<span class="nc" id="L959">    Instance extreme = new Instance(candidate);</span>
+<span class="nc bnc" id="L960" title="All 2 branches missed.">    for (int i = 0; i &lt; m_Instances.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L961" title="All 2 branches missed.">      if ((competitor.value(i) - candidate.value(i)) &gt; 0) {</span>
+<span class="nc" id="L962">        extreme.setValue(i, node.m_NodeRanges[i][MAX]);</span>
+      } else {
+<span class="nc" id="L964">        extreme.setValue(i, node.m_NodeRanges[i][MIN]);</span>
+      }
+    }
+<span class="nc" id="L967">    boolean isFullOwner = m_EuclideanDistance.distance(extreme, candidate) &lt; m_EuclideanDistance</span>
+<span class="nc bnc" id="L968" title="All 2 branches missed.">        .distance(extreme, competitor);</span>
+
+<span class="nc" id="L970">    return isFullOwner;</span>
+  }
+
+  /**
+   * Assigns instances of this node to center. Center to be assign to is decided
+   * by the distance function.
+   * 
+   * @param node The KDTreeNode whose instances are to be assigned.
+   * @param centers	all the input centers
+   * @param centList	the list of centers to work with
+   * @param assignments	index list of last assignments
+   * @throws Exception If there is error assigning the instances.
+   */
+  public void assignSubToCenters(KDTreeNode node, Instances centers,
+      int[] centList, int[] assignments) throws Exception {
+    // todo: undecided situations
+<span class="nc" id="L986">    int numCent = centList.length;</span>
+
+    // WARNING: assignments is &quot;input/output-parameter&quot;
+    // should not be null and the following should not happen
+<span class="nc bnc" id="L990" title="All 2 branches missed.">    if (assignments == null) {</span>
+<span class="nc" id="L991">      assignments = new int[m_Instances.numInstances()];</span>
+<span class="nc bnc" id="L992" title="All 2 branches missed.">      for (int i = 0; i &lt; assignments.length; i++) {</span>
+<span class="nc" id="L993">        assignments[i] = -1;</span>
+      }
+    }
+
+    // set assignments for all instances of this node
+<span class="nc bnc" id="L998" title="All 2 branches missed.">    for (int i = node.m_Start; i &lt;= node.m_End; i++) {</span>
+<span class="nc" id="L999">      int instIndex = m_InstList[i];</span>
+<span class="nc" id="L1000">      Instance inst = m_Instances.instance(instIndex);</span>
+      // if (instList[i] == 664) System.out.println(&quot;664***&quot;);
+<span class="nc" id="L1002">      int newC = m_EuclideanDistance.closestPoint(inst, centers, centList);</span>
+      // int newC = clusterProcessedInstance(inst, centers);
+<span class="nc" id="L1004">      assignments[instIndex] = newC;</span>
+    }
+<span class="nc" id="L1006">  }</span>
+
+  /**
+   * Properties' variables =====================================================
+   */
+
+  /** flag for normalizing. */
+<span class="nc" id="L1013">  boolean m_NormalizeNodeWidth = true;</span>
+
+  /** The euclidean distance function to use. */
+  protected EuclideanDistance m_EuclideanDistance;
+  { // to make sure we have only one object of EuclideanDistance
+<span class="nc bnc" id="L1018" title="All 4 branches missed.">    if (m_DistanceFunction instanceof EuclideanDistance)</span>
+<span class="nc" id="L1019">      m_EuclideanDistance = (EuclideanDistance) m_DistanceFunction;</span>
+    else
+<span class="nc" id="L1021">      m_DistanceFunction = m_EuclideanDistance = new EuclideanDistance();</span>
+  }
+
+  /** minimal relative width of a KDTree rectangle. */
+<span class="nc" id="L1025">  protected double m_MinBoxRelWidth = 1.0E-2;</span>
+
+  /** maximal number of instances in a leaf. */
+<span class="nc" id="L1028">  protected int m_MaxInstInLeaf = 40;</span>
+
+  /**
+   * the GET and SET - functions ===============================================
+   */
+
+  /**
+   * Tip text for this property.
+   * 
+   * @return 		the tip text for this property
+   */
+  public String minBoxRelWidthTipText() {
+<span class="nc" id="L1040">    return &quot;The minimum relative width of the box. A node is only made a leaf &quot;</span>
+        + &quot;if the width of the split dimension of the instances in a node &quot;
+        + &quot;normalized over the width of the split dimension of all the &quot;
+        + &quot;instances is less than or equal to this minimum relative width.&quot;;
+  }
+
+  /**
+   * Sets the minimum relative box width.
+   * 
+   * @param i		the minimum relative box width
+   */
+  public void setMinBoxRelWidth(double i) {
+<span class="nc" id="L1052">    m_MinBoxRelWidth = i;</span>
+<span class="nc" id="L1053">  }</span>
+
+  /**
+   * Gets the minimum relative box width.
+   * 
+   * @return 		the minimum relative box width
+   */
+  public double getMinBoxRelWidth() {
+<span class="nc" id="L1061">    return m_MinBoxRelWidth;</span>
+  }
+
+  /**
+   * Tip text for this property.
+   * 
+   * @return 		the tip text for this property
+   */
+  public String maxInstInLeafTipText() {
+<span class="nc" id="L1070">    return &quot;The max number of instances in a leaf.&quot;;</span>
+  }
+
+  /**
+   * Sets the maximum number of instances in a leaf.
+   * 
+   * @param i		the maximum number of instances in a leaf
+   */
+  public void setMaxInstInLeaf(int i) {
+<span class="nc" id="L1079">    m_MaxInstInLeaf = i;</span>
+<span class="nc" id="L1080">  }</span>
+
+  /**
+   * Get the maximum number of instances in a leaf.
+   * 
+   * @return 		the maximum number of instances in a leaf
+   */
+  public int getMaxInstInLeaf() {
+<span class="nc" id="L1088">    return m_MaxInstInLeaf;</span>
+  }
+
+  /**
+   * Tip text for this property.
+   * 
+   * @return 		the tip text for this property
+   */
+  public String normalizeNodeWidthTipText() {
+<span class="nc" id="L1097">    return &quot;Whether if the widths of the KDTree node should be normalized &quot;</span>
+        + &quot;by the width of the universe or not. &quot;
+        + &quot;Where, width of the node is the range of the split attribute &quot;
+        + &quot;based on the instances in that node, and width of the &quot;
+        + &quot;universe is the range of the split attribute based on all the &quot;
+        + &quot;instances (default: false).&quot;;
+  }
+
+  /**
+   * Sets the flag for normalizing the widths of a KDTree Node by the width of
+   * the dimension in the universe.
+   * 
+   * @param n		true to use normalizing.
+   */
+  public void setNormalizeNodeWidth(boolean n) {
+<span class="nc" id="L1112">    m_NormalizeNodeWidth = n;</span>
+<span class="nc" id="L1113">  }</span>
+
+  /**
+   * Gets the normalize flag.
+   * 
+   * @return 		True if normalizing
+   */
+  public boolean getNormalizeNodeWidth() {
+<span class="nc" id="L1121">    return m_NormalizeNodeWidth;</span>
+  }
+
+  /**
+   * returns the distance function currently in use.
+   * 
+   * @return 		the distance function
+   */
+  public DistanceFunction getDistanceFunction() {
+<span class="nc" id="L1130">    return (DistanceFunction) m_EuclideanDistance;</span>
+  }
+
+  /**
+   * sets the distance function to use for nearest neighbour search.
+   * 
+   * @param df		the distance function to use
+   * @throws Exception	if not EuclideanDistance
+   */
+  public void setDistanceFunction(DistanceFunction df) throws Exception {
+<span class="nc bnc" id="L1140" title="All 2 branches missed.">    if (!(df instanceof EuclideanDistance))</span>
+<span class="nc" id="L1141">      throw new Exception(&quot;KDTree currently only works with &quot;</span>
+          + &quot;EuclideanDistanceFunction.&quot;);
+<span class="nc" id="L1143">    m_DistanceFunction = m_EuclideanDistance = (EuclideanDistance) df;</span>
+<span class="nc" id="L1144">  }</span>
+  
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String nodeSplitterTipText() {
+<span class="nc" id="L1153">    return &quot;The the splitting method to split the nodes of the KDTree.&quot;;</span>
+  }
+
+  /**
+   * Returns the splitting method currently in use to split the nodes of the
+   * KDTree.
+   * 
+   * @return The KDTreeNodeSplitter currently in use.
+   */
+  public KDTreeNodeSplitter getNodeSplitter() {
+<span class="nc" id="L1163">    return m_Splitter;</span>
+  }
+
+  /**
+   * Sets the splitting method to use to split the nodes of the KDTree.
+   * 
+   * @param splitter The KDTreeNodeSplitter to use.
+   */
+  public void setNodeSplitter(KDTreeNodeSplitter splitter) {
+<span class="nc" id="L1172">    m_Splitter = splitter;</span>
+<span class="nc" id="L1173">  }</span>
+
+  /**
+   * Returns a string describing this nearest neighbour search algorithm.
+   * 
+   * @return 		a description of the algorithm for displaying in the
+   *         		explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L1182">    return </span>
+<span class="nc" id="L1183">        &quot;Class implementing the KDTree search algorithm for nearest &quot;</span>
+      + &quot;neighbour search.\n&quot;
+      + &quot;The connection to dataset is only a reference. For the tree &quot;
+      + &quot;structure the indexes are stored in an array. \n&quot;
+      + &quot;Building the tree:\n&quot;
+      + &quot;If a node has &lt;maximal-inst-number&gt; (option -L) instances no &quot;
+      + &quot;further splitting is done. Also if the split would leave one &quot;
+      + &quot;side empty, the branch is not split any further even if the &quot;
+      + &quot;instances in the resulting node are more than &quot;
+      + &quot;&lt;maximal-inst-number&gt; instances.\n&quot;
+      + &quot;**PLEASE NOTE:** The algorithm can not handle missing values, so it &quot;
+      + &quot;is advisable to run ReplaceMissingValues filter if there are any &quot;
+      + &quot;missing values in the dataset.\n\n&quot;
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L1197">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   * 
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L1206">    Vector newVector = new Vector();</span>
+    
+<span class="nc" id="L1208">    newVector.add(new Option(</span>
+<span class="nc" id="L1209">	&quot;\tNode splitting method to use.\n&quot;</span>
+	+ &quot;\t(default: weka.core.neighboursearch.kdtrees.SlidingMidPointOfWidestSide)&quot;,
+<span class="nc" id="L1211">	&quot;S&quot;, 1, &quot;-S &lt;classname and options&gt;&quot;));</span>
+    
+<span class="nc" id="L1213">    newVector.addElement(new Option(</span>
+<span class="nc" id="L1214">	&quot;\tSet minimal width of a box\n&quot;</span>
+        + &quot;\t(default: 1.0E-2).&quot;, 
+<span class="nc" id="L1216">        &quot;W&quot;, 0, &quot;-W &lt;value&gt;&quot;));</span>
+    
+<span class="nc" id="L1218">    newVector.addElement(new Option(</span>
+<span class="nc" id="L1219">	&quot;\tMaximal number of instances in a leaf\n&quot;</span>
+        + &quot;\t(default: 40).&quot;,
+<span class="nc" id="L1221">        &quot;L&quot;, 0, &quot;-L&quot;));</span>
+    
+<span class="nc" id="L1223">    newVector.addElement(new Option(</span>
+<span class="nc" id="L1224">	&quot;\tNormalizing will be done\n&quot;</span>
+        + &quot;\t(Select dimension for split, with normalising to universe).&quot;,
+<span class="nc" id="L1226">        &quot;N&quot;, 0, &quot;-N&quot;));</span>
+    
+<span class="nc" id="L1228">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;classname and options&amp;gt;
+   *  Node splitting method to use.
+   *  (default: weka.core.neighboursearch.kdtrees.SlidingMidPointOfWidestSide)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;value&amp;gt;
+   *  Set minimal width of a box
+   *  (default: 1.0E-2).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -L
+   *  Maximal number of instances in a leaf
+   *  (default: 40).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N
+   *  Normalizing will be done
+   *  (Select dimension for split, with normalising to universe).&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   * 
+   * @param options	the list of options as an array of strings
+   * @throws Exception	if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="nc" id="L1259">    super.setOptions(options);</span>
+
+<span class="nc" id="L1261">    String optionString = Utils.getOption('S', options);</span>
+<span class="nc bnc" id="L1262" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L1263">      String splitMethodSpec[] = Utils.splitOptions(optionString);</span>
+<span class="nc bnc" id="L1264" title="All 2 branches missed.">      if (splitMethodSpec.length == 0) {</span>
+<span class="nc" id="L1265">        throw new Exception(&quot;Invalid DistanceFunction specification string.&quot;);</span>
+      }
+<span class="nc" id="L1267">      String className = splitMethodSpec[0];</span>
+<span class="nc" id="L1268">      splitMethodSpec[0] = &quot;&quot;;</span>
+
+<span class="nc" id="L1270">      setNodeSplitter((KDTreeNodeSplitter) Utils.forName(</span>
+<span class="nc" id="L1271">          KDTreeNodeSplitter.class, className, splitMethodSpec));</span>
+    }
+    else {
+<span class="nc" id="L1274">      setNodeSplitter(new SlidingMidPointOfWidestSide());</span>
+    }
+
+<span class="nc" id="L1277">    optionString = Utils.getOption('W', options);</span>
+<span class="nc bnc" id="L1278" title="All 2 branches missed.">    if (optionString.length() != 0)</span>
+<span class="nc" id="L1279">      setMinBoxRelWidth(Double.parseDouble(optionString));</span>
+    else
+<span class="nc" id="L1281">      setMinBoxRelWidth(1.0E-2);</span>
+
+<span class="nc" id="L1283">    optionString = Utils.getOption('L', options);</span>
+<span class="nc bnc" id="L1284" title="All 2 branches missed.">    if (optionString.length() != 0)</span>
+<span class="nc" id="L1285">      setMaxInstInLeaf(Integer.parseInt(optionString));</span>
+    else
+<span class="nc" id="L1287">      setMaxInstInLeaf(40);</span>
+
+<span class="nc" id="L1289">    setNormalizeNodeWidth(Utils.getFlag('N', options));</span>
+<span class="nc" id="L1290">  }</span>
+
+  /**
+   * Gets the current settings of KDtree.
+   * 
+   * @return 		an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    Vector&lt;String&gt;	result;
+    String[]		options;
+    int			i;
+    
+<span class="nc" id="L1302">    result = new Vector&lt;String&gt;();</span>
+    
+<span class="nc" id="L1304">    options = super.getOptions();</span>
+<span class="nc bnc" id="L1305" title="All 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L1306">      result.add(options[i]);</span>
+    
+<span class="nc" id="L1308">    result.add(&quot;-S&quot;);</span>
+<span class="nc" id="L1309">    result.add(</span>
+<span class="nc" id="L1310">	(m_Splitter.getClass().getName() + &quot; &quot; +</span>
+<span class="nc" id="L1311">	 Utils.joinOptions(m_Splitter.getOptions())).trim());</span>
+
+<span class="nc" id="L1313">    result.add(&quot;-W&quot;);</span>
+<span class="nc" id="L1314">    result.add(&quot;&quot; + getMinBoxRelWidth());</span>
+
+<span class="nc" id="L1316">    result.add(&quot;-L&quot;);</span>
+<span class="nc" id="L1317">    result.add(&quot;&quot; + getMaxInstInLeaf());</span>
+
+<span class="nc bnc" id="L1319" title="All 2 branches missed.">    if (getNormalizeNodeWidth())</span>
+<span class="nc" id="L1320">      result.add(&quot;-N&quot;);</span>
+
+<span class="nc" id="L1322">    return result.toArray(new String[result.size()]);</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1331">    return RevisionUtils.extract(&quot;$Revision: 1.3 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

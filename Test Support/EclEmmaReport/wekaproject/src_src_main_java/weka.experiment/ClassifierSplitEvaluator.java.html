@@ -1,0 +1,1068 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>ClassifierSplitEvaluator.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.experiment</a> &gt; <span class="el_source">ClassifierSplitEvaluator.java</span></div><h1>ClassifierSplitEvaluator.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    ClassifierSplitEvaluator.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+
+package weka.experiment;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.Evaluation;
+import weka.classifiers.rules.ZeroR;
+import weka.core.AdditionalMeasureProducer;
+import weka.core.Attribute;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Summarizable;
+import weka.core.Utils;
+
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectOutputStream;
+import java.io.ObjectStreamClass;
+import java.io.Serializable;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadMXBean;
+import java.util.Enumeration;
+import java.util.Vector;
+
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * A SplitEvaluator that produces results for a classification scheme on a nominal class attribute.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;class name&amp;gt;
+ *  The full class name of the classifier.
+ *  eg: weka.classifiers.bayes.NaiveBayes&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;index&amp;gt;
+ *  The index of the class for which IR statistics
+ *  are to be output. (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;index&amp;gt;
+ *  The index of an attribute to output in the
+ *  results. This attribute should identify an
+ *  instance in order to know which instances are
+ *  in the test set of a cross validation. if 0
+ *  no output (default 0).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P
+ *  Add target and prediction columns to the result
+ *  for each fold.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to classifier weka.classifiers.rules.ZeroR:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * All options after -- will be passed to the classifier.
+ *
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 7513 $
+ */
+public class ClassifierSplitEvaluator 
+  implements SplitEvaluator, OptionHandler, AdditionalMeasureProducer, 
+             RevisionHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = -8511241602760467265L;
+  
+  /** The template classifier */
+<span class="nc" id="L101">  protected Classifier m_Template = new ZeroR();</span>
+
+  /** The classifier used for evaluation */
+  protected Classifier m_Classifier;
+
+  /** The names of any additional measures to look for in SplitEvaluators */
+<span class="nc" id="L107">  protected String [] m_AdditionalMeasures = null;</span>
+
+  /** Array of booleans corresponding to the measures in m_AdditionalMeasures
+      indicating which of the AdditionalMeasures the current classifier
+      can produce */
+<span class="nc" id="L112">  protected boolean [] m_doesProduce = null;</span>
+
+  /** The number of additional measures that need to be filled in
+      after taking into account column constraints imposed by the final
+      destination for results */
+<span class="nc" id="L117">  protected int m_numberAdditionalMeasures = 0;</span>
+
+  /** Holds the statistics for the most recent application of the classifier */
+<span class="nc" id="L120">  protected String m_result = null;</span>
+
+  /** The classifier options (if any) */
+<span class="nc" id="L123">  protected String m_ClassifierOptions = &quot;&quot;;</span>
+
+  /** The classifier version */
+<span class="nc" id="L126">  protected String m_ClassifierVersion = &quot;&quot;;</span>
+
+  /** The length of a key */
+  private static final int KEY_SIZE = 3;
+
+  /** The length of a result */
+  private static final int RESULT_SIZE = 28;
+
+  /** The number of IR statistics */
+  private static final int NUM_IR_STATISTICS = 14;
+  
+  /** The number of averaged IR statistics */
+  private static final int NUM_WEIGHTED_IR_STATISTICS = 8;
+  
+  /** Class index for information retrieval statistics (default 0) */
+<span class="nc" id="L141">  private int m_IRclass = 0;</span>
+  
+  /** Flag for prediction and target columns output.*/
+<span class="nc" id="L144">  private boolean m_predTargetColumn = false;</span>
+
+  /** Attribute index of instance identifier (default -1) */
+<span class="nc" id="L147">  private int m_attID = -1;</span>
+
+  /**
+   * No args constructor.
+   */
+<span class="nc" id="L152">  public ClassifierSplitEvaluator() {</span>
+
+<span class="nc" id="L154">    updateOptions();</span>
+<span class="nc" id="L155">  }</span>
+
+  /**
+   * Returns a string describing this split evaluator
+   * @return a description of the split evaluator suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L163">    return &quot; A SplitEvaluator that produces results for a classification &quot;</span>
+      +&quot;scheme on a nominal class attribute.&quot;;
+  }
+
+  /**
+   * Returns an enumeration describing the available options..
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="nc" id="L174">    Vector newVector = new Vector(4);</span>
+
+<span class="nc" id="L176">    newVector.addElement(new Option(</span>
+<span class="nc" id="L177">	     &quot;\tThe full class name of the classifier.\n&quot;</span>
+	      +&quot;\teg: weka.classifiers.bayes.NaiveBayes&quot;, 
+<span class="nc" id="L179">	     &quot;W&quot;, 1, </span>
+<span class="nc" id="L180">	     &quot;-W &lt;class name&gt;&quot;));</span>
+<span class="nc" id="L181">    newVector.addElement(new Option(</span>
+<span class="nc" id="L182">	     &quot;\tThe index of the class for which IR statistics\n&quot; +</span>
+	     &quot;\tare to be output. (default 1)&quot;,
+<span class="nc" id="L184">	     &quot;C&quot;, 1, </span>
+<span class="nc" id="L185">	     &quot;-C &lt;index&gt;&quot;));</span>
+<span class="nc" id="L186">    newVector.addElement(new Option(</span>
+<span class="nc" id="L187">	     &quot;\tThe index of an attribute to output in the\n&quot; +</span>
+	     &quot;\tresults. This attribute should identify an\n&quot; +
+             &quot;\tinstance in order to know which instances are\n&quot; +
+             &quot;\tin the test set of a cross validation. if 0\n&quot; +
+             &quot;\tno output (default 0).&quot;,
+<span class="nc" id="L192">	     &quot;I&quot;, 1, </span>
+<span class="nc" id="L193">	     &quot;-I &lt;index&gt;&quot;));</span>
+<span class="nc" id="L194">    newVector.addElement(new Option(</span>
+<span class="nc" id="L195">	     &quot;\tAdd target and prediction columns to the result\n&quot; +</span>
+             &quot;\tfor each fold.&quot;,
+<span class="nc" id="L197">	     &quot;P&quot;, 0, </span>
+<span class="nc" id="L198">	     &quot;-P&quot;));</span>
+
+<span class="nc bnc" id="L200" title="All 2 branches missed.">    if ((m_Template != null) &amp;&amp;</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">	(m_Template instanceof OptionHandler)) {</span>
+<span class="nc" id="L202">      newVector.addElement(new Option(</span>
+<span class="nc" id="L203">	     &quot;&quot;,</span>
+<span class="nc" id="L204">	     &quot;&quot;, 0, &quot;\nOptions specific to classifier &quot;</span>
+<span class="nc" id="L205">	     + m_Template.getClass().getName() + &quot;:&quot;));</span>
+<span class="nc" id="L206">      Enumeration enu = ((OptionHandler)m_Template).listOptions();</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">      while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L208">	newVector.addElement(enu.nextElement());</span>
+      }
+    }
+<span class="nc" id="L211">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;class name&amp;gt;
+   *  The full class name of the classifier.
+   *  eg: weka.classifiers.bayes.NaiveBayes&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;index&amp;gt;
+   *  The index of the class for which IR statistics
+   *  are to be output. (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -I &amp;lt;index&amp;gt;
+   *  The index of an attribute to output in the
+   *  results. This attribute should identify an
+   *  instance in order to know which instances are
+   *  in the test set of a cross validation. if 0
+   *  no output (default 0).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P
+   *  Add target and prediction columns to the result
+   *  for each fold.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to classifier weka.classifiers.rules.ZeroR:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * All options after -- will be passed to the classifier.
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    
+<span class="nc" id="L256">    String cName = Utils.getOption('W', options);</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">    if (cName.length() == 0) {</span>
+<span class="nc" id="L258">      throw new Exception(&quot;A classifier must be specified with&quot;</span>
+			  + &quot; the -W option.&quot;);
+    }
+    // Do it first without options, so if an exception is thrown during
+    // the option setting, listOptions will contain options for the actual
+    // Classifier.
+<span class="nc" id="L264">    setClassifier(Classifier.forName(cName, null));</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">    if (getClassifier() instanceof OptionHandler) {</span>
+<span class="nc" id="L266">      ((OptionHandler) getClassifier())</span>
+<span class="nc" id="L267">	.setOptions(Utils.partitionOptions(options));</span>
+<span class="nc" id="L268">      updateOptions();</span>
+    }
+
+<span class="nc" id="L271">    String indexName = Utils.getOption('C', options);</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">    if (indexName.length() != 0) {</span>
+<span class="nc" id="L273">      m_IRclass = (new Integer(indexName)).intValue() - 1;</span>
+    } else {
+<span class="nc" id="L275">      m_IRclass = 0;</span>
+    }
+
+<span class="nc" id="L278">    String attID = Utils.getOption('I', options);</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">    if (attID.length() != 0) {</span>
+<span class="nc" id="L280">      m_attID = (new Integer(attID)).intValue() - 1;</span>
+    } else {
+<span class="nc" id="L282">      m_attID = -1;</span>
+    }
+    
+<span class="nc" id="L285">    m_predTargetColumn = Utils.getFlag('P', options);</span>
+<span class="nc" id="L286">  }</span>
+
+  /**
+   * Gets the current settings of the Classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+
+<span class="nc" id="L295">    String [] classifierOptions = new String [0];</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">    if ((m_Template != null) &amp;&amp; </span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">	(m_Template instanceof OptionHandler)) {</span>
+<span class="nc" id="L298">      classifierOptions = ((OptionHandler)m_Template).getOptions();</span>
+    }
+    
+<span class="nc" id="L301">    String [] options = new String [classifierOptions.length + 8];</span>
+<span class="nc" id="L302">    int current = 0;</span>
+
+<span class="nc bnc" id="L304" title="All 2 branches missed.">    if (getClassifier() != null) {</span>
+<span class="nc" id="L305">      options[current++] = &quot;-W&quot;;</span>
+<span class="nc" id="L306">      options[current++] = getClassifier().getClass().getName();</span>
+    }
+<span class="nc" id="L308">    options[current++] = &quot;-I&quot;; </span>
+<span class="nc" id="L309">    options[current++] = &quot;&quot; + (m_attID + 1);</span>
+
+<span class="nc bnc" id="L311" title="All 2 branches missed.">    if (getPredTargetColumn()) options[current++] = &quot;-P&quot;;</span>
+    
+<span class="nc" id="L313">    options[current++] = &quot;-C&quot;; </span>
+<span class="nc" id="L314">    options[current++] = &quot;&quot; + (m_IRclass + 1);</span>
+<span class="nc" id="L315">    options[current++] = &quot;--&quot;;</span>
+    
+<span class="nc" id="L317">    System.arraycopy(classifierOptions, 0, options, current, </span>
+<span class="nc" id="L318">		     classifierOptions.length);</span>
+<span class="nc" id="L319">    current += classifierOptions.length;</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L321">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="nc" id="L323">    return options;</span>
+  }
+
+  /**
+   * Set a list of method names for additional measures to look for
+   * in Classifiers. This could contain many measures (of which only a
+   * subset may be produceable by the current Classifier) if an experiment
+   * is the type that iterates over a set of properties.
+   * @param additionalMeasures a list of method names
+   */
+  public void setAdditionalMeasures(String [] additionalMeasures) {
+    // System.err.println(&quot;ClassifierSplitEvaluator: setting additional measures&quot;);
+<span class="nc" id="L335">    m_AdditionalMeasures = additionalMeasures;</span>
+    
+    // determine which (if any) of the additional measures this classifier
+    // can produce
+<span class="nc bnc" id="L339" title="All 4 branches missed.">    if (m_AdditionalMeasures != null &amp;&amp; m_AdditionalMeasures.length &gt; 0) {</span>
+<span class="nc" id="L340">      m_doesProduce = new boolean [m_AdditionalMeasures.length];</span>
+
+<span class="nc bnc" id="L342" title="All 2 branches missed.">      if (m_Template instanceof AdditionalMeasureProducer) {</span>
+<span class="nc" id="L343">	Enumeration en = ((AdditionalMeasureProducer)m_Template).</span>
+<span class="nc" id="L344">	  enumerateMeasures();</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">	while (en.hasMoreElements()) {</span>
+<span class="nc" id="L346">	  String mname = (String)en.nextElement();</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">	  for (int j=0;j&lt;m_AdditionalMeasures.length;j++) {</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">	    if (mname.compareToIgnoreCase(m_AdditionalMeasures[j]) == 0) {</span>
+<span class="nc" id="L349">	      m_doesProduce[j] = true;</span>
+	    }
+	  }
+	}
+      }
+    } else {
+<span class="nc" id="L355">      m_doesProduce = null;</span>
+    }
+<span class="nc" id="L357">  }</span>
+
+  /**
+   * Returns an enumeration of any additional measure names that might be
+   * in the classifier
+   * @return an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+<span class="nc" id="L365">    Vector newVector = new Vector();</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">    if (m_Template instanceof AdditionalMeasureProducer) {</span>
+<span class="nc" id="L367">      Enumeration en = ((AdditionalMeasureProducer)m_Template).</span>
+<span class="nc" id="L368">	enumerateMeasures();</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">      while (en.hasMoreElements()) {</span>
+<span class="nc" id="L370">	String mname = (String)en.nextElement();</span>
+<span class="nc" id="L371">	newVector.addElement(mname);</span>
+      }
+    }
+<span class="nc" id="L374">    return newVector.elements();</span>
+  }
+  
+  /**
+   * Returns the value of the named measure
+   * @param additionalMeasureName the name of the measure to query for its value
+   * @return the value of the named measure
+   * @throws IllegalArgumentException if the named measure is not supported
+   */
+  public double getMeasure(String additionalMeasureName) {
+<span class="nc bnc" id="L384" title="All 2 branches missed.">    if (m_Template instanceof AdditionalMeasureProducer) {</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">      if (m_Classifier == null) {</span>
+<span class="nc" id="L386">	throw new IllegalArgumentException(&quot;ClassifierSplitEvaluator: &quot; +</span>
+					   &quot;Can't return result for measure, &quot; +
+					   &quot;classifier has not been built yet.&quot;);
+      }
+<span class="nc" id="L390">      return ((AdditionalMeasureProducer)m_Classifier).</span>
+<span class="nc" id="L391">	getMeasure(additionalMeasureName);</span>
+    } else {
+<span class="nc" id="L393">      throw new IllegalArgumentException(&quot;ClassifierSplitEvaluator: &quot;</span>
+<span class="nc" id="L394">			  +&quot;Can't return value for : &quot;+additionalMeasureName</span>
+<span class="nc" id="L395">			  +&quot;. &quot;+m_Template.getClass().getName()+&quot; &quot;</span>
+<span class="nc" id="L396">			  +&quot;is not an AdditionalMeasureProducer&quot;);</span>
+    }
+  }
+
+  /**
+   * Gets the data types of each of the key columns produced for a single run.
+   * The number of key fields must be constant
+   * for a given SplitEvaluator.
+   *
+   * @return an array containing objects of the type of each key column. The 
+   * objects should be Strings, or Doubles.
+   */
+  public Object [] getKeyTypes() {
+
+<span class="nc" id="L410">    Object [] keyTypes = new Object[KEY_SIZE];</span>
+<span class="nc" id="L411">    keyTypes[0] = &quot;&quot;;</span>
+<span class="nc" id="L412">    keyTypes[1] = &quot;&quot;;</span>
+<span class="nc" id="L413">    keyTypes[2] = &quot;&quot;;</span>
+<span class="nc" id="L414">    return keyTypes;</span>
+  }
+
+  /**
+   * Gets the names of each of the key columns produced for a single run.
+   * The number of key fields must be constant
+   * for a given SplitEvaluator.
+   *
+   * @return an array containing the name of each key column
+   */
+  public String [] getKeyNames() {
+
+<span class="nc" id="L426">    String [] keyNames = new String[KEY_SIZE];</span>
+<span class="nc" id="L427">    keyNames[0] = &quot;Scheme&quot;;</span>
+<span class="nc" id="L428">    keyNames[1] = &quot;Scheme_options&quot;;</span>
+<span class="nc" id="L429">    keyNames[2] = &quot;Scheme_version_ID&quot;;</span>
+<span class="nc" id="L430">    return keyNames;</span>
+  }
+
+  /**
+   * Gets the key describing the current SplitEvaluator. For example
+   * This may contain the name of the classifier used for classifier
+   * predictive evaluation. The number of key fields must be constant
+   * for a given SplitEvaluator.
+   *
+   * @return an array of objects containing the key.
+   */
+  public Object [] getKey(){
+
+<span class="nc" id="L443">    Object [] key = new Object[KEY_SIZE];</span>
+<span class="nc" id="L444">    key[0] = m_Template.getClass().getName();</span>
+<span class="nc" id="L445">    key[1] = m_ClassifierOptions;</span>
+<span class="nc" id="L446">    key[2] = m_ClassifierVersion;</span>
+<span class="nc" id="L447">    return key;</span>
+  }
+
+  /**
+   * Gets the data types of each of the result columns produced for a 
+   * single run. The number of result fields must be constant
+   * for a given SplitEvaluator.
+   *
+   * @return an array containing objects of the type of each result column. 
+   * The objects should be Strings, or Doubles.
+   */
+  public Object [] getResultTypes() {
+<span class="nc bnc" id="L459" title="All 2 branches missed.">    int addm = (m_AdditionalMeasures != null) </span>
+<span class="nc" id="L460">      ? m_AdditionalMeasures.length </span>
+<span class="nc" id="L461">      : 0;</span>
+<span class="nc" id="L462">    int overall_length = RESULT_SIZE+addm;</span>
+<span class="nc" id="L463">    overall_length += NUM_IR_STATISTICS;</span>
+<span class="nc" id="L464">    overall_length += NUM_WEIGHTED_IR_STATISTICS;</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">    if (getAttributeID() &gt;= 0) overall_length += 1;</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">    if (getPredTargetColumn()) overall_length += 2;</span>
+<span class="nc" id="L467">    Object [] resultTypes = new Object[overall_length];</span>
+<span class="nc" id="L468">    Double doub = new Double(0);</span>
+<span class="nc" id="L469">    int current = 0;</span>
+<span class="nc" id="L470">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L471">    resultTypes[current++] = doub;</span>
+
+<span class="nc" id="L473">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L474">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L475">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L476">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L477">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L478">    resultTypes[current++] = doub;</span>
+
+<span class="nc" id="L480">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L481">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L482">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L483">    resultTypes[current++] = doub;</span>
+
+<span class="nc" id="L485">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L486">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L487">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L488">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L489">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L490">    resultTypes[current++] = doub;</span>
+
+<span class="nc" id="L492">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L493">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L494">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L495">    resultTypes[current++] = doub;</span>
+
+    // IR stats
+<span class="nc" id="L498">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L499">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L500">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L501">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L502">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L503">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L504">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L505">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L506">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L507">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L508">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L509">    resultTypes[current++] = doub;</span>
+    
+    // Weighted IR stats
+<span class="nc" id="L512">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L513">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L514">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L515">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L516">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L517">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L518">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L519">    resultTypes[current++] = doub;</span>
+
+    // Timing stats
+<span class="nc" id="L522">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L523">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L524">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L525">    resultTypes[current++] = doub;</span>
+    
+    // sizes
+<span class="nc" id="L528">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L529">    resultTypes[current++] = doub;</span>
+<span class="nc" id="L530">    resultTypes[current++] = doub;</span>
+
+    // ID/Targets/Predictions
+<span class="nc bnc" id="L533" title="All 2 branches missed.">    if (getAttributeID() &gt;= 0) resultTypes[current++] = &quot;&quot;;</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">    if (getPredTargetColumn()){</span>
+<span class="nc" id="L535">        resultTypes[current++] = &quot;&quot;;</span>
+<span class="nc" id="L536">        resultTypes[current++] = &quot;&quot;;</span>
+    }
+    
+    // Classifier defined extras
+<span class="nc" id="L540">    resultTypes[current++] = &quot;&quot;;</span>
+
+    // add any additional measures
+<span class="nc bnc" id="L543" title="All 2 branches missed.">    for (int i=0;i&lt;addm;i++) {</span>
+<span class="nc" id="L544">      resultTypes[current++] = doub;</span>
+    }
+<span class="nc bnc" id="L546" title="All 2 branches missed.">    if (current != overall_length) {</span>
+<span class="nc" id="L547">      throw new Error(&quot;ResultTypes didn't fit RESULT_SIZE&quot;);</span>
+    }
+<span class="nc" id="L549">    return resultTypes;</span>
+  }
+
+  /**
+   * Gets the names of each of the result columns produced for a single run.
+   * The number of result fields must be constant
+   * for a given SplitEvaluator.
+   *
+   * @return an array containing the name of each result column
+   */
+  public String [] getResultNames() {
+<span class="nc bnc" id="L560" title="All 2 branches missed.">    int addm = (m_AdditionalMeasures != null) </span>
+<span class="nc" id="L561">      ? m_AdditionalMeasures.length </span>
+<span class="nc" id="L562">      : 0;</span>
+<span class="nc" id="L563">    int overall_length = RESULT_SIZE+addm;</span>
+<span class="nc" id="L564">    overall_length += NUM_IR_STATISTICS;</span>
+<span class="nc" id="L565">    overall_length += NUM_WEIGHTED_IR_STATISTICS;</span>
+<span class="nc bnc" id="L566" title="All 2 branches missed.">    if (getAttributeID() &gt;= 0) overall_length += 1;</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">    if (getPredTargetColumn()) overall_length += 2;</span>
+
+<span class="nc" id="L569">    String [] resultNames = new String[overall_length];</span>
+<span class="nc" id="L570">    int current = 0;</span>
+<span class="nc" id="L571">    resultNames[current++] = &quot;Number_of_training_instances&quot;;</span>
+<span class="nc" id="L572">    resultNames[current++] = &quot;Number_of_testing_instances&quot;;</span>
+
+    // Basic performance stats - right vs wrong
+<span class="nc" id="L575">    resultNames[current++] = &quot;Number_correct&quot;;</span>
+<span class="nc" id="L576">    resultNames[current++] = &quot;Number_incorrect&quot;;</span>
+<span class="nc" id="L577">    resultNames[current++] = &quot;Number_unclassified&quot;;</span>
+<span class="nc" id="L578">    resultNames[current++] = &quot;Percent_correct&quot;;</span>
+<span class="nc" id="L579">    resultNames[current++] = &quot;Percent_incorrect&quot;;</span>
+<span class="nc" id="L580">    resultNames[current++] = &quot;Percent_unclassified&quot;;</span>
+<span class="nc" id="L581">    resultNames[current++] = &quot;Kappa_statistic&quot;;</span>
+
+    // Sensitive stats - certainty of predictions
+<span class="nc" id="L584">    resultNames[current++] = &quot;Mean_absolute_error&quot;;</span>
+<span class="nc" id="L585">    resultNames[current++] = &quot;Root_mean_squared_error&quot;;</span>
+<span class="nc" id="L586">    resultNames[current++] = &quot;Relative_absolute_error&quot;;</span>
+<span class="nc" id="L587">    resultNames[current++] = &quot;Root_relative_squared_error&quot;;</span>
+
+    // SF stats
+<span class="nc" id="L590">    resultNames[current++] = &quot;SF_prior_entropy&quot;;</span>
+<span class="nc" id="L591">    resultNames[current++] = &quot;SF_scheme_entropy&quot;;</span>
+<span class="nc" id="L592">    resultNames[current++] = &quot;SF_entropy_gain&quot;;</span>
+<span class="nc" id="L593">    resultNames[current++] = &quot;SF_mean_prior_entropy&quot;;</span>
+<span class="nc" id="L594">    resultNames[current++] = &quot;SF_mean_scheme_entropy&quot;;</span>
+<span class="nc" id="L595">    resultNames[current++] = &quot;SF_mean_entropy_gain&quot;;</span>
+
+    // K&amp;B stats
+<span class="nc" id="L598">    resultNames[current++] = &quot;KB_information&quot;;</span>
+<span class="nc" id="L599">    resultNames[current++] = &quot;KB_mean_information&quot;;</span>
+<span class="nc" id="L600">    resultNames[current++] = &quot;KB_relative_information&quot;;</span>
+
+    // IR stats
+<span class="nc" id="L603">    resultNames[current++] = &quot;True_positive_rate&quot;;</span>
+<span class="nc" id="L604">    resultNames[current++] = &quot;Num_true_positives&quot;;</span>
+<span class="nc" id="L605">    resultNames[current++] = &quot;False_positive_rate&quot;;</span>
+<span class="nc" id="L606">    resultNames[current++] = &quot;Num_false_positives&quot;;</span>
+<span class="nc" id="L607">    resultNames[current++] = &quot;True_negative_rate&quot;;</span>
+<span class="nc" id="L608">    resultNames[current++] = &quot;Num_true_negatives&quot;;</span>
+<span class="nc" id="L609">    resultNames[current++] = &quot;False_negative_rate&quot;;</span>
+<span class="nc" id="L610">    resultNames[current++] = &quot;Num_false_negatives&quot;;</span>
+<span class="nc" id="L611">    resultNames[current++] = &quot;IR_precision&quot;;</span>
+<span class="nc" id="L612">    resultNames[current++] = &quot;IR_recall&quot;;</span>
+<span class="nc" id="L613">    resultNames[current++] = &quot;F_measure&quot;;</span>
+<span class="nc" id="L614">    resultNames[current++] = &quot;Area_under_ROC&quot;;</span>
+    
+    // Weighted IR stats
+<span class="nc" id="L617">    resultNames[current++] = &quot;Weighted_avg_true_positive_rate&quot;;</span>
+<span class="nc" id="L618">    resultNames[current++] = &quot;Weighted_avg_false_positive_rate&quot;;</span>
+<span class="nc" id="L619">    resultNames[current++] = &quot;Weighted_avg_true_negative_rate&quot;;</span>
+<span class="nc" id="L620">    resultNames[current++] = &quot;Weighted_avg_false_negative_rate&quot;;</span>
+<span class="nc" id="L621">    resultNames[current++] = &quot;Weighted_avg_IR_precision&quot;;</span>
+<span class="nc" id="L622">    resultNames[current++] = &quot;Weighted_avg_IR_recall&quot;;</span>
+<span class="nc" id="L623">    resultNames[current++] = &quot;Weighted_avg_F_measure&quot;;</span>
+<span class="nc" id="L624">    resultNames[current++] = &quot;Weighted_avg_area_under_ROC&quot;;</span>
+    
+    // Timing stats
+<span class="nc" id="L627">    resultNames[current++] = &quot;Elapsed_Time_training&quot;;</span>
+<span class="nc" id="L628">    resultNames[current++] = &quot;Elapsed_Time_testing&quot;;</span>
+<span class="nc" id="L629">    resultNames[current++] = &quot;UserCPU_Time_training&quot;;</span>
+<span class="nc" id="L630">    resultNames[current++] = &quot;UserCPU_Time_testing&quot;;</span>
+
+    // sizes
+<span class="nc" id="L633">    resultNames[current++] = &quot;Serialized_Model_Size&quot;;</span>
+<span class="nc" id="L634">    resultNames[current++] = &quot;Serialized_Train_Set_Size&quot;;</span>
+<span class="nc" id="L635">    resultNames[current++] = &quot;Serialized_Test_Set_Size&quot;;</span>
+    
+    // ID/Targets/Predictions
+<span class="nc bnc" id="L638" title="All 2 branches missed.">    if (getAttributeID() &gt;= 0) resultNames[current++] = &quot;Instance_ID&quot;;</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">    if (getPredTargetColumn()){</span>
+<span class="nc" id="L640">        resultNames[current++] = &quot;Targets&quot;;</span>
+<span class="nc" id="L641">        resultNames[current++] = &quot;Predictions&quot;;</span>
+    }
+    
+    // Classifier defined extras
+<span class="nc" id="L645">    resultNames[current++] = &quot;Summary&quot;;</span>
+    // add any additional measures
+<span class="nc bnc" id="L647" title="All 2 branches missed.">    for (int i=0;i&lt;addm;i++) {</span>
+<span class="nc" id="L648">      resultNames[current++] = m_AdditionalMeasures[i];</span>
+    }
+<span class="nc bnc" id="L650" title="All 2 branches missed.">    if (current != overall_length) {</span>
+<span class="nc" id="L651">      throw new Error(&quot;ResultNames didn't fit RESULT_SIZE&quot;);</span>
+    }
+<span class="nc" id="L653">    return resultNames;</span>
+  }
+
+  /**
+   * Gets the results for the supplied train and test datasets. Now performs
+   * a deep copy of the classifier before it is built and evaluated (just in case
+   * the classifier is not initialized properly in buildClassifier()).
+   *
+   * @param train the training Instances.
+   * @param test the testing Instances.
+   * @return the results stored in an array. The objects stored in
+   * the array may be Strings, Doubles, or null (for the missing value).
+   * @throws Exception if a problem occurs while getting the results
+   */
+  public Object [] getResult(Instances train, Instances test)
+  throws Exception {
+    
+<span class="nc bnc" id="L670" title="All 2 branches missed.">    if (train.classAttribute().type() != Attribute.NOMINAL) {</span>
+<span class="nc" id="L671">      throw new Exception(&quot;Class attribute is not nominal!&quot;);</span>
+    }
+<span class="nc bnc" id="L673" title="All 2 branches missed.">    if (m_Template == null) {</span>
+<span class="nc" id="L674">      throw new Exception(&quot;No classifier has been specified&quot;);</span>
+    }
+<span class="nc bnc" id="L676" title="All 2 branches missed.">    int addm = (m_AdditionalMeasures != null) ? m_AdditionalMeasures.length : 0;</span>
+<span class="nc" id="L677">    int overall_length = RESULT_SIZE+addm;</span>
+<span class="nc" id="L678">    overall_length += NUM_IR_STATISTICS;</span>
+<span class="nc" id="L679">    overall_length += NUM_WEIGHTED_IR_STATISTICS;</span>
+<span class="nc bnc" id="L680" title="All 2 branches missed.">    if (getAttributeID() &gt;= 0) overall_length += 1;</span>
+<span class="nc bnc" id="L681" title="All 2 branches missed.">    if (getPredTargetColumn()) overall_length += 2;</span>
+    
+<span class="nc" id="L683">    ThreadMXBean thMonitor = ManagementFactory.getThreadMXBean();</span>
+<span class="nc" id="L684">    boolean canMeasureCPUTime = thMonitor.isThreadCpuTimeSupported();</span>
+<span class="nc bnc" id="L685" title="All 4 branches missed.">    if(canMeasureCPUTime &amp;&amp; !thMonitor.isThreadCpuTimeEnabled())</span>
+<span class="nc" id="L686">      thMonitor.setThreadCpuTimeEnabled(true);</span>
+    
+<span class="nc" id="L688">    Object [] result = new Object[overall_length];</span>
+<span class="nc" id="L689">    Evaluation eval = new Evaluation(train);</span>
+<span class="nc" id="L690">    m_Classifier = Classifier.makeCopy(m_Template);</span>
+    double [] predictions;
+<span class="nc" id="L692">    long thID = Thread.currentThread().getId();</span>
+<span class="nc" id="L693">    long CPUStartTime=-1, trainCPUTimeElapsed=-1, testCPUTimeElapsed=-1,</span>
+         trainTimeStart, trainTimeElapsed, testTimeStart, testTimeElapsed;    
+
+    //training classifier
+<span class="nc" id="L697">    trainTimeStart = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L698" title="All 2 branches missed.">    if(canMeasureCPUTime)</span>
+<span class="nc" id="L699">      CPUStartTime = thMonitor.getThreadUserTime(thID);</span>
+<span class="nc" id="L700">    m_Classifier.buildClassifier(train);    </span>
+<span class="nc bnc" id="L701" title="All 2 branches missed.">    if(canMeasureCPUTime)</span>
+<span class="nc" id="L702">      trainCPUTimeElapsed = thMonitor.getThreadUserTime(thID) - CPUStartTime;</span>
+<span class="nc" id="L703">    trainTimeElapsed = System.currentTimeMillis() - trainTimeStart;</span>
+    
+    //testing classifier
+<span class="nc" id="L706">    testTimeStart = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L707" title="All 2 branches missed.">    if(canMeasureCPUTime) </span>
+<span class="nc" id="L708">      CPUStartTime = thMonitor.getThreadUserTime(thID);</span>
+<span class="nc" id="L709">    predictions = eval.evaluateModel(m_Classifier, test);</span>
+<span class="nc bnc" id="L710" title="All 2 branches missed.">    if(canMeasureCPUTime)</span>
+<span class="nc" id="L711">      testCPUTimeElapsed = thMonitor.getThreadUserTime(thID) - CPUStartTime;</span>
+<span class="nc" id="L712">    testTimeElapsed = System.currentTimeMillis() - testTimeStart;</span>
+<span class="nc" id="L713">    thMonitor = null;</span>
+    
+<span class="nc" id="L715">    m_result = eval.toSummaryString();</span>
+    // The results stored are all per instance -- can be multiplied by the
+    // number of instances to get absolute numbers
+<span class="nc" id="L718">    int current = 0;</span>
+<span class="nc" id="L719">    result[current++] = new Double(train.numInstances());</span>
+<span class="nc" id="L720">    result[current++] = new Double(eval.numInstances());</span>
+<span class="nc" id="L721">    result[current++] = new Double(eval.correct());</span>
+<span class="nc" id="L722">    result[current++] = new Double(eval.incorrect());</span>
+<span class="nc" id="L723">    result[current++] = new Double(eval.unclassified());</span>
+<span class="nc" id="L724">    result[current++] = new Double(eval.pctCorrect());</span>
+<span class="nc" id="L725">    result[current++] = new Double(eval.pctIncorrect());</span>
+<span class="nc" id="L726">    result[current++] = new Double(eval.pctUnclassified());</span>
+<span class="nc" id="L727">    result[current++] = new Double(eval.kappa());</span>
+    
+<span class="nc" id="L729">    result[current++] = new Double(eval.meanAbsoluteError());</span>
+<span class="nc" id="L730">    result[current++] = new Double(eval.rootMeanSquaredError());</span>
+<span class="nc" id="L731">    result[current++] = new Double(eval.relativeAbsoluteError());</span>
+<span class="nc" id="L732">    result[current++] = new Double(eval.rootRelativeSquaredError());</span>
+    
+<span class="nc" id="L734">    result[current++] = new Double(eval.SFPriorEntropy());</span>
+<span class="nc" id="L735">    result[current++] = new Double(eval.SFSchemeEntropy());</span>
+<span class="nc" id="L736">    result[current++] = new Double(eval.SFEntropyGain());</span>
+<span class="nc" id="L737">    result[current++] = new Double(eval.SFMeanPriorEntropy());</span>
+<span class="nc" id="L738">    result[current++] = new Double(eval.SFMeanSchemeEntropy());</span>
+<span class="nc" id="L739">    result[current++] = new Double(eval.SFMeanEntropyGain());</span>
+    
+    // K&amp;B stats
+<span class="nc" id="L742">    result[current++] = new Double(eval.KBInformation());</span>
+<span class="nc" id="L743">    result[current++] = new Double(eval.KBMeanInformation());</span>
+<span class="nc" id="L744">    result[current++] = new Double(eval.KBRelativeInformation());</span>
+    
+    // IR stats
+<span class="nc" id="L747">    result[current++] = new Double(eval.truePositiveRate(m_IRclass));</span>
+<span class="nc" id="L748">    result[current++] = new Double(eval.numTruePositives(m_IRclass));</span>
+<span class="nc" id="L749">    result[current++] = new Double(eval.falsePositiveRate(m_IRclass));</span>
+<span class="nc" id="L750">    result[current++] = new Double(eval.numFalsePositives(m_IRclass));</span>
+<span class="nc" id="L751">    result[current++] = new Double(eval.trueNegativeRate(m_IRclass));</span>
+<span class="nc" id="L752">    result[current++] = new Double(eval.numTrueNegatives(m_IRclass));</span>
+<span class="nc" id="L753">    result[current++] = new Double(eval.falseNegativeRate(m_IRclass));</span>
+<span class="nc" id="L754">    result[current++] = new Double(eval.numFalseNegatives(m_IRclass));</span>
+<span class="nc" id="L755">    result[current++] = new Double(eval.precision(m_IRclass));</span>
+<span class="nc" id="L756">    result[current++] = new Double(eval.recall(m_IRclass));</span>
+<span class="nc" id="L757">    result[current++] = new Double(eval.fMeasure(m_IRclass));</span>
+<span class="nc" id="L758">    result[current++] = new Double(eval.areaUnderROC(m_IRclass));</span>
+    
+    // Weighted IR stats
+<span class="nc" id="L761">    result[current++] = new Double(eval.weightedTruePositiveRate());</span>
+<span class="nc" id="L762">    result[current++] = new Double(eval.weightedFalsePositiveRate());</span>
+<span class="nc" id="L763">    result[current++] = new Double(eval.weightedTrueNegativeRate());</span>
+<span class="nc" id="L764">    result[current++] = new Double(eval.weightedFalseNegativeRate());</span>
+<span class="nc" id="L765">    result[current++] = new Double(eval.weightedPrecision());</span>
+<span class="nc" id="L766">    result[current++] = new Double(eval.weightedRecall());</span>
+<span class="nc" id="L767">    result[current++] = new Double(eval.weightedFMeasure());</span>
+<span class="nc" id="L768">    result[current++] = new Double(eval.weightedAreaUnderROC());</span>
+    
+    // Timing stats
+<span class="nc" id="L771">    result[current++] = new Double(trainTimeElapsed / 1000.0);</span>
+<span class="nc" id="L772">    result[current++] = new Double(testTimeElapsed / 1000.0);</span>
+<span class="nc bnc" id="L773" title="All 2 branches missed.">    if(canMeasureCPUTime) {</span>
+<span class="nc" id="L774">      result[current++] = new Double((trainCPUTimeElapsed/1000000.0) / 1000.0);</span>
+<span class="nc" id="L775">      result[current++] = new Double((testCPUTimeElapsed /1000000.0) / 1000.0);</span>
+    }
+    else {
+<span class="nc" id="L778">      result[current++] = new Double(Instance.missingValue());</span>
+<span class="nc" id="L779">      result[current++] = new Double(Instance.missingValue());</span>
+    }
+
+    // sizes
+<span class="nc" id="L783">    ByteArrayOutputStream bastream = new ByteArrayOutputStream();</span>
+<span class="nc" id="L784">    ObjectOutputStream oostream = new ObjectOutputStream(bastream);</span>
+<span class="nc" id="L785">    oostream.writeObject(m_Classifier);</span>
+<span class="nc" id="L786">    result[current++] = new Double(bastream.size());</span>
+<span class="nc" id="L787">    bastream = new ByteArrayOutputStream();</span>
+<span class="nc" id="L788">    oostream = new ObjectOutputStream(bastream);</span>
+<span class="nc" id="L789">    oostream.writeObject(train);</span>
+<span class="nc" id="L790">    result[current++] = new Double(bastream.size());</span>
+<span class="nc" id="L791">    bastream = new ByteArrayOutputStream();</span>
+<span class="nc" id="L792">    oostream = new ObjectOutputStream(bastream);</span>
+<span class="nc" id="L793">    oostream.writeObject(test);</span>
+<span class="nc" id="L794">    result[current++] = new Double(bastream.size());</span>
+    
+    // IDs
+<span class="nc bnc" id="L797" title="All 2 branches missed.">    if (getAttributeID() &gt;= 0){</span>
+<span class="nc" id="L798">      String idsString = &quot;&quot;;</span>
+<span class="nc bnc" id="L799" title="All 2 branches missed.">      if (test.attribute(m_attID).isNumeric()){</span>
+<span class="nc bnc" id="L800" title="All 2 branches missed.">        if (test.numInstances() &gt; 0)</span>
+<span class="nc" id="L801">          idsString += test.instance(0).value(m_attID);</span>
+<span class="nc bnc" id="L802" title="All 2 branches missed.">        for(int i=1;i&lt;test.numInstances();i++){</span>
+<span class="nc" id="L803">          idsString += &quot;|&quot; + test.instance(i).value(m_attID);</span>
+        }
+      } else {
+<span class="nc bnc" id="L806" title="All 2 branches missed.">        if (test.numInstances() &gt; 0)</span>
+<span class="nc" id="L807">          idsString += test.instance(0).stringValue(m_attID);</span>
+<span class="nc bnc" id="L808" title="All 2 branches missed.">        for(int i=1;i&lt;test.numInstances();i++){</span>
+<span class="nc" id="L809">          idsString += &quot;|&quot; + test.instance(i).stringValue(m_attID);</span>
+        }
+      }
+<span class="nc" id="L812">      result[current++] = idsString;</span>
+    }
+    
+<span class="nc bnc" id="L815" title="All 2 branches missed.">    if (getPredTargetColumn()){</span>
+<span class="nc bnc" id="L816" title="All 2 branches missed.">      if (test.classAttribute().isNumeric()){</span>
+        // Targets
+<span class="nc bnc" id="L818" title="All 2 branches missed.">        if (test.numInstances() &gt; 0){</span>
+<span class="nc" id="L819">          String targetsString = &quot;&quot;;</span>
+<span class="nc" id="L820">          targetsString += test.instance(0).value(test.classIndex());</span>
+<span class="nc bnc" id="L821" title="All 2 branches missed.">          for(int i=1;i&lt;test.numInstances();i++){</span>
+<span class="nc" id="L822">            targetsString += &quot;|&quot; + test.instance(i).value(test.classIndex());</span>
+          }
+<span class="nc" id="L824">          result[current++] = targetsString;</span>
+        }
+        
+        // Predictions
+<span class="nc bnc" id="L828" title="All 2 branches missed.">        if (predictions.length &gt; 0){</span>
+<span class="nc" id="L829">          String predictionsString = &quot;&quot;;</span>
+<span class="nc" id="L830">          predictionsString += predictions[0];</span>
+<span class="nc bnc" id="L831" title="All 2 branches missed.">          for(int i=1;i&lt;predictions.length;i++){</span>
+<span class="nc" id="L832">            predictionsString += &quot;|&quot; + predictions[i];</span>
+          }
+<span class="nc" id="L834">          result[current++] = predictionsString;</span>
+        }
+      } else {
+        // Targets
+<span class="nc bnc" id="L838" title="All 2 branches missed.">        if (test.numInstances() &gt; 0){</span>
+<span class="nc" id="L839">          String targetsString = &quot;&quot;;</span>
+<span class="nc" id="L840">          targetsString += test.instance(0).stringValue(test.classIndex());</span>
+<span class="nc bnc" id="L841" title="All 2 branches missed.">          for(int i=1;i&lt;test.numInstances();i++){</span>
+<span class="nc" id="L842">            targetsString += &quot;|&quot; + test.instance(i).stringValue(test.classIndex());</span>
+          }
+<span class="nc" id="L844">          result[current++] = targetsString;</span>
+        }
+        
+        // Predictions
+<span class="nc bnc" id="L848" title="All 2 branches missed.">        if (predictions.length &gt; 0){</span>
+<span class="nc" id="L849">          String predictionsString = &quot;&quot;;</span>
+<span class="nc" id="L850">          predictionsString += test.classAttribute().value((int) predictions[0]);</span>
+<span class="nc bnc" id="L851" title="All 2 branches missed.">          for(int i=1;i&lt;predictions.length;i++){</span>
+<span class="nc" id="L852">            predictionsString += &quot;|&quot; + test.classAttribute().value((int) predictions[i]);</span>
+          }
+<span class="nc" id="L854">          result[current++] = predictionsString;</span>
+        }
+      }
+    }
+    
+<span class="nc bnc" id="L859" title="All 2 branches missed.">    if (m_Classifier instanceof Summarizable) {</span>
+<span class="nc" id="L860">      result[current++] = ((Summarizable)m_Classifier).toSummaryString();</span>
+    } else {
+<span class="nc" id="L862">      result[current++] = null;</span>
+    }
+    
+<span class="nc bnc" id="L865" title="All 2 branches missed.">    for (int i=0;i&lt;addm;i++) {</span>
+<span class="nc bnc" id="L866" title="All 2 branches missed.">      if (m_doesProduce[i]) {</span>
+        try {
+<span class="nc" id="L868">          double dv = ((AdditionalMeasureProducer)m_Classifier).</span>
+<span class="nc" id="L869">          getMeasure(m_AdditionalMeasures[i]);</span>
+<span class="nc bnc" id="L870" title="All 2 branches missed.">          if (!Instance.isMissingValue(dv)) {</span>
+<span class="nc" id="L871">            Double value = new Double(dv);</span>
+<span class="nc" id="L872">            result[current++] = value;</span>
+          } else {
+<span class="nc" id="L874">            result[current++] = null;</span>
+          }
+<span class="nc" id="L876">        } catch (Exception ex) {</span>
+<span class="nc" id="L877">          System.err.println(ex);</span>
+        }
+      } else {
+<span class="nc" id="L880">        result[current++] = null;</span>
+      }
+    }
+    
+<span class="nc bnc" id="L884" title="All 2 branches missed.">    if (current != overall_length) {</span>
+<span class="nc" id="L885">      throw new Error(&quot;Results didn't fit RESULT_SIZE&quot;);</span>
+    }
+<span class="nc" id="L887">    return result;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String classifierTipText() {
+<span class="nc" id="L896">    return &quot;The classifier to use.&quot;;</span>
+  }
+
+  /**
+   * Get the value of Classifier.
+   *
+   * @return Value of Classifier.
+   */
+  public Classifier getClassifier() {
+    
+<span class="nc" id="L906">    return m_Template;</span>
+  }
+  
+  /**
+   * Sets the classifier.
+   *
+   * @param newClassifier the new classifier to use.
+   */
+  public void setClassifier(Classifier newClassifier) {
+    
+<span class="nc" id="L916">    m_Template = newClassifier;</span>
+<span class="nc" id="L917">    updateOptions();</span>
+<span class="nc" id="L918">  }</span>
+  
+  /**
+   * Get the value of ClassForIRStatistics.
+   * @return Value of ClassForIRStatistics.
+   */
+  public int getClassForIRStatistics() {
+<span class="nc" id="L925">    return m_IRclass;</span>
+  }
+  
+  /**
+   * Set the value of ClassForIRStatistics.
+   * @param v  Value to assign to ClassForIRStatistics.
+   */
+  public void setClassForIRStatistics(int v) {
+<span class="nc" id="L933">    m_IRclass = v;</span>
+<span class="nc" id="L934">  }</span>
+
+  /**
+   * Get the index of Attibute Identifying the instances
+   * @return index of outputed Attribute.
+   */
+  public int getAttributeID() {
+<span class="nc" id="L941">    return m_attID;</span>
+  }
+  
+  /**
+   * Set the index of Attibute Identifying the instances
+   * @param v index the attribute to output
+   */
+  public void setAttributeID(int v) {
+<span class="nc" id="L949">    m_attID = v;</span>
+<span class="nc" id="L950">  }</span>
+    
+  /**
+   *@return true if the prediction and target columns must be outputed.
+   */
+  public boolean getPredTargetColumn(){
+<span class="nc" id="L956">      return m_predTargetColumn;</span>
+  }
+
+  /**
+   * Set the flag for prediction and target output.
+   *@param v true if the 2 columns have to be outputed. false otherwise.
+   */
+  public void setPredTargetColumn(boolean v){
+<span class="nc" id="L964">      m_predTargetColumn = v;</span>
+<span class="nc" id="L965">  }</span>
+  
+  /**
+   * Updates the options that the current classifier is using.
+   */
+  protected void updateOptions() {
+    
+<span class="nc bnc" id="L972" title="All 2 branches missed.">    if (m_Template instanceof OptionHandler) {</span>
+<span class="nc" id="L973">      m_ClassifierOptions = Utils.joinOptions(((OptionHandler)m_Template)</span>
+<span class="nc" id="L974">					      .getOptions());</span>
+    } else {
+<span class="nc" id="L976">      m_ClassifierOptions = &quot;&quot;;</span>
+    }
+<span class="nc bnc" id="L978" title="All 2 branches missed.">    if (m_Template instanceof Serializable) {</span>
+<span class="nc" id="L979">      ObjectStreamClass obs = ObjectStreamClass.lookup(m_Template</span>
+<span class="nc" id="L980">						       .getClass());</span>
+<span class="nc" id="L981">      m_ClassifierVersion = &quot;&quot; + obs.getSerialVersionUID();</span>
+    } else {
+<span class="nc" id="L983">      m_ClassifierVersion = &quot;&quot;;</span>
+    }
+<span class="nc" id="L985">  }</span>
+
+  /**
+   * Set the Classifier to use, given it's class name. A new classifier will be
+   * instantiated.
+   *
+   * @param newClassifierName the Classifier class name.
+   * @throws Exception if the class name is invalid.
+   */
+  public void setClassifierName(String newClassifierName) throws Exception {
+
+    try {
+<span class="nc" id="L997">      setClassifier((Classifier)Class.forName(newClassifierName)</span>
+<span class="nc" id="L998">		    .newInstance());</span>
+<span class="nc" id="L999">    } catch (Exception ex) {</span>
+<span class="nc" id="L1000">      throw new Exception(&quot;Can't find Classifier with class name: &quot;</span>
+<span class="nc" id="L1001">			  + newClassifierName);</span>
+    }
+<span class="nc" id="L1003">  }</span>
+
+  /**
+   * Gets the raw output from the classifier
+   * @return the raw output from th,0e classifier
+   */
+  public String getRawResultOutput() {
+<span class="nc" id="L1010">    StringBuffer result = new StringBuffer();</span>
+
+<span class="nc bnc" id="L1012" title="All 2 branches missed.">    if (m_Classifier == null) {</span>
+<span class="nc" id="L1013">      return &quot;&lt;null&gt; classifier&quot;;</span>
+    }
+<span class="nc" id="L1015">    result.append(toString());</span>
+<span class="nc" id="L1016">    result.append(&quot;Classifier model: \n&quot;+m_Classifier.toString()+'\n');</span>
+
+    // append the performance statistics
+<span class="nc bnc" id="L1019" title="All 2 branches missed.">    if (m_result != null) {</span>
+<span class="nc" id="L1020">      result.append(m_result);</span>
+      
+<span class="nc bnc" id="L1022" title="All 2 branches missed.">      if (m_doesProduce != null) {</span>
+<span class="nc bnc" id="L1023" title="All 2 branches missed.">	for (int i=0;i&lt;m_doesProduce.length;i++) {</span>
+<span class="nc bnc" id="L1024" title="All 2 branches missed.">	  if (m_doesProduce[i]) {</span>
+	    try {
+<span class="nc" id="L1026">	      double dv = ((AdditionalMeasureProducer)m_Classifier).</span>
+<span class="nc" id="L1027">		getMeasure(m_AdditionalMeasures[i]);</span>
+<span class="nc bnc" id="L1028" title="All 2 branches missed.">	      if (!Instance.isMissingValue(dv)) {</span>
+<span class="nc" id="L1029">		Double value = new Double(dv);</span>
+<span class="nc" id="L1030">		result.append(m_AdditionalMeasures[i]+&quot; : &quot;+value+'\n');</span>
+	      } else {
+<span class="nc" id="L1032">		result.append(m_AdditionalMeasures[i]+&quot; : &quot;+'?'+'\n');</span>
+	      }
+<span class="nc" id="L1034">	    } catch (Exception ex) {</span>
+<span class="nc" id="L1035">	      System.err.println(ex);</span>
+	    }
+	  } 
+	}
+      }
+    }
+<span class="nc" id="L1041">    return result.toString();</span>
+  }
+
+  /**
+   * Returns a text description of the split evaluator.
+   *
+   * @return a text description of the split evaluator.
+   */
+  public String toString() {
+
+<span class="nc" id="L1051">    String result = &quot;ClassifierSplitEvaluator: &quot;;</span>
+<span class="nc bnc" id="L1052" title="All 2 branches missed.">    if (m_Template == null) {</span>
+<span class="nc" id="L1053">      return result + &quot;&lt;null&gt; classifier&quot;;</span>
+    }
+<span class="nc" id="L1055">    return result + m_Template.getClass().getName() + &quot; &quot; </span>
+<span class="nc" id="L1056">      + m_ClassifierOptions + &quot;(version &quot; + m_ClassifierVersion + &quot;)&quot;;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1065">    return RevisionUtils.extract(&quot;$Revision: 7513 $&quot;);</span>
+  }
+} // ClassifierSplitEvaluator
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

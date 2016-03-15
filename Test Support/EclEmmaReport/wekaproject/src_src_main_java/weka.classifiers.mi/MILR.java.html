@@ -1,0 +1,839 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>MILR.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.mi</a> &gt; <span class="el_source">MILR.java</span></div><h1>MILR.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * MILR.java
+ * Copyright (C) 2005 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.mi;
+
+import weka.classifiers.Classifier;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.MultiInstanceCapabilitiesHandler;
+import weka.core.Optimization;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Uses either standard or collective multi-instance assumption, but within linear regression. For the collective assumption, it offers arithmetic or geometric mean for the posteriors.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Turn on debugging output.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;ridge&amp;gt;
+ *  Set the ridge in the log-likelihood.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A [0|1|2]
+ *  Defines the type of algorithm:
+ *   0. standard MI assumption
+ *   1. collective MI assumption, arithmetic mean for posteriors
+ *   2. collective MI assumption, geometric mean for posteriors&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Xin Xu (xx5@cs.waikato.ac.nz)
+ * @version $Revision: 9144 $ 
+ */
+<span class="fc" id="L69">public class MILR</span>
+  extends Classifier 
+  implements OptionHandler, MultiInstanceCapabilitiesHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 1996101190172373826L;
+  
+  protected double[] m_Par;
+
+  /** The number of the class labels */
+  protected int m_NumClasses;
+
+  /** The ridge parameter. */
+<span class="fc" id="L82">  protected double m_Ridge = 1e-6;</span>
+
+  /** Class labels for each bag */
+  protected int[] m_Classes;
+
+  /** MI data */ 
+  protected double[][][] m_Data;
+
+  /** All attribute names */
+  protected Instances m_Attributes;
+
+<span class="fc" id="L93">  protected double[] xMean = null, xSD = null;</span>
+
+  /** the type of processing */
+<span class="fc" id="L96">  protected int m_AlgorithmType = ALGORITHMTYPE_DEFAULT;</span>
+
+  /** standard MI assumption */
+  public static final int ALGORITHMTYPE_DEFAULT = 0;
+  /** collective MI assumption, arithmetic mean for posteriors */
+  public static final int ALGORITHMTYPE_ARITHMETIC = 1;
+  /** collective MI assumption, geometric mean for posteriors */
+  public static final int ALGORITHMTYPE_GEOMETRIC = 2;
+  /** the types of algorithms */
+<span class="fc" id="L105">  public static final Tag [] TAGS_ALGORITHMTYPE = {</span>
+<span class="fc" id="L106">    new Tag(ALGORITHMTYPE_DEFAULT, &quot;standard MI assumption&quot;),</span>
+<span class="fc" id="L107">    new Tag(ALGORITHMTYPE_ARITHMETIC, &quot;collective MI assumption, arithmetic mean for posteriors&quot;),</span>
+<span class="fc" id="L108">    new Tag(ALGORITHMTYPE_GEOMETRIC, &quot;collective MI assumption, geometric mean for posteriors&quot;),</span>
+  };
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L118">    return </span>
+<span class="nc" id="L119">        &quot;Uses either standard or collective multi-instance assumption, but &quot;</span>
+      + &quot;within linear regression. For the collective assumption, it offers &quot;
+      + &quot;arithmetic or geometric mean for the posteriors.&quot;;
+  }
+
+  /**
+   * Returns an enumeration describing the available options
+   *
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+<span class="fc" id="L130">    Vector result = new Vector();</span>
+    
+<span class="fc" id="L132">    result.addElement(new Option(</span>
+<span class="fc" id="L133">          &quot;\tTurn on debugging output.&quot;,</span>
+<span class="fc" id="L134">          &quot;D&quot;, 0, &quot;-D&quot;));</span>
+    
+<span class="fc" id="L136">    result.addElement(new Option(</span>
+<span class="fc" id="L137">        &quot;\tSet the ridge in the log-likelihood.&quot;,</span>
+<span class="fc" id="L138">        &quot;R&quot;, 1, &quot;-R &lt;ridge&gt;&quot;));</span>
+
+<span class="fc" id="L140">    result.addElement(new Option(</span>
+<span class="fc" id="L141">        &quot;\tDefines the type of algorithm:\n&quot;</span>
+        + &quot;\t 0. standard MI assumption\n&quot;
+        + &quot;\t 1. collective MI assumption, arithmetic mean for posteriors\n&quot;
+        + &quot;\t 2. collective MI assumption, geometric mean for posteriors&quot;,
+<span class="fc" id="L145">        &quot;A&quot;, 1, &quot;-A [0|1|2]&quot;));</span>
+
+<span class="fc" id="L147">    return result.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. 
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    String      tmpStr;
+
+<span class="fc" id="L159">    setDebug(Utils.getFlag('D', options));</span>
+
+<span class="fc" id="L161">    tmpStr = Utils.getOption('R', options);</span>
+<span class="fc bfc" id="L162" title="All 2 branches covered.">    if (tmpStr.length() != 0) </span>
+<span class="fc" id="L163">      setRidge(Double.parseDouble(tmpStr));</span>
+    else 
+<span class="fc" id="L165">      setRidge(1.0e-6);</span>
+
+<span class="fc" id="L167">    tmpStr = Utils.getOption('A', options);</span>
+<span class="fc bfc" id="L168" title="All 2 branches covered.">    if (tmpStr.length() != 0) {</span>
+<span class="fc" id="L169">      setAlgorithmType(new SelectedTag(Integer.parseInt(tmpStr), TAGS_ALGORITHMTYPE));</span>
+    } else {
+<span class="fc" id="L171">      setAlgorithmType(new SelectedTag(ALGORITHMTYPE_DEFAULT, TAGS_ALGORITHMTYPE));</span>
+    }     
+<span class="fc" id="L173">  }</span>
+
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    Vector        result;
+    
+<span class="fc" id="L183">    result = new Vector();</span>
+
+<span class="pc bpc" id="L185" title="1 of 2 branches missed.">    if (getDebug())</span>
+<span class="nc" id="L186">      result.add(&quot;-D&quot;);</span>
+    
+<span class="fc" id="L188">    result.add(&quot;-R&quot;);</span>
+<span class="fc" id="L189">    result.add(&quot;&quot; + getRidge());</span>
+    
+<span class="fc" id="L191">    result.add(&quot;-A&quot;);</span>
+<span class="fc" id="L192">    result.add(&quot;&quot; + m_AlgorithmType);</span>
+
+<span class="fc" id="L194">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String ridgeTipText() {
+<span class="nc" id="L204">    return &quot;The ridge in the log-likelihood.&quot;;</span>
+  }
+
+  /**
+   * Sets the ridge in the log-likelihood.
+   *
+   * @param ridge the ridge
+   */
+  public void setRidge(double ridge) {
+<span class="fc" id="L213">    m_Ridge = ridge;</span>
+<span class="fc" id="L214">  }</span>
+
+  /**
+   * Gets the ridge in the log-likelihood.
+   *
+   * @return the ridge
+   */
+  public double getRidge() {
+<span class="fc" id="L222">    return m_Ridge;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String algorithmTypeTipText() {
+<span class="nc" id="L232">    return &quot;The mean type for the posteriors.&quot;;</span>
+  }
+
+  /**
+   * Gets the type of algorithm.
+   *
+   * @return the algorithm type
+   */
+  public SelectedTag getAlgorithmType() {
+<span class="nc" id="L241">    return new SelectedTag(m_AlgorithmType, TAGS_ALGORITHMTYPE);</span>
+  }
+
+  /**
+   * Sets the algorithm type.
+   *
+   * @param newType the new algorithm type
+   */
+  public void setAlgorithmType(SelectedTag newType) {
+<span class="pc bpc" id="L250" title="1 of 2 branches missed.">    if (newType.getTags() == TAGS_ALGORITHMTYPE) {</span>
+<span class="fc" id="L251">      m_AlgorithmType = newType.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L253">  }</span>
+
+  private class OptEng 
+    extends Optimization {
+    
+    /** the type to use 
+     * @see MILR#TAGS_ALGORITHMTYPE */
+    private int m_Type;
+    
+    /**
+     * initializes the object
+     * 
+     * @param type      the type top use
+     * @see MILR#TAGS_ALGORITHMTYPE
+     */
+    public OptEng(int type) {
+<span class="fc" id="L269">      super();</span>
+      
+<span class="fc" id="L271">      m_Type = type;</span>
+<span class="fc" id="L272">    }</span>
+    
+    /** 
+     * Evaluate objective function
+     * @param x the current values of variables
+     * @return the value of the objective function 
+     */
+    protected double objectiveFunction(double[] x){
+<span class="fc" id="L280">      double nll = 0; // -LogLikelihood</span>
+      
+<span class="pc bpc" id="L282" title="3 of 4 branches missed.">      switch (m_Type) {</span>
+        case ALGORITHMTYPE_DEFAULT:
+<span class="fc bfc" id="L284" title="All 2 branches covered.">          for(int i=0; i&lt;m_Classes.length; i++){ // ith bag</span>
+<span class="fc" id="L285">            int nI = m_Data[i][0].length; // numInstances in ith bag</span>
+<span class="fc" id="L286">            double bag = 0.0, // NLL of each bag </span>
+<span class="fc" id="L287">                   prod = 0.0;   // Log-prob. </span>
+
+<span class="fc bfc" id="L289" title="All 2 branches covered.">            for(int j=0; j&lt;nI; j++){</span>
+<span class="fc" id="L290">              double exp=0.0;</span>
+<span class="fc bfc" id="L291" title="All 2 branches covered.">              for(int k=m_Data[i].length-1; k&gt;=0; k--)</span>
+<span class="fc" id="L292">                exp += m_Data[i][k][j]*x[k+1];</span>
+<span class="fc" id="L293">              exp += x[0];</span>
+<span class="fc" id="L294">              exp = Math.exp(exp);</span>
+
+<span class="fc bfc" id="L296" title="All 2 branches covered.">              if(m_Classes[i]==1)</span>
+<span class="fc" id="L297">                prod -= Math.log(1.0+exp);</span>
+              else
+<span class="fc" id="L299">                bag += Math.log(1.0+exp);</span>
+            }
+
+<span class="fc bfc" id="L302" title="All 2 branches covered.">            if(m_Classes[i]==1)</span>
+<span class="fc" id="L303">              bag = -Math.log(1.0-Math.exp(prod));</span>
+
+<span class="fc" id="L305">            nll += bag;</span>
+          }   
+<span class="fc" id="L307">          break;</span>
+        
+        case ALGORITHMTYPE_ARITHMETIC:
+<span class="nc bnc" id="L310" title="All 2 branches missed.">          for(int i=0; i&lt;m_Classes.length; i++){ // ith bag</span>
+<span class="nc" id="L311">            int nI = m_Data[i][0].length; // numInstances in ith bag</span>
+<span class="nc" id="L312">            double bag = 0;  // NLL of each bag</span>
+
+<span class="nc bnc" id="L314" title="All 2 branches missed.">            for(int j=0; j&lt;nI; j++){</span>
+<span class="nc" id="L315">              double exp=0.0;</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">              for(int k=m_Data[i].length-1; k&gt;=0; k--)</span>
+<span class="nc" id="L317">                exp += m_Data[i][k][j]*x[k+1];</span>
+<span class="nc" id="L318">              exp += x[0];</span>
+<span class="nc" id="L319">              exp = Math.exp(exp);</span>
+
+<span class="nc bnc" id="L321" title="All 2 branches missed.">              if(m_Classes[i] == 1)</span>
+<span class="nc" id="L322">                bag += 1.0-1.0/(1.0+exp); // To avoid exp infinite</span>
+              else
+<span class="nc" id="L324">                bag += 1.0/(1.0+exp);                  </span>
+            }   
+<span class="nc" id="L326">            bag /= (double)nI;</span>
+
+<span class="nc" id="L328">            nll -= Math.log(bag);</span>
+          }   
+<span class="nc" id="L330">          break;</span>
+          
+        case ALGORITHMTYPE_GEOMETRIC:
+<span class="nc bnc" id="L333" title="All 2 branches missed.">          for(int i=0; i&lt;m_Classes.length; i++){ // ith bag</span>
+<span class="nc" id="L334">            int nI = m_Data[i][0].length; // numInstances in ith bag</span>
+<span class="nc" id="L335">            double bag = 0;   // Log-prob. </span>
+
+<span class="nc bnc" id="L337" title="All 2 branches missed.">            for(int j=0; j&lt;nI; j++){</span>
+<span class="nc" id="L338">              double exp=0.0;</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">              for(int k=m_Data[i].length-1; k&gt;=0; k--)</span>
+<span class="nc" id="L340">                exp += m_Data[i][k][j]*x[k+1];</span>
+<span class="nc" id="L341">              exp += x[0];</span>
+
+<span class="nc bnc" id="L343" title="All 2 branches missed.">              if(m_Classes[i]==1)</span>
+<span class="nc" id="L344">                bag -= exp/(double)nI;</span>
+              else
+<span class="nc" id="L346">                bag += exp/(double)nI;</span>
+            }
+
+<span class="nc" id="L349">            nll += Math.log(1.0+Math.exp(bag));</span>
+          }   
+          break;
+      }
+
+      // ridge: note that intercepts NOT included
+<span class="fc bfc" id="L355" title="All 2 branches covered.">      for(int r=1; r&lt;x.length; r++)</span>
+<span class="fc" id="L356">        nll += m_Ridge*x[r]*x[r];</span>
+
+<span class="fc" id="L358">      return nll;</span>
+    }
+
+    /** 
+     * Evaluate Jacobian vector
+     * @param x the current values of variables
+     * @return the gradient vector 
+     */
+    protected double[] evaluateGradient(double[] x){
+<span class="fc" id="L367">      double[] grad = new double[x.length];</span>
+      
+<span class="pc bpc" id="L369" title="3 of 4 branches missed.">      switch (m_Type) {</span>
+        case ALGORITHMTYPE_DEFAULT:
+<span class="fc bfc" id="L371" title="All 2 branches covered.">          for(int i=0; i&lt;m_Classes.length; i++){ // ith bag</span>
+<span class="fc" id="L372">            int nI = m_Data[i][0].length; // numInstances in ith bag</span>
+
+<span class="fc" id="L374">            double denom = 0.0; // denominator, in log-scale       </span>
+<span class="fc" id="L375">            double[] bag = new double[grad.length]; //gradient update with ith bag</span>
+
+<span class="fc bfc" id="L377" title="All 2 branches covered.">            for(int j=0; j&lt;nI; j++){</span>
+              // Compute exp(b0+b1*Xi1j+...)/[1+exp(b0+b1*Xi1j+...)]
+<span class="fc" id="L379">              double exp=0.0;</span>
+<span class="fc bfc" id="L380" title="All 2 branches covered.">              for(int k=m_Data[i].length-1; k&gt;=0; k--)</span>
+<span class="fc" id="L381">                exp += m_Data[i][k][j]*x[k+1];</span>
+<span class="fc" id="L382">              exp += x[0];</span>
+<span class="fc" id="L383">              exp = Math.exp(exp)/(1.0+Math.exp(exp));</span>
+
+<span class="fc bfc" id="L385" title="All 2 branches covered.">              if(m_Classes[i]==1)</span>
+                // Bug fix: it used to be denom += Math.log(1.0+exp);
+                // Fixed 21 Jan 2005 (Eibe)
+<span class="fc" id="L388">                denom -= Math.log(1.0-exp);</span>
+
+              // Instance-wise update of dNLL/dBk
+<span class="fc bfc" id="L391" title="All 2 branches covered.">              for(int p=0; p&lt;x.length; p++){  // pth variable</span>
+<span class="fc" id="L392">                double m = 1.0;</span>
+<span class="fc bfc" id="L393" title="All 2 branches covered.">                if(p&gt;0) m=m_Data[i][p-1][j];</span>
+<span class="fc" id="L394">                bag[p] += m*exp;</span>
+              }     
+            }
+
+<span class="fc" id="L398">            denom = Math.exp(denom);</span>
+
+            // Bag-wise update of dNLL/dBk
+<span class="fc bfc" id="L401" title="All 2 branches covered.">            for(int q=0; q&lt;grad.length; q++){</span>
+<span class="fc bfc" id="L402" title="All 2 branches covered.">              if(m_Classes[i]==1)</span>
+<span class="fc" id="L403">                grad[q] -= bag[q]/(denom-1.0);</span>
+              else
+<span class="fc" id="L405">                grad[q] += bag[q];</span>
+            }   
+          }
+<span class="fc" id="L408">          break;</span>
+        
+        case ALGORITHMTYPE_ARITHMETIC:
+<span class="nc bnc" id="L411" title="All 2 branches missed.">          for(int i=0; i&lt;m_Classes.length; i++){ // ith bag</span>
+<span class="nc" id="L412">            int nI = m_Data[i][0].length; // numInstances in ith bag </span>
+
+<span class="nc" id="L414">            double denom=0.0;</span>
+<span class="nc" id="L415">            double[] numrt = new double[x.length];</span>
+
+<span class="nc bnc" id="L417" title="All 2 branches missed.">            for(int j=0; j&lt;nI; j++){</span>
+              // Compute exp(b0+b1*Xi1j+...)/[1+exp(b0+b1*Xi1j+...)]
+<span class="nc" id="L419">              double exp=0.0;</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">              for(int k=m_Data[i].length-1; k&gt;=0; k--)</span>
+<span class="nc" id="L421">                exp += m_Data[i][k][j]*x[k+1];</span>
+<span class="nc" id="L422">              exp += x[0];</span>
+<span class="nc" id="L423">              exp = Math.exp(exp);</span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">              if(m_Classes[i]==1)</span>
+<span class="nc" id="L425">                denom += exp/(1.0+exp);</span>
+              else
+<span class="nc" id="L427">                denom += 1.0/(1.0+exp);      </span>
+
+              // Instance-wise update of dNLL/dBk
+<span class="nc bnc" id="L430" title="All 2 branches missed.">              for(int p=0; p&lt;x.length; p++){  // pth variable</span>
+<span class="nc" id="L431">                double m = 1.0;</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">                if(p&gt;0) m=m_Data[i][p-1][j];</span>
+<span class="nc" id="L433">                numrt[p] += m*exp/((1.0+exp)*(1.0+exp));   </span>
+              }     
+            }
+
+            // Bag-wise update of dNLL/dBk
+<span class="nc bnc" id="L438" title="All 2 branches missed.">            for(int q=0; q&lt;grad.length; q++){</span>
+<span class="nc bnc" id="L439" title="All 2 branches missed.">              if(m_Classes[i]==1)</span>
+<span class="nc" id="L440">                grad[q] -= numrt[q]/denom;</span>
+              else
+<span class="nc" id="L442">                grad[q] += numrt[q]/denom;          </span>
+            }
+          }
+<span class="nc" id="L445">          break;</span>
+
+        case ALGORITHMTYPE_GEOMETRIC:
+<span class="nc bnc" id="L448" title="All 2 branches missed.">          for(int i=0; i&lt;m_Classes.length; i++){ // ith bag</span>
+<span class="nc" id="L449">            int nI = m_Data[i][0].length; // numInstances in ith bag    </span>
+<span class="nc" id="L450">            double bag = 0;</span>
+<span class="nc" id="L451">            double[] sumX = new double[x.length];</span>
+<span class="nc bnc" id="L452" title="All 2 branches missed.">            for(int j=0; j&lt;nI; j++){</span>
+              // Compute exp(b0+b1*Xi1j+...)/[1+exp(b0+b1*Xi1j+...)]
+<span class="nc" id="L454">              double exp=0.0;</span>
+<span class="nc bnc" id="L455" title="All 2 branches missed.">              for(int k=m_Data[i].length-1; k&gt;=0; k--)</span>
+<span class="nc" id="L456">                exp += m_Data[i][k][j]*x[k+1];</span>
+<span class="nc" id="L457">              exp += x[0];</span>
+
+<span class="nc bnc" id="L459" title="All 2 branches missed.">              if(m_Classes[i]==1){</span>
+<span class="nc" id="L460">                bag -= exp/(double)nI;</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">                for(int q=0; q&lt;grad.length; q++){</span>
+<span class="nc" id="L462">                  double m = 1.0;</span>
+<span class="nc bnc" id="L463" title="All 2 branches missed.">                  if(q&gt;0) m=m_Data[i][q-1][j];</span>
+<span class="nc" id="L464">                  sumX[q] -= m/(double)nI;</span>
+                }
+              }
+              else{
+<span class="nc" id="L468">                bag += exp/(double)nI;</span>
+<span class="nc bnc" id="L469" title="All 2 branches missed.">                for(int q=0; q&lt;grad.length; q++){</span>
+<span class="nc" id="L470">                  double m = 1.0;</span>
+<span class="nc bnc" id="L471" title="All 2 branches missed.">                  if(q&gt;0) m=m_Data[i][q-1][j];</span>
+<span class="nc" id="L472">                  sumX[q] += m/(double)nI;</span>
+                }     
+              }
+            }
+
+<span class="nc bnc" id="L477" title="All 2 branches missed.">            for(int p=0; p&lt;x.length; p++)</span>
+<span class="nc" id="L478">              grad[p] += Math.exp(bag)*sumX[p]/(1.0+Math.exp(bag));</span>
+          }
+          break;
+      }
+
+      // ridge: note that intercepts NOT included
+<span class="fc bfc" id="L484" title="All 2 branches covered.">      for(int r=1; r&lt;x.length; r++){</span>
+<span class="fc" id="L485">        grad[r] += 2.0*m_Ridge*x[r];</span>
+      }
+
+<span class="fc" id="L488">      return grad;</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L497">      return RevisionUtils.extract(&quot;$Revision: 9144 $&quot;);</span>
+    }
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L507">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L508">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L511">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L512">    result.enable(Capability.RELATIONAL_ATTRIBUTES);</span>
+
+    // class
+<span class="fc" id="L515">    result.enable(Capability.BINARY_CLASS);</span>
+<span class="fc" id="L516">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+    // other
+<span class="fc" id="L519">    result.enable(Capability.ONLY_MULTIINSTANCE);</span>
+    
+<span class="fc" id="L521">    return result;</span>
+  }
+
+  /**
+   * Returns the capabilities of this multi-instance classifier for the
+   * relational data.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getMultiInstanceCapabilities() {
+<span class="fc" id="L532">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L533">    result.disableAll();</span>
+    
+    // attributes
+<span class="fc" id="L536">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L537">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L538">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L539">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L542">    result.disableAllClasses();</span>
+<span class="fc" id="L543">    result.enable(Capability.NO_CLASS);</span>
+    
+<span class="fc" id="L545">    return result;</span>
+  }
+
+  /**
+   * Builds the classifier
+   *
+   * @param train the training data to be used for generating the
+   * boosted classifier.
+   * @throws Exception if the classifier could not be built successfully
+   */
+  public void buildClassifier(Instances train) throws Exception {
+    // can classifier handle the data?
+<span class="fc" id="L557">    getCapabilities().testWithFail(train);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L560">    train = new Instances(train);</span>
+<span class="fc" id="L561">    train.deleteWithMissingClass();</span>
+
+<span class="fc" id="L563">    m_NumClasses = train.numClasses();</span>
+
+<span class="fc" id="L565">    int nR = train.attribute(1).relation().numAttributes();</span>
+<span class="fc" id="L566">    int nC = train.numInstances();</span>
+
+<span class="fc" id="L568">    m_Data  = new double [nC][nR][];              // Data values</span>
+<span class="fc" id="L569">    m_Classes  = new int [nC];                    // Class values</span>
+<span class="fc" id="L570">    m_Attributes = train.attribute(1).relation();</span>
+
+<span class="fc" id="L572">    xMean = new double [nR];             // Mean of mean</span>
+<span class="fc" id="L573">    xSD   = new double [nR];             // Mode of stddev</span>
+
+<span class="fc" id="L575">    double sY1=0, sY0=0, totIns=0;                          // Number of classes</span>
+<span class="fc" id="L576">    int[] missingbags = new int[nR];</span>
+
+<span class="pc bpc" id="L578" title="1 of 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L579">      System.out.println(&quot;Extracting data...&quot;);</span>
+    }
+
+<span class="fc bfc" id="L582" title="All 2 branches covered.">    for(int h=0; h&lt;m_Data.length; h++){</span>
+<span class="fc" id="L583">      Instance current = train.instance(h);</span>
+<span class="fc" id="L584">      m_Classes[h] = (int)current.classValue();  // Class value starts from 0</span>
+<span class="fc" id="L585">      Instances currInsts = current.relationalValue(1);</span>
+<span class="fc" id="L586">      int nI = currInsts.numInstances();</span>
+<span class="fc" id="L587">      totIns += (double)nI;</span>
+
+<span class="fc bfc" id="L589" title="All 2 branches covered.">      for (int i = 0; i &lt; nR; i++) {  		</span>
+        // initialize m_data[][][]		
+<span class="fc" id="L591">        m_Data[h][i] = new double[nI];</span>
+<span class="fc" id="L592">        double avg=0, std=0, num=0;</span>
+<span class="fc bfc" id="L593" title="All 2 branches covered.">        for (int k=0; k&lt;nI; k++){</span>
+<span class="pc bpc" id="L594" title="1 of 2 branches missed.">          if(!currInsts.instance(k).isMissing(i)){</span>
+<span class="fc" id="L595">            m_Data[h][i][k] = currInsts.instance(k).value(i);</span>
+<span class="fc" id="L596">            avg += m_Data[h][i][k];</span>
+<span class="fc" id="L597">            std += m_Data[h][i][k]*m_Data[h][i][k];</span>
+<span class="fc" id="L598">            num++;</span>
+          }
+          else
+<span class="nc" id="L601">            m_Data[h][i][k] = Double.NaN;</span>
+        }
+        
+<span class="pc bpc" id="L604" title="1 of 2 branches missed.">        if(num &gt; 0){</span>
+<span class="fc" id="L605">          xMean[i] += avg/num;</span>
+<span class="fc" id="L606">          xSD[i] += std/num;</span>
+        }
+        else
+<span class="nc" id="L609">          missingbags[i]++;</span>
+      }	    
+
+      // Class count	
+<span class="fc bfc" id="L613" title="All 2 branches covered.">      if (m_Classes[h] == 1)</span>
+<span class="fc" id="L614">        sY1++;</span>
+      else
+<span class="fc" id="L616">        sY0++;</span>
+    }
+
+<span class="fc bfc" id="L619" title="All 2 branches covered.">    for (int j = 0; j &lt; nR; j++) {</span>
+<span class="fc" id="L620">      xMean[j] = xMean[j]/(double)(nC-missingbags[j]);</span>
+<span class="fc" id="L621">      xSD[j] = Math.sqrt(Math.abs(xSD[j]/((double)(nC-missingbags[j])-1.0)</span>
+<span class="fc" id="L622">            -xMean[j]*xMean[j]*(double)(nC-missingbags[j])/</span>
+<span class="fc" id="L623">            ((double)(nC-missingbags[j])-1.0)));</span>
+    }
+
+<span class="pc bpc" id="L626" title="1 of 2 branches missed.">    if (m_Debug) {	    </span>
+      // Output stats about input data
+<span class="nc" id="L628">      System.out.println(&quot;Descriptives...&quot;);</span>
+<span class="nc" id="L629">      System.out.println(sY0 + &quot; bags have class 0 and &quot; +</span>
+<span class="nc" id="L630">          sY1 + &quot; bags have class 1&quot;);</span>
+<span class="nc" id="L631">      System.out.println(&quot;\n Variable     Avg       SD    &quot;);</span>
+<span class="nc bnc" id="L632" title="All 2 branches missed.">      for (int j = 0; j &lt; nR; j++) </span>
+<span class="nc" id="L633">        System.out.println(Utils.doubleToString(j,8,4) </span>
+<span class="nc" id="L634">            + Utils.doubleToString(xMean[j], 10, 4) </span>
+<span class="nc" id="L635">            + Utils.doubleToString(xSD[j], 10,4));</span>
+    }
+
+    // Normalise input data and remove ignored attributes
+<span class="fc bfc" id="L639" title="All 2 branches covered.">    for (int i = 0; i &lt; nC; i++) {</span>
+<span class="fc bfc" id="L640" title="All 2 branches covered.">      for (int j = 0; j &lt; nR; j++) {</span>
+<span class="fc bfc" id="L641" title="All 2 branches covered.">        for(int k=0; k &lt; m_Data[i][j].length; k++){</span>
+<span class="pc bpc" id="L642" title="1 of 2 branches missed.">          if(xSD[j] != 0){</span>
+<span class="pc bpc" id="L643" title="1 of 2 branches missed.">            if(!Double.isNaN(m_Data[i][j][k]))</span>
+<span class="fc" id="L644">              m_Data[i][j][k] = (m_Data[i][j][k] - xMean[j]) / xSD[j];</span>
+            else
+<span class="nc" id="L646">              m_Data[i][j][k] = 0;</span>
+          }
+        }
+      }
+    }
+
+<span class="pc bpc" id="L652" title="1 of 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L653">      System.out.println(&quot;\nIteration History...&quot; );</span>
+    }
+
+<span class="fc" id="L656">    double x[] = new double[nR + 1];</span>
+<span class="fc" id="L657">    x[0] =  Math.log((sY1+1.0) / (sY0+1.0));</span>
+<span class="fc" id="L658">    double[][] b = new double[2][x.length];</span>
+<span class="fc" id="L659">    b[0][0] = Double.NaN;</span>
+<span class="fc" id="L660">    b[1][0] = Double.NaN;</span>
+<span class="fc bfc" id="L661" title="All 2 branches covered.">    for (int q=1; q &lt; x.length;q++){</span>
+<span class="fc" id="L662">      x[q] = 0.0;		</span>
+<span class="fc" id="L663">      b[0][q] = Double.NaN;</span>
+<span class="fc" id="L664">      b[1][q] = Double.NaN;</span>
+    }
+
+<span class="fc" id="L667">    OptEng opt = new OptEng(m_AlgorithmType);	</span>
+<span class="fc" id="L668">    opt.setDebug(m_Debug);</span>
+<span class="fc" id="L669">    m_Par = opt.findArgmin(x, b);</span>
+<span class="pc bpc" id="L670" title="1 of 2 branches missed.">    while(m_Par==null){</span>
+<span class="nc" id="L671">      m_Par = opt.getVarbValues();</span>
+<span class="nc bnc" id="L672" title="All 2 branches missed.">      if (m_Debug)</span>
+<span class="nc" id="L673">        System.out.println(&quot;200 iterations finished, not enough!&quot;);</span>
+<span class="nc" id="L674">      m_Par = opt.findArgmin(m_Par, b);</span>
+    }
+<span class="pc bpc" id="L676" title="1 of 2 branches missed.">    if (m_Debug)</span>
+<span class="nc" id="L677">      System.out.println(&quot; -------------&lt;Converged&gt;--------------&quot;);</span>
+
+    // feature selection use
+<span class="pc bpc" id="L680" title="1 of 2 branches missed.">    if (m_AlgorithmType == ALGORITHMTYPE_ARITHMETIC) {</span>
+<span class="nc" id="L681">      double[] fs = new double[nR];</span>
+<span class="nc bnc" id="L682" title="All 2 branches missed.">      for(int k=1; k&lt;nR+1; k++)</span>
+<span class="nc" id="L683">        fs[k-1] = Math.abs(m_Par[k]);</span>
+<span class="nc" id="L684">      int[] idx = Utils.sort(fs);</span>
+<span class="nc" id="L685">      double max = fs[idx[idx.length-1]];</span>
+<span class="nc bnc" id="L686" title="All 2 branches missed.">      for(int k=idx.length-1; k&gt;=0; k--)</span>
+<span class="nc" id="L687">        System.out.println(m_Attributes.attribute(idx[k]).name()+&quot;\t&quot;+(fs[idx[k]]*100/max));</span>
+    }
+
+    // Convert coefficients back to non-normalized attribute units
+<span class="fc bfc" id="L691" title="All 2 branches covered.">    for(int j = 1; j &lt; nR+1; j++) {</span>
+<span class="pc bpc" id="L692" title="1 of 2 branches missed.">      if (xSD[j-1] != 0) {</span>
+<span class="fc" id="L693">        m_Par[j] /= xSD[j-1];</span>
+<span class="fc" id="L694">        m_Par[0] -= m_Par[j] * xMean[j-1];</span>
+      }
+    }
+<span class="fc" id="L697">  }		</span>
+
+  /**
+   * Computes the distribution for a given exemplar
+   *
+   * @param exmp the exemplar for which distribution is computed
+   * @return the distribution
+   * @throws Exception if the distribution can't be computed successfully
+   */
+  public double[] distributionForInstance(Instance exmp) 
+    throws Exception {
+
+    // Extract the data
+<span class="fc" id="L710">    Instances ins = exmp.relationalValue(1);</span>
+<span class="fc" id="L711">    int nI = ins.numInstances(), nA = ins.numAttributes();</span>
+<span class="fc" id="L712">    double[][] dat = new double [nI][nA+1];</span>
+<span class="fc bfc" id="L713" title="All 2 branches covered.">    for(int j=0; j&lt;nI; j++){</span>
+<span class="fc" id="L714">      dat[j][0]=1.0;</span>
+<span class="fc" id="L715">      int idx=1;</span>
+<span class="fc bfc" id="L716" title="All 2 branches covered.">      for(int k=0; k&lt;nA; k++){ </span>
+<span class="pc bpc" id="L717" title="1 of 2 branches missed.">        if(!ins.instance(j).isMissing(k))</span>
+<span class="fc" id="L718">          dat[j][idx] = ins.instance(j).value(k);</span>
+        else
+<span class="nc" id="L720">          dat[j][idx] = xMean[idx-1];</span>
+<span class="fc" id="L721">        idx++;</span>
+      }
+    }
+
+    // Compute the probability of the bag
+<span class="fc" id="L726">    double [] distribution = new double[2];</span>
+<span class="pc bpc" id="L727" title="3 of 4 branches missed.">    switch (m_AlgorithmType) {</span>
+      case ALGORITHMTYPE_DEFAULT:
+<span class="fc" id="L729">        distribution[0]=0.0;  // Log-Prob. for class 0</span>
+
+<span class="fc bfc" id="L731" title="All 2 branches covered.">        for(int i=0; i&lt;nI; i++){</span>
+<span class="fc" id="L732">          double exp = 0.0; </span>
+<span class="fc bfc" id="L733" title="All 2 branches covered.">          for(int r=0; r&lt;m_Par.length; r++)</span>
+<span class="fc" id="L734">            exp += m_Par[r]*dat[i][r];</span>
+<span class="fc" id="L735">          exp = Math.exp(exp);</span>
+
+          // Prob. updated for one instance
+<span class="fc" id="L738">          distribution[0] -= Math.log(1.0+exp);</span>
+        }
+
+        // Prob. for class 0
+<span class="fc" id="L742">        distribution[0] = Math.exp(distribution[0]);</span>
+        // Prob. for class 1
+<span class="fc" id="L744">        distribution[1] = 1.0 - distribution[0];</span>
+<span class="fc" id="L745">        break;</span>
+      
+      case ALGORITHMTYPE_ARITHMETIC:
+<span class="nc" id="L748">        distribution[0]=0.0;  // Prob. for class 0</span>
+
+<span class="nc bnc" id="L750" title="All 2 branches missed.">        for(int i=0; i&lt;nI; i++){</span>
+<span class="nc" id="L751">          double exp = 0.0;</span>
+<span class="nc bnc" id="L752" title="All 2 branches missed.">          for(int r=0; r&lt;m_Par.length; r++)</span>
+<span class="nc" id="L753">            exp += m_Par[r]*dat[i][r];</span>
+<span class="nc" id="L754">          exp = Math.exp(exp);</span>
+
+          // Prob. updated for one instance
+<span class="nc" id="L757">          distribution[0] += 1.0/(1.0+exp);</span>
+        }
+
+        // Prob. for class 0
+<span class="nc" id="L761">        distribution[0] /= (double)nI;</span>
+        // Prob. for class 1
+<span class="nc" id="L763">        distribution[1] = 1.0 - distribution[0];</span>
+<span class="nc" id="L764">        break;</span>
+
+      case ALGORITHMTYPE_GEOMETRIC:
+<span class="nc bnc" id="L767" title="All 2 branches missed.">        for(int i=0; i&lt;nI; i++){</span>
+<span class="nc" id="L768">          double exp = 0.0;</span>
+<span class="nc bnc" id="L769" title="All 2 branches missed.">          for(int r=0; r&lt;m_Par.length; r++)</span>
+<span class="nc" id="L770">            exp += m_Par[r]*dat[i][r];</span>
+<span class="nc" id="L771">          distribution[1] += exp/(double)nI; </span>
+        }
+
+        // Prob. for class 1
+<span class="nc" id="L775">        distribution[1] = 1.0/(1.0+Math.exp(-distribution[1]));</span>
+        // Prob. for class 0
+<span class="nc" id="L777">        distribution[0] = 1-distribution[1];</span>
+        break;
+    }
+
+<span class="fc" id="L781">    return distribution;</span>
+  }
+
+  /**
+   * Gets a string describing the classifier.
+   *
+   * @return a string describing the classifer built.
+   */
+  public String toString() {
+
+<span class="fc" id="L791">    String result = &quot;Modified Logistic Regression&quot;;</span>
+<span class="pc bpc" id="L792" title="1 of 2 branches missed.">    if (m_Par == null) {</span>
+<span class="fc" id="L793">      return result + &quot;: No model built yet.&quot;;</span>
+    }
+
+<span class="nc" id="L796">    result += &quot;\nMean type: &quot; + getAlgorithmType().getSelectedTag().getReadable() + &quot;\n&quot;;</span>
+<span class="nc" id="L797">    result += &quot;\nCoefficients...\n&quot;</span>
+      + &quot;Variable      Coeff.\n&quot;;
+<span class="nc bnc" id="L799" title="All 2 branches missed.">    for (int j = 1, idx=0; j &lt; m_Par.length; j++, idx++) {</span>
+<span class="nc" id="L800">      result += m_Attributes.attribute(idx).name();</span>
+<span class="nc" id="L801">      result += &quot; &quot;+Utils.doubleToString(m_Par[j], 12, 4); </span>
+<span class="nc" id="L802">      result += &quot;\n&quot;;</span>
+    }
+
+<span class="nc" id="L805">    result += &quot;Intercept:&quot;;</span>
+<span class="nc" id="L806">    result += &quot; &quot;+Utils.doubleToString(m_Par[0], 10, 4); </span>
+<span class="nc" id="L807">    result += &quot;\n&quot;;</span>
+
+<span class="nc" id="L809">    result += &quot;\nOdds Ratios...\n&quot;</span>
+      + &quot;Variable         O.R.\n&quot;;
+<span class="nc bnc" id="L811" title="All 2 branches missed.">    for (int j = 1, idx=0; j &lt; m_Par.length; j++, idx++) {</span>
+<span class="nc" id="L812">      result += &quot; &quot; + m_Attributes.attribute(idx).name(); </span>
+<span class="nc" id="L813">      double ORc = Math.exp(m_Par[j]);</span>
+<span class="nc bnc" id="L814" title="All 2 branches missed.">      result += &quot; &quot; + ((ORc &gt; 1e10) ?  &quot;&quot; + ORc : Utils.doubleToString(ORc, 12, 4));</span>
+    }
+<span class="nc" id="L816">    result += &quot;\n&quot;;</span>
+<span class="nc" id="L817">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L826">    return RevisionUtils.extract(&quot;$Revision: 9144 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain the command line arguments to the
+   * scheme (see Evaluation)
+   */
+  public static void main(String[] argv) {
+<span class="nc" id="L836">    runClassifier(new MILR(), argv);</span>
+<span class="nc" id="L837">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

@@ -1,0 +1,915 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RandomSplitResultProducer.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.experiment</a> &gt; <span class="el_source">RandomSplitResultProducer.java</span></div><h1>RandomSplitResultProducer.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RandomSplitResultProducer.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+
+package weka.experiment;
+
+import weka.core.AdditionalMeasureProducer;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+
+import java.io.File;
+import java.util.Calendar;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.TimeZone;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Generates a single train/test split and calls the appropriate SplitEvaluator to generate some results.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;percent&amp;gt;
+ *  The percentage of instances to use for training.
+ *  (default 66)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ * Save raw split evaluator output.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -O &amp;lt;file/directory name/path&amp;gt;
+ *  The filename where raw output will be stored.
+ *  If a directory name is specified then then individual
+ *  outputs will be gzipped, otherwise all output will be
+ *  zipped to the named file. Use in conjuction with -D. (default splitEvalutorOut.zip)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;class name&amp;gt;
+ *  The full class name of a SplitEvaluator.
+ *  eg: weka.experiment.ClassifierSplitEvaluator&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R
+ *  Set when data is not to be randomized and the data sets' size.
+ *  Is not to be determined via probabilistic rounding.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to split evaluator weka.experiment.ClassifierSplitEvaluator:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;class name&amp;gt;
+ *  The full class name of the classifier.
+ *  eg: weka.classifiers.bayes.NaiveBayes&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;index&amp;gt;
+ *  The index of the class for which IR statistics
+ *  are to be output. (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;index&amp;gt;
+ *  The index of an attribute to output in the
+ *  results. This attribute should identify an
+ *  instance in order to know which instances are
+ *  in the test set of a cross validation. if 0
+ *  no output (default 0).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P
+ *  Add target and prediction columns to the result
+ *  for each fold.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to classifier weka.classifiers.rules.ZeroR:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ * 
+ * All options after -- will be passed to the split evaluator.
+ *
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 6255 $
+ */
+<span class="pc" id="L110">public class RandomSplitResultProducer </span>
+  implements ResultProducer, OptionHandler, AdditionalMeasureProducer, 
+             RevisionHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = 1403798165056795073L;
+  
+  /** The dataset of interest */
+  protected Instances m_Instances;
+
+  /** The ResultListener to send results to */
+<span class="nc" id="L121">  protected ResultListener m_ResultListener = new CSVResultListener();</span>
+
+  /** The percentage of instances to use for training */
+<span class="nc" id="L124">  protected double m_TrainPercent = 66;</span>
+
+  /** Whether dataset is to be randomized */
+<span class="nc" id="L127">  protected boolean m_randomize = true;</span>
+
+  /** The SplitEvaluator used to generate results */
+<span class="nc" id="L130">  protected SplitEvaluator m_SplitEvaluator = new ClassifierSplitEvaluator();</span>
+
+  /** The names of any additional measures to look for in SplitEvaluators */
+<span class="nc" id="L133">  protected String [] m_AdditionalMeasures = null;</span>
+
+  /** Save raw output of split evaluators --- for debugging purposes */
+<span class="nc" id="L136">  protected boolean m_debugOutput = false;</span>
+
+  /** The output zipper to use for saving raw splitEvaluator output */
+<span class="nc" id="L139">  protected OutputZipper m_ZipDest = null;</span>
+
+  /** The destination output file/directory for raw output */
+<span class="nc" id="L142">  protected File m_OutputFile = new File(</span>
+<span class="nc" id="L143">			        new File(System.getProperty(&quot;user.dir&quot;)), </span>
+<span class="nc" id="L144">				&quot;splitEvalutorOut.zip&quot;);</span>
+
+  /** The name of the key field containing the dataset name */
+<span class="fc" id="L147">  public static String DATASET_FIELD_NAME = &quot;Dataset&quot;;</span>
+
+  /** The name of the key field containing the run number */
+<span class="fc" id="L150">  public static String RUN_FIELD_NAME = &quot;Run&quot;;</span>
+
+  /** The name of the result field containing the timestamp */
+<span class="fc" id="L153">  public static String TIMESTAMP_FIELD_NAME = &quot;Date_time&quot;;</span>
+
+  /**
+   * Returns a string describing this result producer
+   * @return a description of the result producer suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L161">    return</span>
+<span class="nc" id="L162">        &quot;Generates a single train/test split and calls the appropriate &quot;</span>
+      + &quot;SplitEvaluator to generate some results.&quot;;
+  }
+
+  /**
+   * Sets the dataset that results will be obtained for.
+   *
+   * @param instances a value of type 'Instances'.
+   */
+  public void setInstances(Instances instances) {
+    
+<span class="nc" id="L173">    m_Instances = instances;</span>
+<span class="nc" id="L174">  }</span>
+
+  /**
+   * Set a list of method names for additional measures to look for
+   * in SplitEvaluators. This could contain many measures (of which only a
+   * subset may be produceable by the current SplitEvaluator) if an experiment
+   * is the type that iterates over a set of properties.
+   * @param additionalMeasures an array of measure names, null if none
+   */
+  public void setAdditionalMeasures(String [] additionalMeasures) {
+<span class="nc" id="L184">    m_AdditionalMeasures = additionalMeasures;</span>
+
+<span class="nc bnc" id="L186" title="All 2 branches missed.">    if (m_SplitEvaluator != null) {</span>
+<span class="nc" id="L187">      System.err.println(&quot;RandomSplitResultProducer: setting additional &quot;</span>
+			 +&quot;measures for &quot;
+			 +&quot;split evaluator&quot;);
+<span class="nc" id="L190">      m_SplitEvaluator.setAdditionalMeasures(m_AdditionalMeasures);</span>
+    }
+<span class="nc" id="L192">  }</span>
+  
+    /**
+     * Returns an enumeration of any additional measure names that might be
+   * in the SplitEvaluator
+   * @return an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+<span class="nc" id="L200">    Vector newVector = new Vector();</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">    if (m_SplitEvaluator instanceof AdditionalMeasureProducer) {</span>
+<span class="nc" id="L202">      Enumeration en = ((AdditionalMeasureProducer)m_SplitEvaluator).</span>
+<span class="nc" id="L203">	enumerateMeasures();</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">      while (en.hasMoreElements()) {</span>
+<span class="nc" id="L205">	String mname = (String)en.nextElement();</span>
+<span class="nc" id="L206">	newVector.addElement(mname);</span>
+      }
+    }
+<span class="nc" id="L209">    return newVector.elements();</span>
+  }
+  
+  /**
+   * Returns the value of the named measure
+   * @param additionalMeasureName the name of the measure to query for its value
+   * @return the value of the named measure
+   * @throws IllegalArgumentException if the named measure is not supported
+   */
+  public double getMeasure(String additionalMeasureName) {
+<span class="nc bnc" id="L219" title="All 2 branches missed.">    if (m_SplitEvaluator instanceof AdditionalMeasureProducer) {</span>
+<span class="nc" id="L220">      return ((AdditionalMeasureProducer)m_SplitEvaluator).</span>
+<span class="nc" id="L221">	getMeasure(additionalMeasureName);</span>
+    } else {
+<span class="nc" id="L223">      throw new IllegalArgumentException(&quot;RandomSplitResultProducer: &quot;</span>
+<span class="nc" id="L224">			  +&quot;Can't return value for : &quot;+additionalMeasureName</span>
+<span class="nc" id="L225">			  +&quot;. &quot;+m_SplitEvaluator.getClass().getName()+&quot; &quot;</span>
+<span class="nc" id="L226">			  +&quot;is not an AdditionalMeasureProducer&quot;);</span>
+    }
+  }
+  
+  /**
+   * Sets the object to send results of each run to.
+   *
+   * @param listener a value of type 'ResultListener'
+   */
+  public void setResultListener(ResultListener listener) {
+
+<span class="nc" id="L237">    m_ResultListener = listener;</span>
+<span class="nc" id="L238">  }</span>
+
+  /**
+   * Gets a Double representing the current date and time.
+   * eg: 1:46pm on 20/5/1999 -&gt; 19990520.1346
+   *
+   * @return a value of type Double
+   */
+  public static Double getTimestamp() {
+
+<span class="nc" id="L248">    Calendar now = Calendar.getInstance(TimeZone.getTimeZone(&quot;UTC&quot;));</span>
+<span class="nc" id="L249">    double timestamp = now.get(Calendar.YEAR) * 10000</span>
+<span class="nc" id="L250">      + (now.get(Calendar.MONTH) + 1) * 100</span>
+<span class="nc" id="L251">      + now.get(Calendar.DAY_OF_MONTH)</span>
+<span class="nc" id="L252">      + now.get(Calendar.HOUR_OF_DAY) / 100.0</span>
+<span class="nc" id="L253">      + now.get(Calendar.MINUTE) / 10000.0;</span>
+<span class="nc" id="L254">    return new Double(timestamp);</span>
+  }
+
+  /**
+   * Prepare to generate results.
+   *
+   * @throws Exception if an error occurs during preprocessing.
+   */
+  public void preProcess() throws Exception {
+
+<span class="nc bnc" id="L264" title="All 2 branches missed.">    if (m_SplitEvaluator == null) {</span>
+<span class="nc" id="L265">      throw new Exception(&quot;No SplitEvalutor set&quot;);</span>
+    }
+<span class="nc bnc" id="L267" title="All 2 branches missed.">    if (m_ResultListener == null) {</span>
+<span class="nc" id="L268">      throw new Exception(&quot;No ResultListener set&quot;);</span>
+    }
+<span class="nc" id="L270">    m_ResultListener.preProcess(this);</span>
+<span class="nc" id="L271">  }</span>
+  
+  /**
+   * Perform any postprocessing. When this method is called, it indicates
+   * that no more requests to generate results for the current experiment
+   * will be sent.
+   *
+   * @throws Exception if an error occurs
+   */
+  public void postProcess() throws Exception {
+
+<span class="nc" id="L282">    m_ResultListener.postProcess(this);</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">    if (m_debugOutput) {</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">      if (m_ZipDest != null) {</span>
+<span class="nc" id="L285">	m_ZipDest.finished();</span>
+<span class="nc" id="L286">	m_ZipDest = null;</span>
+      }
+    }
+<span class="nc" id="L289">  }</span>
+
+  /**
+   * Gets the keys for a specified run number. Different run
+   * numbers correspond to different randomizations of the data. Keys
+   * produced should be sent to the current ResultListener
+   *
+   * @param run the run number to get keys for.
+   * @throws Exception if a problem occurs while getting the keys
+   */
+  public void doRunKeys(int run) throws Exception {
+<span class="nc bnc" id="L300" title="All 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="nc" id="L301">      throw new Exception(&quot;No Instances set&quot;);</span>
+    }
+    // Add in some fields to the key like run number, dataset name
+<span class="nc" id="L304">    Object [] seKey = m_SplitEvaluator.getKey();</span>
+<span class="nc" id="L305">    Object [] key = new Object [seKey.length + 2];</span>
+<span class="nc" id="L306">    key[0] = Utils.backQuoteChars(m_Instances.relationName());</span>
+<span class="nc" id="L307">    key[1] = &quot;&quot; + run;</span>
+<span class="nc" id="L308">    System.arraycopy(seKey, 0, key, 2, seKey.length);</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">    if (m_ResultListener.isResultRequired(this, key)) {</span>
+      try {
+<span class="nc" id="L311">	m_ResultListener.acceptResult(this, key, null);</span>
+<span class="nc" id="L312">      } catch (Exception ex) {</span>
+	// Save the train and test datasets for debugging purposes?
+<span class="nc" id="L314">	throw ex;</span>
+      }
+    }
+<span class="nc" id="L317">  }</span>
+
+  /**
+   * Gets the results for a specified run number. Different run
+   * numbers correspond to different randomizations of the data. Results
+   * produced should be sent to the current ResultListener
+   *
+   * @param run the run number to get results for.
+   * @throws Exception if a problem occurs while getting the results
+   */
+  public void doRun(int run) throws Exception {
+
+<span class="nc bnc" id="L329" title="All 2 branches missed.">    if (getRawOutput()) {</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">      if (m_ZipDest == null) {</span>
+<span class="nc" id="L331">	m_ZipDest = new OutputZipper(m_OutputFile);</span>
+      }
+    }
+
+<span class="nc bnc" id="L335" title="All 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="nc" id="L336">      throw new Exception(&quot;No Instances set&quot;);</span>
+    }
+    // Add in some fields to the key like run number, dataset name
+<span class="nc" id="L339">    Object [] seKey = m_SplitEvaluator.getKey();</span>
+<span class="nc" id="L340">    Object [] key = new Object [seKey.length + 2];</span>
+<span class="nc" id="L341">    key[0] = Utils.backQuoteChars(m_Instances.relationName());</span>
+<span class="nc" id="L342">    key[1] = &quot;&quot; + run;</span>
+<span class="nc" id="L343">    System.arraycopy(seKey, 0, key, 2, seKey.length);</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">    if (m_ResultListener.isResultRequired(this, key)) {</span>
+
+      // Randomize on a copy of the original dataset
+<span class="nc" id="L347">      Instances runInstances = new Instances(m_Instances);</span>
+
+      Instances train;
+      Instances test;
+
+<span class="nc bnc" id="L352" title="All 2 branches missed.">      if (!m_randomize) {</span>
+
+	// Don't do any randomization
+<span class="nc" id="L355">	int trainSize = Utils.round(runInstances.numInstances() * m_TrainPercent / 100);</span>
+<span class="nc" id="L356">	int testSize = runInstances.numInstances() - trainSize;</span>
+<span class="nc" id="L357">	train = new Instances(runInstances, 0, trainSize);</span>
+<span class="nc" id="L358">	test = new Instances(runInstances, trainSize, testSize);</span>
+      } else {
+<span class="nc" id="L360">	Random rand = new Random(run);</span>
+<span class="nc" id="L361">	runInstances.randomize(rand);</span>
+	
+	// Nominal class
+<span class="nc bnc" id="L364" title="All 2 branches missed.">	if (runInstances.classAttribute().isNominal()) {</span>
+	  
+	  // create the subset for each classs
+<span class="nc" id="L367">	  int numClasses = runInstances.numClasses();</span>
+<span class="nc" id="L368">	  Instances[] subsets = new Instances[numClasses + 1];</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">	  for (int i=0; i &lt; numClasses + 1; i++) {</span>
+<span class="nc" id="L370">	    subsets[i] = new Instances(runInstances, 10);</span>
+	  }
+	  
+	  // divide instances into subsets
+<span class="nc" id="L374">	  Enumeration e = runInstances.enumerateInstances();</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">	  while(e.hasMoreElements()) {</span>
+<span class="nc" id="L376">	    Instance inst = (Instance) e.nextElement();</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">	    if (inst.classIsMissing()) {</span>
+<span class="nc" id="L378">	      subsets[numClasses].add(inst);</span>
+	    } else {
+<span class="nc" id="L380">	      subsets[(int) inst.classValue()].add(inst);</span>
+	    }
+	  }
+	  
+	  // Compactify them
+<span class="nc bnc" id="L385" title="All 2 branches missed.">	  for (int i=0; i &lt; numClasses + 1; i++) {</span>
+<span class="nc" id="L386">	    subsets[i].compactify();</span>
+	  }
+	  
+	  // merge into train and test sets
+<span class="nc" id="L390">	  train = new Instances(runInstances, runInstances.numInstances());</span>
+<span class="nc" id="L391">	  test = new Instances(runInstances, runInstances.numInstances());</span>
+<span class="nc bnc" id="L392" title="All 2 branches missed.">	  for (int i = 0; i &lt; numClasses + 1; i++) {</span>
+<span class="nc" id="L393">	    int trainSize = </span>
+<span class="nc" id="L394">	      Utils.probRound(subsets[i].numInstances() * m_TrainPercent / 100, rand);</span>
+<span class="nc bnc" id="L395" title="All 2 branches missed.">	    for (int j = 0; j &lt; trainSize; j++) {</span>
+<span class="nc" id="L396">	      train.add(subsets[i].instance(j));</span>
+	    }
+<span class="nc bnc" id="L398" title="All 2 branches missed.">	    for (int j = trainSize; j &lt; subsets[i].numInstances(); j++) {</span>
+<span class="nc" id="L399">	      test.add(subsets[i].instance(j));</span>
+	    }
+	    // free memory
+<span class="nc" id="L402">	    subsets[i] = null;</span>
+	  }
+<span class="nc" id="L404">	  train.compactify();</span>
+<span class="nc" id="L405">	  test.compactify();</span>
+	  
+	  // randomize the final sets
+<span class="nc" id="L408">	  train.randomize(rand);</span>
+<span class="nc" id="L409">	  test.randomize(rand);</span>
+	} else {
+	  
+	  // Numeric target 
+<span class="nc" id="L413">	  int trainSize = </span>
+<span class="nc" id="L414">	    Utils.probRound(runInstances.numInstances() * m_TrainPercent / 100, rand);</span>
+<span class="nc" id="L415">	  int testSize = runInstances.numInstances() - trainSize;</span>
+<span class="nc" id="L416">	  train = new Instances(runInstances, 0, trainSize);</span>
+<span class="nc" id="L417">	  test = new Instances(runInstances, trainSize, testSize);</span>
+	}
+      }
+      try {
+<span class="nc" id="L421">	Object [] seResults = m_SplitEvaluator.getResult(train, test);</span>
+<span class="nc" id="L422">	Object [] results = new Object [seResults.length + 1];</span>
+<span class="nc" id="L423">	results[0] = getTimestamp();</span>
+<span class="nc" id="L424">	System.arraycopy(seResults, 0, results, 1,</span>
+<span class="nc" id="L425">			 seResults.length);</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">	if (m_debugOutput) {</span>
+<span class="nc" id="L427">	  String resultName = </span>
+<span class="nc" id="L428">	    (&quot;&quot;+run+&quot;.&quot;+</span>
+<span class="nc" id="L429">	     Utils.backQuoteChars(runInstances.relationName())</span>
+<span class="nc" id="L430">	     +&quot;.&quot;</span>
+<span class="nc" id="L431">	     +m_SplitEvaluator.toString()).replace(' ','_');</span>
+<span class="nc" id="L432">	  resultName = Utils.removeSubstring(resultName, </span>
+<span class="nc" id="L433">					     &quot;weka.classifiers.&quot;);</span>
+<span class="nc" id="L434">	  resultName = Utils.removeSubstring(resultName, </span>
+<span class="nc" id="L435">					     &quot;weka.filters.&quot;);</span>
+<span class="nc" id="L436">	  resultName = Utils.removeSubstring(resultName, </span>
+<span class="nc" id="L437">					     &quot;weka.attributeSelection.&quot;);</span>
+<span class="nc" id="L438">	  m_ZipDest.zipit(m_SplitEvaluator.getRawResultOutput(), resultName);</span>
+	}
+<span class="nc" id="L440">	m_ResultListener.acceptResult(this, key, results);</span>
+<span class="nc" id="L441">      } catch (Exception ex) {</span>
+	// Save the train and test datasets for debugging purposes?
+<span class="nc" id="L443">	throw ex;</span>
+      }
+    }
+<span class="nc" id="L446">  }</span>
+
+  /**
+   * Gets the names of each of the columns produced for a single run.
+   * This method should really be static.
+   *
+   * @return an array containing the name of each column
+   */
+  public String [] getKeyNames() {
+
+<span class="nc" id="L456">    String [] keyNames = m_SplitEvaluator.getKeyNames();</span>
+    // Add in the names of our extra key fields
+<span class="nc" id="L458">    String [] newKeyNames = new String [keyNames.length + 2];</span>
+<span class="nc" id="L459">    newKeyNames[0] = DATASET_FIELD_NAME;</span>
+<span class="nc" id="L460">    newKeyNames[1] = RUN_FIELD_NAME;</span>
+<span class="nc" id="L461">    System.arraycopy(keyNames, 0, newKeyNames, 2, keyNames.length);</span>
+<span class="nc" id="L462">    return newKeyNames;</span>
+  }
+
+  /**
+   * Gets the data types of each of the columns produced for a single run.
+   * This method should really be static.
+   *
+   * @return an array containing objects of the type of each column. The 
+   * objects should be Strings, or Doubles.
+   */
+  public Object [] getKeyTypes() {
+
+<span class="nc" id="L474">    Object [] keyTypes = m_SplitEvaluator.getKeyTypes();</span>
+    // Add in the types of our extra fields
+<span class="nc" id="L476">    Object [] newKeyTypes = new String [keyTypes.length + 2];</span>
+<span class="nc" id="L477">    newKeyTypes[0] = new String();</span>
+<span class="nc" id="L478">    newKeyTypes[1] = new String();</span>
+<span class="nc" id="L479">    System.arraycopy(keyTypes, 0, newKeyTypes, 2, keyTypes.length);</span>
+<span class="nc" id="L480">    return newKeyTypes;</span>
+  }
+
+  /**
+   * Gets the names of each of the columns produced for a single run.
+   * This method should really be static.
+   *
+   * @return an array containing the name of each column
+   */
+  public String [] getResultNames() {
+
+<span class="nc" id="L491">    String [] resultNames = m_SplitEvaluator.getResultNames();</span>
+    // Add in the names of our extra Result fields
+<span class="nc" id="L493">    String [] newResultNames = new String [resultNames.length + 1];</span>
+<span class="nc" id="L494">    newResultNames[0] = TIMESTAMP_FIELD_NAME;</span>
+<span class="nc" id="L495">    System.arraycopy(resultNames, 0, newResultNames, 1, resultNames.length);</span>
+<span class="nc" id="L496">    return newResultNames;</span>
+  }
+
+  /**
+   * Gets the data types of each of the columns produced for a single run.
+   * This method should really be static.
+   *
+   * @return an array containing objects of the type of each column. The 
+   * objects should be Strings, or Doubles.
+   */
+  public Object [] getResultTypes() {
+
+<span class="nc" id="L508">    Object [] resultTypes = m_SplitEvaluator.getResultTypes();</span>
+    // Add in the types of our extra Result fields
+<span class="nc" id="L510">    Object [] newResultTypes = new Object [resultTypes.length + 1];</span>
+<span class="nc" id="L511">    newResultTypes[0] = new Double(0);</span>
+<span class="nc" id="L512">    System.arraycopy(resultTypes, 0, newResultTypes, 1, resultTypes.length);</span>
+<span class="nc" id="L513">    return newResultTypes;</span>
+  }
+
+  /**
+   * Gets a description of the internal settings of the result
+   * producer, sufficient for distinguishing a ResultProducer
+   * instance from another with different settings (ignoring
+   * those settings set through this interface). For example,
+   * a cross-validation ResultProducer may have a setting for the
+   * number of folds. For a given state, the results produced should
+   * be compatible. Typically if a ResultProducer is an OptionHandler,
+   * this string will represent the command line arguments required
+   * to set the ResultProducer to that state.
+   *
+   * @return the description of the ResultProducer state, or null
+   * if no state is defined
+   */
+  public String getCompatibilityState() {
+
+<span class="nc" id="L532">    String result = &quot;-P &quot; + m_TrainPercent;</span>
+<span class="nc bnc" id="L533" title="All 2 branches missed.">    if (!getRandomizeData()) {</span>
+<span class="nc" id="L534">      result += &quot; -R&quot;;</span>
+    }
+<span class="nc bnc" id="L536" title="All 2 branches missed.">    if (m_SplitEvaluator == null) {</span>
+<span class="nc" id="L537">      result += &quot; &lt;null SplitEvaluator&gt;&quot;;</span>
+    } else {
+<span class="nc" id="L539">      result += &quot; -W &quot; + m_SplitEvaluator.getClass().getName();</span>
+    }
+<span class="nc" id="L541">    return result + &quot; --&quot;;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String outputFileTipText() {
+<span class="nc" id="L550">    return &quot;Set the destination for saving raw output. If the rawOutput &quot;</span>
+      +&quot;option is selected, then output from the splitEvaluator for &quot;
+      +&quot;individual train-test splits is saved. If the destination is a &quot;
+      +&quot;directory, &quot;
+      +&quot;then each output is saved to an individual gzip file; if the &quot;
+      +&quot;destination is a file, then each output is saved as an entry &quot;
+      +&quot;in a zip file.&quot;;
+  }
+
+  /**
+   * Get the value of OutputFile.
+   *
+   * @return Value of OutputFile.
+   */
+  public File getOutputFile() {
+    
+<span class="nc" id="L566">    return m_OutputFile;</span>
+  }
+  
+  /**
+   * Set the value of OutputFile.
+   *
+   * @param newOutputFile Value to assign to OutputFile.
+   */
+  public void setOutputFile(File newOutputFile) {
+    
+<span class="nc" id="L576">    m_OutputFile = newOutputFile;</span>
+<span class="nc" id="L577">  }  </span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String randomizeDataTipText() {
+<span class="nc" id="L585">    return &quot;Do not randomize dataset and do not perform probabilistic rounding &quot; +</span>
+      &quot;if false&quot;;
+  }
+
+  /**
+   * Get if dataset is to be randomized
+   * @return true if dataset is to be randomized
+   */
+  public boolean getRandomizeData() {
+<span class="nc" id="L594">    return m_randomize;</span>
+  }
+  
+  /**
+   * Set to true if dataset is to be randomized
+   * @param d true if dataset is to be randomized
+   */
+  public void setRandomizeData(boolean d) {
+<span class="nc" id="L602">    m_randomize = d;</span>
+<span class="nc" id="L603">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String rawOutputTipText() {
+<span class="nc" id="L611">    return &quot;Save raw output (useful for debugging). If set, then output is &quot;</span>
+      +&quot;sent to the destination specified by outputFile&quot;;
+  }
+
+  /**
+   * Get if raw split evaluator output is to be saved
+   * @return true if raw split evalutor output is to be saved
+   */
+  public boolean getRawOutput() {
+<span class="nc" id="L620">    return m_debugOutput;</span>
+  }
+  
+  /**
+   * Set to true if raw split evaluator output is to be saved
+   * @param d true if output is to be saved
+   */
+  public void setRawOutput(boolean d) {
+<span class="nc" id="L628">    m_debugOutput = d;</span>
+<span class="nc" id="L629">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String trainPercentTipText() {
+<span class="nc" id="L637">    return &quot;Set the percentage of data to use for training.&quot;;</span>
+  }
+
+  /**
+   * Get the value of TrainPercent.
+   *
+   * @return Value of TrainPercent.
+   */
+  public double getTrainPercent() {
+    
+<span class="nc" id="L647">    return m_TrainPercent;</span>
+  }
+  
+  /**
+   * Set the value of TrainPercent.
+   *
+   * @param newTrainPercent Value to assign to TrainPercent.
+   */
+  public void setTrainPercent(double newTrainPercent) {
+    
+<span class="nc" id="L657">    m_TrainPercent = newTrainPercent;</span>
+<span class="nc" id="L658">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String splitEvaluatorTipText() {
+<span class="nc" id="L666">    return &quot;The evaluator to apply to the test data. &quot;</span>
+      +&quot;This may be a classifier, regression scheme etc.&quot;;
+  }
+
+  /**
+   * Get the SplitEvaluator.
+   *
+   * @return the SplitEvaluator.
+   */
+  public SplitEvaluator getSplitEvaluator() {
+    
+<span class="nc" id="L677">    return m_SplitEvaluator;</span>
+  }
+  
+  /**
+   * Set the SplitEvaluator.
+   *
+   * @param newSplitEvaluator new SplitEvaluator to use.
+   */
+  public void setSplitEvaluator(SplitEvaluator newSplitEvaluator) {
+    
+<span class="nc" id="L687">    m_SplitEvaluator = newSplitEvaluator;</span>
+<span class="nc" id="L688">    m_SplitEvaluator.setAdditionalMeasures(m_AdditionalMeasures);</span>
+<span class="nc" id="L689">  }</span>
+
+  /**
+   * Returns an enumeration describing the available options..
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="nc" id="L698">    Vector newVector = new Vector(5);</span>
+
+<span class="nc" id="L700">    newVector.addElement(new Option(</span>
+<span class="nc" id="L701">	     &quot;\tThe percentage of instances to use for training.\n&quot;</span>
+	      +&quot;\t(default 66)&quot;, 
+<span class="nc" id="L703">	     &quot;P&quot;, 1, </span>
+<span class="nc" id="L704">	     &quot;-P &lt;percent&gt;&quot;));</span>
+
+<span class="nc" id="L706">    newVector.addElement(new Option(</span>
+<span class="nc" id="L707">	     &quot;Save raw split evaluator output.&quot;,</span>
+<span class="nc" id="L708">	     &quot;D&quot;,0,&quot;-D&quot;));</span>
+
+<span class="nc" id="L710">    newVector.addElement(new Option(</span>
+<span class="nc" id="L711">	     &quot;\tThe filename where raw output will be stored.\n&quot;</span>
+	     +&quot;\tIf a directory name is specified then then individual\n&quot;
+	     +&quot;\toutputs will be gzipped, otherwise all output will be\n&quot;
+	     +&quot;\tzipped to the named file. Use in conjuction with -D.&quot;
+	     +&quot;\t(default splitEvalutorOut.zip)&quot;, 
+<span class="nc" id="L716">	     &quot;O&quot;, 1, </span>
+<span class="nc" id="L717">	     &quot;-O &lt;file/directory name/path&gt;&quot;));</span>
+
+<span class="nc" id="L719">    newVector.addElement(new Option(</span>
+<span class="nc" id="L720">	     &quot;\tThe full class name of a SplitEvaluator.\n&quot;</span>
+	      +&quot;\teg: weka.experiment.ClassifierSplitEvaluator&quot;, 
+<span class="nc" id="L722">	     &quot;W&quot;, 1, </span>
+<span class="nc" id="L723">	     &quot;-W &lt;class name&gt;&quot;));</span>
+
+<span class="nc" id="L725">    newVector.addElement(new Option(</span>
+<span class="nc" id="L726">	     &quot;\tSet when data is not to be randomized and the data sets' size.\n&quot;</span>
+	     + &quot;\tIs not to be determined via probabilistic rounding.&quot;,
+<span class="nc" id="L728">	     &quot;R&quot;,0,&quot;-R&quot;));</span>
+
+ 
+<span class="nc bnc" id="L731" title="All 2 branches missed.">    if ((m_SplitEvaluator != null) &amp;&amp;</span>
+<span class="nc bnc" id="L732" title="All 2 branches missed.">	(m_SplitEvaluator instanceof OptionHandler)) {</span>
+<span class="nc" id="L733">      newVector.addElement(new Option(</span>
+<span class="nc" id="L734">	     &quot;&quot;,</span>
+<span class="nc" id="L735">	     &quot;&quot;, 0, &quot;\nOptions specific to split evaluator &quot;</span>
+<span class="nc" id="L736">	     + m_SplitEvaluator.getClass().getName() + &quot;:&quot;));</span>
+<span class="nc" id="L737">      Enumeration enu = ((OptionHandler)m_SplitEvaluator).listOptions();</span>
+<span class="nc bnc" id="L738" title="All 2 branches missed.">      while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L739">	newVector.addElement(enu.nextElement());</span>
+      }
+    }
+<span class="nc" id="L742">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;percent&amp;gt;
+   *  The percentage of instances to use for training.
+   *  (default 66)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   * Save raw split evaluator output.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -O &amp;lt;file/directory name/path&amp;gt;
+   *  The filename where raw output will be stored.
+   *  If a directory name is specified then then individual
+   *  outputs will be gzipped, otherwise all output will be
+   *  zipped to the named file. Use in conjuction with -D. (default splitEvalutorOut.zip)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;class name&amp;gt;
+   *  The full class name of a SplitEvaluator.
+   *  eg: weka.experiment.ClassifierSplitEvaluator&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R
+   *  Set when data is not to be randomized and the data sets' size.
+   *  Is not to be determined via probabilistic rounding.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to split evaluator weka.experiment.ClassifierSplitEvaluator:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;class name&amp;gt;
+   *  The full class name of the classifier.
+   *  eg: weka.classifiers.bayes.NaiveBayes&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;index&amp;gt;
+   *  The index of the class for which IR statistics
+   *  are to be output. (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -I &amp;lt;index&amp;gt;
+   *  The index of an attribute to output in the
+   *  results. This attribute should identify an
+   *  instance in order to know which instances are
+   *  in the test set of a cross validation. if 0
+   *  no output (default 0).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P
+   *  Add target and prediction columns to the result
+   *  for each fold.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to classifier weka.classifiers.rules.ZeroR:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * All options after -- will be passed to the split evaluator.
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    
+<span class="nc" id="L812">    setRawOutput(Utils.getFlag('D', options));</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">    setRandomizeData(!Utils.getFlag('R', options));</span>
+
+<span class="nc" id="L815">    String fName = Utils.getOption('O', options);</span>
+<span class="nc bnc" id="L816" title="All 2 branches missed.">    if (fName.length() != 0) {</span>
+<span class="nc" id="L817">      setOutputFile(new File(fName));</span>
+    }
+
+<span class="nc" id="L820">    String trainPct = Utils.getOption('P', options);</span>
+<span class="nc bnc" id="L821" title="All 2 branches missed.">    if (trainPct.length() != 0) {</span>
+<span class="nc" id="L822">      setTrainPercent((new Double(trainPct)).doubleValue());</span>
+    } else {
+<span class="nc" id="L824">      setTrainPercent(66);</span>
+    }
+
+<span class="nc" id="L827">    String seName = Utils.getOption('W', options);</span>
+<span class="nc bnc" id="L828" title="All 2 branches missed.">    if (seName.length() == 0) {</span>
+<span class="nc" id="L829">      throw new Exception(&quot;A SplitEvaluator must be specified with&quot;</span>
+			  + &quot; the -W option.&quot;);
+    }
+    // Do it first without options, so if an exception is thrown during
+    // the option setting, listOptions will contain options for the actual
+    // SE.
+<span class="nc" id="L835">    setSplitEvaluator((SplitEvaluator)Utils.forName(</span>
+<span class="nc" id="L836">		      SplitEvaluator.class,</span>
+<span class="nc" id="L837">		      seName,</span>
+<span class="nc" id="L838">		      null));</span>
+<span class="nc bnc" id="L839" title="All 2 branches missed.">    if (getSplitEvaluator() instanceof OptionHandler) {</span>
+<span class="nc" id="L840">      ((OptionHandler) getSplitEvaluator())</span>
+<span class="nc" id="L841">	.setOptions(Utils.partitionOptions(options));</span>
+    }
+<span class="nc" id="L843">  }</span>
+
+  /**
+   * Gets the current settings of the result producer.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+
+<span class="nc" id="L852">    String [] seOptions = new String [0];</span>
+<span class="nc bnc" id="L853" title="All 2 branches missed.">    if ((m_SplitEvaluator != null) &amp;&amp; </span>
+<span class="nc bnc" id="L854" title="All 2 branches missed.">	(m_SplitEvaluator instanceof OptionHandler)) {</span>
+<span class="nc" id="L855">      seOptions = ((OptionHandler)m_SplitEvaluator).getOptions();</span>
+    }
+    
+<span class="nc" id="L858">    String [] options = new String [seOptions.length + 9];</span>
+<span class="nc" id="L859">    int current = 0;</span>
+
+<span class="nc" id="L861">    options[current++] = &quot;-P&quot;; options[current++] = &quot;&quot; + getTrainPercent();</span>
+    
+<span class="nc bnc" id="L863" title="All 2 branches missed.">    if (getRawOutput()) {</span>
+<span class="nc" id="L864">      options[current++] = &quot;-D&quot;;</span>
+    }
+    
+<span class="nc bnc" id="L867" title="All 2 branches missed.">    if (!getRandomizeData()) {</span>
+<span class="nc" id="L868">      options[current++] = &quot;-R&quot;;</span>
+    }
+
+<span class="nc" id="L871">    options[current++] = &quot;-O&quot;; </span>
+<span class="nc" id="L872">    options[current++] = getOutputFile().getName();</span>
+
+<span class="nc bnc" id="L874" title="All 2 branches missed.">    if (getSplitEvaluator() != null) {</span>
+<span class="nc" id="L875">      options[current++] = &quot;-W&quot;;</span>
+<span class="nc" id="L876">      options[current++] = getSplitEvaluator().getClass().getName();</span>
+    }
+<span class="nc" id="L878">    options[current++] = &quot;--&quot;;</span>
+
+<span class="nc" id="L880">    System.arraycopy(seOptions, 0, options, current, </span>
+<span class="nc" id="L881">		     seOptions.length);</span>
+<span class="nc" id="L882">    current += seOptions.length;</span>
+<span class="nc bnc" id="L883" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L884">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="nc" id="L886">    return options;</span>
+  }
+
+  /**
+   * Gets a text descrption of the result producer.
+   *
+   * @return a text description of the result producer.
+   */
+  public String toString() {
+
+<span class="nc" id="L896">    String result = &quot;RandomSplitResultProducer: &quot;;</span>
+<span class="nc" id="L897">    result += getCompatibilityState();</span>
+<span class="nc bnc" id="L898" title="All 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="nc" id="L899">      result += &quot;: &lt;null Instances&gt;&quot;;</span>
+    } else {
+<span class="nc" id="L901">      result += &quot;: &quot; + Utils.backQuoteChars(m_Instances.relationName());</span>
+    }
+<span class="nc" id="L903">    return result;</span>
+  }
+
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L912">    return RevisionUtils.extract(&quot;$Revision: 6255 $&quot;);</span>
+  }
+} // RandomSplitResultProducer
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

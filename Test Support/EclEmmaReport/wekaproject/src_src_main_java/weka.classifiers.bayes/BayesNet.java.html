@@ -1,0 +1,1130 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>BayesNet.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.bayes</a> &gt; <span class="el_source">BayesNet.java</span></div><h1>BayesNet.java</h1><pre class="source lang-java linenums">/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * BayesNet.java
+ * Copyright (C) 2001 University of Waikato, Hamilton, New Zealand
+ * 
+ */
+package weka.classifiers.bayes;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.bayes.net.ADNode;
+import weka.classifiers.bayes.net.BIFReader;
+import weka.classifiers.bayes.net.ParentSet;
+import weka.classifiers.bayes.net.estimate.BayesNetEstimator;
+import weka.classifiers.bayes.net.estimate.DiscreteEstimatorBayes;
+import weka.classifiers.bayes.net.estimate.SimpleEstimator;
+import weka.classifiers.bayes.net.search.SearchAlgorithm;
+import weka.classifiers.bayes.net.search.local.K2;
+import weka.classifiers.bayes.net.search.local.LocalScoreSearchAlgorithm;
+import weka.classifiers.bayes.net.search.local.Scoreable;
+import weka.core.AdditionalMeasureProducer;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.Drawable;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.estimators.Estimator;
+import weka.filters.Filter;
+import weka.filters.supervised.attribute.Discretize;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Bayes Network learning using various search algorithms and quality measures.&lt;br/&gt;
+ * Base class for a Bayes Network classifier. Provides datastructures (network structure, conditional probability distributions, etc.) and facilities common to Bayes Network learning algorithms like K2 and B.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * http://sourceforge.net/projects/weka/files/documentation/WekaManual-3-6-1.pdf/download
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Do not use ADTree data structure
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;BIF file&amp;gt;
+ *  BIF file to compare with
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Q weka.classifiers.bayes.net.search.SearchAlgorithm
+ *  Search algorithm
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -E weka.classifiers.bayes.net.estimate.SimpleEstimator
+ *  Estimator algorithm
+ * &lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Remco Bouckaert (rrb@xm.co.nz)
+ * @version $Revision: 5725 $
+ */
+<span class="fc" id="L90">public class BayesNet</span>
+  extends Classifier
+  implements OptionHandler, WeightedInstancesHandler, Drawable, 
+             AdditionalMeasureProducer {
+
+  /** for serialization */
+  static final long serialVersionUID = 746037443258775954L;
+
+
+  /**
+   * The parent sets.
+   */
+  protected ParentSet[] m_ParentSets;
+
+  /**
+   * The attribute estimators containing CPTs.
+   */
+  public Estimator[][] m_Distributions;
+
+
+  /** filter used to quantize continuous variables, if any **/
+<span class="fc" id="L111">  protected Discretize m_DiscretizeFilter = null;</span>
+
+  /** attribute index of a non-nominal attribute */
+<span class="fc" id="L114">  int m_nNonDiscreteAttribute = -1;</span>
+
+  /** filter used to fill in missing values, if any **/
+<span class="fc" id="L117">  protected ReplaceMissingValues m_MissingValuesFilter = null;	</span>
+
+  /**
+   * The number of classes
+   */
+  protected int m_NumClasses;
+
+  /**
+   * The dataset header for the purposes of printing out a semi-intelligible
+   * model
+   */
+  public Instances m_Instances;
+
+  /**
+   * Datastructure containing ADTree representation of the database.
+   * This may result in more efficient access to the data.
+   */
+  ADNode m_ADTree;
+
+  /**
+   * Bayes network to compare the structure with.
+   */
+<span class="fc" id="L139">  protected BIFReader m_otherBayesNet = null;</span>
+
+  /**
+   * Use the experimental ADTree datastructure for calculating contingency tables
+   */
+<span class="fc" id="L144">  boolean m_bUseADTree = false;</span>
+
+  /**
+   * Search algorithm used for learning the structure of a network.
+   */
+<span class="fc" id="L149">  SearchAlgorithm m_SearchAlgorithm = new K2();</span>
+
+  /**
+   * Search algorithm used for learning the structure of a network.
+   */
+<span class="fc" id="L154">  BayesNetEstimator m_BayesNetEstimator = new SimpleEstimator();</span>
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L162">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L163">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L166">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L167">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L168">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L171">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L172">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+
+    // instances
+<span class="fc" id="L175">    result.setMinimumNumberInstances(0);</span>
+
+<span class="fc" id="L177">    return result;</span>
+  }
+
+  /**
+   * Generates the classifier.
+   * 
+   * @param instances set of instances serving as training data
+   * @throws Exception if the classifier has not been generated
+   * successfully
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L190">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L193">    instances = new Instances(instances);</span>
+<span class="fc" id="L194">    instances.deleteWithMissingClass();</span>
+
+    // ensure we have a data set with discrete variables only and with no missing values
+<span class="fc" id="L197">    instances = normalizeDataSet(instances);</span>
+
+    // Copy the instances
+<span class="fc" id="L200">    m_Instances = new Instances(instances);</span>
+
+    // sanity check: need more than 1 variable in datat set
+<span class="fc" id="L203">    m_NumClasses = instances.numClasses();</span>
+
+    // initialize ADTree
+<span class="pc bpc" id="L206" title="1 of 2 branches missed.">    if (m_bUseADTree) {</span>
+<span class="nc" id="L207">      m_ADTree = ADNode.makeADTree(instances);</span>
+      //      System.out.println(&quot;Oef, done!&quot;);
+    }
+
+    // build the network structure
+<span class="fc" id="L212">    initStructure();</span>
+
+    // build the network structure
+<span class="fc" id="L215">    buildStructure();</span>
+
+    // build the set of CPTs
+<span class="fc" id="L218">    estimateCPTs();</span>
+
+    // Save space
+    // m_Instances = new Instances(m_Instances, 0);
+<span class="fc" id="L222">    m_ADTree = null;</span>
+<span class="fc" id="L223">  } // buildClassifier</span>
+
+  /** ensure that all variables are nominal and that there are no missing values
+   * @param instances data set to check and quantize and/or fill in missing values
+   * @return filtered instances
+   * @throws Exception if a filter (Discretize, ReplaceMissingValues) fails
+   */
+  protected Instances normalizeDataSet(Instances instances) throws Exception {
+<span class="fc" id="L231">    m_DiscretizeFilter = null;</span>
+<span class="fc" id="L232">    m_MissingValuesFilter = null;</span>
+
+<span class="fc" id="L234">    boolean bHasNonNominal = false;</span>
+<span class="fc" id="L235">    boolean bHasMissingValues = false;</span>
+
+<span class="fc" id="L237">    Enumeration enu = instances.enumerateAttributes();		</span>
+<span class="fc bfc" id="L238" title="All 2 branches covered.">    while (enu.hasMoreElements()) {</span>
+<span class="fc" id="L239">      Attribute attribute = (Attribute) enu.nextElement();</span>
+<span class="fc bfc" id="L240" title="All 2 branches covered.">      if (attribute.type() != Attribute.NOMINAL) {</span>
+<span class="fc" id="L241">	m_nNonDiscreteAttribute = attribute.index();</span>
+<span class="fc" id="L242">	bHasNonNominal = true;</span>
+	//throw new UnsupportedAttributeTypeException(&quot;BayesNet handles nominal variables only. Non-nominal variable in dataset detected.&quot;);
+      }
+<span class="fc" id="L245">      Enumeration enum2 = instances.enumerateInstances();</span>
+<span class="fc bfc" id="L246" title="All 2 branches covered.">      while (enum2.hasMoreElements()) {</span>
+<span class="fc bfc" id="L247" title="All 2 branches covered.">	if (((Instance) enum2.nextElement()).isMissing(attribute)) {</span>
+<span class="fc" id="L248">	  bHasMissingValues = true;</span>
+	  // throw new NoSupportForMissingValuesException(&quot;BayesNet: no missing values, please.&quot;);
+	}
+      }
+    }
+
+<span class="fc bfc" id="L254" title="All 2 branches covered.">    if (bHasNonNominal) {</span>
+<span class="fc" id="L255">      System.err.println(&quot;Warning: discretizing data set&quot;);</span>
+<span class="fc" id="L256">      m_DiscretizeFilter = new Discretize();</span>
+<span class="fc" id="L257">      m_DiscretizeFilter.setInputFormat(instances);</span>
+<span class="fc" id="L258">      instances = Filter.useFilter(instances, m_DiscretizeFilter);</span>
+    }
+
+<span class="fc bfc" id="L261" title="All 2 branches covered.">    if (bHasMissingValues) {</span>
+<span class="fc" id="L262">      System.err.println(&quot;Warning: filling in missing values in data set&quot;);</span>
+<span class="fc" id="L263">      m_MissingValuesFilter = new ReplaceMissingValues();</span>
+<span class="fc" id="L264">      m_MissingValuesFilter.setInputFormat(instances);</span>
+<span class="fc" id="L265">      instances = Filter.useFilter(instances, m_MissingValuesFilter);</span>
+    }
+<span class="fc" id="L267">    return instances;</span>
+  } // normalizeDataSet
+
+  /** ensure that all variables are nominal and that there are no missing values
+   * @param instance instance to check and quantize and/or fill in missing values
+   * @return filtered instance
+   * @throws Exception if a filter (Discretize, ReplaceMissingValues) fails
+   */
+  protected Instance normalizeInstance(Instance instance) throws Exception {
+<span class="fc bfc" id="L276" title="All 2 branches covered.">    if ((m_DiscretizeFilter != null) &amp;&amp;</span>
+<span class="pc bpc" id="L277" title="1 of 2 branches missed.">	(instance.attribute(m_nNonDiscreteAttribute).type() != Attribute.NOMINAL)) {</span>
+<span class="fc" id="L278">      m_DiscretizeFilter.input(instance);</span>
+<span class="fc" id="L279">      instance = m_DiscretizeFilter.output();</span>
+    }
+<span class="fc bfc" id="L281" title="All 2 branches covered.">    if (m_MissingValuesFilter != null) {</span>
+<span class="fc" id="L282">      m_MissingValuesFilter.input(instance);</span>
+<span class="fc" id="L283">      instance = m_MissingValuesFilter.output();</span>
+    } else {
+      // is there a missing value in this instance?
+      // this can happen when there is no missing value in the training set
+<span class="fc bfc" id="L287" title="All 2 branches covered.">      for (int iAttribute = 0; iAttribute &lt; m_Instances.numAttributes(); iAttribute++) {</span>
+<span class="pc bpc" id="L288" title="1 of 4 branches missed.">	if (iAttribute != instance.classIndex() &amp;&amp; instance.isMissing(iAttribute)) {</span>
+<span class="nc" id="L289">	  System.err.println(&quot;Warning: Found missing value in test set, filling in values.&quot;);</span>
+<span class="nc" id="L290">	  m_MissingValuesFilter = new ReplaceMissingValues();</span>
+<span class="nc" id="L291">	  m_MissingValuesFilter.setInputFormat(m_Instances);</span>
+<span class="nc" id="L292">	  Filter.useFilter(m_Instances, m_MissingValuesFilter);</span>
+<span class="nc" id="L293">	  m_MissingValuesFilter.input(instance);</span>
+<span class="nc" id="L294">	  instance = m_MissingValuesFilter.output();</span>
+<span class="nc" id="L295">	  iAttribute = m_Instances.numAttributes();</span>
+	}
+      }
+    }
+<span class="fc" id="L299">    return instance;</span>
+  } // normalizeInstance
+
+  /**
+   * Init structure initializes the structure to an empty graph or a Naive Bayes
+   * graph (depending on the -N flag).
+   * 
+   * @throws Exception in case of an error
+   */
+  public void initStructure() throws Exception {
+
+    // initialize topological ordering
+    //    m_nOrder = new int[m_Instances.numAttributes()];
+    //    m_nOrder[0] = m_Instances.classIndex();
+
+<span class="fc" id="L314">    int nAttribute = 0;</span>
+
+<span class="fc bfc" id="L316" title="All 2 branches covered.">    for (int iOrder = 1; iOrder &lt; m_Instances.numAttributes(); iOrder++) {</span>
+<span class="fc bfc" id="L317" title="All 2 branches covered.">      if (nAttribute == m_Instances.classIndex()) {</span>
+<span class="fc" id="L318">	nAttribute++;</span>
+      }
+
+      //      m_nOrder[iOrder] = nAttribute++;
+    }
+
+    // reserve memory
+<span class="fc" id="L325">    m_ParentSets = new ParentSet[m_Instances.numAttributes()];</span>
+
+<span class="fc bfc" id="L327" title="All 2 branches covered.">    for (int iAttribute = 0; iAttribute &lt; m_Instances.numAttributes(); iAttribute++) {</span>
+<span class="fc" id="L328">      m_ParentSets[iAttribute] = new ParentSet(m_Instances.numAttributes());</span>
+    }
+<span class="fc" id="L330">  } // initStructure</span>
+
+  /**
+   * buildStructure determines the network structure/graph of the network.
+   * The default behavior is creating a network where all nodes have the first
+   * node as its parent (i.e., a BayesNet that behaves like a naive Bayes classifier).
+   * This method can be overridden by derived classes to restrict the class
+   * of network structures that are acceptable.
+   * 
+   * @throws Exception in case of an error
+   */
+  public void buildStructure() throws Exception {
+<span class="fc" id="L342">    m_SearchAlgorithm.buildStructure(this, m_Instances);</span>
+<span class="fc" id="L343">  } // buildStructure</span>
+
+  /**
+   * estimateCPTs estimates the conditional probability tables for the Bayes
+   * Net using the network structure.
+   * 
+   * @throws Exception in case of an error
+   */
+  public void estimateCPTs() throws Exception {
+<span class="fc" id="L352">    m_BayesNetEstimator.estimateCPTs(this);</span>
+<span class="fc" id="L353">  } // estimateCPTs</span>
+
+  /**
+   * initializes the conditional probabilities
+   * 
+   * @throws Exception in case of an error
+   */
+  public void initCPTs() throws Exception {
+<span class="nc" id="L361">    m_BayesNetEstimator.initCPTs(this);</span>
+<span class="nc" id="L362">  } // estimateCPTs</span>
+
+  /**
+   * Updates the classifier with the given instance.
+   * 
+   * @param instance the new training instance to include in the model
+   * @throws Exception if the instance could not be incorporated in
+   * the model.
+   */
+  public void updateClassifier(Instance instance) throws Exception {
+<span class="nc" id="L372">    instance = normalizeInstance(instance);</span>
+<span class="nc" id="L373">    m_BayesNetEstimator.updateClassifier(this, instance);</span>
+<span class="nc" id="L374">  } // updateClassifier</span>
+
+  /**
+   * Calculates the class membership probabilities for the given test
+   * instance.
+   * 
+   * @param instance the instance to be classified
+   * @return predicted class probability distribution
+   * @throws Exception if there is a problem generating the prediction
+   */
+  public double[] distributionForInstance(Instance instance) throws Exception {
+<span class="fc" id="L385">    instance = normalizeInstance(instance);</span>
+<span class="fc" id="L386">    return m_BayesNetEstimator.distributionForInstance(this, instance);</span>
+  } // distributionForInstance
+
+  /**
+   * Calculates the counts for Dirichlet distribution for the 
+   * class membership probabilities for the given test instance.
+   * 
+   * @param instance the instance to be classified
+   * @return counts for Dirichlet distribution for class probability 
+   * @throws Exception if there is a problem generating the prediction
+   */
+  public double[] countsForInstance(Instance instance) throws Exception {
+<span class="nc" id="L398">    double[] fCounts = new double[m_NumClasses];</span>
+
+<span class="nc bnc" id="L400" title="All 2 branches missed.">    for (int iClass = 0; iClass &lt; m_NumClasses; iClass++) {</span>
+<span class="nc" id="L401">      fCounts[iClass] = 0.0;</span>
+    }
+
+<span class="nc bnc" id="L404" title="All 2 branches missed.">    for (int iClass = 0; iClass &lt; m_NumClasses; iClass++) {</span>
+<span class="nc" id="L405">      double fCount = 0;</span>
+
+<span class="nc bnc" id="L407" title="All 2 branches missed.">      for (int iAttribute = 0; iAttribute &lt; m_Instances.numAttributes(); iAttribute++) {</span>
+<span class="nc" id="L408">	double iCPT = 0;</span>
+
+<span class="nc bnc" id="L410" title="All 2 branches missed.">	for (int iParent = 0; iParent &lt; m_ParentSets[iAttribute].getNrOfParents(); iParent++) {</span>
+<span class="nc" id="L411">	  int nParent = m_ParentSets[iAttribute].getParent(iParent);</span>
+
+<span class="nc bnc" id="L413" title="All 2 branches missed.">	  if (nParent == m_Instances.classIndex()) {</span>
+<span class="nc" id="L414">	    iCPT = iCPT * m_NumClasses + iClass;</span>
+	  } else {
+<span class="nc" id="L416">	    iCPT = iCPT * m_Instances.attribute(nParent).numValues() + instance.value(nParent);</span>
+	  }
+	}
+
+<span class="nc bnc" id="L420" title="All 2 branches missed.">	if (iAttribute == m_Instances.classIndex()) {</span>
+<span class="nc" id="L421">	  fCount += ((DiscreteEstimatorBayes) m_Distributions[iAttribute][(int) iCPT]).getCount(iClass);</span>
+	} else {
+<span class="nc" id="L423">	  fCount</span>
+<span class="nc" id="L424">	  += ((DiscreteEstimatorBayes) m_Distributions[iAttribute][(int) iCPT]).getCount(</span>
+<span class="nc" id="L425">	      instance.value(iAttribute));</span>
+	}
+      }
+
+<span class="nc" id="L429">      fCounts[iClass] += fCount;</span>
+    }
+<span class="nc" id="L431">    return fCounts;</span>
+  } // countsForInstance
+
+  /**
+   * Returns an enumeration describing the available options
+   * 
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+<span class="fc" id="L440">    Vector newVector = new Vector(4);</span>
+
+<span class="fc" id="L442">    newVector.addElement(new Option(&quot;\tDo not use ADTree data structure\n&quot;, &quot;D&quot;, 0, &quot;-D&quot;));</span>
+<span class="fc" id="L443">    newVector.addElement(new Option(&quot;\tBIF file to compare with\n&quot;, &quot;B&quot;, 1, &quot;-B &lt;BIF file&gt;&quot;));</span>
+<span class="fc" id="L444">    newVector.addElement(new Option(&quot;\tSearch algorithm\n&quot;, &quot;Q&quot;, 1, &quot;-Q weka.classifiers.bayes.net.search.SearchAlgorithm&quot;));</span>
+<span class="fc" id="L445">    newVector.addElement(new Option(&quot;\tEstimator algorithm\n&quot;, &quot;E&quot;, 1, &quot;-E weka.classifiers.bayes.net.estimate.SimpleEstimator&quot;));</span>
+
+<span class="fc" id="L447">    return newVector.elements();</span>
+  } // listOptions
+
+  /**
+   * Parses a given list of options. &lt;p&gt;
+   * 
+     &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Do not use ADTree data structure
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -B &amp;lt;BIF file&amp;gt;
+   *  BIF file to compare with
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -Q weka.classifiers.bayes.net.search.SearchAlgorithm
+   *  Search algorithm
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -E weka.classifiers.bayes.net.estimate.SimpleEstimator
+   *  Estimator algorithm
+   * &lt;/pre&gt;
+   * 
+     &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="fc bfc" id="L478" title="All 2 branches covered.">    m_bUseADTree = !(Utils.getFlag('D', options));</span>
+
+<span class="fc" id="L480">    String sBIFFile = Utils.getOption('B', options);</span>
+<span class="pc bpc" id="L481" title="2 of 4 branches missed.">    if (sBIFFile != null &amp;&amp; !sBIFFile.equals(&quot;&quot;)) {</span>
+<span class="nc" id="L482">      setBIFFile(sBIFFile);</span>
+    }
+
+<span class="fc" id="L485">    String searchAlgorithmName = Utils.getOption('Q', options);</span>
+<span class="fc bfc" id="L486" title="All 2 branches covered.">    if (searchAlgorithmName.length() != 0) {</span>
+<span class="fc" id="L487">      setSearchAlgorithm(</span>
+<span class="fc" id="L488">	  (SearchAlgorithm) Utils.forName(</span>
+<span class="fc" id="L489">	      SearchAlgorithm.class,</span>
+<span class="fc" id="L490">	      searchAlgorithmName,</span>
+<span class="fc" id="L491">	      partitionOptions(options)));</span>
+    }
+    else {
+<span class="fc" id="L494">      setSearchAlgorithm(new K2());</span>
+    }
+
+
+<span class="fc" id="L498">    String estimatorName = Utils.getOption('E', options);</span>
+<span class="fc bfc" id="L499" title="All 2 branches covered.">    if (estimatorName.length() != 0) {</span>
+<span class="fc" id="L500">      setEstimator(</span>
+<span class="fc" id="L501">	  (BayesNetEstimator) Utils.forName(</span>
+<span class="fc" id="L502">	      BayesNetEstimator.class,</span>
+<span class="fc" id="L503">	      estimatorName,</span>
+<span class="fc" id="L504">	      Utils.partitionOptions(options)));</span>
+    }
+    else {
+<span class="fc" id="L507">      setEstimator(new SimpleEstimator());</span>
+    }
+
+<span class="fc" id="L510">    Utils.checkForRemainingOptions(options);</span>
+<span class="fc" id="L511">  } // setOptions</span>
+
+  /**
+   * Returns the secondary set of options (if any) contained in
+   * the supplied options array. The secondary set is defined to
+   * be any options after the first &quot;--&quot; but before the &quot;-E&quot;. These 
+   * options are removed from the original options array.
+   *
+   * @param options the input array of options
+   * @return the array of secondary options
+   */
+  public static String [] partitionOptions(String [] options) {
+
+<span class="pc bpc" id="L524" title="1 of 2 branches missed.">    for (int i = 0; i &lt; options.length; i++) {</span>
+<span class="fc bfc" id="L525" title="All 2 branches covered.">      if (options[i].equals(&quot;--&quot;)) {</span>
+	// ensure it follows by a -E option
+<span class="fc" id="L527">	int j = i;</span>
+<span class="pc bpc" id="L528" title="1 of 4 branches missed.">	while ((j &lt; options.length) &amp;&amp; !(options[j].equals(&quot;-E&quot;))) {</span>
+<span class="fc" id="L529">	  j++;</span>
+	}
+        /*	if (j &gt;= options.length) {
+	  return new String[0];
+          } */
+<span class="fc" id="L534">	options[i++] = &quot;&quot;;</span>
+<span class="fc" id="L535">	String [] result = new String [options.length - i];</span>
+<span class="fc" id="L536">	j = i;</span>
+<span class="pc bpc" id="L537" title="1 of 4 branches missed.">	while ((j &lt; options.length) &amp;&amp; !(options[j].equals(&quot;-E&quot;))) {</span>
+<span class="fc" id="L538">	  result[j - i] = options[j];</span>
+<span class="fc" id="L539">	  options[j] = &quot;&quot;;</span>
+<span class="fc" id="L540">	  j++;</span>
+	}
+<span class="fc bfc" id="L542" title="All 2 branches covered.">	while(j &lt; options.length) {</span>
+<span class="fc" id="L543">	  result[j - i] = &quot;&quot;;</span>
+<span class="fc" id="L544">	  j++;</span>
+	}		 
+<span class="fc" id="L546">	return result;</span>
+      }
+    }
+<span class="nc" id="L549">    return new String [0];</span>
+  }
+
+
+  /**
+   * Gets the current settings of the classifier.
+   * 
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+<span class="fc" id="L559">    String[] searchOptions = m_SearchAlgorithm.getOptions();</span>
+<span class="fc" id="L560">    String[] estimatorOptions = m_BayesNetEstimator.getOptions();</span>
+<span class="fc" id="L561">    String[] options = new String[11 + searchOptions.length + estimatorOptions.length];</span>
+<span class="fc" id="L562">    int current = 0;</span>
+
+<span class="fc bfc" id="L564" title="All 2 branches covered.">    if (!m_bUseADTree) {</span>
+<span class="fc" id="L565">      options[current++] = &quot;-D&quot;;</span>
+    }
+
+<span class="pc bpc" id="L568" title="1 of 2 branches missed.">    if (m_otherBayesNet != null) {</span>
+<span class="nc" id="L569">      options[current++] = &quot;-B&quot;;</span>
+<span class="nc" id="L570">      options[current++] = ((BIFReader) m_otherBayesNet).getFileName();</span>
+    }
+
+<span class="fc" id="L573">    options[current++] = &quot;-Q&quot;;</span>
+<span class="fc" id="L574">    options[current++] = &quot;&quot; + getSearchAlgorithm().getClass().getName();</span>
+<span class="fc" id="L575">    options[current++] = &quot;--&quot;;</span>
+<span class="fc bfc" id="L576" title="All 2 branches covered.">    for (int iOption = 0; iOption &lt; searchOptions.length; iOption++) {</span>
+<span class="fc" id="L577">      options[current++] = searchOptions[iOption];</span>
+    }
+
+<span class="fc" id="L580">    options[current++] = &quot;-E&quot;;</span>
+<span class="fc" id="L581">    options[current++] = &quot;&quot; + getEstimator().getClass().getName();</span>
+<span class="fc" id="L582">    options[current++] = &quot;--&quot;;</span>
+<span class="fc bfc" id="L583" title="All 2 branches covered.">    for (int iOption = 0; iOption &lt; estimatorOptions.length; iOption++) {</span>
+<span class="fc" id="L584">      options[current++] = estimatorOptions[iOption];</span>
+    }
+
+    // Fill up rest with empty strings, not nulls!
+<span class="fc bfc" id="L588" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc" id="L589">      options[current++] = &quot;&quot;;</span>
+    }
+
+<span class="fc" id="L592">    return options;</span>
+  } // getOptions
+
+  /**
+   * Set the SearchAlgorithm used in searching for network structures. 
+   * @param newSearchAlgorithm the SearchAlgorithm to use.
+   */
+  public void setSearchAlgorithm(SearchAlgorithm newSearchAlgorithm) {
+<span class="fc" id="L600">    m_SearchAlgorithm = newSearchAlgorithm;</span>
+<span class="fc" id="L601">  }</span>
+
+  /**
+   * Get the SearchAlgorithm used as the search algorithm
+   * @return the SearchAlgorithm used as the search algorithm
+   */
+  public SearchAlgorithm getSearchAlgorithm() {
+<span class="fc" id="L608">    return m_SearchAlgorithm;</span>
+  }
+
+  /**
+   * Set the Estimator Algorithm used in calculating the CPTs 
+   * @param newBayesNetEstimator the Estimator to use.
+   */
+  public void setEstimator(BayesNetEstimator newBayesNetEstimator) {
+<span class="fc" id="L616">    m_BayesNetEstimator = newBayesNetEstimator;</span>
+<span class="fc" id="L617">  }</span>
+
+  /**
+   * Get the BayesNetEstimator used for calculating the CPTs
+   * @return the BayesNetEstimator used.
+   */
+  public BayesNetEstimator getEstimator() {
+<span class="fc" id="L624">    return m_BayesNetEstimator;</span>
+  }
+
+  /**
+   * Set whether ADTree structure is used or not
+   * @param bUseADTree true if an ADTree structure is used
+   */
+  public void setUseADTree(boolean bUseADTree) {
+<span class="nc" id="L632">    m_bUseADTree = bUseADTree;</span>
+<span class="nc" id="L633">  }</span>
+
+  /**
+   * Method declaration
+   * @return whether ADTree structure is used or not
+   */
+  public boolean getUseADTree() {
+<span class="fc" id="L640">    return m_bUseADTree;</span>
+  }
+
+  /**
+   * Set name of network in BIF file to compare with
+   * @param sBIFFile the name of the BIF file
+   */
+  public void setBIFFile(String sBIFFile) {
+    try {
+<span class="nc" id="L649">      m_otherBayesNet = new BIFReader().processFile(sBIFFile);</span>
+<span class="nc" id="L650">    } catch (Throwable t) {</span>
+<span class="nc" id="L651">      m_otherBayesNet = null;</span>
+    }
+<span class="nc" id="L653">  }</span>
+
+  /**
+   * Get name of network in BIF file to compare with
+   * @return BIF file name
+   */
+  public String getBIFFile() {
+<span class="nc bnc" id="L660" title="All 2 branches missed.">    if (m_otherBayesNet != null) {</span>
+<span class="nc" id="L661">      return m_otherBayesNet.getFileName();</span>
+    }
+<span class="nc" id="L663">    return &quot;&quot;;</span>
+  }
+
+
+  /**
+   * Returns a description of the classifier.
+   * 
+   * @return a description of the classifier as a string.
+   */
+  public String toString() {
+<span class="fc" id="L673">    StringBuffer text = new StringBuffer();</span>
+
+<span class="fc" id="L675">    text.append(&quot;Bayes Network Classifier&quot;);</span>
+<span class="pc bpc" id="L676" title="1 of 2 branches missed.">    text.append(&quot;\n&quot; + (m_bUseADTree ? &quot;Using &quot; : &quot;not using &quot;) + &quot;ADTree&quot;);</span>
+
+<span class="pc bpc" id="L678" title="1 of 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="fc" id="L679">      text.append(&quot;: No model built yet.&quot;);</span>
+    } else {
+
+      // flatten BayesNet down to text
+<span class="nc" id="L683">      text.append(&quot;\n#attributes=&quot;);</span>
+<span class="nc" id="L684">      text.append(m_Instances.numAttributes());</span>
+<span class="nc" id="L685">      text.append(&quot; #classindex=&quot;);</span>
+<span class="nc" id="L686">      text.append(m_Instances.classIndex());</span>
+<span class="nc" id="L687">      text.append(&quot;\nNetwork structure (nodes followed by parents)\n&quot;);</span>
+
+<span class="nc bnc" id="L689" title="All 2 branches missed.">      for (int iAttribute = 0; iAttribute &lt; m_Instances.numAttributes(); iAttribute++) {</span>
+<span class="nc" id="L690">	text.append(</span>
+<span class="nc" id="L691">	    m_Instances.attribute(iAttribute).name()</span>
+<span class="nc" id="L692">	    + &quot;(&quot;</span>
+<span class="nc" id="L693">		+ m_Instances.attribute(iAttribute).numValues()</span>
+<span class="nc" id="L694">		+ &quot;): &quot;);</span>
+
+<span class="nc bnc" id="L696" title="All 2 branches missed.">	for (int iParent = 0; iParent &lt; m_ParentSets[iAttribute].getNrOfParents(); iParent++) {</span>
+<span class="nc" id="L697">	  text.append(m_Instances.attribute(m_ParentSets[iAttribute].getParent(iParent)).name() + &quot; &quot;);</span>
+	}
+
+<span class="nc" id="L700">	text.append(&quot;\n&quot;);</span>
+
+	// Description of distributions tends to be too much detail, so it is commented out here
+	// for (int iParent = 0; iParent &lt; m_ParentSets[iAttribute].GetCardinalityOfParents(); iParent++) {
+	// text.append('(' + m_Distributions[iAttribute][iParent].toString() + ')');
+	// }
+	// text.append(&quot;\n&quot;);
+      }
+
+<span class="nc" id="L709">      text.append(&quot;LogScore Bayes: &quot; + measureBayesScore() + &quot;\n&quot;);</span>
+<span class="nc" id="L710">      text.append(&quot;LogScore BDeu: &quot; + measureBDeuScore() + &quot;\n&quot;);</span>
+<span class="nc" id="L711">      text.append(&quot;LogScore MDL: &quot; + measureMDLScore() + &quot;\n&quot;);</span>
+<span class="nc" id="L712">      text.append(&quot;LogScore ENTROPY: &quot; + measureEntropyScore() + &quot;\n&quot;);</span>
+<span class="nc" id="L713">      text.append(&quot;LogScore AIC: &quot; + measureAICScore() + &quot;\n&quot;);</span>
+
+<span class="nc bnc" id="L715" title="All 2 branches missed.">      if (m_otherBayesNet != null) {</span>
+<span class="nc" id="L716">	text.append(</span>
+<span class="nc" id="L717">	    &quot;Missing: &quot;</span>
+<span class="nc" id="L718">	    + m_otherBayesNet.missingArcs(this)</span>
+<span class="nc" id="L719">	    + &quot; Extra: &quot;</span>
+<span class="nc" id="L720">	    + m_otherBayesNet.extraArcs(this)</span>
+<span class="nc" id="L721">	    + &quot; Reversed: &quot;</span>
+<span class="nc" id="L722">	    + m_otherBayesNet.reversedArcs(this)</span>
+<span class="nc" id="L723">	    + &quot;\n&quot;);</span>
+<span class="nc" id="L724">	text.append(&quot;Divergence: &quot; + m_otherBayesNet.divergence(this) + &quot;\n&quot;);</span>
+      }
+    }
+
+<span class="fc" id="L728">    return text.toString();</span>
+  } // toString
+
+
+  /**
+   *  Returns the type of graph this classifier
+   *  represents.
+   *  @return Drawable.TREE
+   */   
+  public int graphType() {
+<span class="nc" id="L738">    return Drawable.BayesNet;</span>
+  }
+
+  /**
+   * Returns a BayesNet graph in XMLBIF ver 0.3 format.
+   * @return String representing this BayesNet in XMLBIF ver  0.3
+   * @throws Exception in case BIF generation fails
+   */
+  public String graph() throws Exception {
+<span class="nc" id="L747">    return toXMLBIF03();</span>
+  }
+
+  public String getBIFHeader() {
+<span class="nc" id="L751">    StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L752">    text.append(&quot;&lt;?xml version=\&quot;1.0\&quot;?&gt;\n&quot;);</span>
+<span class="nc" id="L753">    text.append(&quot;&lt;!-- DTD for the XMLBIF 0.3 format --&gt;\n&quot;);</span>
+<span class="nc" id="L754">    text.append(&quot;&lt;!DOCTYPE BIF [\n&quot;);</span>
+<span class="nc" id="L755">    text.append(&quot;	&lt;!ELEMENT BIF ( NETWORK )*&gt;\n&quot;);</span>
+<span class="nc" id="L756">    text.append(&quot;	      &lt;!ATTLIST BIF VERSION CDATA #REQUIRED&gt;\n&quot;);</span>
+<span class="nc" id="L757">    text.append(&quot;	&lt;!ELEMENT NETWORK ( NAME, ( PROPERTY | VARIABLE | DEFINITION )* )&gt;\n&quot;);</span>
+<span class="nc" id="L758">    text.append(&quot;	&lt;!ELEMENT NAME (#PCDATA)&gt;\n&quot;);</span>
+<span class="nc" id="L759">    text.append(&quot;	&lt;!ELEMENT VARIABLE ( NAME, ( OUTCOME |  PROPERTY )* ) &gt;\n&quot;);</span>
+<span class="nc" id="L760">    text.append(&quot;	      &lt;!ATTLIST VARIABLE TYPE (nature|decision|utility) \&quot;nature\&quot;&gt;\n&quot;);</span>
+<span class="nc" id="L761">    text.append(&quot;	&lt;!ELEMENT OUTCOME (#PCDATA)&gt;\n&quot;);</span>
+<span class="nc" id="L762">    text.append(&quot;	&lt;!ELEMENT DEFINITION ( FOR | GIVEN | TABLE | PROPERTY )* &gt;\n&quot;);</span>
+<span class="nc" id="L763">    text.append(&quot;	&lt;!ELEMENT FOR (#PCDATA)&gt;\n&quot;);</span>
+<span class="nc" id="L764">    text.append(&quot;	&lt;!ELEMENT GIVEN (#PCDATA)&gt;\n&quot;);</span>
+<span class="nc" id="L765">    text.append(&quot;	&lt;!ELEMENT TABLE (#PCDATA)&gt;\n&quot;);</span>
+<span class="nc" id="L766">    text.append(&quot;	&lt;!ELEMENT PROPERTY (#PCDATA)&gt;\n&quot;);</span>
+<span class="nc" id="L767">    text.append(&quot;]&gt;\n&quot;);</span>
+<span class="nc" id="L768">    return text.toString();</span>
+  } // getBIFHeader
+
+  /**
+   * Returns a description of the classifier in XML BIF 0.3 format.
+   * See http://www-2.cs.cmu.edu/~fgcozman/Research/InterchangeFormat/
+   * for details on XML BIF.
+   * @return an XML BIF 0.3 description of the classifier as a string.
+   */
+  public String toXMLBIF03() {
+<span class="nc bnc" id="L778" title="All 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="nc" id="L779">      return(&quot;&lt;!--No model built yet--&gt;&quot;);</span>
+    }
+
+<span class="nc" id="L782">    StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L783">    text.append(getBIFHeader());</span>
+<span class="nc" id="L784">    text.append(&quot;\n&quot;);</span>
+<span class="nc" id="L785">    text.append(&quot;\n&quot;);</span>
+<span class="nc" id="L786">    text.append(&quot;&lt;BIF VERSION=\&quot;0.3\&quot;&gt;\n&quot;);</span>
+<span class="nc" id="L787">    text.append(&quot;&lt;NETWORK&gt;\n&quot;);</span>
+<span class="nc" id="L788">    text.append(&quot;&lt;NAME&gt;&quot; + XMLNormalize(m_Instances.relationName()) + &quot;&lt;/NAME&gt;\n&quot;);</span>
+<span class="nc bnc" id="L789" title="All 2 branches missed.">    for (int iAttribute = 0; iAttribute &lt; m_Instances.numAttributes(); iAttribute++) {</span>
+<span class="nc" id="L790">      text.append(&quot;&lt;VARIABLE TYPE=\&quot;nature\&quot;&gt;\n&quot;);</span>
+<span class="nc" id="L791">      text.append(&quot;&lt;NAME&gt;&quot; + XMLNormalize(m_Instances.attribute(iAttribute).name()) + &quot;&lt;/NAME&gt;\n&quot;);</span>
+<span class="nc bnc" id="L792" title="All 2 branches missed.">      for (int iValue = 0; iValue &lt; m_Instances.attribute(iAttribute).numValues(); iValue++) {</span>
+<span class="nc" id="L793">	text.append(&quot;&lt;OUTCOME&gt;&quot; + XMLNormalize(m_Instances.attribute(iAttribute).value(iValue)) + &quot;&lt;/OUTCOME&gt;\n&quot;);</span>
+      }
+<span class="nc" id="L795">      text.append(&quot;&lt;/VARIABLE&gt;\n&quot;);</span>
+    }
+
+<span class="nc bnc" id="L798" title="All 2 branches missed.">    for (int iAttribute = 0; iAttribute &lt; m_Instances.numAttributes(); iAttribute++) {</span>
+<span class="nc" id="L799">      text.append(&quot;&lt;DEFINITION&gt;\n&quot;);</span>
+<span class="nc" id="L800">      text.append(&quot;&lt;FOR&gt;&quot; + XMLNormalize(m_Instances.attribute(iAttribute).name()) + &quot;&lt;/FOR&gt;\n&quot;);</span>
+<span class="nc bnc" id="L801" title="All 2 branches missed.">      for (int iParent = 0; iParent &lt; m_ParentSets[iAttribute].getNrOfParents(); iParent++) {</span>
+<span class="nc" id="L802">	text.append(&quot;&lt;GIVEN&gt;&quot;</span>
+<span class="nc" id="L803">	    + XMLNormalize(m_Instances.attribute(m_ParentSets[iAttribute].getParent(iParent)).name()) +</span>
+<span class="nc" id="L804">	&quot;&lt;/GIVEN&gt;\n&quot;);</span>
+      }
+<span class="nc" id="L806">      text.append(&quot;&lt;TABLE&gt;\n&quot;);</span>
+<span class="nc bnc" id="L807" title="All 2 branches missed.">      for (int iParent = 0; iParent &lt; m_ParentSets[iAttribute].getCardinalityOfParents(); iParent++) {</span>
+<span class="nc bnc" id="L808" title="All 2 branches missed.">	for (int iValue = 0; iValue &lt; m_Instances.attribute(iAttribute).numValues(); iValue++) {</span>
+<span class="nc" id="L809">	  text.append(m_Distributions[iAttribute][iParent].getProbability(iValue));</span>
+<span class="nc" id="L810">	  text.append(' ');</span>
+	}
+<span class="nc" id="L812">	text.append('\n');</span>
+      }
+<span class="nc" id="L814">      text.append(&quot;&lt;/TABLE&gt;\n&quot;);</span>
+<span class="nc" id="L815">      text.append(&quot;&lt;/DEFINITION&gt;\n&quot;);</span>
+    }
+<span class="nc" id="L817">    text.append(&quot;&lt;/NETWORK&gt;\n&quot;);</span>
+<span class="nc" id="L818">    text.append(&quot;&lt;/BIF&gt;\n&quot;);</span>
+<span class="nc" id="L819">    return text.toString();</span>
+  } // toXMLBIF03
+
+
+  /** XMLNormalize converts the five standard XML entities in a string
+   * g.e. the string V&amp;D's is returned as V&amp;amp;D&amp;apos;s
+   * @param sStr string to normalize
+   * @return normalized string
+   */
+  protected String XMLNormalize(String sStr) {
+<span class="nc" id="L829">    StringBuffer sStr2 = new StringBuffer();</span>
+<span class="nc bnc" id="L830" title="All 2 branches missed.">    for (int iStr = 0; iStr &lt; sStr.length(); iStr++) {</span>
+<span class="nc" id="L831">      char c = sStr.charAt(iStr);</span>
+<span class="nc bnc" id="L832" title="All 6 branches missed.">      switch (c) {</span>
+<span class="nc" id="L833">	case '&amp;': sStr2.append(&quot;&amp;amp;&quot;); break;</span>
+<span class="nc" id="L834">	case '\'': sStr2.append(&quot;&amp;apos;&quot;); break;</span>
+<span class="nc" id="L835">	case '\&quot;': sStr2.append(&quot;&amp;quot;&quot;); break;</span>
+<span class="nc" id="L836">	case '&lt;': sStr2.append(&quot;&amp;lt;&quot;); break;</span>
+<span class="nc" id="L837">	case '&gt;': sStr2.append(&quot;&amp;gt;&quot;); break;</span>
+	default:
+<span class="nc" id="L839">	  sStr2.append(c);</span>
+      }
+    }
+<span class="nc" id="L842">    return sStr2.toString();</span>
+  } // XMLNormalize
+
+
+  /**
+   * @return a string to describe the UseADTreeoption.
+   */
+  public String useADTreeTipText() {
+<span class="nc" id="L850">    return &quot;When ADTree (the data structure for increasing speed on counts,&quot;</span>
+    + &quot; not to be confused with the classifier under the same name) is used&quot;
+    + &quot; learning time goes down typically. However, because ADTrees are memory&quot;
+    + &quot; intensive, memory problems may occur. Switching this option off makes&quot;
+    + &quot; the structure learning algorithms slower, and run with less memory.&quot;
+    + &quot; By default, ADTrees are used.&quot;;
+  }
+
+  /**
+   * @return a string to describe the SearchAlgorithm.
+   */
+  public String searchAlgorithmTipText() {
+<span class="nc" id="L862">    return &quot;Select method used for searching network structures.&quot;;</span>
+  }
+
+  /**
+   * This will return a string describing the BayesNetEstimator.
+   * @return The string.
+   */
+  public String estimatorTipText() {
+<span class="nc" id="L870">    return &quot;Select Estimator algorithm for finding the conditional probability tables&quot;</span>
+    + &quot; of the Bayes Network.&quot;;
+  }
+
+  /**
+   * @return a string to describe the BIFFile.
+   */
+  public String BIFFileTipText() {
+<span class="nc" id="L878">    return &quot;Set the name of a file in BIF XML format. A Bayes network learned&quot;</span>
+    + &quot; from data can be compared with the Bayes network represented by the BIF file.&quot;
+    + &quot; Statistics calculated are o.a. the number of missing and extra arcs.&quot;;
+  }
+
+  /**
+   * This will return a string describing the classifier.
+   * @return The string.
+   */
+  public String globalInfo() {
+<span class="nc" id="L888">    return </span>
+<span class="nc" id="L889">    &quot;Bayes Network learning using various search algorithms and &quot;</span>
+    + &quot;quality measures.\n&quot;
+    + &quot;Base class for a Bayes Network classifier. Provides &quot;
+    + &quot;datastructures (network structure, conditional probability &quot;
+    + &quot;distributions, etc.) and facilities common to Bayes Network &quot;
+    + &quot;learning algorithms like K2 and B.\n\n&quot;
+    + &quot;For more information see:\n\n&quot;
+    + &quot;http://www.cs.waikato.ac.nz/~remco/weka.pdf&quot;;
+  }
+
+  /**
+   * Main method for testing this class.
+   * 
+   * @param argv the options
+   */
+  public static void main(String[] argv) {
+<span class="nc" id="L905">    runClassifier(new BayesNet(), argv);</span>
+<span class="nc" id="L906">  } // main</span>
+
+  /** get name of the Bayes network
+   * @return name of the Bayes net
+   */
+  public String getName() {
+<span class="nc" id="L912">    return m_Instances.relationName();</span>
+  }
+
+  /** get number of nodes in the Bayes network
+   * @return number of nodes
+   */
+  public int getNrOfNodes() {
+<span class="nc" id="L919">    return m_Instances.numAttributes();</span>
+  }
+
+  /** get name of a node in the Bayes network
+   * @param iNode index of the node
+   * @return name of the specified node
+   */
+  public String getNodeName(int iNode) {
+<span class="nc" id="L927">    return m_Instances.attribute(iNode).name();</span>
+  }
+
+  /** get number of values a node can take
+   * @param iNode index of the node
+   * @return cardinality of the specified node
+   */
+  public int getCardinality(int iNode) {
+<span class="nc" id="L935">    return m_Instances.attribute(iNode).numValues();</span>
+  }
+
+  /** get name of a particular value of a node
+   * @param iNode index of the node
+   * @param iValue index of the value
+   * @return cardinality of the specified node
+   */
+  public String getNodeValue(int iNode, int iValue) {
+<span class="nc" id="L944">    return m_Instances.attribute(iNode).value(iValue);</span>
+  }
+
+  /** get number of parents of a node in the network structure
+   * @param iNode index of the node
+   * @return number of parents of the specified node
+   */
+  public int getNrOfParents(int iNode) {
+<span class="nc" id="L952">    return m_ParentSets[iNode].getNrOfParents();</span>
+  }
+
+  /** get node index of a parent of a node in the network structure
+   * @param iNode index of the node
+   * @param iParent index of the parents, e.g., 0 is the first parent, 1 the second parent, etc.
+   * @return node index of the iParent's parent of the specified node
+   */
+  public int getParent(int iNode, int iParent) {
+<span class="nc" id="L961">    return m_ParentSets[iNode].getParent(iParent);</span>
+  }
+
+  /** Get full set of parent sets.
+   * @return parent sets;
+   */
+  public ParentSet[] getParentSets() { 
+<span class="nc" id="L968">    return m_ParentSets;</span>
+  }
+
+  /** Get full set of estimators.
+   * @return estimators;
+   */
+  public Estimator[][] getDistributions() {
+<span class="nc" id="L975">    return m_Distributions;</span>
+  }
+
+  /** get number of values the collection of parents of a node can take
+   * @param iNode index of the node
+   * @return cardinality of the parent set of the specified node
+   */
+  public int getParentCardinality(int iNode) {
+<span class="nc" id="L983">    return m_ParentSets[iNode].getCardinalityOfParents();</span>
+  }
+
+  /** get particular probability of the conditional probability distribtion
+   * of a node given its parents.
+   * @param iNode index of the node
+   * @param iParent index of the parent set, 0 &lt;= iParent &lt;= getParentCardinality(iNode)
+   * @param iValue index of the value, 0 &lt;= iValue &lt;= getCardinality(iNode)
+   * @return probability
+   */
+  public double getProbability(int iNode, int iParent, int iValue) {
+<span class="nc" id="L994">    return m_Distributions[iNode][iParent].getProbability(iValue);</span>
+  }
+
+  /** get the parent set of a node 
+   * @param iNode index of the node
+   * @return Parent set of the specified node.
+   */
+  public ParentSet getParentSet(int iNode) {
+<span class="fc" id="L1002">    return m_ParentSets[iNode];</span>
+  }
+
+  /** get ADTree strucrture containing efficient representation of counts.
+   * @return ADTree strucrture
+   */
+<span class="nc" id="L1008">  public ADNode getADTree() { return m_ADTree;}</span>
+
+  // implementation of AdditionalMeasureProducer interface
+  /**
+   * Returns an enumeration of the measure names. Additional measures
+   * must follow the naming convention of starting with &quot;measure&quot;, eg.
+   * double measureBlah()
+   * @return an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+<span class="nc" id="L1018">    Vector newVector = new Vector(4);</span>
+<span class="nc" id="L1019">    newVector.addElement(&quot;measureExtraArcs&quot;);</span>
+<span class="nc" id="L1020">    newVector.addElement(&quot;measureMissingArcs&quot;);</span>
+<span class="nc" id="L1021">    newVector.addElement(&quot;measureReversedArcs&quot;);</span>
+<span class="nc" id="L1022">    newVector.addElement(&quot;measureDivergence&quot;);</span>
+<span class="nc" id="L1023">    newVector.addElement(&quot;measureBayesScore&quot;);</span>
+<span class="nc" id="L1024">    newVector.addElement(&quot;measureBDeuScore&quot;);</span>
+<span class="nc" id="L1025">    newVector.addElement(&quot;measureMDLScore&quot;);</span>
+<span class="nc" id="L1026">    newVector.addElement(&quot;measureAICScore&quot;);</span>
+<span class="nc" id="L1027">    newVector.addElement(&quot;measureEntropyScore&quot;);</span>
+<span class="nc" id="L1028">    return newVector.elements();</span>
+  } // enumerateMeasures
+
+  public double measureExtraArcs() {
+<span class="nc bnc" id="L1032" title="All 2 branches missed.">    if (m_otherBayesNet != null) {</span>
+<span class="nc" id="L1033">      return m_otherBayesNet.extraArcs(this); </span>
+    }
+<span class="nc" id="L1035">    return 0;</span>
+  } // measureExtraArcs
+
+  public double measureMissingArcs() {
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">    if (m_otherBayesNet != null) {</span>
+<span class="nc" id="L1040">      return m_otherBayesNet.missingArcs(this); </span>
+    }
+<span class="nc" id="L1042">    return 0;</span>
+  } // measureMissingArcs
+
+  public double measureReversedArcs() {
+<span class="nc bnc" id="L1046" title="All 2 branches missed.">    if (m_otherBayesNet != null) {</span>
+<span class="nc" id="L1047">      return m_otherBayesNet.reversedArcs(this); </span>
+    }
+<span class="nc" id="L1049">    return 0;</span>
+  } // measureReversedArcs
+
+  public double measureDivergence() {
+<span class="nc bnc" id="L1053" title="All 2 branches missed.">    if (m_otherBayesNet != null) {</span>
+<span class="nc" id="L1054">      return m_otherBayesNet.divergence(this); </span>
+    }
+<span class="nc" id="L1056">    return 0;</span>
+  } // measureDivergence
+
+  public double measureBayesScore() {
+<span class="nc" id="L1060">    LocalScoreSearchAlgorithm s = new LocalScoreSearchAlgorithm(this, m_Instances);</span>
+<span class="nc" id="L1061">    return s.logScore(Scoreable.BAYES);</span>
+  } // measureBayesScore
+
+  public double measureBDeuScore() {
+<span class="nc" id="L1065">    LocalScoreSearchAlgorithm s = new LocalScoreSearchAlgorithm(this, m_Instances);</span>
+<span class="nc" id="L1066">    return s.logScore(Scoreable.BDeu);</span>
+  } // measureBDeuScore
+
+  public double measureMDLScore() {
+<span class="nc" id="L1070">    LocalScoreSearchAlgorithm s = new LocalScoreSearchAlgorithm(this, m_Instances);</span>
+<span class="nc" id="L1071">    return s.logScore(Scoreable.MDL);</span>
+  } // measureMDLScore
+
+  public double measureAICScore() {
+<span class="nc" id="L1075">    LocalScoreSearchAlgorithm s = new LocalScoreSearchAlgorithm(this, m_Instances);</span>
+<span class="nc" id="L1076">    return s.logScore(Scoreable.AIC);</span>
+  } // measureAICScore
+
+  public double measureEntropyScore() {
+<span class="nc" id="L1080">    LocalScoreSearchAlgorithm s = new LocalScoreSearchAlgorithm(this, m_Instances);</span>
+<span class="nc" id="L1081">    return s.logScore(Scoreable.ENTROPY);</span>
+  } // measureEntropyScore
+
+  /**
+   * Returns the value of the named measure
+   * @param measureName the name of the measure to query for its value
+   * @return the value of the named measure
+   * @throws IllegalArgumentException if the named measure is not supported
+   */
+  public double getMeasure(String measureName) {
+<span class="nc bnc" id="L1091" title="All 2 branches missed.">    if (measureName.equals(&quot;measureExtraArcs&quot;)) {</span>
+<span class="nc" id="L1092">      return measureExtraArcs();</span>
+    }
+<span class="nc bnc" id="L1094" title="All 2 branches missed.">    if (measureName.equals(&quot;measureMissingArcs&quot;)) {</span>
+<span class="nc" id="L1095">      return measureMissingArcs();</span>
+    }
+<span class="nc bnc" id="L1097" title="All 2 branches missed.">    if (measureName.equals(&quot;measureReversedArcs&quot;)) {</span>
+<span class="nc" id="L1098">      return measureReversedArcs();</span>
+    }
+<span class="nc bnc" id="L1100" title="All 2 branches missed.">    if (measureName.equals(&quot;measureDivergence&quot;)) {</span>
+<span class="nc" id="L1101">      return measureDivergence();</span>
+    }
+<span class="nc bnc" id="L1103" title="All 2 branches missed.">    if (measureName.equals(&quot;measureBayesScore&quot;)) {</span>
+<span class="nc" id="L1104">      return measureBayesScore();</span>
+    }
+<span class="nc bnc" id="L1106" title="All 2 branches missed.">    if (measureName.equals(&quot;measureBDeuScore&quot;)) {</span>
+<span class="nc" id="L1107">      return measureBDeuScore();</span>
+    }
+<span class="nc bnc" id="L1109" title="All 2 branches missed.">    if (measureName.equals(&quot;measureMDLScore&quot;)) {</span>
+<span class="nc" id="L1110">      return measureMDLScore();</span>
+    }
+<span class="nc bnc" id="L1112" title="All 2 branches missed.">    if (measureName.equals(&quot;measureAICScore&quot;)) {</span>
+<span class="nc" id="L1113">      return measureAICScore();</span>
+    }
+<span class="nc bnc" id="L1115" title="All 2 branches missed.">    if (measureName.equals(&quot;measureEntropyScore&quot;)) {</span>
+<span class="nc" id="L1116">      return measureEntropyScore();</span>
+    }
+<span class="nc" id="L1118">    return 0;</span>
+  } // getMeasure
+
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1127">    return RevisionUtils.extract(&quot;$Revision: 5725 $&quot;);</span>
+  }
+} // class BayesNet
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

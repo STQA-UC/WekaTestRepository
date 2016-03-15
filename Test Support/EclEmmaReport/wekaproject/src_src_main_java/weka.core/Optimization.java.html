@@ -1,0 +1,1395 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Optimization.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core</a> &gt; <span class="el_source">Optimization.java</span></div><h1>Optimization.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Optimization.java
+ *    Copyright (C) 2003 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.core;
+
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+/**
+ * Implementation of Active-sets method with BFGS update to solve optimization
+ * problem with only bounds constraints in multi-dimensions.  In this
+ * implementation we consider both the lower and higher bound constraints. &lt;p/&gt;
+ *
+ * Here is the sketch of our searching strategy, and the detailed description
+ * of the algorithm can be found in the Appendix of Xin Xu's MSc thesis:&lt;p/&gt;
+ * Initialize everything, incl. initial value, direction, etc.&lt;p/&gt;
+ * LOOP (main algorithm):&lt;br/&gt;
+ * 
+ * 1. Perform the line search using the directions for free variables&lt;br/&gt;
+ * 1.1  Check all the bounds that are not &quot;active&quot; (i.e. binding variables)
+ *      and compute the feasible step length to the bound for each of them&lt;br/&gt;
+ * 1.2  Pick up the least feasible step length, say \alpha, and set it as 
+ *      the upper bound of the current step length, i.e.
+ *      0&amp;lt;\lambda&amp;lt;=\alpha&lt;br/&gt;
+ * 1.3  Search for any possible step length&amp;lt;=\alpha that can result the 
+ *      &quot;sufficient function decrease&quot; (\alpha condition) AND &quot;positive
+ *      definite inverse Hessian&quot; (\beta condition), if possible, using
+ *      SAFEGUARDED polynomial interpolation.  This step length is &quot;safe&quot; and
+ *      thus is used to compute the next value of the free variables .&lt;br/&gt;
+ * 1.4  Fix the variable(s) that are newly bound to its constraint(s).&lt;p/&gt;     
+ *
+ * 2. Check whether there is convergence of all variables or their gradients.
+ *    If there is, check the possibilities to release any current bindings of
+ *    the fixed variables to their bounds based on the &quot;reliable&quot; second-order
+ *    Lagarange multipliers if available.  If it's available and negative for
+ *    one variable, then release it.  If not available, use first-order
+ *    Lagarange multiplier to test release.  If there is any released
+ *    variables, STOP the loop.  Otherwise update the inverse of Hessian matrix
+ *    and gradient for the newly released variables and CONTINUE LOOP.&lt;p/&gt;
+ *
+ * 3. Use BFGS formula to update the inverse of Hessian matrix.  Note the 
+ *    already-fixed variables must have zeros in the corresponding entries
+ *    in the inverse Hessian.&lt;p/&gt;  
+ *
+ * 4. Compute the new (newton) search direction d=H^{-1}*g, where H^{-1} is the 
+ *    inverse Hessian and g is the Jacobian.  Note that again, the already-
+ *    fixed variables will have zero direction.&lt;p/&gt;
+ *
+ * ENDLOOP&lt;p/&gt;
+ *
+ * A typical usage of this class is to create your own subclass of this class
+ * and provide the objective function and gradients as follows:&lt;p/&gt;
+ * &lt;pre&gt;
+ * class MyOpt extends Optimization {
+ *   // Provide the objective function
+ *   protected double objectiveFunction(double[] x) {
+ *       // How to calculate your objective function...
+ *       // ...
+ *   }
+ *
+ *   // Provide the first derivatives
+ *   protected double[] evaluateGradient(double[] x) {
+ *       // How to calculate the gradient of the objective function...
+ *       // ...
+ *   }
+ *
+ *   // If possible, provide the index^{th} row of the Hessian matrix
+ *   protected double[] evaluateHessian(double[] x, int index) {
+ *      // How to calculate the index^th variable's second derivative
+ *      // ... 
+ *   }
+ * }
+ * &lt;/pre&gt;
+ *
+ * When it's the time to use it, in some routine(s) of other class...
+ * &lt;pre&gt;
+ * MyOpt opt = new MyOpt();
+ * 
+ * // Set up initial variable values and bound constraints
+ * double[] x = new double[numVariables];
+ * // Lower and upper bounds: 1st row is lower bounds, 2nd is upper
+ * double[] constraints = new double[2][numVariables];
+ * ...
+ *
+ * // Find the minimum, 200 iterations as default
+ * x = opt.findArgmin(x, constraints); 
+ * while(x == null){  // 200 iterations are not enough
+ *    x = opt.getVarbValues();  // Try another 200 iterations
+ *    x = opt.findArgmin(x, constraints);
+ * }
+ *
+ * // The minimal function value
+ * double minFunction = opt.getMinFunction();
+ * ...
+ * &lt;/pre&gt;
+ * 
+ * It is recommended that Hessian values be provided so that the second-order
+ * Lagrangian multiplier estimate can be calcluated.  However, if it is not
+ * provided, there is no need to override the &lt;code&gt;evaluateHessian()&lt;/code&gt;
+ * function.&lt;p/&gt;
+ *
+ * REFERENCES (see also the &lt;code&gt;getTechnicalInformation()&lt;/code&gt; method):&lt;br/&gt;
+ * The whole model algorithm is adapted from Chapter 5 and other related
+ * chapters in Gill, Murray and Wright(1981) &quot;Practical Optimization&quot;, Academic
+ * Press.  and Gill and Murray(1976) &quot;Minimization Subject to Bounds on the
+ * Variables&quot;, NPL Report NAC72, while Chong and Zak(1996) &quot;An Introduction to
+ * Optimization&quot;, John Wiley &amp;amp; Sons, Inc. provides us a brief but helpful
+ * introduction to the method. &lt;p/&gt;
+ *
+ * Dennis and Schnabel(1983) &quot;Numerical Methods for Unconstrained Optimization
+ * and Nonlinear Equations&quot;, Prentice-Hall Inc. and Press et al.(1992) &quot;Numeric
+ * Recipe in C&quot;, Second Edition, Cambridge University Press. are consulted for
+ * the polynomial interpolation used in the line search implementation.  &lt;p/&gt;
+ *
+ * The Hessian modification in BFGS update uses Cholesky factorization and two
+ * rank-one modifications:&lt;br/&gt;
+ * Bk+1 = Bk + (Gk*Gk')/(Gk'Dk) + (dGk*(dGk)'))/[alpha*(dGk)'*Dk]. &lt;br/&gt;
+ * where Gk is the gradient vector, Dk is the direction vector and alpha is the
+ * step rate. &lt;br/&gt;
+ * This method is due to Gill, Golub, Murray and Saunders(1974) ``Methods for
+ * Modifying Matrix Factorizations'', Mathematics of Computation, Vol.28,
+ * No.126, pp 505-535. &lt;p/&gt;
+ *
+ * @author Xin Xu (xx5@cs.waikato.ac.nz)
+ * @version $Revision: 1.9 $ 
+ * @see #getTechnicalInformation()
+ */
+<span class="fc" id="L147">public abstract class Optimization</span>
+    implements TechnicalInformationHandler, RevisionHandler {
+    
+<span class="fc" id="L150">    protected double m_ALF = 1.0e-4;</span>
+
+<span class="fc" id="L152">    protected double m_BETA = 0.9;    </span>
+
+<span class="fc" id="L154">    protected double m_TOLX = 1.0e-6;</span>
+   
+<span class="fc" id="L156">    protected double m_STPMX = 100.0;</span>
+    
+<span class="fc" id="L158">    protected int m_MAXITS = 200;</span>
+    
+<span class="fc" id="L160">    protected static boolean m_Debug = false;</span>
+    
+    /** function value */
+    protected double m_f;    
+ 
+    /** G'*p */
+    private double m_Slope;
+    
+    /** Test if zero step in lnsrch */
+<span class="fc" id="L169">    private boolean m_IsZeroStep = false;</span>
+    
+    /** Used when iteration overflow occurs */
+    private double[] m_X;
+    
+    /** Compute machine precision */
+    protected static double m_Epsilon, m_Zero; 
+    static {
+<span class="fc" id="L177">	m_Epsilon=1.0;</span>
+<span class="fc bfc" id="L178" title="All 2 branches covered.">	while(1.0+m_Epsilon &gt; 1.0){</span>
+<span class="fc" id="L179">	    m_Epsilon /= 2.0;	    </span>
+	}
+<span class="fc" id="L181">	m_Epsilon *= 2.0;</span>
+<span class="fc" id="L182">	m_Zero = Math.sqrt(m_Epsilon);</span>
+<span class="pc bpc" id="L183" title="1 of 2 branches missed.">	if (m_Debug)</span>
+<span class="nc" id="L184">	    System.err.print(&quot;Machine precision is &quot;+m_Epsilon+</span>
+<span class="nc" id="L185">			     &quot; and zero set to &quot;+m_Zero);</span>
+    }
+    
+    /**
+     * Returns an instance of a TechnicalInformation object, containing 
+     * detailed information about the technical background of this class,
+     * e.g., paper reference or book this class is based on.
+     * 
+     * @return the technical information about this class
+     */
+    public TechnicalInformation getTechnicalInformation() {
+      TechnicalInformation 	result;
+      TechnicalInformation 	additional;
+      
+<span class="nc" id="L199">      result = new TechnicalInformation(Type.MASTERSTHESIS);</span>
+<span class="nc" id="L200">      result.setValue(Field.AUTHOR, &quot;Xin Xu&quot;);</span>
+<span class="nc" id="L201">      result.setValue(Field.YEAR, &quot;2003&quot;);</span>
+<span class="nc" id="L202">      result.setValue(Field.TITLE, &quot;Statistical learning in multiple instance problem&quot;);</span>
+<span class="nc" id="L203">      result.setValue(Field.SCHOOL, &quot;University of Waikato&quot;);</span>
+<span class="nc" id="L204">      result.setValue(Field.ADDRESS, &quot;Hamilton, NZ&quot;);</span>
+<span class="nc" id="L205">      result.setValue(Field.NOTE, &quot;0657.594&quot;);</span>
+
+<span class="nc" id="L207">      additional = result.add(Type.BOOK);</span>
+<span class="nc" id="L208">      additional.setValue(Field.AUTHOR, &quot;P. E. Gill and W. Murray and M. H. Wright&quot;);</span>
+<span class="nc" id="L209">      additional.setValue(Field.YEAR, &quot;1981&quot;);</span>
+<span class="nc" id="L210">      additional.setValue(Field.TITLE, &quot;Practical Optimization&quot;);</span>
+<span class="nc" id="L211">      additional.setValue(Field.PUBLISHER, &quot;Academic Press&quot;);</span>
+<span class="nc" id="L212">      additional.setValue(Field.ADDRESS, &quot;London and New York&quot;);</span>
+      
+<span class="nc" id="L214">      additional = result.add(Type.TECHREPORT);</span>
+<span class="nc" id="L215">      additional.setValue(Field.AUTHOR, &quot;P. E. Gill and W. Murray&quot;);</span>
+<span class="nc" id="L216">      additional.setValue(Field.YEAR, &quot;1976&quot;);</span>
+<span class="nc" id="L217">      additional.setValue(Field.TITLE, &quot;Minimization subject to bounds on the variables&quot;);</span>
+<span class="nc" id="L218">      additional.setValue(Field.INSTITUTION, &quot;National Physical Laboratory&quot;);</span>
+<span class="nc" id="L219">      additional.setValue(Field.NUMBER, &quot;NAC 72&quot;);</span>
+      
+<span class="nc" id="L221">      additional = result.add(Type.BOOK);</span>
+<span class="nc" id="L222">      additional.setValue(Field.AUTHOR, &quot;E. K. P. Chong and S. H. Zak&quot;);</span>
+<span class="nc" id="L223">      additional.setValue(Field.YEAR, &quot;1996&quot;);</span>
+<span class="nc" id="L224">      additional.setValue(Field.TITLE, &quot;An Introduction to Optimization&quot;);</span>
+<span class="nc" id="L225">      additional.setValue(Field.PUBLISHER, &quot;John Wiley and Sons&quot;);</span>
+<span class="nc" id="L226">      additional.setValue(Field.ADDRESS, &quot;New York&quot;);</span>
+      
+<span class="nc" id="L228">      additional = result.add(Type.BOOK);</span>
+<span class="nc" id="L229">      additional.setValue(Field.AUTHOR, &quot;J. E. Dennis and R. B. Schnabel&quot;);</span>
+<span class="nc" id="L230">      additional.setValue(Field.YEAR, &quot;1983&quot;);</span>
+<span class="nc" id="L231">      additional.setValue(Field.TITLE, &quot;Numerical Methods for Unconstrained Optimization and Nonlinear Equations&quot;);</span>
+<span class="nc" id="L232">      additional.setValue(Field.PUBLISHER, &quot;Prentice-Hall&quot;);</span>
+      
+<span class="nc" id="L234">      additional = result.add(Type.BOOK);</span>
+<span class="nc" id="L235">      additional.setValue(Field.AUTHOR, &quot;W. H. Press and B. P. Flannery and S. A. Teukolsky and W. T. Vetterling&quot;);</span>
+<span class="nc" id="L236">      additional.setValue(Field.YEAR, &quot;1992&quot;);</span>
+<span class="nc" id="L237">      additional.setValue(Field.TITLE, &quot;Numerical Recipes in C&quot;);</span>
+<span class="nc" id="L238">      additional.setValue(Field.PUBLISHER, &quot;Cambridge University Press&quot;);</span>
+<span class="nc" id="L239">      additional.setValue(Field.EDITION, &quot;Second&quot;);</span>
+      
+<span class="nc" id="L241">      additional = result.add(Type.ARTICLE);</span>
+<span class="nc" id="L242">      additional.setValue(Field.AUTHOR, &quot;P. E. Gill and G. H. Golub and W. Murray and M. A. Saunders&quot;);</span>
+<span class="nc" id="L243">      additional.setValue(Field.YEAR, &quot;1974&quot;);</span>
+<span class="nc" id="L244">      additional.setValue(Field.TITLE, &quot;Methods for modifying matrix factorizations&quot;);</span>
+<span class="nc" id="L245">      additional.setValue(Field.JOURNAL, &quot;Mathematics of Computation&quot;);</span>
+<span class="nc" id="L246">      additional.setValue(Field.VOLUME, &quot;28&quot;);</span>
+<span class="nc" id="L247">      additional.setValue(Field.NUMBER, &quot;126&quot;);</span>
+<span class="nc" id="L248">      additional.setValue(Field.PAGES, &quot;505-535&quot;);</span>
+      
+<span class="nc" id="L250">      return result;</span>
+    }
+    
+    /**
+     * Subclass should implement this procedure to evaluate objective
+     * function to be minimized
+     * 
+     * @param x the variable values
+     * @return the objective function value
+     * @throws Exception if something goes wrong
+     */
+    protected abstract double objectiveFunction(double[] x) throws Exception;
+
+    /**
+     * Subclass should implement this procedure to evaluate gradient
+     * of the objective function
+     * 
+     * @param x the variable values
+     * @return the gradient vector
+     * @throws Exception if something goes wrong
+     */
+    protected abstract double[] evaluateGradient(double[] x) throws Exception;
+
+    /**
+     * Subclass is recommended to override this procedure to evaluate second-order
+     * gradient of the objective function.  If it's not provided, it returns
+     * null.
+     *
+     * @param x the variables
+     * @param index the row index in the Hessian matrix
+     * @return one row (the row #index) of the Hessian matrix, null as default
+     * @throws Exception if something goes wrong
+     */
+    protected double[] evaluateHessian(double[] x, int index) throws Exception{
+<span class="nc" id="L284">	return null;</span>
+    }
+
+    /**
+     * Get the minimal function value
+     *
+     * @return minimal function value found
+     */
+    public double getMinFunction() {
+<span class="fc" id="L293">      return m_f;</span>
+    }
+
+    /**
+     * Set the maximal number of iterations in searching (Default 200)
+     *
+     * @param it the maximal number of iterations
+     */
+    public void setMaxIteration(int it) {
+<span class="nc" id="L302">      m_MAXITS=it;</span>
+<span class="nc" id="L303">    }</span>
+      
+    /**
+     * Set whether in debug mode
+     *
+     * @param db use debug or not
+     */
+    public void setDebug(boolean db) {
+<span class="fc" id="L311">      m_Debug = db;</span>
+<span class="fc" id="L312">    }</span>
+    
+    /**
+     * Get the variable values.  Only needed when iterations exceeds 
+     * the max threshold.
+     *
+     * @return the current variable values
+     */
+    public double[] getVarbValues() {
+<span class="fc" id="L321">      return m_X;</span>
+    }
+    
+    /**
+     * Find a new point x in the direction p from a point xold at which the
+     * value of the function has decreased sufficiently, the positive 
+     * definiteness of B matrix (approximation of the inverse of the Hessian)
+     * is preserved and no bound constraints are violated.  Details see &quot;Numerical 
+     * Methods for Unconstrained Optimization and Nonlinear Equations&quot;.
+     * &quot;Numeric Recipes in C&quot; was also consulted.
+     *
+     * @param xold old x value 
+     * @param gradient gradient at that point
+     * @param direct direction vector
+     * @param stpmax maximum step length
+     * @param isFixed indicating whether a variable has been fixed
+     * @param nwsBounds non-working set bounds.  Means these variables are free and
+     *                  subject to the bound constraints in this step
+     * @param wsBdsIndx index of variables that has working-set bounds.  Means
+     *                  these variables are already fixed and no longer subject to
+     *                  the constraints
+     * @return new value along direction p from xold, null if no step was taken
+     * @throws Exception if an error occurs
+     */
+    public double[] lnsrch(double[] xold, double[] gradient, 
+			   double[] direct, double stpmax,
+			   boolean[] isFixed, double[][] nwsBounds,
+			   DynamicIntArray wsBdsIndx)
+	throws Exception {
+	
+<span class="fc" id="L351">	int i, k,len=xold.length, </span>
+<span class="fc" id="L352">	    fixedOne=-1; // idx of variable to be fixed</span>
+	double alam, alamin; // lambda to be found, and its lower bound
+	
+	// For convergence and bound test
+<span class="fc" id="L356">	double temp,test,alpha=Double.POSITIVE_INFINITY,fold=m_f,sum; </span>
+	
+	// For cubic interpolation
+<span class="fc" id="L359">	double a,alam2=0,b,disc=0,maxalam=1.0,rhs1,rhs2,tmplam;</span>
+	
+<span class="fc" id="L361">	double[] x = new double[len]; // New variable values</span>
+	
+	// Scale the step 
+<span class="fc bfc" id="L364" title="All 2 branches covered.">	for (sum=0.0,i=0;i&lt;len;i++){</span>
+<span class="pc bpc" id="L365" title="1 of 2 branches missed.">	    if(!isFixed[i]) // For fixed variables, direction = 0</span>
+<span class="fc" id="L366">		sum += direct[i]*direct[i];</span>
+	}	
+<span class="fc" id="L368">	sum = Math.sqrt(sum);</span>
+	
+<span class="pc bpc" id="L370" title="1 of 2 branches missed.">	if (m_Debug)</span>
+<span class="nc" id="L371">	    System.err.println(&quot;fold:  &quot;+Utils.doubleToString(fold,10,7)+&quot;\n&quot;+</span>
+<span class="nc" id="L372">			       &quot;sum:  &quot;+Utils.doubleToString(sum,10,7)+&quot;\n&quot;+</span>
+<span class="nc" id="L373">			       &quot;stpmax:  &quot;+Utils.doubleToString(stpmax,10,7));</span>
+<span class="fc bfc" id="L374" title="All 2 branches covered.">	if (sum &gt; stpmax){</span>
+<span class="fc bfc" id="L375" title="All 2 branches covered.">	    for (i=0;i&lt;len;i++)</span>
+<span class="pc bpc" id="L376" title="1 of 2 branches missed.">		if(!isFixed[i])</span>
+<span class="fc" id="L377">		    direct[i] *= stpmax/sum;		</span>
+	}
+	else
+<span class="fc" id="L380">	    maxalam = stpmax/sum;</span>
+	
+	// Compute initial rate of decrease, g'*d 
+<span class="fc" id="L383">	m_Slope=0.0;</span>
+<span class="fc bfc" id="L384" title="All 2 branches covered.">	for (i=0;i&lt;len;i++){</span>
+<span class="fc" id="L385">	    x[i] = xold[i];</span>
+<span class="pc bpc" id="L386" title="1 of 2 branches missed.">	    if(!isFixed[i])</span>
+<span class="fc" id="L387">		m_Slope += gradient[i]*direct[i];</span>
+	}
+	
+<span class="pc bpc" id="L390" title="1 of 2 branches missed.">	if (m_Debug)</span>
+<span class="nc" id="L391">	    System.err.print(&quot;slope:  &quot; + Utils.doubleToString(m_Slope,10,7)+ &quot;\n&quot;);</span>
+	
+	// Slope too small
+<span class="fc bfc" id="L394" title="All 2 branches covered.">	if(Math.abs(m_Slope)&lt;=m_Zero){</span>
+<span class="pc bpc" id="L395" title="1 of 2 branches missed.">	    if (m_Debug)</span>
+<span class="nc" id="L396">		System.err.println(&quot;Gradient and direction orthogonal -- &quot;+</span>
+				   &quot;Min. found with current fixed variables&quot;+
+				   &quot; (or all variables fixed). Try to release&quot;+
+				   &quot; some variables now.&quot;);
+<span class="fc" id="L400">	    return x;</span>
+	}
+	
+	// Err: slope &gt; 0
+<span class="pc bpc" id="L404" title="1 of 2 branches missed.">	if(m_Slope &gt; m_Zero){</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">	    if(m_Debug)</span>
+<span class="nc bnc" id="L406" title="All 2 branches missed.">		for(int h=0; h&lt;x.length; h++)</span>
+<span class="nc" id="L407">		    System.err.println(h+&quot;: isFixed=&quot;+isFixed[h]+&quot;, x=&quot;+</span>
+<span class="nc" id="L408">				       x[h]+&quot;, grad=&quot;+gradient[h]+&quot;, direct=&quot;+</span>
+<span class="nc" id="L409">				       direct[h]);</span>
+<span class="nc" id="L410">	    throw new Exception(&quot;g'*p positive! -- Try to debug from here: line 327.&quot;);</span>
+	}
+	
+	// Compute LAMBDAmin and upper bound of lambda--alpha
+<span class="fc" id="L414">	test=0.0;</span>
+<span class="fc bfc" id="L415" title="All 2 branches covered.">	for(i=0;i&lt;len;i++){	    </span>
+<span class="pc bpc" id="L416" title="1 of 2 branches missed.">	    if(!isFixed[i]){// No need for fixed variables</span>
+<span class="fc" id="L417">		temp=Math.abs(direct[i])/Math.max(Math.abs(x[i]),1.0);</span>
+<span class="fc bfc" id="L418" title="All 2 branches covered.">		if (temp &gt; test) test=temp;</span>
+	    }
+	}
+	
+<span class="fc bfc" id="L422" title="All 2 branches covered.">	if(test&gt;m_Zero) // Not converge</span>
+<span class="fc" id="L423">	    alamin = m_TOLX/test;</span>
+	else{
+<span class="pc bpc" id="L425" title="1 of 2 branches missed.">	    if (m_Debug)</span>
+<span class="nc" id="L426">		System.err.println(&quot;Zero directions for all free variables -- &quot;+</span>
+				   &quot;Min. found with current fixed variables&quot;+
+				   &quot; (or all variables fixed). Try to release&quot;+
+				   &quot; some variables now.&quot;);
+<span class="fc" id="L430">	    return x;</span>
+	}
+		
+	// Check whether any non-working-set bounds are &quot;binding&quot;
+<span class="fc bfc" id="L434" title="All 2 branches covered.">	for(i=0;i&lt;len;i++){</span>
+<span class="pc bpc" id="L435" title="1 of 2 branches missed.">	    if(!isFixed[i]){// No need for fixed variables</span>
+		double alpi;
+<span class="pc bpc" id="L437" title="1 of 4 branches missed.">		if((direct[i]&lt;-m_Epsilon) &amp;&amp; !Double.isNaN(nwsBounds[0][i])){//Not feasible</span>
+<span class="nc" id="L438">		    alpi = (nwsBounds[0][i]-xold[i])/direct[i];</span>
+<span class="nc bnc" id="L439" title="All 2 branches missed.">		    if(alpi &lt;= m_Zero){ // Zero</span>
+<span class="nc bnc" id="L440" title="All 2 branches missed.">			if (m_Debug)</span>
+<span class="nc" id="L441">			    System.err.println(&quot;Fix variable &quot;+i+</span>
+<span class="nc" id="L442">					       &quot; to lower bound &quot;+ nwsBounds[0][i]+</span>
+<span class="nc" id="L443">					       &quot; from value &quot;+ xold[i]);</span>
+<span class="nc" id="L444">			x[i] = nwsBounds[0][i];</span>
+<span class="nc" id="L445">			isFixed[i]=true; // Fix this variable</span>
+<span class="nc" id="L446">			alpha = 0.0;</span>
+<span class="nc" id="L447">			nwsBounds[0][i]=Double.NaN; //Add cons. to working set</span>
+<span class="nc" id="L448">			wsBdsIndx.addElement(i);</span>
+		    }
+<span class="nc bnc" id="L450" title="All 2 branches missed.">		    else if(alpha &gt; alpi){ // Fix one variable in one iteration</span>
+<span class="nc" id="L451">			alpha = alpi;</span>
+<span class="nc" id="L452">			fixedOne = i;</span>
+		    }			
+		}
+<span class="pc bpc" id="L455" title="1 of 4 branches missed.">		else if((direct[i]&gt;m_Epsilon) &amp;&amp; !Double.isNaN(nwsBounds[1][i])){//Not feasible</span>
+<span class="nc" id="L456">		    alpi = (nwsBounds[1][i]-xold[i])/direct[i];</span>
+<span class="nc bnc" id="L457" title="All 2 branches missed.">		    if(alpi &lt;= m_Zero){ // Zero</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">			if (m_Debug)</span>
+<span class="nc" id="L459">			    System.err.println(&quot;Fix variable &quot;+i+</span>
+<span class="nc" id="L460">					       &quot; to upper bound &quot;+ nwsBounds[1][i]+</span>
+<span class="nc" id="L461">					       &quot; from value &quot;+ xold[i]);</span>
+<span class="nc" id="L462">			x[i] = nwsBounds[1][i];</span>
+<span class="nc" id="L463">			isFixed[i]=true; // Fix this variable</span>
+<span class="nc" id="L464">			alpha = 0.0;</span>
+<span class="nc" id="L465">			nwsBounds[1][i]=Double.NaN; //Add cons. to working set</span>
+<span class="nc" id="L466">			wsBdsIndx.addElement(i);</span>
+		    }
+<span class="nc bnc" id="L468" title="All 2 branches missed.">		    else if(alpha &gt; alpi){</span>
+<span class="nc" id="L469">			alpha = alpi;</span>
+<span class="nc" id="L470">			fixedOne = i;</span>
+		    }			
+		}				
+	    }
+	}	
+	
+<span class="pc bpc" id="L476" title="1 of 2 branches missed.">	if (m_Debug){</span>
+<span class="nc" id="L477">	    System.err.println(&quot;alamin: &quot; + Utils.doubleToString(alamin,10,7));</span>
+<span class="nc" id="L478">	    System.err.println(&quot;alpha: &quot; + Utils.doubleToString(alpha,10,7));</span>
+	}
+	
+<span class="pc bpc" id="L481" title="1 of 2 branches missed.">	if(alpha &lt;= m_Zero){ // Zero	   </span>
+<span class="nc" id="L482">	    m_IsZeroStep = true;</span>
+<span class="nc bnc" id="L483" title="All 2 branches missed.">	    if (m_Debug)</span>
+<span class="nc" id="L484">		System.err.println(&quot;Alpha too small, try again&quot;);</span>
+<span class="nc" id="L485">	    return x;</span>
+	}
+	
+<span class="fc" id="L488">	alam = alpha; // Always try full feasible newton step </span>
+<span class="pc bpc" id="L489" title="1 of 2 branches missed.">	if(alam &gt; 1.0)</span>
+<span class="fc" id="L490">	    alam = 1.0;</span>
+	
+	// Iteration of one newton step, if necessary, backtracking is done
+<span class="fc" id="L493">	double initF=fold, // Initial function value</span>
+<span class="fc" id="L494">	    hi=alam, lo=alam, newSlope=0, fhi=m_f, flo=m_f;// Variables used for beta condition</span>
+	double[] newGrad;  // Gradient on the new variable values
+	
+	kloop:
+<span class="fc" id="L498">	for (k=0;;k++) {</span>
+<span class="pc bpc" id="L499" title="1 of 2 branches missed.">	    if(m_Debug)</span>
+<span class="nc" id="L500">		System.err.println(&quot;\nLine search iteration: &quot; + k);</span>
+	    
+<span class="fc bfc" id="L502" title="All 2 branches covered.">	    for (i=0;i&lt;len;i++){</span>
+<span class="pc bpc" id="L503" title="1 of 2 branches missed.">		if(!isFixed[i]){</span>
+<span class="fc" id="L504">		    x[i] = xold[i]+alam*direct[i];  // Compute xnew</span>
+<span class="pc bpc" id="L505" title="3 of 4 branches missed.">		    if(!Double.isNaN(nwsBounds[0][i]) &amp;&amp; (x[i]&lt;nwsBounds[0][i])){    </span>
+<span class="nc" id="L506">			x[i] = nwsBounds[0][i]; //Rounding error	</span>
+		    }
+<span class="pc bpc" id="L508" title="3 of 4 branches missed.">		    else if(!Double.isNaN(nwsBounds[1][i]) &amp;&amp; (x[i]&gt;nwsBounds[1][i])){		</span>
+<span class="nc" id="L509">			x[i] = nwsBounds[1][i]; //Rounding error	</span>
+		    }
+		}
+	    }
+	    
+<span class="fc" id="L514">	    m_f = objectiveFunction(x);    // Compute fnew</span>
+<span class="pc bpc" id="L515" title="1 of 2 branches missed.">	    if(Double.isNaN(m_f))</span>
+<span class="nc" id="L516">		throw new Exception(&quot;Objective function value is NaN!&quot;);</span>
+	
+<span class="fc bfc" id="L518" title="All 2 branches covered.">	    while(Double.isInfinite(m_f)){ // Avoid infinity</span>
+<span class="pc bpc" id="L519" title="1 of 2 branches missed.">		if(m_Debug)</span>
+<span class="nc" id="L520">		    System.err.println(&quot;Too large m_f.  Shrink step by half.&quot;);</span>
+<span class="fc" id="L521">		alam *= 0.5; // Shrink by half</span>
+<span class="pc bpc" id="L522" title="1 of 2 branches missed.">		if(alam &lt;= m_Epsilon){</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">		    if(m_Debug)</span>
+<span class="nc" id="L524">			System.err.println(&quot;Wrong starting points, change them!&quot;);</span>
+<span class="nc" id="L525">		    return x;</span>
+		}
+		
+<span class="fc bfc" id="L528" title="All 2 branches covered.">		for (i=0;i&lt;len;i++)</span>
+<span class="pc bpc" id="L529" title="1 of 2 branches missed.">		    if(!isFixed[i])</span>
+<span class="fc" id="L530">			x[i] = xold[i]+alam*direct[i]; </span>
+		
+<span class="fc" id="L532">		m_f = objectiveFunction(x); </span>
+<span class="pc bpc" id="L533" title="1 of 2 branches missed.">		if(Double.isNaN(m_f))</span>
+<span class="nc" id="L534">		    throw new Exception(&quot;Objective function value is NaN!&quot;);</span>
+	
+<span class="fc" id="L536">		initF = Double.POSITIVE_INFINITY;</span>
+	    }
+	    
+<span class="pc bpc" id="L539" title="1 of 2 branches missed.">	    if(m_Debug) {</span>
+<span class="nc" id="L540">		System.err.println(&quot;obj. function: &quot; + </span>
+<span class="nc" id="L541">				   Utils.doubleToString(m_f, 10, 7));</span>
+<span class="nc" id="L542">		System.err.println(&quot;threshold: &quot; + </span>
+<span class="nc" id="L543">				   Utils.doubleToString(fold+m_ALF*alam*m_Slope,10,7));</span>
+	    }
+	    
+<span class="fc bfc" id="L546" title="All 2 branches covered.">	    if(m_f&lt;=fold+m_ALF*alam*m_Slope){// Alpha condition: sufficient function decrease</span>
+<span class="pc bpc" id="L547" title="1 of 2 branches missed.">		if(m_Debug)		</span>
+<span class="nc" id="L548">		    System.err.println(&quot;Sufficient function decrease (alpha condition): &quot;); </span>
+<span class="fc" id="L549">		newGrad = evaluateGradient(x);</span>
+<span class="fc bfc" id="L550" title="All 2 branches covered.">		for(newSlope=0.0,i=0; i&lt;len; i++)</span>
+<span class="pc bpc" id="L551" title="1 of 2 branches missed.">		    if(!isFixed[i])</span>
+<span class="fc" id="L552">			newSlope += newGrad[i]*direct[i];</span>
+
+<span class="fc bfc" id="L554" title="All 2 branches covered.">		if(newSlope &gt;= m_BETA*m_Slope){ // Beta condition: ensure pos. defnty.	</span>
+<span class="pc bpc" id="L555" title="1 of 2 branches missed.">		    if(m_Debug)		</span>
+<span class="nc" id="L556">			System.err.println(&quot;Increasing derivatives (beta condition): &quot;); 	</span>
+
+<span class="pc bpc" id="L558" title="3 of 4 branches missed.">		    if((fixedOne!=-1) &amp;&amp; (alam&gt;=alpha)){ // Has bounds and over</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">			if(direct[fixedOne] &gt; 0){</span>
+<span class="nc" id="L560">			    x[fixedOne] = nwsBounds[1][fixedOne]; // Avoid rounding error</span>
+<span class="nc" id="L561">			    nwsBounds[1][fixedOne]=Double.NaN; //Add cons. to working set</span>
+			}
+			else{
+<span class="nc" id="L564">			    x[fixedOne] = nwsBounds[0][fixedOne]; // Avoid rounding error</span>
+<span class="nc" id="L565">			    nwsBounds[0][fixedOne]=Double.NaN; //Add cons. to working set</span>
+			}
+			
+<span class="nc bnc" id="L568" title="All 2 branches missed.">			if(m_Debug)</span>
+<span class="nc" id="L569">			    System.err.println(&quot;Fix variable &quot;</span>
+<span class="nc" id="L570">					       +fixedOne+&quot; to bound &quot;+ x[fixedOne]+</span>
+<span class="nc" id="L571">					       &quot; from value &quot;+ xold[fixedOne]);</span>
+<span class="nc" id="L572">			isFixed[fixedOne]=true; // Fix the variable</span>
+<span class="nc" id="L573">			wsBdsIndx.addElement(fixedOne);</span>
+		    }		
+<span class="fc" id="L575">		    return x;</span>
+		}
+<span class="fc bfc" id="L577" title="All 2 branches covered.">		else if(k==0){ // First time: increase alam </span>
+		    // Search for the smallest value not complying with alpha condition
+<span class="fc" id="L579">		    double upper = Math.min(alpha,maxalam); </span>
+<span class="pc bpc" id="L580" title="1 of 2 branches missed.">		    if(m_Debug)</span>
+<span class="nc" id="L581">			System.err.println(&quot;Alpha condition holds, increase alpha... &quot;);</span>
+<span class="pc bfc" id="L582" title="All 4 branches covered.">		    while(!((alam&gt;=upper) || (m_f&gt;fold+m_ALF*alam*m_Slope))){</span>
+<span class="fc" id="L583">			lo = alam;</span>
+<span class="fc" id="L584">			flo = m_f;</span>
+<span class="fc" id="L585">			alam *= 2.0;</span>
+<span class="fc bfc" id="L586" title="All 2 branches covered.">			if(alam&gt;=upper)  // Avoid rounding errors</span>
+<span class="fc" id="L587">			    alam=upper;</span>
+
+<span class="fc bfc" id="L589" title="All 2 branches covered.">			for (i=0;i&lt;len;i++)</span>
+<span class="pc bpc" id="L590" title="1 of 2 branches missed.">			    if(!isFixed[i])</span>
+<span class="fc" id="L591">				x[i] = xold[i]+alam*direct[i];</span>
+<span class="fc" id="L592">			m_f = objectiveFunction(x);</span>
+<span class="pc bpc" id="L593" title="1 of 2 branches missed.">			if(Double.isNaN(m_f))</span>
+<span class="nc" id="L594">			    throw new Exception(&quot;Objective function value is NaN!&quot;);</span>
+			
+<span class="fc" id="L596">			newGrad = evaluateGradient(x);</span>
+<span class="fc bfc" id="L597" title="All 2 branches covered.">			for(newSlope=0.0,i=0; i&lt;len; i++)</span>
+<span class="pc bpc" id="L598" title="1 of 2 branches missed.">			    if(!isFixed[i])</span>
+<span class="fc" id="L599">				newSlope += newGrad[i]*direct[i];</span>
+			
+<span class="fc bfc" id="L601" title="All 2 branches covered.">			if(newSlope &gt;= m_BETA*m_Slope){</span>
+<span class="pc bpc" id="L602" title="1 of 2 branches missed.">			    if (m_Debug)		</span>
+<span class="nc" id="L603">				System.err.println(&quot;Increasing derivatives (beta condition): \n&quot;+</span>
+<span class="nc" id="L604">						   &quot;newSlope = &quot;+Utils.doubleToString(newSlope,10,7));</span>
+			    
+<span class="pc bpc" id="L606" title="3 of 4 branches missed.">			    if((fixedOne!=-1) &amp;&amp; (alam&gt;=alpha)){ // Has bounds and over</span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">				if(direct[fixedOne] &gt; 0){</span>
+<span class="nc" id="L608">				    x[fixedOne] = nwsBounds[1][fixedOne]; // Avoid rounding error</span>
+<span class="nc" id="L609">				    nwsBounds[1][fixedOne]=Double.NaN; //Add cons. to working set</span>
+				}
+				else{
+<span class="nc" id="L612">				    x[fixedOne] = nwsBounds[0][fixedOne]; // Avoid rounding error</span>
+<span class="nc" id="L613">				    nwsBounds[0][fixedOne]=Double.NaN; //Add cons. to working set</span>
+				}
+				
+<span class="nc bnc" id="L616" title="All 2 branches missed.">				if(m_Debug)</span>
+<span class="nc" id="L617">				    System.err.println(&quot;Fix variable &quot;</span>
+<span class="nc" id="L618">						       +fixedOne+&quot; to bound &quot;+ x[fixedOne]+</span>
+<span class="nc" id="L619">						       &quot; from value &quot;+ xold[fixedOne]);</span>
+<span class="nc" id="L620">				isFixed[fixedOne]=true; // Fix the variable</span>
+<span class="nc" id="L621">				wsBdsIndx.addElement(fixedOne);</span>
+			    }		 				    
+<span class="fc" id="L623">			    return x;</span>
+			}
+		    }
+<span class="fc" id="L626">		    hi = alam;</span>
+<span class="fc" id="L627">		    fhi = m_f;			</span>
+<span class="fc" id="L628">		    break kloop;</span>
+		}
+		else{
+<span class="pc bpc" id="L631" title="1 of 2 branches missed.">		    if(m_Debug)</span>
+<span class="nc" id="L632">			System.err.println(&quot;Alpha condition holds.&quot;);</span>
+<span class="fc" id="L633">		    hi = alam2; lo = alam; flo = m_f;</span>
+<span class="fc" id="L634">		    break kloop;</span>
+		}		    
+	    }        
+<span class="fc bfc" id="L637" title="All 2 branches covered.">	    else if (alam &lt; alamin) { // No feasible lambda found       </span>
+<span class="pc bpc" id="L638" title="1 of 2 branches missed.">		if(initF&lt;fold){ </span>
+<span class="nc" id="L639">		    alam = Math.min(1.0,alpha);</span>
+<span class="nc bnc" id="L640" title="All 2 branches missed.">		    for (i=0;i&lt;len;i++)</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">			if(!isFixed[i])</span>
+<span class="nc" id="L642">			    x[i] = xold[i]+alam*direct[i]; //Still take Alpha</span>
+		    
+<span class="nc bnc" id="L644" title="All 2 branches missed.">		    if (m_Debug)</span>
+<span class="nc" id="L645">			System.err.println(&quot;No feasible lambda: still take&quot;+</span>
+<span class="nc" id="L646">					   &quot; alpha=&quot;+alam);</span>
+		    
+<span class="nc bnc" id="L648" title="All 4 branches missed.">		    if((fixedOne!=-1) &amp;&amp; (alam&gt;=alpha)){ // Has bounds and over</span>
+<span class="nc bnc" id="L649" title="All 2 branches missed.">			if(direct[fixedOne] &gt; 0){</span>
+<span class="nc" id="L650">			    x[fixedOne] = nwsBounds[1][fixedOne]; // Avoid rounding error</span>
+<span class="nc" id="L651">			    nwsBounds[1][fixedOne]=Double.NaN; //Add cons. to working set</span>
+			}
+			else{
+<span class="nc" id="L654">			    x[fixedOne] = nwsBounds[0][fixedOne]; // Avoid rounding error</span>
+<span class="nc" id="L655">			    nwsBounds[0][fixedOne]=Double.NaN; //Add cons. to working set</span>
+			}
+			
+<span class="nc bnc" id="L658" title="All 2 branches missed.">			if(m_Debug)</span>
+<span class="nc" id="L659">			    System.err.println(&quot;Fix variable &quot;</span>
+<span class="nc" id="L660">					       +fixedOne+&quot; to bound &quot;+ x[fixedOne]+</span>
+<span class="nc" id="L661">					       &quot; from value &quot;+ xold[fixedOne]);</span>
+<span class="nc" id="L662">			isFixed[fixedOne]=true; // Fix the variable</span>
+<span class="nc" id="L663">			wsBdsIndx.addElement(fixedOne);</span>
+		    }		 		    
+		}
+		else{   // Convergence on delta(x)
+<span class="fc bfc" id="L667" title="All 2 branches covered.">		    for(i=0;i&lt;len;i++) </span>
+<span class="fc" id="L668">			x[i]=xold[i];</span>
+<span class="fc" id="L669">		    m_f=fold;</span>
+<span class="pc bpc" id="L670" title="1 of 2 branches missed.">		    if (m_Debug)</span>
+<span class="nc" id="L671">			System.err.println(&quot;Cannot find feasible lambda&quot;); </span>
+		}
+		
+<span class="fc" id="L674">		return x; </span>
+	    }
+	    else { // Backtracking by polynomial interpolation
+<span class="fc bfc" id="L677" title="All 2 branches covered.">		if(k==0){ // First time backtrack: quadratic interpolation</span>
+<span class="fc bfc" id="L678" title="All 2 branches covered.">		    if(!Double.isInfinite(initF))</span>
+<span class="fc" id="L679">			initF = m_f;		    </span>
+		    // lambda = -g'(0)/(2*g''(0))
+<span class="fc" id="L681">		    tmplam = -0.5*alam*m_Slope/((m_f-fold)/alam-m_Slope);</span>
+		}
+		else {    // Subsequent backtrack: cubic interpolation 
+<span class="fc" id="L684">		    rhs1 = m_f-fold-alam*m_Slope;</span>
+<span class="fc" id="L685">		    rhs2 = fhi-fold-alam2*m_Slope;</span>
+<span class="fc" id="L686">		    a=(rhs1/(alam*alam)-rhs2/(alam2*alam2))/(alam-alam2);</span>
+<span class="fc" id="L687">		    b=(-alam2*rhs1/(alam*alam)+alam*rhs2/(alam2*alam2))/(alam-alam2);</span>
+<span class="pc bpc" id="L688" title="1 of 2 branches missed.">		    if (a == 0.0) tmplam = -m_Slope/(2.0*b);</span>
+		    else {
+<span class="fc" id="L690">			disc=b*b-3.0*a*m_Slope;</span>
+<span class="pc bpc" id="L691" title="1 of 2 branches missed.">			if (disc &lt; 0.0) disc = 0.0;</span>
+<span class="fc" id="L692">			double numerator = -b+Math.sqrt(disc);</span>
+<span class="pc bpc" id="L693" title="1 of 2 branches missed.">			if(numerator &gt;= Double.MAX_VALUE){</span>
+<span class="nc" id="L694">			    numerator = Double.MAX_VALUE;</span>
+<span class="nc bnc" id="L695" title="All 2 branches missed.">			    if (m_Debug)</span>
+<span class="nc" id="L696">				System.err.print(&quot;-b+sqrt(disc) too large! Set it to MAX_VALUE.&quot;);</span>
+			}
+<span class="fc" id="L698">			tmplam=numerator/(3.0*a);</span>
+		    }
+<span class="pc bpc" id="L700" title="1 of 2 branches missed.">		    if (m_Debug)</span>
+<span class="nc" id="L701">			System.err.print(&quot;Cubic interpolation: \n&quot; + </span>
+<span class="nc" id="L702">					 &quot;a:   &quot; + Utils.doubleToString(a,10,7)+ &quot;\n&quot; +</span>
+<span class="nc" id="L703">					 &quot;b:   &quot; + Utils.doubleToString(b,10,7)+ &quot;\n&quot; +</span>
+<span class="nc" id="L704">					 &quot;disc:   &quot; + Utils.doubleToString(disc,10,7)+ &quot;\n&quot; +</span>
+<span class="nc" id="L705">					 &quot;tmplam:   &quot; + tmplam + &quot;\n&quot; +</span>
+<span class="nc" id="L706">					 &quot;alam:   &quot; + Utils.doubleToString(alam,10,7)+ &quot;\n&quot;);	</span>
+<span class="fc bfc" id="L707" title="All 2 branches covered.">		    if (tmplam&gt;0.5*alam)</span>
+<span class="fc" id="L708">			tmplam=0.5*alam;             // lambda &lt;= 0.5*lambda_old</span>
+		}
+	    }
+<span class="fc" id="L711">	    alam2=alam;</span>
+<span class="fc" id="L712">	    fhi=m_f;</span>
+<span class="fc" id="L713">	    alam=Math.max(tmplam,0.1*alam);          // lambda &gt;= 0.1*lambda_old</span>
+	    
+<span class="pc bpc" id="L715" title="1 of 2 branches missed.">	    if(alam&gt;alpha){</span>
+<span class="nc" id="L716">		throw new Exception(&quot;Sth. wrong in lnsrch:&quot;+</span>
+<span class="nc" id="L717">				    &quot;Lambda infeasible!(lambda=&quot;+alam+</span>
+<span class="nc" id="L718">				    &quot;, alpha=&quot;+alpha+&quot;, upper=&quot;+tmplam+</span>
+<span class="nc" id="L719">				    &quot;|&quot;+(-alpha*m_Slope/(2.0*((m_f-fold)/alpha-m_Slope)))+</span>
+<span class="nc" id="L720">				    &quot;, m_f=&quot;+m_f+&quot;, fold=&quot;+fold+</span>
+<span class="nc" id="L721">				    &quot;, slope=&quot;+m_Slope);</span>
+	    }	    
+	} // Endfor(k=0;;k++)
+	
+	// Quadratic interpolation between lamda values between lo and hi.
+	// If cannot find a value satisfying beta condition, use lo.
+<span class="fc" id="L727">	double ldiff = hi-lo, lincr;</span>
+<span class="pc bpc" id="L728" title="1 of 2 branches missed.">	if(m_Debug)</span>
+<span class="nc" id="L729">	    System.err.println(&quot;Last stage of searching for beta condition (alam between &quot;</span>
+<span class="nc" id="L730">			       +Utils.doubleToString(lo,10,7)+&quot; and &quot;</span>
+<span class="nc" id="L731">			       +Utils.doubleToString(hi,10,7)+&quot;)...\n&quot;+</span>
+<span class="nc" id="L732">			       &quot;Quadratic Interpolation(QI):\n&quot;+</span>
+<span class="nc" id="L733">			       &quot;Last newSlope = &quot;+Utils.doubleToString(newSlope, 10, 7));</span>
+	
+<span class="pc bfc" id="L735" title="All 4 branches covered.">	while((newSlope&lt;m_BETA*m_Slope) &amp;&amp; (ldiff&gt;=alamin)){</span>
+<span class="fc" id="L736">	    lincr = -0.5*newSlope*ldiff*ldiff/(fhi-flo-newSlope*ldiff);</span>
+
+<span class="pc bpc" id="L738" title="1 of 2 branches missed.">	    if(m_Debug)</span>
+<span class="nc" id="L739">		System.err.println(&quot;fhi = &quot;+fhi+&quot;\n&quot;+</span>
+<span class="nc" id="L740">				   &quot;flo = &quot;+flo+&quot;\n&quot;+</span>
+<span class="nc" id="L741">				   &quot;ldiff = &quot;+ldiff+&quot;\n&quot;+</span>
+<span class="nc" id="L742">				   &quot;lincr (using QI) = &quot;+lincr+&quot;\n&quot;);</span>
+	    
+<span class="fc bfc" id="L744" title="All 2 branches covered.">	    if(lincr&lt;0.2*ldiff) lincr=0.2*ldiff;</span>
+<span class="fc" id="L745">	    alam = lo+lincr;</span>
+<span class="pc bpc" id="L746" title="1 of 2 branches missed.">	    if(alam &gt;= hi){ // We cannot go beyond the bounds, so the best we can try is hi</span>
+<span class="nc" id="L747">	    	alam=hi;</span>
+<span class="nc" id="L748">		lincr=ldiff;</span>
+	    }
+<span class="fc bfc" id="L750" title="All 2 branches covered.">	    for (i=0;i&lt;len;i++)</span>
+<span class="pc bpc" id="L751" title="1 of 2 branches missed.">		if(!isFixed[i])</span>
+<span class="fc" id="L752">		    x[i] = xold[i]+alam*direct[i];</span>
+<span class="fc" id="L753">	    m_f = objectiveFunction(x);</span>
+<span class="pc bpc" id="L754" title="1 of 2 branches missed.">	    if(Double.isNaN(m_f))</span>
+<span class="nc" id="L755">		throw new Exception(&quot;Objective function value is NaN!&quot;);</span>
+	
+<span class="fc bfc" id="L757" title="All 2 branches covered.">	    if(m_f&gt;fold+m_ALF*alam*m_Slope){ </span>
+		// Alpha condition fails, shrink lambda_upper
+<span class="fc" id="L759">		ldiff = lincr;</span>
+<span class="fc" id="L760">		fhi = m_f;</span>
+	    }	    
+	    else{ // Alpha condition holds	    
+<span class="fc" id="L763">		newGrad = evaluateGradient(x);</span>
+<span class="fc bfc" id="L764" title="All 2 branches covered.">		for(newSlope=0.0,i=0; i&lt;len; i++)</span>
+<span class="pc bpc" id="L765" title="1 of 2 branches missed.">		    if(!isFixed[i])</span>
+<span class="fc" id="L766">			newSlope += newGrad[i]*direct[i];</span>
+		
+<span class="fc bfc" id="L768" title="All 2 branches covered.">		if(newSlope &lt; m_BETA*m_Slope){</span>
+		    // Beta condition fails, shrink lambda_lower
+<span class="fc" id="L770">		    lo = alam;</span>
+<span class="fc" id="L771">		    ldiff -= lincr;</span>
+<span class="fc" id="L772">		    flo = m_f;</span>
+		}
+	    }
+	} 
+	
+<span class="fc bfc" id="L777" title="All 2 branches covered.">	if(newSlope &lt; m_BETA*m_Slope){ // Cannot satisfy beta condition, take lo</span>
+<span class="pc bpc" id="L778" title="1 of 2 branches missed.">	    if(m_Debug)</span>
+<span class="nc" id="L779">		System.err.println(&quot;Beta condition cannot be satisfied, take alpha condition&quot;);</span>
+<span class="fc" id="L780">	    alam=lo;</span>
+<span class="fc bfc" id="L781" title="All 2 branches covered.">	    for (i=0;i&lt;len;i++)</span>
+<span class="pc bpc" id="L782" title="1 of 2 branches missed.">		if(!isFixed[i])</span>
+<span class="fc" id="L783">		    x[i] = xold[i]+alam*direct[i];</span>
+<span class="fc" id="L784">	    m_f = flo;</span>
+	}
+<span class="pc bpc" id="L786" title="1 of 2 branches missed.">	else if(m_Debug)</span>
+<span class="nc" id="L787">	    System.err.println(&quot;Both alpha and beta conditions are satisfied. alam=&quot;</span>
+<span class="nc" id="L788">			       +Utils.doubleToString(alam,10,7));</span>
+	
+<span class="pc bpc" id="L790" title="3 of 4 branches missed.">	if((fixedOne!=-1) &amp;&amp; (alam&gt;=alpha)){ // Has bounds and over</span>
+<span class="nc bnc" id="L791" title="All 2 branches missed.">	    if(direct[fixedOne] &gt; 0){</span>
+<span class="nc" id="L792">		x[fixedOne] = nwsBounds[1][fixedOne]; // Avoid rounding error</span>
+<span class="nc" id="L793">		nwsBounds[1][fixedOne]=Double.NaN; //Add cons. to working set</span>
+	    }
+	    else{
+<span class="nc" id="L796">		x[fixedOne] = nwsBounds[0][fixedOne]; // Avoid rounding error</span>
+<span class="nc" id="L797">		nwsBounds[0][fixedOne]=Double.NaN; //Add cons. to working set</span>
+	    }
+	    
+<span class="nc bnc" id="L800" title="All 2 branches missed.">	    if(m_Debug)</span>
+<span class="nc" id="L801">		System.err.println(&quot;Fix variable &quot;</span>
+<span class="nc" id="L802">				   +fixedOne+&quot; to bound &quot;+ x[fixedOne]+</span>
+<span class="nc" id="L803">				   &quot; from value &quot;+ xold[fixedOne]);</span>
+<span class="nc" id="L804">	    isFixed[fixedOne]=true; // Fix the variable</span>
+<span class="nc" id="L805">	    wsBdsIndx.addElement(fixedOne);</span>
+	}
+	
+<span class="fc" id="L808">	return x;</span>
+    }
+    
+    /**
+     * Main algorithm.  Descriptions see &quot;Practical Optimization&quot;
+     *
+     * @param initX initial point of x, assuming no value's on the bound!
+     * @param constraints the bound constraints of each variable
+     *                    constraints[0] is the lower bounds and 
+     *                    constraints[1] is the upper bounds
+     * @return the solution of x, null if number of iterations not enough
+     * @throws Exception if an error occurs
+     */
+    public double[] findArgmin(double[] initX, double[][] constraints) 
+	throws Exception{
+<span class="fc" id="L823">	int l = initX.length;</span>
+	
+	// Initially all variables are free, all bounds are constraints of
+	// non-working-set constraints
+<span class="fc" id="L827">	boolean[] isFixed = new boolean[l];</span>
+<span class="fc" id="L828">	double[][] nwsBounds = new double[2][l];</span>
+	// Record indice of fixed variables, simply for efficiency
+<span class="fc" id="L830">	DynamicIntArray wsBdsIndx = new DynamicIntArray(constraints.length); </span>
+	// Vectors used to record the variable indices to be freed 	
+<span class="fc" id="L832">	DynamicIntArray toFree=null, oldToFree=null;	</span>
+
+	// Initial value of obj. function, gradient and inverse of the Hessian
+<span class="fc" id="L835">	m_f = objectiveFunction(initX);</span>
+<span class="pc bpc" id="L836" title="1 of 2 branches missed.">	if(Double.isNaN(m_f))</span>
+<span class="nc" id="L837">	    throw new Exception(&quot;Objective function value is NaN!&quot;);</span>
+	
+<span class="fc" id="L839">	double sum=0;</span>
+<span class="fc" id="L840">	double[] grad=evaluateGradient(initX), oldGrad, oldX,</span>
+<span class="fc" id="L841">	    deltaGrad=new double[l], deltaX=new double[l],</span>
+<span class="fc" id="L842">	    direct = new double[l], x = new double[l];</span>
+<span class="fc" id="L843">	Matrix L = new Matrix(l, l);  // Lower triangle of Cholesky factor </span>
+<span class="fc" id="L844">	double[] D = new double[l];   // Diagonal of Cholesky factor</span>
+<span class="fc bfc" id="L845" title="All 2 branches covered.">	for(int i=0; i&lt;l; i++){</span>
+<span class="fc" id="L846">	    L.setRow(i, new double[l]);</span>
+<span class="fc" id="L847">	    L.setElement(i,i,1.0);</span>
+<span class="fc" id="L848">	    D[i] = 1.0;</span>
+<span class="fc" id="L849">	    direct[i] = -grad[i];</span>
+<span class="fc" id="L850">	    sum += grad[i]*grad[i];</span>
+<span class="fc" id="L851">	    x[i] = initX[i];</span>
+<span class="fc" id="L852">	    nwsBounds[0][i] = constraints[0][i];</span>
+<span class="fc" id="L853">	    nwsBounds[1][i] = constraints[1][i];</span>
+<span class="fc" id="L854">	    isFixed[i] = false;</span>
+	}	
+<span class="fc" id="L856">	double stpmax = m_STPMX*Math.max(Math.sqrt(sum), l);</span>
+	
+	iterates:
+<span class="fc bfc" id="L859" title="All 2 branches covered.">	for(int step=0; step &lt; m_MAXITS; step++){</span>
+<span class="pc bpc" id="L860" title="1 of 2 branches missed.">	    if (m_Debug)</span>
+<span class="nc" id="L861">		System.err.println(&quot;\nIteration # &quot; + step + &quot;:&quot;);	    </span>
+	    
+	    // Try at most one feasible newton step, i.e. 0&lt;lamda&lt;=alpha
+<span class="fc" id="L864">	    oldX = x;</span>
+<span class="fc" id="L865">	    oldGrad = grad;</span>
+	    
+	    // Also update grad
+<span class="pc bpc" id="L868" title="1 of 2 branches missed.">	    if (m_Debug)</span>
+<span class="nc" id="L869">		System.err.println(&quot;Line search ... &quot;);</span>
+<span class="fc" id="L870">	    m_IsZeroStep = false;</span>
+<span class="fc" id="L871">	    x=lnsrch(x, grad, direct, stpmax, </span>
+<span class="fc" id="L872">		     isFixed, nwsBounds, wsBdsIndx);</span>
+<span class="pc bpc" id="L873" title="1 of 2 branches missed.">	    if (m_Debug)</span>
+<span class="nc" id="L874">		System.err.println(&quot;Line search finished.&quot;);</span>
+	    
+<span class="pc bpc" id="L876" title="1 of 2 branches missed.">	    if(m_IsZeroStep){ // Zero step, simply delete rows/cols of D and L</span>
+<span class="nc bnc" id="L877" title="All 2 branches missed.">		for(int f=0; f&lt;wsBdsIndx.size(); f++){</span>
+<span class="nc" id="L878">		    int idx=wsBdsIndx.elementAt(f);</span>
+<span class="nc" id="L879">		    L.setRow(idx, new double[l]);</span>
+<span class="nc" id="L880">		    L.setColumn(idx, new double[l]);</span>
+<span class="nc" id="L881">		    D[idx] = 0.0;</span>
+		}		
+<span class="nc" id="L883">		grad = evaluateGradient(x);</span>
+<span class="nc" id="L884">		step--;</span>
+	    }
+	    else{
+		// Check converge on x
+<span class="fc" id="L888">		boolean finish = false;</span>
+<span class="fc" id="L889">		double test=0.0;</span>
+<span class="fc bfc" id="L890" title="All 2 branches covered.">		for(int h=0; h&lt;l; h++){</span>
+<span class="fc" id="L891">		    deltaX[h] = x[h]-oldX[h];</span>
+<span class="fc" id="L892">		    double tmp=Math.abs(deltaX[h])/</span>
+<span class="fc" id="L893">			Math.max(Math.abs(x[h]), 1.0);</span>
+<span class="fc bfc" id="L894" title="All 2 branches covered.">		    if(tmp &gt; test) test = tmp;				    </span>
+		}
+<span class="fc bfc" id="L896" title="All 2 branches covered.">		if(test &lt; m_Zero){</span>
+<span class="pc bpc" id="L897" title="1 of 2 branches missed.">		    if (m_Debug)</span>
+<span class="nc" id="L898">			System.err.println(&quot;\nDeltaX converge: &quot;+test);</span>
+<span class="fc" id="L899">		    finish = true;</span>
+		}
+		
+		// Check zero gradient	    
+<span class="fc" id="L903">		grad = evaluateGradient(x);</span>
+<span class="fc" id="L904">		test=0.0;</span>
+<span class="fc" id="L905">		double denom=0.0, dxSq=0.0, dgSq=0.0, newlyBounded=0.0; </span>
+<span class="fc bfc" id="L906" title="All 2 branches covered.">		for(int g=0; g&lt;l; g++){</span>
+<span class="pc bpc" id="L907" title="1 of 2 branches missed.">		    if(!isFixed[g]){ 		   </span>
+<span class="fc" id="L908">			deltaGrad[g] = grad[g] - oldGrad[g];		  </span>
+			// Calculate the denominators			    
+<span class="fc" id="L910">			denom += deltaX[g]*deltaGrad[g];</span>
+<span class="fc" id="L911">			dxSq += deltaX[g]*deltaX[g];</span>
+<span class="fc" id="L912">			dgSq += deltaGrad[g]*deltaGrad[g];</span>
+		    }
+		    else // Only newly bounded variables will be non-zero
+<span class="nc" id="L915">			newlyBounded +=  deltaX[g]*(grad[g]-oldGrad[g]);</span>
+		    
+		    // Note: CANNOT use projected gradient for testing 
+		    // convergence because of newly bounded variables
+<span class="fc" id="L919">		    double tmp = Math.abs(grad[g])*</span>
+<span class="fc" id="L920">			Math.max(Math.abs(direct[g]),1.0)/</span>
+<span class="fc" id="L921">			Math.max(Math.abs(m_f),1.0);</span>
+<span class="fc bfc" id="L922" title="All 2 branches covered.">		    if(tmp &gt; test) test = tmp;	</span>
+		}
+		
+<span class="fc bfc" id="L925" title="All 2 branches covered.">		if(test &lt; m_Zero){</span>
+<span class="pc bpc" id="L926" title="1 of 2 branches missed.">		    if (m_Debug)</span>
+<span class="nc" id="L927">			System.err.println(&quot;Gradient converge: &quot;+test);</span>
+<span class="fc" id="L928">		    finish = true;</span>
+		}	    
+		
+		// dg'*dx could be &lt; 0 using inexact lnsrch
+<span class="pc bpc" id="L932" title="1 of 2 branches missed.">		if(m_Debug)</span>
+<span class="nc" id="L933">		    System.err.println(&quot;dg'*dx=&quot;+(denom+newlyBounded));	</span>
+		// dg'*dx = 0
+<span class="fc bfc" id="L935" title="All 2 branches covered.">		if(Math.abs(denom+newlyBounded) &lt; m_Zero)</span>
+<span class="fc" id="L936">		    finish = true;</span>
+		
+<span class="fc" id="L938">		int size = wsBdsIndx.size();</span>
+<span class="fc" id="L939">		boolean isUpdate = true;  // Whether to update BFGS formula	    </span>
+		// Converge: check whether release any current constraints
+<span class="fc bfc" id="L941" title="All 2 branches covered.">		if(finish){</span>
+<span class="pc bpc" id="L942" title="1 of 2 branches missed.">		    if (m_Debug)</span>
+<span class="nc" id="L943">			System.err.println(&quot;Test any release possible ...&quot;);</span>
+		    	
+<span class="pc bpc" id="L945" title="1 of 2 branches missed.">		    if(toFree != null)</span>
+<span class="nc" id="L946">			oldToFree = (DynamicIntArray)toFree.copy();</span>
+<span class="fc" id="L947">		    toFree = new DynamicIntArray(wsBdsIndx.size());</span>
+		    
+<span class="pc bpc" id="L949" title="1 of 2 branches missed.">		    for(int m=size-1; m&gt;=0; m--){</span>
+<span class="nc" id="L950">			int index=wsBdsIndx.elementAt(m);</span>
+<span class="nc" id="L951">			double[] hessian = evaluateHessian(x, index);			</span>
+<span class="nc" id="L952">			double deltaL=0.0;</span>
+<span class="nc bnc" id="L953" title="All 2 branches missed.">			if(hessian != null){</span>
+<span class="nc bnc" id="L954" title="All 2 branches missed.">			    for(int mm=0; mm&lt;hessian.length; mm++)</span>
+<span class="nc bnc" id="L955" title="All 2 branches missed.">				if(!isFixed[mm]) // Free variable</span>
+<span class="nc" id="L956">				    deltaL += hessian[mm]*direct[mm];</span>
+			}
+			
+			// First and second order Lagrangian multiplier estimate
+			// If user didn't provide Hessian, use first-order only
+			double L1, L2;
+<span class="nc bnc" id="L962" title="All 2 branches missed.">			if(x[index] &gt;= constraints[1][index]) // Upper bound</span>
+<span class="nc" id="L963">			    L1 = -grad[index];</span>
+<span class="nc bnc" id="L964" title="All 2 branches missed.">			else if(x[index] &lt;= constraints[0][index])// Lower bound</span>
+<span class="nc" id="L965">			    L1 = grad[index];</span>
+			else
+<span class="nc" id="L967">			    throw new Exception(&quot;x[&quot;+index+&quot;] not fixed on the&quot;+</span>
+<span class="nc" id="L968">						&quot; bounds where it should have been!&quot;);</span>
+			
+			// L2 = L1 + deltaL
+<span class="nc" id="L971">			L2 = L1 + deltaL;			</span>
+<span class="nc bnc" id="L972" title="All 2 branches missed.">			if (m_Debug)</span>
+<span class="nc" id="L973">			    System.err.println(&quot;Variable &quot;+index+</span>
+<span class="nc" id="L974">					       &quot;: Lagrangian=&quot;+L1+&quot;|&quot;+L2);</span>
+			
+			//Check validity of Lagrangian multiplier estimate
+<span class="nc" id="L977">			boolean isConverge = </span>
+<span class="nc bnc" id="L978" title="All 2 branches missed.">			    (2.0*Math.abs(deltaL)) &lt; Math.min(Math.abs(L1),</span>
+<span class="nc" id="L979">							      Math.abs(L2));  </span>
+<span class="nc bnc" id="L980" title="All 4 branches missed.">			if((L1*L2&gt;0.0) &amp;&amp; isConverge){ //Same sign and converge: valid</span>
+<span class="nc bnc" id="L981" title="All 2 branches missed.">			    if(L2 &lt; 0.0){// Negative Lagrangian: feasible</span>
+<span class="nc" id="L982">				toFree.addElement(index);</span>
+<span class="nc" id="L983">				wsBdsIndx.removeElementAt(m);</span>
+<span class="nc" id="L984">				finish=false; // Not optimal, cannot finish</span>
+			    }
+			}
+			
+			// Although hardly happen, better check it
+			// If the first-order Lagrangian multiplier estimate is wrong,
+			// avoid zigzagging
+<span class="nc bnc" id="L991" title="All 6 branches missed.">			if((hessian==null) &amp;&amp; (toFree != null) &amp;&amp; toFree.equal(oldToFree)) </span>
+<span class="nc" id="L992">			    finish = true;           </span>
+		    }
+		    
+<span class="pc bpc" id="L995" title="1 of 2 branches missed.">		    if(finish){// Min. found</span>
+<span class="pc bpc" id="L996" title="1 of 2 branches missed.">			if (m_Debug)</span>
+<span class="nc" id="L997">			    System.err.println(&quot;Minimum found.&quot;);</span>
+<span class="fc" id="L998">			m_f = objectiveFunction(x);</span>
+<span class="pc bpc" id="L999" title="1 of 2 branches missed.">			if(Double.isNaN(m_f))</span>
+<span class="nc" id="L1000">			    throw new Exception(&quot;Objective function value is NaN!&quot;);	</span>
+<span class="fc" id="L1001">			return x;</span>
+		    }
+		    
+		    // Free some variables
+<span class="nc bnc" id="L1005" title="All 2 branches missed.">		    for(int mmm=0; mmm&lt;toFree.size(); mmm++){</span>
+<span class="nc" id="L1006">			int freeIndx=toFree.elementAt(mmm);</span>
+<span class="nc" id="L1007">			isFixed[freeIndx] = false; // Free this variable</span>
+<span class="nc bnc" id="L1008" title="All 2 branches missed.">			if(x[freeIndx] &lt;= constraints[0][freeIndx]){// Lower bound</span>
+<span class="nc" id="L1009">			    nwsBounds[0][freeIndx] = constraints[0][freeIndx];</span>
+<span class="nc bnc" id="L1010" title="All 2 branches missed.">			    if (m_Debug)</span>
+<span class="nc" id="L1011">				System.err.println(&quot;Free variable &quot;+freeIndx+</span>
+<span class="nc" id="L1012">						   &quot; from bound &quot;+ </span>
+<span class="nc" id="L1013">						   nwsBounds[0][freeIndx]);</span>
+			}
+			else{ // Upper bound
+<span class="nc" id="L1016">			    nwsBounds[1][freeIndx] = constraints[1][freeIndx];</span>
+<span class="nc bnc" id="L1017" title="All 2 branches missed.">			    if (m_Debug)</span>
+<span class="nc" id="L1018">				System.err.println(&quot;Free variable &quot;+freeIndx+</span>
+<span class="nc" id="L1019">						   &quot; from bound &quot;+ </span>
+<span class="nc" id="L1020">						   nwsBounds[1][freeIndx]);</span>
+			}			
+<span class="nc" id="L1022">			L.setElement(freeIndx, freeIndx, 1.0);</span>
+<span class="nc" id="L1023">			D[freeIndx] = 1.0;</span>
+<span class="nc" id="L1024">			isUpdate = false;			</span>
+		    }			
+		}
+		
+<span class="fc bfc" id="L1028" title="All 2 branches covered.">		if(denom&lt;Math.max(m_Zero*Math.sqrt(dxSq)*Math.sqrt(dgSq), m_Zero)){</span>
+<span class="pc bpc" id="L1029" title="1 of 2 branches missed.">		    if (m_Debug) </span>
+<span class="nc" id="L1030">			System.err.println(&quot;dg'*dx negative!&quot;);</span>
+<span class="fc" id="L1031">		    isUpdate = false; // Do not update		    </span>
+		}		
+		// If Hessian will be positive definite, update it
+<span class="fc bfc" id="L1034" title="All 2 branches covered.">		if(isUpdate){</span>
+		    
+		    // modify once: dg*dg'/(dg'*dx)	
+<span class="fc" id="L1037">		    double coeff = 1.0/denom; // 1/(dg'*dx)	</span>
+<span class="fc" id="L1038">		    updateCholeskyFactor(L,D,deltaGrad,coeff,isFixed);</span>
+		    
+		    // modify twice: g*g'/(g'*p)	
+<span class="fc" id="L1041">		    coeff = 1.0/m_Slope; // 1/(g'*p)</span>
+<span class="fc" id="L1042">		    updateCholeskyFactor(L,D,oldGrad,coeff,isFixed);  		    </span>
+		}
+	    }
+	    
+	    // Find new direction 
+<span class="fc" id="L1047">	    Matrix LD = new Matrix(l,l); // L*D</span>
+<span class="fc" id="L1048">	    double[] b = new double[l];</span>
+	    
+<span class="fc bfc" id="L1050" title="All 2 branches covered.">	    for(int k=0; k&lt;l; k++){</span>
+<span class="pc bpc" id="L1051" title="1 of 2 branches missed.">		if(!isFixed[k])  b[k] = -grad[k];</span>
+<span class="nc" id="L1052">		else             b[k] = 0.0;</span>
+		
+<span class="fc bfc" id="L1054" title="All 2 branches covered.">		for(int j=k; j&lt;l; j++){ // Lower triangle	</span>
+<span class="pc bpc" id="L1055" title="2 of 4 branches missed.">		    if(!isFixed[j] &amp;&amp; !isFixed[k])</span>
+<span class="fc" id="L1056">			LD.setElement(j, k, L.getElement(j,k)*D[k]);</span>
+		}		
+	    }	    	
+	    
+	    // Solve (LD)*y = -g, where y=L'*direct
+<span class="fc" id="L1061">	    double[] LDIR = solveTriangle(LD, b, true, isFixed);	    </span>
+<span class="fc" id="L1062">	    LD = null;</span>
+	    
+<span class="fc bfc" id="L1064" title="All 2 branches covered.">	    for(int m=0; m&lt;LDIR.length; m++){</span>
+<span class="pc bpc" id="L1065" title="1 of 2 branches missed.">		if(Double.isNaN(LDIR[m]))</span>
+<span class="nc" id="L1066">		    throw new Exception(&quot;L*direct[&quot;+m+&quot;] is NaN!&quot;</span>
+<span class="nc" id="L1067">					+&quot;|-g=&quot;+b[m]+&quot;|&quot;+isFixed[m]</span>
+<span class="nc" id="L1068">					+&quot;|diag=&quot;+D[m]);</span>
+	    }
+	    
+	    // Solve L'*direct = y
+<span class="fc" id="L1072">	    direct = solveTriangle(L, LDIR, false, isFixed);</span>
+<span class="fc bfc" id="L1073" title="All 2 branches covered.">	    for(int m=0; m&lt;direct.length; m++){</span>
+<span class="pc bpc" id="L1074" title="1 of 2 branches missed.">		if(Double.isNaN(direct[m]))</span>
+<span class="nc" id="L1075">		    throw new Exception(&quot;direct is NaN!&quot;);</span>
+	    }
+	    
+	    //System.gc();
+	}
+	
+<span class="pc bpc" id="L1081" title="1 of 2 branches missed.">	if(m_Debug)</span>
+<span class="nc" id="L1082">	    System.err.println(&quot;Cannot find minimum&quot;+</span>
+			       &quot; -- too many interations!&quot;);
+<span class="fc" id="L1084">	m_X = x;</span>
+<span class="fc" id="L1085">	return null;</span>
+    }
+    
+    /** 
+     * Solve the linear equation of TX=B where T is a triangle matrix
+     * It can be solved using back/forward substitution, with O(N^2) 
+     * complexity
+     * @param t the matrix T
+     * @param b the vector B
+     * @param isLower whether T is a lower or higher triangle matrix
+     * @param isZero which row(s) of T are not used when solving the equation. 
+     *               If it's null or all 'false', then every row is used.
+     * @return the solution of X
+     */     
+    public static double[] solveTriangle(Matrix t, double[] b, 
+					 boolean isLower, boolean[] isZero){
+<span class="fc" id="L1101">	int n = b.length; </span>
+<span class="fc" id="L1102">	double[] result = new double[n];</span>
+<span class="pc bpc" id="L1103" title="1 of 2 branches missed.">	if(isZero == null)</span>
+<span class="nc" id="L1104">	    isZero = new boolean[n];</span>
+	
+<span class="fc bfc" id="L1106" title="All 2 branches covered.">	if(isLower){ // lower triangle, forward-substitution</span>
+<span class="fc" id="L1107">	    int j = 0;</span>
+<span class="pc bpc" id="L1108" title="2 of 4 branches missed.">	    while((j&lt;n)&amp;&amp;isZero[j]){result[j]=0.0; j++;} // go to the first row</span>
+	    
+<span class="pc bpc" id="L1110" title="1 of 2 branches missed.">	    if(j&lt;n){</span>
+<span class="fc" id="L1111">		result[j] = b[j]/t.getElement(j,j);</span>
+		
+<span class="fc bfc" id="L1113" title="All 2 branches covered.">		for(; j&lt;n; j++){</span>
+<span class="pc bpc" id="L1114" title="1 of 2 branches missed.">		    if(!isZero[j]){</span>
+<span class="fc" id="L1115">			double numerator=b[j];</span>
+<span class="fc bfc" id="L1116" title="All 2 branches covered.">			for(int k=0; k&lt;j; k++)</span>
+<span class="fc" id="L1117">			    numerator -= t.getElement(j,k)*result[k];</span>
+<span class="fc" id="L1118">			result[j] = numerator/t.getElement(j,j);</span>
+		    }
+		    else 
+<span class="nc" id="L1121">			result[j] = 0.0;</span>
+		}
+	    }
+	}
+	else{ // Upper triangle, back-substitution
+<span class="fc" id="L1126">	    int j=n-1;</span>
+<span class="pc bpc" id="L1127" title="2 of 4 branches missed.">	    while((j&gt;=0)&amp;&amp;isZero[j]){result[j]=0.0; j--;} // go to the last row</span>
+	    
+<span class="pc bpc" id="L1129" title="1 of 2 branches missed.">	    if(j&gt;=0){</span>
+<span class="fc" id="L1130">		result[j] = b[j]/t.getElement(j,j);</span>
+		
+<span class="fc bfc" id="L1132" title="All 2 branches covered.">		for(; j&gt;=0; j--){</span>
+<span class="pc bpc" id="L1133" title="1 of 2 branches missed.">		    if(!isZero[j]){</span>
+<span class="fc" id="L1134">			double numerator=b[j];</span>
+<span class="fc bfc" id="L1135" title="All 2 branches covered.">			for(int k=j+1; k&lt;n; k++)</span>
+<span class="fc" id="L1136">			    numerator -= t.getElement(k,j)*result[k];</span>
+<span class="fc" id="L1137">			result[j] = numerator/t.getElement(j,j);</span>
+		    }
+		    else 
+<span class="nc" id="L1140">			result[j] = 0.0;</span>
+		}
+	    }
+	}
+	
+<span class="fc" id="L1145">	return result;</span>
+    }
+
+    /**
+     * One rank update of the Cholesky factorization of B matrix in BFGS updates,
+     * i.e. B = LDL', and B_{new} = LDL' + coeff*(vv') where L is a unit lower triangle
+     * matrix and D is a diagonal matrix, and v is a vector.&lt;br/&gt;
+     * When coeff &gt; 0, we use C1 algorithm, and otherwise we use C2 algorithm described
+     * in ``Methods for Modifying Matrix Factorizations'' 
+     *
+     * @param L the unit triangle matrix L
+     * @param D the diagonal matrix D
+     * @param v the update vector v
+     * @param coeff the coeffcient of update
+     * @param isFixed which variables are not to be updated
+     */    
+    protected void updateCholeskyFactor(Matrix L, double[] D, 
+					double[] v, double coeff,
+					boolean[] isFixed)
+	throws Exception{
+	double t, p, b;
+<span class="fc" id="L1166">	int n = v.length;</span>
+<span class="fc" id="L1167">	double[] vp =  new double[n];	</span>
+<span class="fc bfc" id="L1168" title="All 2 branches covered.">	for (int i=0; i&lt;v.length; i++)</span>
+<span class="pc bpc" id="L1169" title="1 of 2 branches missed.">	    if(!isFixed[i])</span>
+<span class="fc" id="L1170">		vp[i]=v[i];</span>
+	    else
+<span class="nc" id="L1172">		vp[i]=0.0;</span>
+	
+<span class="fc bfc" id="L1174" title="All 2 branches covered.">	if(coeff&gt;0.0){</span>
+<span class="fc" id="L1175">	    t = coeff;	    </span>
+<span class="fc bfc" id="L1176" title="All 2 branches covered.">	    for(int j=0; j&lt;n; j++){		</span>
+<span class="pc bpc" id="L1177" title="1 of 2 branches missed.">		if(isFixed[j]) continue;		</span>
+		
+<span class="fc" id="L1179">		p = vp[j];</span>
+<span class="fc" id="L1180">		double d=D[j], dbarj=d+t*p*p;</span>
+<span class="fc" id="L1181">		D[j] = dbarj;</span>
+		
+<span class="fc" id="L1183">		b = p*t/dbarj;</span>
+<span class="fc" id="L1184">		t *= d/dbarj;</span>
+<span class="fc bfc" id="L1185" title="All 2 branches covered.">		for(int r=j+1; r&lt;n; r++){</span>
+<span class="pc bpc" id="L1186" title="1 of 2 branches missed.">		    if(!isFixed[r]){</span>
+<span class="fc" id="L1187">			double l=L.getElement(r, j);</span>
+<span class="fc" id="L1188">			vp[r] -= p*l;</span>
+<span class="fc" id="L1189">			L.setElement(r, j, l+b*vp[r]);</span>
+		    }
+		    else
+<span class="nc" id="L1192">		    	L.setElement(r, j, 0.0);</span>
+		}
+	    }
+	}
+	else{
+<span class="fc" id="L1197">	    double[] P = solveTriangle(L, v, true, isFixed);	    </span>
+<span class="fc" id="L1198">	    t = 0.0;</span>
+<span class="fc bfc" id="L1199" title="All 2 branches covered.">	    for(int i=0; i&lt;n; i++)</span>
+<span class="pc bpc" id="L1200" title="1 of 2 branches missed.">		if(!isFixed[i])</span>
+<span class="fc" id="L1201">		    t += P[i]*P[i]/D[i];	    	</span>
+	    
+<span class="fc" id="L1203">	    double sqrt=1.0+coeff*t;</span>
+<span class="fc bfc" id="L1204" title="All 2 branches covered.">	    sqrt = (sqrt&lt;0.0)? 0.0 : Math.sqrt(sqrt);</span>
+	    
+<span class="fc" id="L1206">	    double alpha=coeff, sigma=coeff/(1.0+sqrt), rho, theta;</span>
+	    
+<span class="fc bfc" id="L1208" title="All 2 branches covered.">	    for(int j=0; j&lt;n; j++){</span>
+<span class="pc bpc" id="L1209" title="1 of 2 branches missed.">		if(isFixed[j]) continue;</span>
+		
+<span class="fc" id="L1211">		double d=D[j];</span>
+<span class="fc" id="L1212">		p = P[j]*P[j]/d;</span>
+<span class="fc" id="L1213">		theta = 1.0+sigma*p;</span>
+<span class="fc" id="L1214">		t -= p; </span>
+<span class="fc bfc" id="L1215" title="All 2 branches covered.">		if(t&lt;0.0) t=0.0; // Rounding error</span>
+
+<span class="fc" id="L1217">		double plus = sigma*sigma*p*t;</span>
+<span class="fc bfc" id="L1218" title="All 4 branches covered.">		if((j&lt;n-1) &amp;&amp; (plus &lt;= m_Zero)) </span>
+<span class="fc" id="L1219">		    plus=m_Zero; // Avoid rounding error</span>
+<span class="fc" id="L1220">		rho = theta*theta + plus;		</span>
+<span class="fc" id="L1221">		D[j] = rho*d;</span>
+		
+<span class="pc bpc" id="L1223" title="1 of 2 branches missed.">		if(Double.isNaN(D[j])){</span>
+<span class="nc" id="L1224">		    throw new Exception(&quot;d[&quot;+j+&quot;] NaN! P=&quot;+P[j]+&quot;,d=&quot;+d+</span>
+<span class="nc" id="L1225">					&quot;,t=&quot;+t+&quot;,p=&quot;+p+&quot;,sigma=&quot;+sigma+</span>
+<span class="nc" id="L1226">					&quot;,sclar=&quot;+coeff);</span>
+		}
+		
+<span class="fc" id="L1229">		b=alpha*P[j]/(rho*d);</span>
+<span class="fc" id="L1230">		alpha /= rho;</span>
+<span class="fc" id="L1231">		rho = Math.sqrt(rho);</span>
+<span class="fc" id="L1232">		double sigmaOld = sigma;</span>
+<span class="fc" id="L1233">		sigma *= (1.0+rho)/(rho*(theta+rho));	 </span>
+<span class="fc bfc" id="L1234" title="All 2 branches covered.">		if((j&lt;n-1) &amp;&amp; </span>
+<span class="pc bpc" id="L1235" title="2 of 4 branches missed.">		   (Double.isNaN(sigma) || Double.isInfinite(sigma)))</span>
+<span class="nc" id="L1236">		    throw new Exception(&quot;sigma NaN/Inf! rho=&quot;+rho+</span>
+<span class="nc" id="L1237">				       &quot;,theta=&quot;+theta+&quot;,P[&quot;+j+&quot;]=&quot;+</span>
+<span class="nc" id="L1238">				       P[j]+&quot;,p=&quot;+p+&quot;,d=&quot;+d+&quot;,t=&quot;+t+</span>
+<span class="nc" id="L1239">				       &quot;,oldsigma=&quot;+sigmaOld);</span>
+		
+<span class="fc bfc" id="L1241" title="All 2 branches covered.">		for(int r=j+1; r&lt;n; r++){</span>
+<span class="pc bpc" id="L1242" title="1 of 2 branches missed.">		    if(!isFixed[r]){</span>
+<span class="fc" id="L1243">			double l=L.getElement(r, j);</span>
+<span class="fc" id="L1244">			vp[r] -= P[j]*l;</span>
+<span class="fc" id="L1245">			L.setElement(r, j, l+b*vp[r]);</span>
+		    }
+		    else
+<span class="nc" id="L1248">		    	L.setElement(r, j, 0.0);</span>
+		}
+	    }
+	}	
+<span class="fc" id="L1252">    }</span>
+
+  /**
+   * Implements a simple dynamic array for ints.
+   */
+  private class DynamicIntArray
+    implements RevisionHandler {
+
+    /** The int array. */
+    private int[] m_Objects;
+
+    /** The current size; */
+<span class="fc" id="L1264">    private int m_Size = 0;</span>
+
+    /** The capacity increment */
+<span class="fc" id="L1267">    private int m_CapacityIncrement = 1;</span>
+  
+    /** The capacity multiplier. */
+<span class="fc" id="L1270">    private int m_CapacityMultiplier = 2;</span>
+
+    /**
+     * Constructs a vector with the given capacity.
+     *
+     * @param capacity the vector's initial capacity
+     */
+<span class="fc" id="L1277">    public DynamicIntArray(int capacity) {</span>
+      
+<span class="fc" id="L1279">      m_Objects = new int[capacity];</span>
+<span class="fc" id="L1280">    }</span>
+
+    /**
+     * Adds an element to this vector. Increases its
+     * capacity if its not large enough.
+     *
+     * @param element the element to add
+     */
+    public final void addElement(int element) {
+      
+<span class="nc bnc" id="L1290" title="All 2 branches missed.">      if (m_Size == m_Objects.length) {</span>
+	int[] newObjects;
+<span class="nc" id="L1292">	newObjects = new int[m_CapacityMultiplier *</span>
+<span class="nc" id="L1293">			     (m_Objects.length +</span>
+<span class="nc" id="L1294">			      m_CapacityIncrement)];</span>
+<span class="nc" id="L1295">	System.arraycopy(m_Objects, 0, newObjects, 0, m_Size);</span>
+<span class="nc" id="L1296">	m_Objects = newObjects;</span>
+      }
+<span class="nc" id="L1298">      m_Objects[m_Size] = element;</span>
+<span class="nc" id="L1299">      m_Size++;</span>
+<span class="nc" id="L1300">    }</span>
+
+    /**
+     * Produces a copy of this vector.
+     *
+     * @return the new vector
+     */
+    public final Object copy() {
+      
+      
+<span class="nc" id="L1310">      DynamicIntArray copy = new DynamicIntArray(m_Objects.length);</span>
+      
+<span class="nc" id="L1312">      copy.m_Size = m_Size;</span>
+<span class="nc" id="L1313">      copy.m_CapacityIncrement = m_CapacityIncrement;</span>
+<span class="nc" id="L1314">      copy.m_CapacityMultiplier = m_CapacityMultiplier;</span>
+<span class="nc" id="L1315">      System.arraycopy(m_Objects, 0, copy.m_Objects, 0, m_Size);</span>
+<span class="nc" id="L1316">      return copy;</span>
+    }
+
+    /**
+     * Returns the element at the given position.
+     *
+     * @param index the element's index
+     * @return the element with the given index
+     */
+    public final int elementAt(int index) {
+      
+<span class="nc" id="L1327">      return m_Objects[index];</span>
+    }
+    
+    /**
+     * Check whether the two integer vectors equal to each other
+     * Two integer vectors are equal if all the elements are the 
+     * same, regardless of the order of the elements
+     *
+     * @param b another integer vector
+     * @return whether they are equal
+     */ 
+    private boolean equal(DynamicIntArray b){
+<span class="nc bnc" id="L1339" title="All 4 branches missed.">      if((b==null) || (size()!=b.size()))</span>
+<span class="nc" id="L1340">	  return false;</span>
+      
+<span class="nc" id="L1342">      int size=size();</span>
+      
+      // Only values matter, order does not matter
+<span class="nc" id="L1345">      int[] sorta=Utils.sort(m_Objects), sortb=Utils.sort(b.m_Objects);</span>
+<span class="nc bnc" id="L1346" title="All 2 branches missed.">      for(int j=0; j&lt;size;j++)</span>
+<span class="nc bnc" id="L1347" title="All 2 branches missed.">	if(m_Objects[sorta[j]] != b.m_Objects[sortb[j]])</span>
+<span class="nc" id="L1348">	  return false;</span>
+      
+<span class="nc" id="L1350">      return true;</span>
+    }
+
+    /**
+     * Deletes an element from this vector.
+     *
+     * @param index the index of the element to be deleted
+     */
+    public final void removeElementAt(int index) {
+      
+<span class="nc" id="L1360">      System.arraycopy(m_Objects, index + 1, m_Objects, index, </span>
+<span class="nc" id="L1361">		       m_Size - index - 1);</span>
+<span class="nc" id="L1362">      m_Size--;</span>
+<span class="nc" id="L1363">    }</span>
+
+    /**
+     * Removes all components from this vector and sets its 
+     * size to zero. 
+     */
+    public final void removeAllElements() {
+      
+<span class="nc" id="L1371">      m_Objects = new int[m_Objects.length];</span>
+<span class="nc" id="L1372">      m_Size = 0;</span>
+<span class="nc" id="L1373">    }</span>
+
+    /**
+     * Returns the vector's current size.
+     *
+     * @return the vector's current size
+     */
+    public final int size() {
+      
+<span class="fc" id="L1382">      return m_Size;</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L1391">      return RevisionUtils.extract(&quot;$Revision: 1.9 $&quot;);</span>
+    }
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

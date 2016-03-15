@@ -1,0 +1,635 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>BallTree.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core.neighboursearch</a> &gt; <span class="el_source">BallTree.java</span></div><h1>BallTree.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * BallTree.java
+ * Copyright (C) 2007 University of Waikato
+ */
+
+package weka.core.neighboursearch;
+
+import weka.core.EuclideanDistance;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.core.neighboursearch.balltrees.BallNode;
+import weka.core.neighboursearch.balltrees.BallTreeConstructor;
+import weka.core.neighboursearch.balltrees.TopDownConstructor;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class implementing the BallTree/Metric Tree algorithm for nearest neighbour search.&lt;br/&gt;
+ * The connection to dataset is only a reference. For the tree structure the indexes are stored in an array.&lt;br/&gt;
+ * See the implementing classes of different construction methods of the trees for details on its construction.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see also:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Stephen M. Omohundro (1989). Five Balltree Construction Algorithms.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Jeffrey K. Uhlmann (1991). Satisfying general proximity/similarity queries with metric trees. Information Processing Letters. 40(4):175-179.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;techreport{Omohundro1989,
+ *    author = {Stephen M. Omohundro},
+ *    institution = {International Computer Science Institute},
+ *    month = {December},
+ *    number = {TR-89-063},
+ *    title = {Five Balltree Construction Algorithms},
+ *    year = {1989}
+ * }
+ * 
+ * &amp;#64;article{Uhlmann1991,
+ *    author = {Jeffrey K. Uhlmann},
+ *    journal = {Information Processing Letters},
+ *    month = {November},
+ *    number = {4},
+ *    pages = {175-179},
+ *    title = {Satisfying general proximity/similarity queries with metric trees},
+ *    volume = {40},
+ *    year = {1991}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;classname and options&amp;gt;
+ *  The construction method to employ. Either TopDown or BottomUp
+ *  (default: weka.core.TopDownConstructor)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt; 
+ *
+ * @author Ashraf M. Kibriya (amk14[at-the-rate]cs[dot]waikato[dot]ac[dot]nz)
+ * @version $Revision: 1.2 $
+ */
+public class BallTree
+  extends NearestNeighbourSearch 
+  implements TechnicalInformationHandler {
+  
+  /** for serialization. */
+  private static final long serialVersionUID = 728763855952698328L;
+
+  /** 
+   * The instances indices sorted inorder of appearence in the tree from left
+   * most leaf node to the right most leaf node.
+   */
+  protected int[] m_InstList;
+  
+  /** 
+   * The maximum number of instances in a leaf. A node is made into a leaf if 
+   * the number of instances in it become less than or equal to this value.
+   */
+<span class="nc" id="L110">  protected int m_MaxInstancesInLeaf = 40;</span>
+  
+  /** Tree Stats variables. */
+<span class="nc" id="L113">  protected TreePerformanceStats m_TreeStats = null;</span>
+
+  /** The root node of the BallTree. */
+  protected BallNode m_Root;
+  
+  /** The constructor method to use to build the tree. */
+<span class="nc" id="L119">  protected BallTreeConstructor m_TreeConstructor = new TopDownConstructor();</span>
+  
+  /** Array holding the distances of the nearest neighbours. It is filled up
+   *  both by nearestNeighbour() and kNearestNeighbours(). 
+   */
+  protected double[] m_Distances;
+
+  /**
+   * Creates a new instance of BallTree.
+   */
+  public BallTree() {
+<span class="nc" id="L130">    super();</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">    if(getMeasurePerformance())</span>
+<span class="nc" id="L132">      m_Stats = m_TreeStats = new TreePerformanceStats();</span>
+<span class="nc" id="L133">  }</span>
+  
+  /**
+   * Creates a new instance of BallTree. 
+   * It also builds the tree on supplied set of Instances.
+   * @param insts The instances/points on which the BallTree 
+   * should be built on.
+   */
+  public BallTree(Instances insts) {
+<span class="nc" id="L142">    super(insts);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">    if(getMeasurePerformance())</span>
+<span class="nc" id="L144">      m_Stats = m_TreeStats = new TreePerformanceStats();</span>
+<span class="nc" id="L145">  }</span>
+
+  /**
+   * Returns a string describing this nearest neighbour search algorithm.
+   * 
+   * @return 		a description of the algorithm for displaying in the
+   *         		explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L154">    return </span>
+<span class="nc" id="L155">        &quot;Class implementing the BallTree/Metric Tree algorithm for &quot;</span>
+      + &quot;nearest neighbour search.\n&quot;
+      + &quot;The connection to dataset is only a reference. For the tree &quot;
+      + &quot;structure the indexes are stored in an array.\n&quot;
+      + &quot;See the implementing classes of different construction methods of &quot;
+      + &quot;the trees for details on its construction.\n\n&quot;
+      + &quot;For more information see also:\n\n&quot;
+<span class="nc" id="L162">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing detailed
+   * information about the technical background of this class, e.g., paper
+   * reference or book this class is based on.
+   * 
+   * @return 		the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation result;
+    TechnicalInformation additional;
+
+<span class="nc" id="L176">    result = new TechnicalInformation(Type.TECHREPORT);</span>
+<span class="nc" id="L177">    result.setValue(Field.AUTHOR, &quot;Stephen M. Omohundro&quot;);</span>
+<span class="nc" id="L178">    result.setValue(Field.YEAR, &quot;1989&quot;);</span>
+<span class="nc" id="L179">    result.setValue(Field.TITLE, &quot;Five Balltree Construction Algorithms&quot;);</span>
+<span class="nc" id="L180">    result.setValue(Field.MONTH, &quot;December&quot;);</span>
+<span class="nc" id="L181">    result.setValue(Field.NUMBER, &quot;TR-89-063&quot;);</span>
+<span class="nc" id="L182">    result.setValue(Field.INSTITUTION, &quot;International Computer Science Institute&quot;);</span>
+
+<span class="nc" id="L184">    additional = result.add(Type.ARTICLE);</span>
+<span class="nc" id="L185">    additional.setValue(Field.AUTHOR, &quot;Jeffrey K. Uhlmann&quot;);</span>
+<span class="nc" id="L186">    additional.setValue(Field.TITLE, &quot;Satisfying general proximity/similarity queries with metric trees&quot;);</span>
+<span class="nc" id="L187">    additional.setValue(Field.JOURNAL, &quot;Information Processing Letters&quot;);</span>
+<span class="nc" id="L188">    additional.setValue(Field.MONTH, &quot;November&quot;);</span>
+<span class="nc" id="L189">    additional.setValue(Field.YEAR, &quot;1991&quot;);</span>
+<span class="nc" id="L190">    additional.setValue(Field.NUMBER, &quot;4&quot;);</span>
+<span class="nc" id="L191">    additional.setValue(Field.VOLUME, &quot;40&quot;);</span>
+<span class="nc" id="L192">    additional.setValue(Field.PAGES, &quot;175-179&quot;);</span>
+    
+<span class="nc" id="L194">    return result;</span>
+  }
+  
+  /**
+   * Builds the BallTree on the supplied set of 
+   * instances/points (supplied with setInstances(Instances) 
+   * method and referenced by the m_Instances field). This
+   * method should not be called by outside classes. They
+   * should only use setInstances(Instances) method.
+   * 
+   * @throws Exception If no instances are supplied 
+   * (m_Instances is null), or if some other error in the 
+   * supplied BallTreeConstructor occurs while building 
+   * the tree.  
+   */
+  protected void buildTree() throws Exception {
+<span class="nc bnc" id="L210" title="All 2 branches missed.">    if(m_Instances==null)</span>
+<span class="nc" id="L211">      throw new Exception(&quot;No instances supplied yet. Have to call &quot; +</span>
+                          &quot;setInstances(instances) with a set of Instances &quot; +
+                          &quot;first.&quot;);
+<span class="nc" id="L214">    m_InstList = new int[m_Instances.numInstances()];</span>
+    
+<span class="nc bnc" id="L216" title="All 2 branches missed.">    for(int i=0; i&lt;m_InstList.length; i++) {</span>
+<span class="nc" id="L217">      m_InstList[i] = i;</span>
+    } //end for
+    
+<span class="nc" id="L220">    m_DistanceFunction.setInstances(m_Instances);</span>
+<span class="nc" id="L221">    m_TreeConstructor.setInstances(m_Instances);</span>
+<span class="nc" id="L222">    m_TreeConstructor.setInstanceList(m_InstList);</span>
+<span class="nc" id="L223">    m_TreeConstructor.setEuclideanDistanceFunction(</span>
+<span class="nc" id="L224">                      (EuclideanDistance)m_DistanceFunction);</span>
+    
+<span class="nc" id="L226">    m_Root = m_TreeConstructor.buildTree();</span>
+<span class="nc" id="L227">  }</span>
+   
+  /**
+   * Returns k nearest instances in the current neighbourhood to the supplied
+   * instance. &amp;gt;k instances can be returned if there is more than one instance 
+   * at the kth boundary (i.e. if there are more than 1 instance with the 
+   * same distance as the kth nearest neighbour).
+   * 
+   * @param target 	The instance to find the k nearest neighbours for.
+   * @param k		The number of nearest neighbours to find.
+   * @throws Exception 	If the neighbours could not be found.
+   * @return The k nearest neighbours of the given target instance 
+   * (&amp;gt;k nearest neighbours, if there are more instances that have same 
+   *  distance as the kth nearest neighbour).
+   */
+  public Instances kNearestNeighbours(Instance target, int k) throws Exception {
+<span class="nc" id="L243">    MyHeap heap = new MyHeap(k);</span>
+
+<span class="nc bnc" id="L245" title="All 2 branches missed.">    if(m_Stats!=null)</span>
+<span class="nc" id="L246">      m_Stats.searchStart();</span>
+    
+<span class="nc" id="L248">    nearestNeighbours(heap, m_Root, target, k);</span>
+    
+<span class="nc bnc" id="L250" title="All 2 branches missed.">    if(m_Stats!=null)</span>
+<span class="nc" id="L251">      m_Stats.searchFinish();</span>
+
+<span class="nc" id="L253">    Instances neighbours = new Instances(m_Instances, heap.totalSize());</span>
+<span class="nc" id="L254">    m_Distances = new double[heap.totalSize()];</span>
+<span class="nc" id="L255">    int [] indices = new int[heap.totalSize()];</span>
+<span class="nc" id="L256">    int i=1; MyHeapElement h;</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">    while(heap.noOfKthNearest()&gt;0) {</span>
+<span class="nc" id="L258">      h = heap.getKthNearest();</span>
+<span class="nc" id="L259">      indices[indices.length-i] = h.index;</span>
+<span class="nc" id="L260">      m_Distances[indices.length-i] = h.distance;</span>
+<span class="nc" id="L261">      i++;</span>
+    }
+<span class="nc bnc" id="L263" title="All 2 branches missed.">    while(heap.size()&gt;0) {</span>
+<span class="nc" id="L264">      h = heap.get();</span>
+<span class="nc" id="L265">      indices[indices.length-i] = h.index;</span>
+<span class="nc" id="L266">      m_Distances[indices.length-i] = h.distance;</span>
+<span class="nc" id="L267">      i++;</span>
+    }
+    
+<span class="nc" id="L270">    m_DistanceFunction.postProcessDistances(m_Distances);</span>
+    
+<span class="nc bnc" id="L272" title="All 2 branches missed.">    for(i=0; i&lt;indices.length; i++)</span>
+<span class="nc" id="L273">      neighbours.add(m_Instances.instance(indices[i]));</span>
+    
+<span class="nc" id="L275">    return neighbours;  // &lt;---Check this statement</span>
+  }
+
+  /** 
+   * Does NN search according to Moore's method. 
+   * Should not be used by outside classes. They should instead
+   * use kNearestNeighbours(Instance, int).
+   * P.S.: The distance returned are squared. Need to post process the 
+   * distances. 
+   * @param heap MyHeap object to store/update NNs found during the search.
+   * @param node The BallNode to do the NN search on.
+   * @param target The target instance for which the NNs are required.
+   * @param k The number of NNs to find.
+   * @throws Exception If the structure of the BallTree is not correct, 
+   * or if there is some problem putting NNs in the heap.
+   */
+  protected void nearestNeighbours(MyHeap heap, BallNode node, Instance target,
+                                   int k) throws Exception{
+<span class="nc" id="L293">    double distance = Double.NEGATIVE_INFINITY;</span>
+
+<span class="nc bnc" id="L295" title="All 2 branches missed.">    if (heap.totalSize() &gt;= k)</span>
+<span class="nc" id="L296">      distance = m_DistanceFunction.distance(target, node.getPivot());</span>
+
+    // The radius is not squared so need to take sqrt before comparison
+<span class="nc bnc" id="L299" title="All 2 branches missed.">    if (distance &gt; -0.000001</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">        &amp;&amp; Math.sqrt(heap.peek().distance) &lt; distance - node.getRadius()) {</span>
+<span class="nc" id="L301">      return;</span>
+<span class="nc bnc" id="L302" title="All 4 branches missed.">    } else if (node.m_Left != null &amp;&amp; node.m_Right != null) { // if node is not</span>
+                                                              // a leaf
+<span class="nc bnc" id="L304" title="All 2 branches missed.">      if (m_TreeStats != null) {</span>
+<span class="nc" id="L305">        m_TreeStats.incrIntNodeCount();</span>
+      }
+<span class="nc" id="L307">      double leftPivotDist = Math.sqrt(m_DistanceFunction.distance(target,</span>
+<span class="nc" id="L308">          node.m_Left.getPivot(), Double.POSITIVE_INFINITY));</span>
+<span class="nc" id="L309">      double rightPivotDist = Math.sqrt(m_DistanceFunction.distance(target,</span>
+<span class="nc" id="L310">          node.m_Right.getPivot(), Double.POSITIVE_INFINITY));</span>
+<span class="nc" id="L311">      double leftBallDist = leftPivotDist - node.m_Left.getRadius();</span>
+<span class="nc" id="L312">      double rightBallDist = rightPivotDist - node.m_Right.getRadius();</span>
+      // if target is inside both balls then see which center is closer
+<span class="nc bnc" id="L314" title="All 4 branches missed.">      if (leftBallDist &lt; 0 &amp;&amp; rightBallDist &lt; 0) {</span>
+<span class="nc bnc" id="L315" title="All 2 branches missed.">        if (leftPivotDist &lt; rightPivotDist) {</span>
+<span class="nc" id="L316">          nearestNeighbours(heap, node.m_Left, target, k);</span>
+<span class="nc" id="L317">          nearestNeighbours(heap, node.m_Right, target, k);</span>
+        } else {
+<span class="nc" id="L319">          nearestNeighbours(heap, node.m_Right, target, k);</span>
+<span class="nc" id="L320">          nearestNeighbours(heap, node.m_Left, target, k);</span>
+        }
+      }
+      // else see which ball is closer (if dist &lt; 0 target is inside a ball, and
+      // hence the ball is closer).
+      else {
+<span class="nc bnc" id="L326" title="All 2 branches missed.">        if (leftBallDist &lt; rightBallDist) {</span>
+<span class="nc" id="L327">          nearestNeighbours(heap, node.m_Left, target, k);</span>
+<span class="nc" id="L328">          nearestNeighbours(heap, node.m_Right, target, k);</span>
+        } else {
+<span class="nc" id="L330">          nearestNeighbours(heap, node.m_Right, target, k);</span>
+<span class="nc" id="L331">          nearestNeighbours(heap, node.m_Left, target, k);</span>
+        }
+      }
+<span class="nc bnc" id="L334" title="All 4 branches missed.">    } else if (node.m_Left != null || node.m_Right != null) { // invalid leaves</span>
+                                                              // assignment
+<span class="nc" id="L336">      throw new Exception(&quot;Error: Only one leaf of the built ball tree is &quot; + </span>
+                          &quot;assigned. Please check code.&quot;);
+<span class="nc bnc" id="L338" title="All 4 branches missed.">    } else if (node.m_Left == null &amp;&amp; node.m_Right == null) { // if node is a</span>
+                                                              // leaf
+<span class="nc bnc" id="L340" title="All 2 branches missed.">      if (m_TreeStats != null) {</span>
+<span class="nc" id="L341">        m_TreeStats.updatePointCount(node.numInstances());</span>
+<span class="nc" id="L342">        m_TreeStats.incrLeafCount();</span>
+      }
+<span class="nc bnc" id="L344" title="All 2 branches missed.">      for (int i = node.m_Start; i &lt;= node.m_End; i++) {</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">        if (target == m_Instances.instance(m_InstList[i])) //for hold-one-out cross-validation</span>
+<span class="nc" id="L346">          continue;</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">        if (heap.totalSize() &lt; k) {</span>
+<span class="nc" id="L348">          distance = m_DistanceFunction.distance(target, m_Instances</span>
+<span class="nc" id="L349">              .instance(m_InstList[i]), Double.POSITIVE_INFINITY, m_Stats);</span>
+<span class="nc" id="L350">          heap.put(m_InstList[i], distance);</span>
+        } else {
+<span class="nc" id="L352">          MyHeapElement head = heap.peek();</span>
+<span class="nc" id="L353">          distance = m_DistanceFunction.distance(target, </span>
+<span class="nc" id="L354">              m_Instances.instance(m_InstList[i]), head.distance, m_Stats);</span>
+<span class="nc bnc" id="L355" title="All 2 branches missed.">          if (distance &lt; head.distance) {</span>
+<span class="nc" id="L356">            heap.putBySubstitute(m_InstList[i], distance);</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">          } else if (distance == head.distance) {</span>
+<span class="nc" id="L358">            heap.putKthNearest(m_InstList[i], distance);</span>
+          }
+        }//end else(heap.totalSize())
+      }
+    }//end else if node is a leaf
+<span class="nc" id="L363">  }</span>
+  
+  /**
+   * Returns the nearest instance in the current neighbourhood to the supplied
+   * instance.
+   * 
+   * @param target 	The instance to find the nearest neighbour for.
+   * @throws Exception 	if the nearest neighbour could not be found.
+   * @return The nearest neighbour of the given target instance.
+   */
+  public Instance nearestNeighbour(Instance target) throws Exception {
+<span class="nc" id="L374">    return kNearestNeighbours(target, 1).instance(0);</span>
+  }
+
+ /** 
+   * Returns the distances of the k nearest neighbours. The kNearestNeighbours
+   * or nearestNeighbour must always be called before calling this function. If
+   * this function is called before calling either the kNearestNeighbours or 
+   * the nearestNeighbour, then it throws an exception. If, however, any 
+   * one of the two functions is called at any point in the past, then no   
+   * exception is thrown and the distances of NN(s) from the training set for 
+   * the last supplied target instance (to either one of the nearestNeighbour 
+   * functions) is/are returned.
+   *
+   * @return 		array containing the distances of the 
+   *            	nearestNeighbours. The length and ordering of the 
+   *            	array is the same as that of the instances returned 
+   *            	by nearestNeighbour functions.
+   * @throws Exception 	if called before calling kNearestNeighbours
+   *            	or nearestNeighbours.
+   */
+  public double[] getDistances() throws Exception {
+<span class="nc bnc" id="L395" title="All 2 branches missed.">    if(m_Distances==null)</span>
+<span class="nc" id="L396">      throw new Exception(&quot;No distances available. Please call either &quot;+</span>
+                          &quot;kNearestNeighbours or nearestNeighbours first.&quot;);
+<span class="nc" id="L398">    return m_Distances;    </span>
+  }
+
+  /**
+   * Adds one instance to the BallTree. This involves creating/updating the 
+   * structure to reflect the newly added training instance 
+   * 
+   * @param ins The instance to be added. Usually the newly added instance in the
+   *            training set.
+   * @throws Exception If the instance cannot be added to the tree.
+   */
+  public void update(Instance ins) throws Exception {
+<span class="nc" id="L410">    addInstanceInfo(ins);</span>
+<span class="nc" id="L411">    m_InstList = m_TreeConstructor.addInstance(m_Root, ins);    </span>
+<span class="nc" id="L412">  }</span>
+  
+  /** 
+   * Adds the given instance's info. This implementation updates the attributes' 
+   * range datastructures of EuclideanDistance class.
+   * 
+   * @param ins		The instance to add the information of. Usually this is
+   * 			the test instance supplied to update the range of 
+   * 			attributes in the distance function.
+   */
+  public void addInstanceInfo(Instance ins) {
+<span class="nc bnc" id="L423" title="All 2 branches missed.">    if(m_Instances!=null)</span>
+<span class="nc" id="L424">      m_DistanceFunction.update(ins);</span>
+<span class="nc" id="L425">  }  </span>
+
+  /**
+   * Builds the BallTree based on the given set of instances.
+   * @param insts The insts for which the BallTree is to be 
+   * built. 
+   * @throws Exception If some error occurs while 
+   * building the BallTree
+   */
+  public void setInstances(Instances insts) throws Exception {
+<span class="nc" id="L435">    super.setInstances(insts);</span>
+<span class="nc" id="L436">    buildTree();</span>
+<span class="nc" id="L437">  }</span>
+  
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String ballTreeConstructorTipText() {
+<span class="nc" id="L446">    return &quot;The tree constructor being used.&quot;;</span>
+  }
+      
+  /**
+   * Returns the BallTreeConstructor currently in use.
+   * @return The BallTreeConstructor currently in use.
+   */
+  public BallTreeConstructor getBallTreeConstructor() {
+<span class="nc" id="L454">    return m_TreeConstructor;</span>
+  }
+  
+  /**
+   * Sets the BallTreeConstructor for building the BallTree 
+   * (default TopDownConstructor).
+   * @param constructor The new BallTreeConstructor. 
+   */
+  public void setBallTreeConstructor(BallTreeConstructor constructor) {
+<span class="nc" id="L463">    m_TreeConstructor = constructor;</span>
+<span class="nc" id="L464">  }</span>
+  
+  /**
+   * Returns the size of the tree.
+   * 
+   * @return 		the size of the tree
+   */
+  public double measureTreeSize() {
+<span class="nc" id="L472">    return m_TreeConstructor.getNumNodes();</span>
+  }
+  
+  /**
+   * Returns the number of leaves.
+   * 
+   * @return 		the number of leaves
+   */
+  public double measureNumLeaves() {
+<span class="nc" id="L481">    return m_TreeConstructor.getNumLeaves();</span>
+  }
+  
+  /**
+   * Returns the depth of the tree. 
+   * 
+   * @return 		the number of rules
+   */
+  public double measureMaxDepth() {
+<span class="nc" id="L490">    return m_TreeConstructor.getMaxDepth();</span>
+  }
+    
+  /**
+   * Returns an enumeration of the additional measure names.
+   * 
+   * @return 		an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+<span class="nc" id="L499">    Vector newVector = new Vector();</span>
+<span class="nc" id="L500">    newVector.addElement(&quot;measureTreeSize&quot;);</span>
+<span class="nc" id="L501">    newVector.addElement(&quot;measureNumLeaves&quot;);</span>
+<span class="nc" id="L502">    newVector.addElement(&quot;measureMaxDepth&quot;);</span>
+<span class="nc bnc" id="L503" title="All 2 branches missed.">    if (m_Stats != null) {</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">      for (Enumeration e = m_Stats.enumerateMeasures(); e.hasMoreElements();) {</span>
+<span class="nc" id="L505">        newVector.addElement(e.nextElement());</span>
+      }
+    }
+<span class="nc" id="L508">    return newVector.elements();</span>
+  }
+  
+  /**
+   * Returns the value of the named measure.
+   * 
+   * @param additionalMeasureName 	the name of the measure to query for 
+   * 					its value.
+   * @return 				the value of the named measure.
+   * @throws IllegalArgumentException 	if the named measure is not supported.
+   */
+  public double getMeasure(String additionalMeasureName) {
+<span class="nc bnc" id="L520" title="All 2 branches missed.">    if (additionalMeasureName.compareToIgnoreCase(&quot;measureMaxDepth&quot;) == 0) {</span>
+<span class="nc" id="L521">      return measureMaxDepth();</span>
+<span class="nc bnc" id="L522" title="All 2 branches missed.">    } else if (additionalMeasureName.compareToIgnoreCase(&quot;measureTreeSize&quot;) == 0) {</span>
+<span class="nc" id="L523">      return measureTreeSize();</span>
+<span class="nc bnc" id="L524" title="All 2 branches missed.">    } else if (additionalMeasureName.compareToIgnoreCase(&quot;measureNumLeaves&quot;) == 0) {</span>
+<span class="nc" id="L525">      return measureNumLeaves();</span>
+<span class="nc bnc" id="L526" title="All 2 branches missed.">    } else if(m_Stats!=null) {</span>
+<span class="nc" id="L527">      return m_Stats.getMeasure(additionalMeasureName);</span>
+    } else {
+<span class="nc" id="L529">      throw new IllegalArgumentException(additionalMeasureName </span>
+<span class="nc" id="L530">			  + &quot; not supported (BallTree)&quot;);</span>
+    }
+  }
+  	
+  /**
+   * Sets whether to calculate the performance statistics or not.
+   * @param measurePerformance This should be true if performance
+   * statistics are to be calculated.
+   */
+  public void setMeasurePerformance(boolean measurePerformance) {
+<span class="nc" id="L540">    m_MeasurePerformance = measurePerformance;</span>
+<span class="nc bnc" id="L541" title="All 2 branches missed.">    if (m_MeasurePerformance) {</span>
+<span class="nc bnc" id="L542" title="All 2 branches missed.">      if (m_Stats == null)</span>
+<span class="nc" id="L543">        m_Stats = m_TreeStats = new TreePerformanceStats();</span>
+    } else
+<span class="nc" id="L545">      m_Stats = m_TreeStats = null;</span>
+<span class="nc" id="L546">  }</span>
+  
+  /**
+   * Returns an enumeration describing the available options.
+   * 
+   * @return 		an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L554">    Vector newVector = new Vector();</span>
+    
+<span class="nc" id="L556">    newVector.addElement(new Option(</span>
+<span class="nc" id="L557">	&quot;\tThe construction method to employ. Either TopDown or BottomUp\n&quot;</span>
+	+ &quot;\t(default: weka.core.TopDownConstructor)&quot;,
+<span class="nc" id="L559">	&quot;C&quot;, 1, &quot;-C &lt;classname and options&gt;&quot;));</span>
+
+<span class="nc" id="L561">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options.
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;classname and options&amp;gt;
+   *  The construction method to employ. Either TopDown or BottomUp
+   *  (default: weka.core.TopDownConstructor)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt; 
+   * 
+   * @param options 	the list of options as an array of strings
+   * @throws Exception 	if an option is not supported
+   */
+  public void setOptions(String[] options)
+    throws Exception {
+
+<span class="nc" id="L582">    super.setOptions(options);</span>
+
+<span class="nc" id="L584">    String optionString = Utils.getOption('C', options);</span>
+<span class="nc bnc" id="L585" title="All 2 branches missed.">    if(optionString.length() != 0) {</span>
+<span class="nc" id="L586">      String constructorSpec[] = Utils.splitOptions(optionString);</span>
+<span class="nc bnc" id="L587" title="All 2 branches missed.">      if(constructorSpec.length == 0) { </span>
+<span class="nc" id="L588">        throw new Exception(&quot;Invalid BallTreeConstructor specification string.&quot;); </span>
+      }
+<span class="nc" id="L590">      String className = constructorSpec[0];</span>
+<span class="nc" id="L591">      constructorSpec[0] = &quot;&quot;;</span>
+
+<span class="nc" id="L593">      setBallTreeConstructor( (BallTreeConstructor)</span>
+<span class="nc" id="L594">                            Utils.forName( BallTreeConstructor.class, </span>
+<span class="nc" id="L595">                                           className, constructorSpec) );</span>
+    }
+    else {
+<span class="nc" id="L598">      setBallTreeConstructor(new TopDownConstructor());  </span>
+    }
+<span class="nc" id="L600">  }</span>
+
+  /**
+   * Gets the current settings of KDtree.
+   * 
+   * @return 		an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    Vector&lt;String&gt;	result;
+    String[]		options;
+    int			i;
+    
+<span class="nc" id="L612">    result = new Vector&lt;String&gt;();</span>
+    
+<span class="nc" id="L614">    options = super.getOptions();</span>
+<span class="nc bnc" id="L615" title="All 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L616">      result.add(options[i]);</span>
+    
+<span class="nc" id="L618">    result.add(&quot;-C&quot;);</span>
+<span class="nc" id="L619">    result.add(</span>
+<span class="nc" id="L620">	(m_TreeConstructor.getClass().getName() + &quot; &quot; +</span>
+<span class="nc" id="L621">	 Utils.joinOptions(m_TreeConstructor.getOptions())).trim());</span>
+
+<span class="nc" id="L623">    return result.toArray(new String[result.size()]);</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L632">    return RevisionUtils.extract(&quot;$Revision: 1.2 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

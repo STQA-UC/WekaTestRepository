@@ -1,0 +1,647 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>MDD.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.mi</a> &gt; <span class="el_source">MDD.java</span></div><h1>MDD.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * MDD.java
+ * Copyright (C) 2005 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.mi;
+
+import weka.classifiers.Classifier;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.MultiInstanceCapabilitiesHandler;
+import weka.core.Optimization;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Normalize;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+import weka.filters.unsupervised.attribute.Standardize;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Modified Diverse Density algorithm, with collective assumption.&lt;br/&gt;
+ * &lt;br/&gt;
+ * More information about DD:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Oded Maron (1998). Learning from ambiguity.&lt;br/&gt;
+ * &lt;br/&gt;
+ * O. Maron, T. Lozano-Perez (1998). A Framework for Multiple Instance Learning. Neural Information Processing Systems. 10.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;phdthesis{Maron1998,
+ *    author = {Oded Maron},
+ *    school = {Massachusetts Institute of Technology},
+ *    title = {Learning from ambiguity},
+ *    year = {1998}
+ * }
+ * 
+ * &amp;#64;article{Maron1998,
+ *    author = {O. Maron and T. Lozano-Perez},
+ *    journal = {Neural Information Processing Systems},
+ *    title = {A Framework for Multiple Instance Learning},
+ *    volume = {10},
+ *    year = {1998}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Turn on debugging output.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+ *  Whether to 0=normalize/1=standardize/2=neither.
+ *  (default 1=standardize)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *    
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Xin Xu (xx5@cs.waikato.ac.nz)
+ * @version $Revision: 9144 $ 
+ */
+<span class="fc" id="L100">public class MDD </span>
+  extends Classifier 
+  implements OptionHandler, MultiInstanceCapabilitiesHandler,
+             TechnicalInformationHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = -7273119490545290581L;
+
+  /** The index of the class attribute */
+  protected int m_ClassIndex;
+
+  protected double[] m_Par;
+
+  /** The number of the class labels */
+  protected int m_NumClasses;
+
+  /** Class labels for each bag */
+  protected int[] m_Classes;
+
+  /** MI data */ 
+  protected double[][][] m_Data;
+
+  /** All attribute names */
+  protected Instances m_Attributes;
+
+  /** The filter used to standardize/normalize all values. */
+<span class="fc" id="L126">  protected Filter m_Filter =null;</span>
+
+  /** Whether to normalize/standardize/neither, default:standardize */
+<span class="fc" id="L129">  protected int m_filterType = FILTER_STANDARDIZE;</span>
+
+  /** Normalize training data */
+  public static final int FILTER_NORMALIZE = 0;
+  /** Standardize training data */
+  public static final int FILTER_STANDARDIZE = 1;
+  /** No normalization/standardization */
+  public static final int FILTER_NONE = 2;
+  /** The filter to apply to the training data */
+<span class="fc" id="L138">  public static final Tag [] TAGS_FILTER = {</span>
+<span class="fc" id="L139">    new Tag(FILTER_NORMALIZE, &quot;Normalize training data&quot;),</span>
+<span class="fc" id="L140">    new Tag(FILTER_STANDARDIZE, &quot;Standardize training data&quot;),</span>
+<span class="fc" id="L141">    new Tag(FILTER_NONE, &quot;No normalization/standardization&quot;),</span>
+  };
+
+  /** The filter used to get rid of missing values. */
+<span class="fc" id="L145">  protected ReplaceMissingValues m_Missing = new ReplaceMissingValues();</span>
+
+  /**
+   * Returns a string describing this filter
+   *
+   * @return a description of the filter suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L154">    return </span>
+<span class="nc" id="L155">        &quot;Modified Diverse Density algorithm, with collective assumption.\n\n&quot;</span>
+      + &quot;More information about DD:\n\n&quot;
+<span class="nc" id="L157">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    TechnicalInformation 	additional;
+    
+<span class="nc" id="L171">    result = new TechnicalInformation(Type.PHDTHESIS);</span>
+<span class="nc" id="L172">    result.setValue(Field.AUTHOR, &quot;Oded Maron&quot;);</span>
+<span class="nc" id="L173">    result.setValue(Field.YEAR, &quot;1998&quot;);</span>
+<span class="nc" id="L174">    result.setValue(Field.TITLE, &quot;Learning from ambiguity&quot;);</span>
+<span class="nc" id="L175">    result.setValue(Field.SCHOOL, &quot;Massachusetts Institute of Technology&quot;);</span>
+    
+<span class="nc" id="L177">    additional = result.add(Type.ARTICLE);</span>
+<span class="nc" id="L178">    additional.setValue(Field.AUTHOR, &quot;O. Maron and T. Lozano-Perez&quot;);</span>
+<span class="nc" id="L179">    additional.setValue(Field.YEAR, &quot;1998&quot;);</span>
+<span class="nc" id="L180">    additional.setValue(Field.TITLE, &quot;A Framework for Multiple Instance Learning&quot;);</span>
+<span class="nc" id="L181">    additional.setValue(Field.JOURNAL, &quot;Neural Information Processing Systems&quot;);</span>
+<span class="nc" id="L182">    additional.setValue(Field.VOLUME, &quot;10&quot;);</span>
+    
+<span class="nc" id="L184">    return result;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options
+   *
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+<span class="fc" id="L193">    Vector result = new Vector();</span>
+    
+<span class="fc" id="L195">    result.addElement(new Option(</span>
+<span class="fc" id="L196">          &quot;\tTurn on debugging output.&quot;,</span>
+<span class="fc" id="L197">          &quot;D&quot;, 0, &quot;-D&quot;));</span>
+    
+<span class="fc" id="L199">    result.addElement(new Option(</span>
+<span class="fc" id="L200">          &quot;\tWhether to 0=normalize/1=standardize/2=neither.\n&quot;</span>
+          + &quot;\t(default 1=standardize)&quot;,
+<span class="fc" id="L202">          &quot;N&quot;, 1, &quot;-N &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L204">    return result.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. 
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="fc" id="L214">    setDebug(Utils.getFlag('D', options));</span>
+
+<span class="fc" id="L216">    String nString = Utils.getOption('N', options);</span>
+<span class="fc bfc" id="L217" title="All 2 branches covered.">    if (nString.length() != 0) {</span>
+<span class="fc" id="L218">      setFilterType(new SelectedTag(Integer.parseInt(nString), TAGS_FILTER));</span>
+    } else {
+<span class="fc" id="L220">      setFilterType(new SelectedTag(FILTER_STANDARDIZE, TAGS_FILTER));</span>
+    }     
+<span class="fc" id="L222">  }</span>
+
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    Vector        result;
+    
+<span class="fc" id="L232">    result = new Vector();</span>
+
+<span class="pc bpc" id="L234" title="1 of 2 branches missed.">    if (getDebug())</span>
+<span class="nc" id="L235">      result.add(&quot;-D&quot;);</span>
+    
+<span class="fc" id="L237">    result.add(&quot;-N&quot;);</span>
+<span class="fc" id="L238">    result.add(&quot;&quot; + m_filterType);</span>
+
+<span class="fc" id="L240">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String filterTypeTipText() {
+<span class="nc" id="L250">    return &quot;The filter type for transforming the training data.&quot;;</span>
+  }
+
+  /**
+   * Gets how the training data will be transformed. Will be one of
+   * FILTER_NORMALIZE, FILTER_STANDARDIZE, FILTER_NONE.
+   *
+   * @return the filtering mode
+   */
+  public SelectedTag getFilterType() {
+<span class="nc" id="L260">    return new SelectedTag(m_filterType, TAGS_FILTER);</span>
+  }
+
+  /**
+   * Sets how the training data will be transformed. Should be one of
+   * FILTER_NORMALIZE, FILTER_STANDARDIZE, FILTER_NONE.
+   *
+   * @param newType the new filtering mode
+   */
+  public void setFilterType(SelectedTag newType) {
+
+<span class="pc bpc" id="L271" title="1 of 2 branches missed.">    if (newType.getTags() == TAGS_FILTER) {</span>
+<span class="fc" id="L272">      m_filterType = newType.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L274">  }</span>
+
+
+<span class="fc" id="L277">  private class OptEng </span>
+    extends Optimization {
+    
+    /** 
+     * Evaluate objective function
+     * @param x the current values of variables
+     * @return the value of the objective function 
+     */
+    protected double objectiveFunction(double[] x){
+<span class="fc" id="L286">      double nll = 0; // -LogLikelihood</span>
+<span class="fc bfc" id="L287" title="All 2 branches covered.">      for(int i=0; i&lt;m_Classes.length; i++){ // ith bag</span>
+<span class="fc" id="L288">        int nI = m_Data[i][0].length; // numInstances in ith bag</span>
+<span class="fc" id="L289">        double bag = 0;  // NLL of each bag</span>
+
+<span class="fc bfc" id="L291" title="All 2 branches covered.">        for(int j=0; j&lt;nI; j++){</span>
+<span class="fc" id="L292">          double ins=0.0; </span>
+<span class="fc bfc" id="L293" title="All 2 branches covered.">          for(int k=0; k&lt;m_Data[i].length; k++) {</span>
+<span class="fc" id="L294">            ins += (m_Data[i][k][j]-x[k*2])*(m_Data[i][k][j]-x[k*2])/</span>
+<span class="fc" id="L295">              (x[k*2+1]*x[k*2+1]);</span>
+          }
+<span class="fc" id="L297">          ins = Math.exp(-ins); </span>
+
+<span class="fc bfc" id="L299" title="All 2 branches covered.">          if(m_Classes[i] == 1)</span>
+<span class="fc" id="L300">            bag += ins/(double)nI;</span>
+          else
+<span class="fc" id="L302">            bag += (1.0-ins)/(double)nI;   </span>
+        }		
+<span class="fc bfc" id="L304" title="All 2 branches covered.">        if(bag&lt;=m_Zero) bag=m_Zero; </span>
+<span class="fc" id="L305">        nll -= Math.log(bag);</span>
+      }		
+
+<span class="fc" id="L308">      return nll;</span>
+    }
+
+    /** 
+     * Evaluate Jacobian vector
+     * @param x the current values of variables
+     * @return the gradient vector 
+     */
+    protected double[] evaluateGradient(double[] x){
+<span class="fc" id="L317">      double[] grad = new double[x.length];</span>
+<span class="fc bfc" id="L318" title="All 2 branches covered.">      for(int i=0; i&lt;m_Classes.length; i++){ // ith bag</span>
+<span class="fc" id="L319">        int nI = m_Data[i][0].length; // numInstances in ith bag </span>
+
+<span class="fc" id="L321">        double denom=0.0;</span>
+<span class="fc" id="L322">        double[] numrt = new double[x.length];</span>
+
+<span class="fc bfc" id="L324" title="All 2 branches covered.">        for(int j=0; j&lt;nI; j++){</span>
+<span class="fc" id="L325">          double exp=0.0;</span>
+<span class="fc bfc" id="L326" title="All 2 branches covered.">          for(int k=0; k&lt;m_Data[i].length; k++)</span>
+<span class="fc" id="L327">            exp += (m_Data[i][k][j]-x[k*2])*(m_Data[i][k][j]-x[k*2])/</span>
+<span class="fc" id="L328">              (x[k*2+1]*x[k*2+1]);			</span>
+<span class="fc" id="L329">          exp = Math.exp(-exp);</span>
+<span class="fc bfc" id="L330" title="All 2 branches covered.">          if(m_Classes[i]==1)</span>
+<span class="fc" id="L331">            denom += exp;</span>
+          else
+<span class="fc" id="L333">            denom += (1.0-exp);		   </span>
+
+          // Instance-wise update
+<span class="fc bfc" id="L336" title="All 2 branches covered.">          for(int p=0; p&lt;m_Data[i].length; p++){  // pth variable</span>
+<span class="fc" id="L337">            numrt[2*p] += exp*2.0*(x[2*p]-m_Data[i][p][j])/</span>
+<span class="fc" id="L338">              (x[2*p+1]*x[2*p+1]);</span>
+<span class="fc" id="L339">            numrt[2*p+1] += </span>
+<span class="fc" id="L340">              exp*(x[2*p]-m_Data[i][p][j])*(x[2*p]-m_Data[i][p][j])/</span>
+<span class="fc" id="L341">              (x[2*p+1]*x[2*p+1]*x[2*p+1]);</span>
+          }			
+        }
+
+<span class="fc bfc" id="L345" title="All 2 branches covered.">        if(denom &lt;= m_Zero){</span>
+<span class="fc" id="L346">          denom = m_Zero;</span>
+        }
+
+        // Bag-wise update 
+<span class="fc bfc" id="L350" title="All 2 branches covered.">        for(int q=0; q&lt;m_Data[i].length; q++){</span>
+<span class="fc bfc" id="L351" title="All 2 branches covered.">          if(m_Classes[i]==1){</span>
+<span class="fc" id="L352">            grad[2*q] += numrt[2*q]/denom;</span>
+<span class="fc" id="L353">            grad[2*q+1] -= numrt[2*q+1]/denom;</span>
+          }else{
+<span class="fc" id="L355">            grad[2*q] -= numrt[2*q]/denom;</span>
+<span class="fc" id="L356">            grad[2*q+1] += numrt[2*q+1]/denom;</span>
+          }
+        }
+      }
+
+<span class="fc" id="L361">      return grad;</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L370">      return RevisionUtils.extract(&quot;$Revision: 9144 $&quot;);</span>
+    }
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L380">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L381">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L384">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L385">    result.enable(Capability.RELATIONAL_ATTRIBUTES);</span>
+
+    // class
+<span class="fc" id="L388">    result.enable(Capability.BINARY_CLASS);</span>
+<span class="fc" id="L389">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+    // other
+<span class="fc" id="L392">    result.enable(Capability.ONLY_MULTIINSTANCE);</span>
+    
+<span class="fc" id="L394">    return result;</span>
+  }
+
+  /**
+   * Returns the capabilities of this multi-instance classifier for the
+   * relational data.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getMultiInstanceCapabilities() {
+<span class="fc" id="L405">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L406">    result.disableAll();</span>
+    
+    // attributes
+<span class="fc" id="L409">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L410">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L411">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L412">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L415">    result.disableAllClasses();</span>
+<span class="fc" id="L416">    result.enable(Capability.NO_CLASS);</span>
+    
+<span class="fc" id="L418">    return result;</span>
+  }
+
+  /**
+   * Builds the classifier
+   *
+   * @param train the training data to be used for generating the
+   * boosted classifier.
+   * @throws Exception if the classifier could not be built successfully
+   */
+  public void buildClassifier(Instances train) throws Exception {
+    // can classifier handle the data?
+<span class="fc" id="L430">    getCapabilities().testWithFail(train);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L433">    train = new Instances(train);</span>
+<span class="fc" id="L434">    train.deleteWithMissingClass();</span>
+    
+<span class="fc" id="L436">    m_ClassIndex = train.classIndex();</span>
+<span class="fc" id="L437">    m_NumClasses = train.numClasses();</span>
+
+<span class="fc" id="L439">    int nR = train.attribute(1).relation().numAttributes();</span>
+<span class="fc" id="L440">    int nC = train.numInstances();</span>
+<span class="fc" id="L441">    int [] bagSize=new int [nC];</span>
+<span class="fc" id="L442">    Instances datasets= new Instances(train.attribute(1).relation(),0);</span>
+
+<span class="fc" id="L444">    m_Data  = new double [nC][nR][];              // Data values</span>
+<span class="fc" id="L445">    m_Classes  = new int [nC];                    // Class values</span>
+<span class="fc" id="L446">    m_Attributes = datasets.stringFreeStructure();		</span>
+<span class="fc" id="L447">    double sY1=0, sY0=0;                          // Number of classes</span>
+
+<span class="pc bpc" id="L449" title="1 of 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L450">      System.out.println(&quot;Extracting data...&quot;);</span>
+    }
+<span class="fc" id="L452">    FastVector maxSzIdx=new FastVector();</span>
+<span class="fc" id="L453">    int maxSz=0;</span>
+
+<span class="fc bfc" id="L455" title="All 2 branches covered.">    for(int h=0; h&lt;nC; h++){</span>
+<span class="fc" id="L456">      Instance current = train.instance(h);</span>
+<span class="fc" id="L457">      m_Classes[h] = (int)current.classValue();  // Class value starts from 0</span>
+<span class="fc" id="L458">      Instances currInsts = current.relationalValue(1);</span>
+<span class="fc" id="L459">      int nI = currInsts.numInstances();</span>
+<span class="fc" id="L460">      bagSize[h]=nI;</span>
+
+<span class="fc bfc" id="L462" title="All 2 branches covered.">      for (int i=0; i&lt;nI;i++){</span>
+<span class="fc" id="L463">        Instance inst=currInsts.instance(i);</span>
+<span class="fc" id="L464">        datasets.add(inst);</span>
+      }
+
+<span class="fc bfc" id="L467" title="All 2 branches covered.">      if(m_Classes[h]==1){</span>
+<span class="fc bfc" id="L468" title="All 2 branches covered.">        if(nI&gt;maxSz){</span>
+<span class="fc" id="L469">          maxSz=nI;</span>
+<span class="fc" id="L470">          maxSzIdx=new FastVector(1);</span>
+<span class="fc" id="L471">          maxSzIdx.addElement(new Integer(h));</span>
+        }
+<span class="pc bpc" id="L473" title="1 of 2 branches missed.">        else if(nI == maxSz)</span>
+<span class="fc" id="L474">          maxSzIdx.addElement(new Integer(h));</span>
+      }
+    }
+
+    /* filter the training data */
+<span class="pc bpc" id="L479" title="1 of 2 branches missed.">    if (m_filterType == FILTER_STANDARDIZE)  </span>
+<span class="fc" id="L480">      m_Filter = new Standardize();</span>
+<span class="nc bnc" id="L481" title="All 2 branches missed.">    else if (m_filterType == FILTER_NORMALIZE)</span>
+<span class="nc" id="L482">      m_Filter = new Normalize();</span>
+    else 
+<span class="nc" id="L484">      m_Filter = null; </span>
+
+<span class="pc bpc" id="L486" title="1 of 2 branches missed.">    if (m_Filter!=null) {</span>
+<span class="fc" id="L487">      m_Filter.setInputFormat(datasets);</span>
+<span class="fc" id="L488">      datasets = Filter.useFilter(datasets, m_Filter); 	</span>
+    }
+
+<span class="fc" id="L491">    m_Missing.setInputFormat(datasets);</span>
+<span class="fc" id="L492">    datasets = Filter.useFilter(datasets, m_Missing);</span>
+
+<span class="fc" id="L494">    int instIndex=0;</span>
+<span class="fc" id="L495">    int start=0;	</span>
+<span class="fc bfc" id="L496" title="All 2 branches covered.">    for(int h=0; h&lt;nC; h++)  {	</span>
+<span class="fc bfc" id="L497" title="All 2 branches covered.">      for (int i = 0; i &lt; datasets.numAttributes(); i++) {</span>
+        // initialize m_data[][][]
+<span class="fc" id="L499">        m_Data[h][i] = new double[bagSize[h]];</span>
+<span class="fc" id="L500">        instIndex=start;</span>
+<span class="fc bfc" id="L501" title="All 2 branches covered.">        for (int k=0; k&lt;bagSize[h]; k++){</span>
+<span class="fc" id="L502">          m_Data[h][i][k]=datasets.instance(instIndex).value(i);</span>
+<span class="fc" id="L503">          instIndex ++;</span>
+        }
+      }
+<span class="fc" id="L506">      start=instIndex;</span>
+
+      // Class count	
+<span class="fc bfc" id="L509" title="All 2 branches covered.">      if (m_Classes[h] == 1)</span>
+<span class="fc" id="L510">        sY1++;		</span>
+      else
+<span class="fc" id="L512">        sY0++;</span>
+    }
+
+<span class="pc bpc" id="L515" title="1 of 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L516">      System.out.println(&quot;\nIteration History...&quot; );</span>
+    }
+
+<span class="fc" id="L519">    double[] x = new double[nR*2], tmp = new double[x.length];</span>
+<span class="fc" id="L520">    double[][] b = new double[2][x.length]; </span>
+
+    OptEng opt;
+<span class="fc" id="L523">    double nll, bestnll = Double.MAX_VALUE;</span>
+<span class="fc bfc" id="L524" title="All 2 branches covered.">    for (int t=0; t&lt;x.length; t++){</span>
+<span class="fc" id="L525">      b[0][t] = Double.NaN;</span>
+<span class="fc" id="L526">      b[1][t] = Double.NaN; </span>
+    }
+
+    // Largest positive exemplar
+<span class="fc bfc" id="L530" title="All 2 branches covered.">    for(int s=0; s&lt;maxSzIdx.size(); s++){</span>
+<span class="fc" id="L531">      int exIdx = ((Integer)maxSzIdx.elementAt(s)).intValue();</span>
+<span class="fc bfc" id="L532" title="All 2 branches covered.">      for(int p=0; p&lt;m_Data[exIdx][0].length; p++){</span>
+<span class="fc bfc" id="L533" title="All 2 branches covered.">        for (int q=0; q &lt; nR;q++){</span>
+<span class="fc" id="L534">          x[2*q] = m_Data[exIdx][q][p];  // pick one instance</span>
+<span class="fc" id="L535">          x[2*q+1] = 1.0;</span>
+        }		
+
+<span class="fc" id="L538">        opt = new OptEng();	</span>
+<span class="fc" id="L539">        tmp = opt.findArgmin(x, b);</span>
+<span class="fc bfc" id="L540" title="All 2 branches covered.">        while(tmp==null){</span>
+<span class="fc" id="L541">          tmp = opt.getVarbValues();</span>
+<span class="pc bpc" id="L542" title="1 of 2 branches missed.">          if (m_Debug)</span>
+<span class="nc" id="L543">            System.out.println(&quot;200 iterations finished, not enough!&quot;);</span>
+<span class="fc" id="L544">          tmp = opt.findArgmin(tmp, b);</span>
+        }
+<span class="fc" id="L546">        nll = opt.getMinFunction();</span>
+
+<span class="fc bfc" id="L548" title="All 2 branches covered.">        if(nll &lt; bestnll){</span>
+<span class="fc" id="L549">          bestnll = nll;</span>
+<span class="fc" id="L550">          m_Par = tmp;</span>
+<span class="pc bpc" id="L551" title="1 of 2 branches missed.">          if (m_Debug)</span>
+<span class="nc" id="L552">            System.out.println(&quot;!!!!!!!!!!!!!!!!Smaller NLL found: &quot;+nll);</span>
+        }
+<span class="pc bpc" id="L554" title="1 of 2 branches missed.">        if (m_Debug)</span>
+<span class="nc" id="L555">          System.out.println(exIdx+&quot;:  -------------&lt;Converged&gt;--------------&quot;);</span>
+      }
+    }
+<span class="fc" id="L558">    }		</span>
+
+  /**
+   * Computes the distribution for a given exemplar
+   *
+   * @param exmp the exemplar for which distribution is computed
+   * @return the distribution
+   * @throws Exception if the distribution can't be computed successfully
+   */
+  public double[] distributionForInstance(Instance exmp) 
+    throws Exception {
+
+    // Extract the data
+<span class="fc" id="L571">    Instances ins = exmp.relationalValue(1);</span>
+<span class="pc bpc" id="L572" title="1 of 2 branches missed.">    if(m_Filter!=null)</span>
+<span class="fc" id="L573">      ins = Filter.useFilter(ins, m_Filter);</span>
+
+<span class="fc" id="L575">    ins = Filter.useFilter(ins, m_Missing);</span>
+
+<span class="fc" id="L577">    int nI = ins.numInstances(), nA = ins.numAttributes();</span>
+<span class="fc" id="L578">    double[][] dat = new double [nI][nA];</span>
+<span class="fc bfc" id="L579" title="All 2 branches covered.">    for(int j=0; j&lt;nI; j++){</span>
+<span class="fc bfc" id="L580" title="All 2 branches covered.">      for(int k=0; k&lt;nA; k++){ </span>
+<span class="fc" id="L581">        dat[j][k] = ins.instance(j).value(k);</span>
+      }
+    }
+
+    // Compute the probability of the bag
+<span class="fc" id="L586">    double [] distribution = new double[2];</span>
+<span class="fc" id="L587">    distribution[1]=0.0;  // Prob. for class 1</span>
+
+<span class="fc bfc" id="L589" title="All 2 branches covered.">    for(int i=0; i&lt;nI; i++){</span>
+<span class="fc" id="L590">      double exp = 0.0;</span>
+<span class="fc bfc" id="L591" title="All 2 branches covered.">      for(int r=0; r&lt;nA; r++)</span>
+<span class="fc" id="L592">        exp += (m_Par[r*2]-dat[i][r])*(m_Par[r*2]-dat[i][r])/</span>
+<span class="fc" id="L593">          ((m_Par[r*2+1])*(m_Par[r*2+1]));</span>
+<span class="fc" id="L594">      exp = Math.exp(-exp);</span>
+
+      // Prob. updated for one instance
+<span class="fc" id="L597">      distribution[1] += exp/(double)nI;</span>
+<span class="fc" id="L598">      distribution[0] += (1.0-exp)/(double)nI;</span>
+    }
+
+<span class="fc" id="L601">    return distribution;</span>
+  }
+
+  /**
+   * Gets a string describing the classifier.
+   *
+   * @return a string describing the classifer built.
+   */
+  public String toString() {
+
+<span class="fc" id="L611">    String result = &quot;Modified Logistic Regression&quot;;</span>
+<span class="pc bpc" id="L612" title="1 of 2 branches missed.">    if (m_Par == null) {</span>
+<span class="fc" id="L613">      return result + &quot;: No model built yet.&quot;;</span>
+    }
+
+<span class="nc" id="L616">    result += &quot;\nCoefficients...\n&quot;</span>
+      + &quot;Variable      Coeff.\n&quot;;
+<span class="nc bnc" id="L618" title="All 2 branches missed.">    for (int j = 0, idx=0; j &lt; m_Par.length/2; j++, idx++) {</span>
+
+<span class="nc" id="L620">      result += m_Attributes.attribute(idx).name();</span>
+<span class="nc" id="L621">      result += &quot; &quot;+Utils.doubleToString(m_Par[j*2], 12, 4); </span>
+<span class="nc" id="L622">      result += &quot; &quot;+Utils.doubleToString(m_Par[j*2+1], 12, 4)+&quot;\n&quot;;</span>
+    }
+
+<span class="nc" id="L625">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L634">    return RevisionUtils.extract(&quot;$Revision: 9144 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain the command line arguments to the
+   * scheme (see Evaluation)
+   */
+  public static void main(String[] argv) {
+<span class="nc" id="L644">    runClassifier(new MDD(), argv);</span>
+<span class="nc" id="L645">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

@@ -1,0 +1,705 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>FTtree.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees.ft</a> &gt; <span class="el_source">FTtree.java</span></div><h1>FTtree.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    FTNode.java
+ *    Copyright (C) 2007 University of Porto, Porto, Portugal
+ *
+ */
+
+package weka.classifiers.trees.ft;
+
+import weka.classifiers.functions.SimpleLinearRegression;
+import weka.classifiers.trees.j48.BinC45ModelSelection;
+import weka.classifiers.trees.j48.BinC45Split;
+import weka.classifiers.trees.j48.C45Split;
+import weka.classifiers.trees.j48.ClassifierSplitModel;
+import weka.classifiers.trees.j48.Distribution;
+import weka.classifiers.trees.j48.ModelSelection;
+import weka.classifiers.trees.j48.Stats;
+import weka.classifiers.trees.lmt.LogisticBase;
+import weka.core.Attribute;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.filters.Filter;
+import weka.filters.supervised.attribute.NominalToBinary;
+
+import java.util.Vector;
+
+/**
+ * Abstract class for Functional tree structure. 
+ * 
+ * @author Jo\~{a}o Gama
+ * @author Carlos Ferreira
+ *
+ * @version $Revision: 1.4 $
+ */
+<span class="fc" id="L52">public abstract class FTtree </span>
+  extends LogisticBase {   
+  
+  /** for serialization */
+  static final long serialVersionUID = 1862737145870398755L;
+    
+  /** Total number of training instances. */
+  protected double m_totalInstanceWeight;
+    
+  /** Node id*/
+  protected int m_id;
+    
+  /** ID of logistic model at leaf*/
+  protected int m_leafModelNum;
+ 
+  /**minimum number of instances at which a node is considered for splitting*/
+  protected int m_minNumInstances;
+
+  /**ModelSelection object (for splitting)*/
+  protected ModelSelection m_modelSelection;     
+
+  /**Filter to convert nominal attributes to binary*/
+  protected NominalToBinary m_nominalToBinary;  
+   
+  /**Simple regression functions fit by LogitBoost at higher levels in the tree*/
+  protected SimpleLinearRegression[][] m_higherRegressions;
+    
+  /**Number of simple regression functions fit by LogitBoost at higher levels in the tree*/
+<span class="fc" id="L80">  protected int m_numHigherRegressions = 0;</span>
+    
+  /**Number of instances at the node*/
+  protected int m_numInstances;   
+
+  /**The ClassifierSplitModel (for splitting)*/
+  protected ClassifierSplitModel m_localModel; 
+    
+  /**Auxiliary copy ClassifierSplitModel (for splitting)*/
+  protected ClassifierSplitModel m_auxLocalModel; 
+ 
+  /**Array of children of the node*/
+  protected FTtree[] m_sons; 
+   
+  /** Stores leaf class value */ 
+  protected int m_leafclass;
+    
+  /**True if node is leaf*/
+  protected boolean m_isLeaf;
+    
+  /**True if node has or splits on constructor */
+<span class="fc" id="L101">  protected boolean m_hasConstr=true;</span>
+    
+  /** Constructor error */
+<span class="fc" id="L104">  protected double  m_constError=0;</span>
+    
+  /** Confidence level */
+<span class="fc" id="L107">  protected float m_CF = 0.10f;  </span>
+                       
+  /**
+   * Method for building a Functional Tree (only called for the root node).
+   * Grows an initial Functional Tree.
+   *
+   * @param data the data to train with
+   * @throws Exception if something goes wrong
+   */
+  public abstract void buildClassifier(Instances data) throws Exception;
+
+  /**
+   * Abstract method for building the tree structure.
+   * Builds a logistic model, splits the node and recursively builds tree for child nodes.
+   * @param data the training data passed on to this node
+   * @param higherRegressions An array of regression functions produced by LogitBoost at higher 
+   * levels in the tree. They represent a logistic regression model that is refined locally 
+   * at this node.
+   * @param totalInstanceWeight the total number of training examples
+   * @param higherNumParameters effective number of parameters in the logistic regression model built
+   * in parent nodes
+   * @throws Exception if something goes wrong
+   */
+  public abstract void buildTree(Instances data, SimpleLinearRegression[][] higherRegressions, 
+                                 double totalInstanceWeight, double higherNumParameters) throws Exception;
+    
+  /**
+   * Abstract Method that prunes a tree using C4.5 pruning procedure.
+   *
+   * @exception Exception if something goes wrong
+   */
+  public abstract double prune() throws Exception; 
+ 
+  /** Inserts new attributes in current dataset or instance 
+   *
+   * @exception Exception if something goes wrong
+   */
+  protected Instances insertNewAttr(Instances data) throws Exception{
+    
+    int i;
+<span class="fc bfc" id="L147" title="All 2 branches covered.">    for (i=0; i&lt;data.classAttribute().numValues(); i++)</span>
+      {
+<span class="fc" id="L149">        data.insertAttributeAt( new Attribute(&quot;N&quot;+ i), i); </span>
+      }
+<span class="fc" id="L151">    return data;</span>
+  }
+
+  /** Removes extended attributes in current dataset or instance 
+   *
+   * @exception Exception if something goes wrong
+   */
+  protected Instances removeExtAttributes(Instances  data) throws Exception{
+    
+<span class="fc bfc" id="L160" title="All 2 branches covered.">    for (int i=0; i&lt; data.classAttribute().numValues(); i++)</span>
+      {
+<span class="fc" id="L162">        data.deleteAttributeAt(0);</span>
+      }
+<span class="fc" id="L164">    return data;</span>
+  }
+
+  /**
+   * Computes estimated errors for tree.
+   */
+  protected double getEstimatedErrors(){
+
+<span class="nc" id="L172">    double errors = 0;</span>
+    int i;
+
+<span class="nc bnc" id="L175" title="All 2 branches missed.">    if (m_isLeaf)</span>
+<span class="nc" id="L176">      return getEstimatedErrorsForDistribution(m_localModel.distribution());</span>
+    else{
+<span class="nc bnc" id="L178" title="All 2 branches missed.">      for (i=0;i&lt;m_sons.length;i++)</span>
+<span class="nc" id="L179">        errors = errors+ m_sons[i].getEstimatedErrors();</span>
+
+<span class="nc" id="L181">      return errors;</span>
+    }
+  }
+
+  /**
+   * Computes estimated errors for one branch.
+   *
+   * @exception Exception if something goes wrong
+   */
+  protected double getEstimatedErrorsForBranch(Instances data)
+    throws Exception {
+
+    Instances [] localInstances;
+<span class="nc" id="L194">    double errors = 0;</span>
+    int i;
+
+<span class="nc bnc" id="L197" title="All 2 branches missed.">    if (m_isLeaf)</span>
+<span class="nc" id="L198">      return getEstimatedErrorsForDistribution(new Distribution(data));</span>
+    else{
+<span class="nc" id="L200">      Distribution savedDist = m_localModel.distribution();</span>
+<span class="nc" id="L201">      m_localModel.resetDistribution(data);</span>
+<span class="nc" id="L202">      localInstances = (Instances[])m_localModel.split(data);</span>
+      //m_localModel.m_distribution=savedDist;
+<span class="nc bnc" id="L204" title="All 2 branches missed.">      for (i=0;i&lt;m_sons.length;i++)</span>
+<span class="nc" id="L205">        errors = errors+</span>
+<span class="nc" id="L206">          m_sons[i].getEstimatedErrorsForBranch(localInstances[i]);</span>
+<span class="nc" id="L207">      return errors;</span>
+    }
+  }
+
+  /**
+   * Computes estimated errors for leaf.
+   */
+  protected double getEstimatedErrorsForDistribution(Distribution
+                                                     theDistribution){
+    double numInc;
+    double numTotal;
+<span class="pc bpc" id="L218" title="1 of 2 branches missed.">    if (Utils.eq(theDistribution.total(),0))</span>
+<span class="nc" id="L219">      return 0;</span>
+    else// stats.addErrs returns p - numberofincorrect.=p
+      {
+<span class="fc" id="L222">        numInc=theDistribution.numIncorrect();</span>
+<span class="fc" id="L223">        numTotal=theDistribution.total();</span>
+<span class="fc" id="L224">        return ((Stats.addErrs(numTotal, numInc,m_CF)) + numInc)/numTotal;</span>
+      }
+
+  }
+
+  /**
+   * Computes estimated errors for Constructor Model.
+   */
+  protected double getEtimateConstModel(Distribution theDistribution){
+    double numInc;
+    double numTotal;
+<span class="pc bpc" id="L235" title="1 of 2 branches missed.">    if (Utils.eq(theDistribution.total(),0))</span>
+<span class="nc" id="L236">      return 0;</span>
+    else// stats.addErrs returns p - numberofincorrect.=p
+      {
+<span class="fc" id="L239">        numTotal=theDistribution.total();</span>
+<span class="fc" id="L240">        return ((Stats.addErrs(numTotal,m_constError,m_CF)) + m_constError)/numTotal;</span>
+      }
+  }
+    
+
+  /**
+   * Method to count the number of inner nodes in the tree
+   * @return the number of inner nodes
+   */
+  public int getNumInnerNodes(){
+<span class="nc bnc" id="L250" title="All 2 branches missed.">    if (m_isLeaf) return 0;</span>
+<span class="nc" id="L251">    int numNodes = 1;</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">    for (int i = 0; i &lt; m_sons.length; i++) numNodes += m_sons[i].getNumInnerNodes();</span>
+<span class="nc" id="L253">    return numNodes;</span>
+  }
+
+  /**
+   * Returns the number of leaves in the tree.
+   * Leaves are only counted if their logistic model has changed compared to the one of the parent node.
+   * @return the number of leaves
+   */
+  public int getNumLeaves(){
+    int numLeaves;
+<span class="nc bnc" id="L263" title="All 2 branches missed.">    if (!m_isLeaf) {</span>
+<span class="nc" id="L264">      numLeaves = 0;</span>
+<span class="nc" id="L265">      int numEmptyLeaves = 0;</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">      for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="nc" id="L267">        numLeaves += m_sons[i].getNumLeaves();</span>
+<span class="nc bnc" id="L268" title="All 4 branches missed.">        if (m_sons[i].m_isLeaf &amp;&amp; !m_sons[i].hasModels()) numEmptyLeaves++;</span>
+      }
+<span class="nc bnc" id="L270" title="All 2 branches missed.">      if (numEmptyLeaves &gt; 1) {</span>
+<span class="nc" id="L271">        numLeaves -= (numEmptyLeaves - 1);</span>
+      }
+    } else {
+<span class="nc" id="L274">      numLeaves = 1;</span>
+    }	   
+<span class="nc" id="L276">    return numLeaves;	</span>
+  }
+
+
+     
+  /**
+   * Merges two arrays of regression functions into one
+   * @param a1 one array
+   * @param a2 the other array
+   *
+   * @return an array that contains all entries from both input arrays
+   */
+  protected SimpleLinearRegression[][] mergeArrays(SimpleLinearRegression[][] a1,	
+                                                   SimpleLinearRegression[][] a2){
+<span class="fc" id="L290">    int numModels1 = a1[0].length;</span>
+<span class="fc" id="L291">    int numModels2 = a2[0].length;		</span>
+	
+<span class="fc" id="L293">    SimpleLinearRegression[][] result =</span>
+<span class="fc" id="L294">      new SimpleLinearRegression[m_numClasses][numModels1 + numModels2];</span>
+	
+<span class="fc bfc" id="L296" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numClasses; i++)</span>
+<span class="fc bfc" id="L297" title="All 2 branches covered.">      for (int j = 0; j &lt; numModels1; j++) {</span>
+<span class="fc" id="L298">        result[i][j]  = a1[i][j];</span>
+      }
+<span class="fc bfc" id="L300" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numClasses; i++)</span>
+<span class="pc bpc" id="L301" title="1 of 2 branches missed.">      for (int j = 0; j &lt; numModels2; j++) result[i][j+numModels1] = a2[i][j];</span>
+<span class="fc" id="L302">    return result;</span>
+  }
+
+  /**
+   * Return a list of all inner nodes in the tree
+   * @return the list of nodes
+   */
+  public Vector getNodes(){
+<span class="nc" id="L310">    Vector nodeList = new Vector();</span>
+<span class="nc" id="L311">    getNodes(nodeList);</span>
+<span class="nc" id="L312">    return nodeList;</span>
+  }
+
+  /**
+   * Fills a list with all inner nodes in the tree
+   * 
+   * @param nodeList the list to be filled
+   */
+  public void getNodes(Vector nodeList) {
+<span class="nc bnc" id="L321" title="All 2 branches missed.">    if (!m_isLeaf) {</span>
+<span class="nc" id="L322">      nodeList.add(this);</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">      for (int i = 0; i &lt; m_sons.length; i++) m_sons[i].getNodes(nodeList);</span>
+    }	
+<span class="nc" id="L325">  }</span>
+    
+  /**
+   * Returns a numeric version of a set of instances.
+   * All nominal attributes are replaced by binary ones, and the class variable is replaced
+   * by a pseudo-class variable that is used by LogitBoost.
+   */
+  protected Instances getNumericData(Instances train) throws Exception{
+	
+<span class="fc" id="L334">    Instances filteredData = new Instances(train);	</span>
+<span class="fc" id="L335">    m_nominalToBinary = new NominalToBinary();			</span>
+<span class="fc" id="L336">    m_nominalToBinary.setInputFormat(filteredData);</span>
+<span class="fc" id="L337">    filteredData = Filter.useFilter(filteredData, m_nominalToBinary);	</span>
+
+<span class="fc" id="L339">    return super.getNumericData(filteredData);</span>
+  }
+
+  /**
+   * Computes the F-values of LogitBoost for an instance from the current logistic model at the node
+   * Note that this also takes into account the (partial) logistic model fit at higher levels in 
+   * the tree.
+   * @param instance the instance
+   * @return the array of F-values 
+   */
+  protected double[] getFs(Instance instance) throws Exception{
+	
+<span class="fc" id="L351">    double [] pred = new double [m_numClasses];</span>
+	
+    //Need to take into account partial model fit at higher levels in the tree (m_higherRegressions) 
+    //and the part of the model fit at this node (m_regressions).
+
+    //Fs from m_regressions (use method of LogisticBase)
+<span class="fc" id="L357">    double [] instanceFs = super.getFs(instance);		</span>
+
+    //Fs from m_higherRegressions
+<span class="fc bfc" id="L360" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numHigherRegressions; i++) {</span>
+<span class="fc" id="L361">      double predSum = 0;</span>
+<span class="fc bfc" id="L362" title="All 2 branches covered.">      for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="fc" id="L363">        pred[j] = m_higherRegressions[j][i].classifyInstance(instance);</span>
+<span class="fc" id="L364">        predSum += pred[j];</span>
+      }
+<span class="fc" id="L366">      predSum /= m_numClasses;</span>
+<span class="fc bfc" id="L367" title="All 2 branches covered.">      for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="fc" id="L368">        instanceFs[j] += (pred[j] - predSum) * (m_numClasses - 1) </span>
+<span class="fc" id="L369">          / m_numClasses;</span>
+      }
+    }
+<span class="fc" id="L372">    return instanceFs; </span>
+  }
+     
+  /**
+   *
+   * @param &lt;any&gt; probsConst
+   */
+  public int getConstError(double[] probsConst)
+  {
+<span class="fc" id="L381">    return Utils.maxIndex(probsConst);</span>
+  }
+    
+  /**
+   *Returns true if the logistic regression model at this node has changed compared to the
+   *one at the parent node.
+   *@return whether it has changed
+   */
+  public boolean hasModels() {
+<span class="nc bnc" id="L390" title="All 2 branches missed.">    return (m_numRegressions &gt; 0);</span>
+  }
+
+  /**
+   * Returns the class probabilities for an instance according to the logistic model at the node.
+   * @param instance the instance
+   * @return the array of probabilities
+   */
+  public double[] modelDistributionForInstance(Instance instance) throws Exception {
+	
+    //make copy and convert nominal attributes
+<span class="fc" id="L401">    instance = (Instance)instance.copy();		</span>
+<span class="fc" id="L402">    m_nominalToBinary.input(instance);</span>
+<span class="fc" id="L403">    instance = m_nominalToBinary.output();	</span>
+	
+    //set numeric pseudo-class
+<span class="fc" id="L406">    instance.setDataset(m_numericDataHeader);		</span>
+	
+<span class="fc" id="L408">    return probs(getFs(instance));</span>
+  }
+
+  /**
+   * Returns the class probabilities for an instance given by the Functional tree.
+   * @param instance the instance
+   * @return the array of probabilities
+   */
+  public abstract double[] distributionForInstance(Instance instance) throws Exception;
+  
+  
+    
+  /**
+   * Returns a description of the Functional tree (tree structure and logistic models)
+   * @return describing string
+   */
+  public String toString(){	
+    //assign numbers to logistic regression functions at leaves
+<span class="nc" id="L426">    assignLeafModelNumbers(0);	</span>
+    try{
+<span class="nc" id="L428">      StringBuffer text = new StringBuffer();</span>
+	    
+<span class="nc bnc" id="L430" title="All 4 branches missed.">      if (m_isLeaf &amp;&amp; !m_hasConstr) {</span>
+<span class="nc" id="L431">        text.append(&quot;: &quot;);</span>
+<span class="nc" id="L432">        text.append(&quot;Class&quot;+&quot;=&quot;+ m_leafclass);</span>
+        //text.append(&quot;FT_&quot;+m_leafModelNum+&quot;:&quot;+getModelParameters());
+      } else {
+                
+<span class="nc bnc" id="L436" title="All 4 branches missed.">        if (m_isLeaf &amp;&amp; m_hasConstr) {</span>
+<span class="nc" id="L437">          text.append(&quot;: &quot;);</span>
+<span class="nc" id="L438">          text.append(&quot;FT_&quot;+m_leafModelNum+&quot;:&quot;+getModelParameters());</span>
+                    
+        } else {
+<span class="nc" id="L441">          dumpTree(0,text);  </span>
+        }	    	    
+      }
+<span class="nc" id="L444">      text.append(&quot;\n\nNumber of Leaves  : \t&quot;+numLeaves()+&quot;\n&quot;);</span>
+<span class="nc" id="L445">      text.append(&quot;\nSize of the Tree : \t&quot;+numNodes()+&quot;\n&quot;);	</span>
+	        
+      //This prints logistic models after the tree, comment out if only tree should be printed
+<span class="nc" id="L448">      text.append(modelsToString());</span>
+<span class="nc" id="L449">      return text.toString();</span>
+<span class="nc" id="L450">    } catch (Exception e){</span>
+<span class="nc" id="L451">      return &quot;Can't print logistic model tree&quot;;</span>
+    }
+  }
+    
+  /**
+   * Returns the number of leaves (normal count).
+   * @return the number of leaves
+   */
+  public int numLeaves() {	
+<span class="nc bnc" id="L460" title="All 2 branches missed.">    if (m_isLeaf) return 1;	</span>
+<span class="nc" id="L461">    int numLeaves = 0;</span>
+<span class="nc bnc" id="L462" title="All 2 branches missed.">    for (int i = 0; i &lt; m_sons.length; i++) numLeaves += m_sons[i].numLeaves();</span>
+<span class="nc" id="L463">    return numLeaves;</span>
+  }
+    
+  /**
+   * Returns the number of nodes.
+   * @return the number of nodes
+   */
+  public int numNodes() {
+<span class="nc bnc" id="L471" title="All 2 branches missed.">    if (m_isLeaf) return 1;	</span>
+<span class="nc" id="L472">    int numNodes = 1;</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">    for (int i = 0; i &lt; m_sons.length; i++) numNodes += m_sons[i].numNodes();</span>
+<span class="nc" id="L474">    return numNodes;</span>
+  }
+   
+  /**
+   * Returns a string describing the number of LogitBoost iterations performed at this node, the total number
+   * of LogitBoost iterations performed (including iterations at higher levels in the tree), and the number
+   * of training examples at this node.
+   * @return the describing string
+   */
+  public String getModelParameters(){
+	
+<span class="nc" id="L485">    StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L486">    int numModels = m_numRegressions+m_numHigherRegressions;</span>
+<span class="nc" id="L487">    text.append(m_numRegressions+&quot;/&quot;+numModels+&quot; (&quot;+m_numInstances+&quot;)&quot;);</span>
+<span class="nc" id="L488">    return text.toString();</span>
+  }
+       
+  /**
+   * Help method for printing tree structure.
+   *
+   * @throws Exception if something goes wrong
+   */
+  protected void dumpTree(int depth,StringBuffer text) 
+    throws Exception {
+	
+<span class="nc bnc" id="L499" title="All 2 branches missed.">    for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="nc" id="L500">      text.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L501" title="All 2 branches missed.">      for (int j = 0; j &lt; depth; j++)</span>
+<span class="nc" id="L502">        text.append(&quot;|   &quot;);</span>
+<span class="nc bnc" id="L503" title="All 2 branches missed.">      if(m_hasConstr)</span>
+<span class="nc" id="L504">        text.append(m_localModel.leftSide(m_train)+ &quot;#&quot; + m_id);</span>
+      else 
+<span class="nc" id="L506">        text.append(m_localModel.leftSide(m_train)); </span>
+<span class="nc" id="L507">      text.append(m_localModel.rightSide(i, m_train) );</span>
+<span class="nc bnc" id="L508" title="All 4 branches missed.">      if (m_sons[i].m_isLeaf &amp;&amp; m_sons[i].m_hasConstr ) {</span>
+<span class="nc" id="L509">        text.append(&quot;: &quot;);</span>
+<span class="nc" id="L510">        text.append(&quot;FT_&quot;+m_sons[i].m_leafModelNum+&quot;:&quot;+m_sons[i].getModelParameters());</span>
+      }else {                
+<span class="nc bnc" id="L512" title="All 4 branches missed.">        if(m_sons[i].m_isLeaf &amp;&amp; !m_sons[i].m_hasConstr)</span>
+          {
+<span class="nc" id="L514">            text.append(&quot;: &quot;);</span>
+<span class="nc" id="L515">            text.append(&quot;Class&quot;+&quot;=&quot;+ m_sons[i].m_leafclass);  </span>
+          }
+        else{
+            
+<span class="nc" id="L519">          m_sons[i].dumpTree(depth+1,text);</span>
+        }
+      }
+    }
+<span class="nc" id="L523">  }</span>
+
+  /**
+   * Assigns unique IDs to all nodes in the tree
+   */
+  public int assignIDs(int lastID) {
+	
+<span class="fc" id="L530">    int currLastID = lastID + 1;</span>
+	
+<span class="fc" id="L532">    m_id = currLastID;</span>
+<span class="pc bpc" id="L533" title="1 of 2 branches missed.">    if (m_sons != null) {</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">      for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="nc" id="L535">        currLastID = m_sons[i].assignIDs(currLastID);</span>
+      }
+    }
+<span class="fc" id="L538">    return currLastID;</span>
+  }
+    
+  /**
+   * Assigns numbers to the logistic regression models at the leaves of the tree
+   */
+  public int assignLeafModelNumbers(int leafCounter) {
+<span class="nc bnc" id="L545" title="All 2 branches missed.">    if (!m_isLeaf) {</span>
+<span class="nc" id="L546">      m_leafModelNum = 0;</span>
+<span class="nc bnc" id="L547" title="All 2 branches missed.">      for (int i = 0; i &lt; m_sons.length; i++){</span>
+<span class="nc" id="L548">        leafCounter = m_sons[i].assignLeafModelNumbers(leafCounter);</span>
+      }
+    } else {
+<span class="nc" id="L551">      leafCounter++;</span>
+<span class="nc" id="L552">      m_leafModelNum = leafCounter;</span>
+    } 
+<span class="nc" id="L554">    return leafCounter;</span>
+  }
+
+  /**
+   * Returns an array containing the coefficients of the logistic regression function at this node.
+   * @return the array of coefficients, first dimension is the class, second the attribute. 
+   */
+  protected double[][] getCoefficients(){
+       
+    //Need to take into account partial model fit at higher levels in the tree (m_higherRegressions) 
+    //and the part of the model fit at this node (m_regressions).
+	
+    //get coefficients from m_regressions: use method of LogisticBase
+<span class="nc" id="L567">    double[][] coefficients = super.getCoefficients();</span>
+    //get coefficients from m_higherRegressions:
+<span class="nc" id="L569">    double constFactor = (double)(m_numClasses - 1) / (double)m_numClasses; // (J - 1)/J</span>
+<span class="nc bnc" id="L570" title="All 2 branches missed.">    for (int j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numHigherRegressions; i++) {		</span>
+<span class="nc" id="L572">        double slope = m_higherRegressions[j][i].getSlope();</span>
+<span class="nc" id="L573">        double intercept = m_higherRegressions[j][i].getIntercept();</span>
+<span class="nc" id="L574">        int attribute = m_higherRegressions[j][i].getAttributeIndex();</span>
+<span class="nc" id="L575">        coefficients[j][0] += constFactor * intercept;</span>
+<span class="nc" id="L576">        coefficients[j][attribute + 1] += constFactor * slope;</span>
+      }
+    }
+
+<span class="nc" id="L580">    return coefficients;</span>
+  }
+    
+  /**
+   * Returns a string describing the logistic regression function at the node.
+   */
+  public String modelsToString(){
+	
+<span class="nc" id="L588">    StringBuffer text = new StringBuffer();</span>
+<span class="nc bnc" id="L589" title="All 4 branches missed.">    if (m_isLeaf &amp;&amp; m_hasConstr) {</span>
+<span class="nc" id="L590">      text.append(&quot;FT_&quot;+m_leafModelNum+&quot;:&quot;+super.toString());</span>
+            
+    }else{
+<span class="nc bnc" id="L593" title="All 4 branches missed.">      if (!m_isLeaf &amp;&amp; m_hasConstr) {</span>
+<span class="nc bnc" id="L594" title="All 2 branches missed.">        if (m_modelSelection instanceof BinC45ModelSelection){</span>
+<span class="nc" id="L595">          text.append(&quot;FT_N&quot;+((BinC45Split)m_localModel).attIndex()+&quot;#&quot;+m_id +&quot;:&quot;+super.toString()); </span>
+        }else{
+<span class="nc" id="L597">          text.append(&quot;FT_N&quot;+((C45Split)m_localModel).attIndex()+&quot;#&quot;+m_id +&quot;:&quot;+super.toString());</span>
+        }
+<span class="nc bnc" id="L599" title="All 2 branches missed.">        for (int i = 0; i &lt; m_sons.length; i++) { </span>
+<span class="nc" id="L600">          text.append(&quot;\n&quot;+ m_sons[i].modelsToString());</span>
+        }
+      }else{
+<span class="nc bnc" id="L603" title="All 4 branches missed.">        if (!m_isLeaf &amp;&amp; !m_hasConstr) </span>
+          {
+<span class="nc bnc" id="L605" title="All 2 branches missed.">            for (int i = 0; i &lt; m_sons.length; i++) { </span>
+<span class="nc" id="L606">              text.append(&quot;\n&quot;+ m_sons[i].modelsToString());</span>
+            }
+          }else{
+<span class="nc bnc" id="L609" title="All 4 branches missed.">          if (m_isLeaf &amp;&amp; !m_hasConstr)</span>
+            {
+<span class="nc" id="L611">              text.append(&quot;&quot;);</span>
+            }
+        }
+                
+      }
+    }
+        
+<span class="nc" id="L618">    return text.toString();</span>
+  }
+
+  /**
+   * Returns graph describing the tree.
+   *
+   * @throws Exception if something goes wrong
+   */
+  public String graph() throws Exception {
+	
+<span class="nc" id="L628">    StringBuffer text = new StringBuffer();</span>
+	
+<span class="nc" id="L630">    assignIDs(-1);</span>
+<span class="nc" id="L631">    assignLeafModelNumbers(0);</span>
+<span class="nc" id="L632">    text.append(&quot;digraph FTree {\n&quot;);</span>
+<span class="nc bnc" id="L633" title="All 4 branches missed.">    if (m_isLeaf &amp;&amp; m_hasConstr) {</span>
+<span class="nc" id="L634">      text.append(&quot;N&quot; + m_id + &quot; [label=\&quot;FT_&quot;+m_leafModelNum+&quot;:&quot;+getModelParameters()+&quot;\&quot; &quot; + </span>
+<span class="nc" id="L635">                  &quot;shape=box style=filled&quot;);</span>
+<span class="nc" id="L636">      text.append(&quot;]\n&quot;);</span>
+    }else{
+<span class="nc bnc" id="L638" title="All 4 branches missed.">      if (m_isLeaf &amp;&amp; !m_hasConstr){</span>
+<span class="nc" id="L639">        text.append(&quot;N&quot; + m_id + &quot; [label=\&quot;Class=&quot;+m_leafclass+ &quot;\&quot; &quot; + </span>
+<span class="nc" id="L640">                    &quot;shape=box style=filled&quot;);</span>
+<span class="nc" id="L641">        text.append(&quot;]\n&quot;);</span>
+             
+      }else {
+<span class="nc" id="L644">        text.append(&quot;N&quot; + m_id </span>
+<span class="nc" id="L645">                    + &quot; [label=\&quot;&quot; + </span>
+<span class="nc" id="L646">                    m_localModel.leftSide(m_train) + &quot;\&quot; &quot;);</span>
+<span class="nc" id="L647">        text.append(&quot;]\n&quot;);</span>
+<span class="nc" id="L648">        graphTree(text);</span>
+      }
+    }
+<span class="nc" id="L651">    return text.toString() +&quot;}\n&quot;;</span>
+  }
+
+  /**
+   * Helper function for graph description of tree
+   *
+   * @throws Exception if something goes wrong
+   */
+  protected void graphTree(StringBuffer text) throws Exception {
+	
+<span class="nc bnc" id="L661" title="All 2 branches missed.">    for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="nc" id="L662">      text.append(&quot;N&quot; + m_id  </span>
+<span class="nc" id="L663">                  + &quot;-&gt;&quot; + </span>
+<span class="nc" id="L664">                  &quot;N&quot; + m_sons[i].m_id +</span>
+<span class="nc" id="L665">                  &quot; [label=\&quot;&quot; + m_localModel.rightSide(i,m_train).trim() + </span>
+<span class="nc" id="L666">                  &quot;\&quot;]\n&quot;);</span>
+<span class="nc bnc" id="L667" title="All 4 branches missed.">      if (m_sons[i].m_isLeaf &amp;&amp; m_sons[i].m_hasConstr) {</span>
+<span class="nc" id="L668">        text.append(&quot;N&quot; +m_sons[i].m_id + &quot; [label=\&quot;FT_&quot;+m_sons[i].m_leafModelNum+&quot;:&quot;+</span>
+<span class="nc" id="L669">                    m_sons[i].getModelParameters()+&quot;\&quot; &quot; + &quot;shape=box style=filled&quot;);</span>
+<span class="nc" id="L670">        text.append(&quot;]\n&quot;);</span>
+      } else { 
+<span class="nc bnc" id="L672" title="All 4 branches missed.">        if (m_sons[i].m_isLeaf &amp;&amp; !m_sons[i].m_hasConstr) {</span>
+<span class="nc" id="L673">          text.append(&quot;N&quot; +m_sons[i].m_id + &quot; [label=\&quot;Class=&quot;+m_sons[i].m_leafclass+&quot;\&quot; &quot; + &quot;shape=box style=filled&quot;);</span>
+<span class="nc" id="L674">          text.append(&quot;]\n&quot;);</span>
+        }else{
+<span class="nc" id="L676">          text.append(&quot;N&quot; + m_sons[i].m_id +</span>
+<span class="nc" id="L677">                      &quot; [label=\&quot;&quot;+m_sons[i].m_localModel.leftSide(m_train) + </span>
+<span class="nc" id="L678">                      &quot;\&quot; &quot;);</span>
+<span class="nc" id="L679">          text.append(&quot;]\n&quot;);</span>
+<span class="nc" id="L680">          m_sons[i].graphTree(text);</span>
+        }
+      }
+    } 
+<span class="nc" id="L684">  }  </span>
+
+  /**
+   * Cleanup in order to save memory.
+   */
+  public void cleanup() {
+<span class="fc" id="L690">    super.cleanup();</span>
+<span class="pc bpc" id="L691" title="1 of 2 branches missed.">    if (!m_isLeaf) {</span>
+<span class="nc bnc" id="L692" title="All 2 branches missed.">      for (int i = 0; i &lt; m_sons.length; i++) m_sons[i].cleanup();</span>
+    }
+<span class="fc" id="L694">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L702">    return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

@@ -1,0 +1,376 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RemoteEngine.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.experiment</a> &gt; <span class="el_source">RemoteEngine.java</span></div><h1>RemoteEngine.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RemoteEngine.java
+ *    Copyright (C) 2000 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+
+package weka.experiment;
+
+import weka.core.Queue;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+
+import java.net.InetAddress;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.rmi.Naming;
+import java.rmi.RMISecurityManager;
+import java.rmi.RemoteException;
+import java.rmi.server.UnicastRemoteObject;
+import java.util.Enumeration;
+import java.util.Hashtable;
+
+/**
+ * A general purpose server for executing Task objects sent via RMI.
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version $Revision: 1.12 $
+ */
+<span class="fc" id="L47">public class RemoteEngine</span>
+  extends UnicastRemoteObject
+  implements Compute, RevisionHandler {
+
+  /** for serialization */
+  private static final long serialVersionUID = -1021538162895448259L;
+
+  /** The name of the host that this engine is started on */
+<span class="nc" id="L55">  private String m_HostName = &quot;local&quot;;</span>
+
+  /** A queue of waiting tasks */
+<span class="nc" id="L58">  private Queue m_TaskQueue = new Queue();</span>
+
+  /** A queue of corresponding ID's for tasks */
+<span class="nc" id="L61">  private Queue m_TaskIdQueue = new Queue();</span>
+
+  /** A hashtable of experiment status */
+<span class="nc" id="L64">  private Hashtable m_TaskStatus = new Hashtable();</span>
+
+  /** Is there a task running */
+<span class="nc" id="L67">  private boolean m_TaskRunning = false;</span>
+  
+  /** Clean up interval (in ms) */
+<span class="fc" id="L70">  protected static long CLEANUPTIMEOUT = 3600000;</span>
+
+  /**
+   * Constructor
+   * @param hostName name of the host
+   * @exception RemoteException if something goes wrong
+   */
+  public RemoteEngine(String hostName) throws RemoteException {
+<span class="nc" id="L78">    super();</span>
+<span class="nc" id="L79">    m_HostName = hostName;</span>
+
+    /* launch a clean-up thread. Will purge any failed or finished 
+       tasks still in the TaskStatus hashtable after an hour */
+       
+    Thread cleanUpThread;
+<span class="nc" id="L85">    cleanUpThread = new Thread() {</span>
+	public void run() {
+<span class="nc" id="L87">	  while (true) {</span>
+	    try {
+	      // sleep for a while
+<span class="nc" id="L90">	      Thread.sleep(CLEANUPTIMEOUT);</span>
+<span class="nc" id="L91">	    } catch (InterruptedException ie) {}</span>
+
+<span class="nc bnc" id="L93" title="All 2 branches missed.">	    if (m_TaskStatus.size() &gt; 0) {</span>
+<span class="nc" id="L94">	      purge();</span>
+	    } else {
+<span class="nc" id="L96">	      System.err.println(&quot;RemoteEngine : purge - no tasks to check.&quot;);</span>
+	    }
+	  }
+	}
+      };
+<span class="nc" id="L101">    cleanUpThread.setPriority(Thread.MIN_PRIORITY);</span>
+<span class="nc" id="L102">    cleanUpThread.setDaemon(true);</span>
+<span class="nc" id="L103">    cleanUpThread.start();</span>
+<span class="nc" id="L104">  }</span>
+  
+  /**
+   * Takes a task object and queues it for execution
+   * @param t the Task object to execute
+   * @return an identifier for the Task that can be used when querying
+   * Task status
+   */
+  public synchronized Object executeTask(Task t) throws RemoteException {
+<span class="nc" id="L113">    String taskId = &quot;&quot;+System.currentTimeMillis()+&quot;:&quot;;</span>
+<span class="nc" id="L114">    taskId += t.hashCode();</span>
+<span class="nc" id="L115">    addTaskToQueue(t, taskId);</span>
+
+<span class="nc" id="L117">    return taskId;</span>
+    //    return t.execute();
+  }
+
+  /**
+   * Returns status information on a particular task
+   *
+   * @param taskId the ID of the task to check
+   * @return a &lt;code&gt;TaskStatusInfo&lt;/code&gt; encapsulating task status info
+   * @exception Exception if an error occurs
+   */
+  public Object checkStatus(Object taskId) throws Exception {
+    
+<span class="nc" id="L130">    TaskStatusInfo inf = (TaskStatusInfo)m_TaskStatus.get(taskId);</span>
+
+<span class="nc bnc" id="L132" title="All 2 branches missed.">    if (inf == null) {</span>
+<span class="nc" id="L133">      throw new Exception(&quot;RemoteEngine (&quot;+m_HostName+&quot;) : Task not found.&quot;);</span>
+    }
+    
+<span class="nc" id="L136">    TaskStatusInfo result = new TaskStatusInfo();</span>
+<span class="nc" id="L137">    result.setExecutionStatus(inf.getExecutionStatus());</span>
+<span class="nc" id="L138">    result.setStatusMessage(inf.getStatusMessage());</span>
+<span class="nc" id="L139">    result.setTaskResult(inf.getTaskResult());</span>
+
+<span class="nc bnc" id="L141" title="All 2 branches missed.">    if (inf.getExecutionStatus() == TaskStatusInfo.FINISHED ||</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">	inf.getExecutionStatus() == TaskStatusInfo.FAILED) {</span>
+<span class="nc" id="L143">      System.err.println(&quot;Finished/failed Task id : &quot; </span>
+<span class="nc" id="L144">			 + taskId + &quot; checked by client. Removing.&quot;);</span>
+<span class="nc" id="L145">      inf.setTaskResult(null);</span>
+<span class="nc" id="L146">      inf = null;</span>
+<span class="nc" id="L147">      m_TaskStatus.remove(taskId);</span>
+    }
+<span class="nc" id="L149">    inf = null;</span>
+<span class="nc" id="L150">    return result;</span>
+  }
+
+  /**
+   * Adds a new task to the queue.
+   *
+   * @param t a &lt;code&gt;Task&lt;/code&gt; value to be added
+   * @param taskId the id of the task to be added
+   */
+  private synchronized void addTaskToQueue(Task t, String taskId) {
+<span class="nc" id="L160">    TaskStatusInfo newTask = t.getTaskStatus();</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">    if (newTask == null) {</span>
+<span class="nc" id="L162">      newTask = new TaskStatusInfo();</span>
+    }
+<span class="nc" id="L164">    m_TaskQueue.push(t);</span>
+<span class="nc" id="L165">    m_TaskIdQueue.push(taskId);</span>
+<span class="nc" id="L166">    newTask.setStatusMessage(&quot;RemoteEngine (&quot;</span>
+<span class="nc" id="L167">			     +m_HostName</span>
+<span class="nc" id="L168">			     +&quot;) : task &quot; + taskId + &quot; queued at postion: &quot;</span>
+<span class="nc" id="L169">			     +m_TaskQueue.size());</span>
+    // add task status to HashTable
+<span class="nc" id="L171">    m_TaskStatus.put(taskId, newTask);</span>
+<span class="nc" id="L172">    System.err.println(&quot;Task id : &quot; + taskId + &quot; Queued.&quot;);</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">    if (m_TaskRunning == false) {</span>
+<span class="nc" id="L174">      startTask();</span>
+    }
+<span class="nc" id="L176">  }</span>
+
+  /**
+   * Checks to see if there are any waiting tasks, and if no task is
+   * currently running starts a waiting task.
+   */
+  private void startTask() {
+
+<span class="nc bnc" id="L184" title="All 4 branches missed.">    if (m_TaskRunning == false &amp;&amp; m_TaskQueue.size() &gt; 0) {</span>
+      Thread activeTaskThread;
+<span class="nc" id="L186">      activeTaskThread = new Thread() {</span>
+	  public void run() {
+<span class="nc" id="L188">	    m_TaskRunning = true;</span>
+<span class="nc" id="L189">	    Task currentTask = (Task)m_TaskQueue.pop();</span>
+<span class="nc" id="L190">	    String taskId = (String)m_TaskIdQueue.pop();</span>
+<span class="nc" id="L191">	    TaskStatusInfo tsi = (TaskStatusInfo)m_TaskStatus.get(taskId);</span>
+<span class="nc" id="L192">	    tsi.setExecutionStatus(TaskStatusInfo.PROCESSING);</span>
+<span class="nc" id="L193">	    tsi.setStatusMessage(&quot;RemoteEngine (&quot;</span>
+<span class="nc" id="L194">				 +m_HostName</span>
+<span class="nc" id="L195">				 +&quot;) : task &quot; + taskId + &quot; running...&quot;);</span>
+	    try {
+<span class="nc" id="L197">	      System.err.println(&quot;Launching task id : &quot;</span>
+<span class="nc" id="L198">				 + taskId + &quot;...&quot;);</span>
+<span class="nc" id="L199">	      currentTask.execute();</span>
+<span class="nc" id="L200">	      TaskStatusInfo runStatus = currentTask.getTaskStatus();</span>
+<span class="nc" id="L201">	      tsi.setExecutionStatus(runStatus.getExecutionStatus());</span>
+<span class="nc" id="L202">	      tsi.setStatusMessage(&quot;RemoteExperiment (&quot;</span>
+<span class="nc" id="L203">				   +m_HostName+&quot;) &quot;</span>
+<span class="nc" id="L204">				   +runStatus.getStatusMessage());</span>
+<span class="nc" id="L205">	      tsi.setTaskResult(runStatus.getTaskResult());</span>
+<span class="nc" id="L206">	    } catch (Error er) {</span>
+              // Object initialization can raise Error, which are not subclass of Exception
+<span class="nc" id="L208">	      tsi.setExecutionStatus(TaskStatusInfo.FAILED);</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">              if (er.getCause() instanceof java.security.AccessControlException) {</span>
+<span class="nc" id="L210">                tsi.setStatusMessage(&quot;RemoteEngine (&quot;</span>
+<span class="nc" id="L211">                                     +m_HostName</span>
+<span class="nc" id="L212">                                     +&quot;) : security error, check remote policy file.&quot;);</span>
+<span class="nc" id="L213">                System.err.println(&quot;Task id &quot; + taskId + &quot; Failed! Check remote policy file&quot;);</span>
+              }
+              else {
+<span class="nc" id="L216">                tsi.setStatusMessage(&quot;RemoteEngine (&quot;</span>
+<span class="nc" id="L217">                                     +m_HostName</span>
+<span class="nc" id="L218">                                     +&quot;) : unknown initialization error.&quot;);</span>
+<span class="nc" id="L219">                System.err.println(&quot;Task id &quot; + taskId + &quot; Unknown initialization error&quot;);</span>
+              }
+<span class="nc" id="L221">	    } catch (Exception ex) {</span>
+<span class="nc" id="L222">	      tsi.setExecutionStatus(TaskStatusInfo.FAILED);</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">              if (ex instanceof java.io.FileNotFoundException) {</span>
+<span class="nc" id="L224">                tsi.setStatusMessage(&quot;RemoteEngine (&quot;</span>
+<span class="nc" id="L225">                                     +m_HostName</span>
+<span class="nc" id="L226">                                     +&quot;) : &quot; + ex.getMessage());</span>
+<span class="nc" id="L227">                System.err.println(&quot;Task id &quot; + taskId + &quot; Failed, &quot; + ex.getMessage());</span>
+              }
+              else {
+<span class="nc" id="L230">                tsi.setStatusMessage(&quot;RemoteEngine (&quot;</span>
+<span class="nc" id="L231">                                     +m_HostName</span>
+<span class="nc" id="L232">                                     +&quot;) : task &quot; + taskId + &quot; failed.&quot;);</span>
+<span class="nc" id="L233">                System.err.println(&quot;Task id &quot; + taskId + &quot; Failed!&quot;);</span>
+              }
+<span class="nc" id="L235">	    } finally {</span>
+<span class="nc bnc" id="L236" title="All 8 branches missed.">	      if (m_TaskStatus.size() == 0) {</span>
+<span class="nc" id="L237">		purgeClasses();</span>
+	      }
+<span class="nc" id="L239">	      m_TaskRunning = false;</span>
+	      // start any waiting tasks
+<span class="nc" id="L241">	      startTask();</span>
+<span class="nc" id="L242">	    }</span>
+<span class="nc" id="L243">	  }</span>
+	};
+<span class="nc" id="L245">      activeTaskThread.setPriority(Thread.MIN_PRIORITY);</span>
+<span class="nc" id="L246">      activeTaskThread.start();</span>
+    }
+<span class="nc" id="L248">  }</span>
+
+  /**
+   * Attempts to purge class types from the virtual machine. May take some
+   * time as it relies on garbage collection
+   */
+  private void purgeClasses() {
+    try {
+      // see if we can purge classes
+<span class="nc" id="L257">      ClassLoader prevCl = </span>
+<span class="nc" id="L258">	Thread.currentThread().getContextClassLoader();</span>
+<span class="nc" id="L259">      ClassLoader urlCl = </span>
+<span class="nc" id="L260">	URLClassLoader.newInstance(new URL[] {new URL(&quot;file:.&quot;)}, prevCl);</span>
+<span class="nc" id="L261">      Thread.currentThread().setContextClassLoader(urlCl);</span>
+<span class="nc" id="L262">    } catch (Exception ex) {</span>
+<span class="nc" id="L263">      ex.printStackTrace();</span>
+    }
+<span class="nc" id="L265">  }</span>
+  
+  /**
+   * Checks the hash table for failed/finished tasks. Any that have been
+   * around for an @seeCLEANUPTIMEOUT or more are removed. Clients are expected to check
+   * on the status of their remote tasks. Checking on the status of a
+   * finished/failed task will remove it from the hash table, therefore
+   * any failed/finished tasks left lying around for more than an hour
+   * suggest that their client has died..
+   *
+   */
+  private void purge() {
+<span class="nc" id="L277">    Enumeration keys = m_TaskStatus.keys();</span>
+<span class="nc" id="L278">    long currentTime = System.currentTimeMillis();</span>
+<span class="nc" id="L279">    System.err.println(&quot;RemoteEngine purge. Current time : &quot; + currentTime);</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">    while (keys.hasMoreElements()) {</span>
+<span class="nc" id="L281">      String taskId = (String)keys.nextElement();</span>
+<span class="nc" id="L282">      System.err.print(&quot;Examining task id : &quot; + taskId + &quot;... &quot;);</span>
+<span class="nc" id="L283">      String timeString = taskId.substring(0, taskId.indexOf(':'));</span>
+<span class="nc" id="L284">      long ts = Long.valueOf(timeString).longValue();</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">      if (currentTime - ts &gt; CLEANUPTIMEOUT) {</span>
+<span class="nc" id="L286">	TaskStatusInfo tsi = (TaskStatusInfo)m_TaskStatus.get(taskId);</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">	if ((tsi != null) </span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">	    &amp;&amp; (tsi.getExecutionStatus() == TaskStatusInfo.FINISHED ||</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">                tsi.getExecutionStatus() == TaskStatusInfo.FAILED)) {</span>
+<span class="nc" id="L290">	  System.err.println(&quot;\nTask id : &quot; </span>
+<span class="nc" id="L291">			     + taskId + &quot; has gone stale. Removing.&quot;);</span>
+<span class="nc" id="L292">	  m_TaskStatus.remove(taskId);</span>
+<span class="nc" id="L293">	  tsi.setTaskResult(null);</span>
+<span class="nc" id="L294">	  tsi = null;</span>
+	}
+      } else {
+<span class="nc" id="L297">	System.err.println(&quot;ok.&quot;);</span>
+      }
+    }
+<span class="nc bnc" id="L300" title="All 2 branches missed.">    if (m_TaskStatus.size() == 0) {</span>
+<span class="nc" id="L301">      purgeClasses();</span>
+    }
+<span class="nc" id="L303">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L311">    return RevisionUtils.extract(&quot;$Revision: 1.12 $&quot;);</span>
+  }
+
+  /**
+   * Main method. Gets address of the local host, creates a remote engine
+   * object and binds it in the RMI registry. If there is no RMI registry,
+   * then it tries to create one with default port 1099.
+   *
+   * @param args 
+   */
+  public static void main(String[] args) {
+<span class="nc bnc" id="L322" title="All 2 branches missed.">    if (System.getSecurityManager() == null) {</span>
+<span class="nc" id="L323">      System.setSecurityManager(new RMISecurityManager());</span>
+    }
+    
+<span class="nc" id="L326">    int port = 1099;</span>
+<span class="nc" id="L327">    InetAddress localhost = null;</span>
+    try {
+<span class="nc" id="L329">      localhost = InetAddress.getLocalHost();</span>
+<span class="nc" id="L330">      System.err.println(&quot;Host name : &quot;+localhost.getHostName());</span>
+<span class="nc" id="L331">    } catch (Exception ex) {</span>
+<span class="nc" id="L332">      ex.printStackTrace();</span>
+    }
+    String name;
+<span class="nc bnc" id="L335" title="All 2 branches missed.">    if (localhost != null) {</span>
+<span class="nc" id="L336">      name = localhost.getHostName();</span>
+    } else {
+<span class="nc" id="L338">      name = &quot;localhost&quot;;</span>
+    }
+    
+    // get optional port
+    try {
+<span class="nc" id="L343">      String portOption = Utils.getOption(&quot;p&quot;, args);</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">      if (!portOption.equals(&quot;&quot;)) </span>
+<span class="nc" id="L345">        port = Integer.parseInt(portOption);</span>
+<span class="nc" id="L346">    } catch (Exception ex) {</span>
+<span class="nc" id="L347">      System.err.println(&quot;Usage : -p &lt;port&gt;&quot;);</span>
+    }
+
+<span class="nc bnc" id="L350" title="All 2 branches missed.">    if (port != 1099) {</span>
+<span class="nc" id="L351">      name = name + &quot;:&quot; + port;</span>
+    }
+<span class="nc" id="L353">    name = &quot;//&quot;+name+&quot;/RemoteEngine&quot;;</span>
+    
+    try {
+<span class="nc" id="L356">      Compute engine = new RemoteEngine(name);</span>
+      
+      try {      
+<span class="nc" id="L359">        Naming.rebind(name, engine);</span>
+<span class="nc" id="L360">        System.out.println(&quot;RemoteEngine bound in RMI registry&quot;);</span>
+<span class="nc" id="L361">      } catch (RemoteException ex) {</span>
+        // try to bootstrap a new registry
+<span class="nc" id="L363">        System.err.println(&quot;Attempting to start RMI registry on port &quot; + port + &quot;...&quot;);</span>
+<span class="nc" id="L364">        java.rmi.registry.LocateRegistry.createRegistry(port);</span>
+<span class="nc" id="L365">        Naming.bind(name, engine);</span>
+<span class="nc" id="L366">        System.out.println(&quot;RemoteEngine bound in RMI registry&quot;);</span>
+      }
+      
+<span class="nc" id="L369">    } catch (Exception e) {</span>
+<span class="nc" id="L370">      System.err.println(&quot;RemoteEngine exception: &quot; + </span>
+<span class="nc" id="L371">			 e.getMessage());</span>
+<span class="nc" id="L372">      e.printStackTrace();</span>
+    }
+<span class="nc" id="L374">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

@@ -1,0 +1,714 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>ClassifierTree.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees.j48</a> &gt; <span class="el_source">ClassifierTree.java</span></div><h1>ClassifierTree.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    ClassifierTree.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.trees.j48;
+
+import weka.core.Capabilities;
+import weka.core.CapabilitiesHandler;
+import weka.core.Drawable;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+
+import java.io.Serializable;
+
+/**
+ * Class for handling a tree structure used for
+ * classification.
+ *
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @version $Revision: 5531 $
+ */
+<span class="fc" id="L43">public class ClassifierTree </span>
+  implements Drawable, Serializable, CapabilitiesHandler, RevisionHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -8722249377542734193L;
+  
+  /** The model selection method. */  
+  protected ModelSelection m_toSelectModel;     
+
+  /** Local model at node. */
+  protected ClassifierSplitModel m_localModel;  
+
+  /** References to sons. */
+  protected ClassifierTree [] m_sons;           
+
+  /** True if node is leaf. */
+  protected boolean m_isLeaf;                   
+
+  /** True if node is empty. */
+  protected boolean m_isEmpty;                  
+
+  /** The training instances. */
+  protected Instances m_train;                  
+
+  /** The pruning instances. */
+  protected Distribution m_test;     
+
+  /** The id for the node. */
+  protected int m_id;
+
+  /** 
+   * For getting a unique ID when outputting the tree (hashcode isn't
+   * guaranteed unique) 
+   */
+<span class="fc" id="L77">  private static long PRINTED_NODES = 0;</span>
+
+  /**
+   * Gets the next unique node ID.
+   *
+   * @return the next unique node ID.
+   */
+  protected static long nextID() {
+
+<span class="nc" id="L86">    return PRINTED_NODES ++;</span>
+  }
+
+  /**
+   * Resets the unique node ID counter (e.g.
+   * between repeated separate print types)
+   */
+  protected static void resetID() {
+
+<span class="nc" id="L95">    PRINTED_NODES = 0;</span>
+<span class="nc" id="L96">  }</span>
+
+  /**
+   * Constructor. 
+   */
+<span class="fc" id="L101">  public ClassifierTree(ModelSelection toSelectLocModel) {</span>
+    
+<span class="fc" id="L103">    m_toSelectModel = toSelectLocModel;</span>
+<span class="fc" id="L104">  }</span>
+
+  /**
+   * Returns default capabilities of the classifier tree.
+   *
+   * @return      the capabilities of this classifier tree
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L112">    Capabilities result = new Capabilities(this);</span>
+<span class="fc" id="L113">    result.enableAll();</span>
+    
+<span class="fc" id="L115">    return result;</span>
+  }
+
+  /**
+   * Method for building a classifier tree.
+   *
+   * @param data the data to build the tree from
+   * @throws Exception if something goes wrong
+   */
+  public void buildClassifier(Instances data) throws Exception {
+
+    // can classifier tree handle the data?
+<span class="fc" id="L127">    getCapabilities().testWithFail(data);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L130">    data = new Instances(data);</span>
+<span class="fc" id="L131">    data.deleteWithMissingClass();</span>
+    
+<span class="fc" id="L133">    buildTree(data, false);</span>
+<span class="fc" id="L134">  }</span>
+
+  /**
+   * Builds the tree structure.
+   *
+   * @param data the data for which the tree structure is to be
+   * generated.
+   * @param keepData is training data to be kept?
+   * @throws Exception if something goes wrong
+   */
+  public void buildTree(Instances data, boolean keepData) throws Exception {
+    
+    Instances [] localInstances;
+
+<span class="fc bfc" id="L148" title="All 2 branches covered.">    if (keepData) {</span>
+<span class="fc" id="L149">      m_train = data;</span>
+    }
+<span class="fc" id="L151">    m_test = null;</span>
+<span class="fc" id="L152">    m_isLeaf = false;</span>
+<span class="fc" id="L153">    m_isEmpty = false;</span>
+<span class="fc" id="L154">    m_sons = null;</span>
+<span class="fc" id="L155">    m_localModel = m_toSelectModel.selectModel(data);</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">    if (m_localModel.numSubsets() &gt; 1) {</span>
+<span class="fc" id="L157">      localInstances = m_localModel.split(data);</span>
+<span class="fc" id="L158">      data = null;</span>
+<span class="fc" id="L159">      m_sons = new ClassifierTree [m_localModel.numSubsets()];</span>
+<span class="fc bfc" id="L160" title="All 2 branches covered.">      for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="fc" id="L161">	m_sons[i] = getNewTree(localInstances[i]);</span>
+<span class="fc" id="L162">	localInstances[i] = null;</span>
+      }
+    }else{
+<span class="fc" id="L165">      m_isLeaf = true;</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">      if (Utils.eq(data.sumOfWeights(), 0))</span>
+<span class="fc" id="L167">	m_isEmpty = true;</span>
+<span class="fc" id="L168">      data = null;</span>
+    }
+<span class="fc" id="L170">  }</span>
+
+  /**
+   * Builds the tree structure with hold out set
+   *
+   * @param train the data for which the tree structure is to be
+   * generated.
+   * @param test the test data for potential pruning
+   * @param keepData is training Data to be kept?
+   * @throws Exception if something goes wrong
+   */
+  public void buildTree(Instances train, Instances test, boolean keepData)
+       throws Exception {
+    
+    Instances [] localTrain, localTest;
+    int i;
+    
+<span class="nc bnc" id="L187" title="All 2 branches missed.">    if (keepData) {</span>
+<span class="nc" id="L188">      m_train = train;</span>
+    }
+<span class="nc" id="L190">    m_isLeaf = false;</span>
+<span class="nc" id="L191">    m_isEmpty = false;</span>
+<span class="nc" id="L192">    m_sons = null;</span>
+<span class="nc" id="L193">    m_localModel = m_toSelectModel.selectModel(train, test);</span>
+<span class="nc" id="L194">    m_test = new Distribution(test, m_localModel);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">    if (m_localModel.numSubsets() &gt; 1) {</span>
+<span class="nc" id="L196">      localTrain = m_localModel.split(train);</span>
+<span class="nc" id="L197">      localTest = m_localModel.split(test);</span>
+<span class="nc" id="L198">      train = test = null;</span>
+<span class="nc" id="L199">      m_sons = new ClassifierTree [m_localModel.numSubsets()];</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">      for (i=0;i&lt;m_sons.length;i++) {</span>
+<span class="nc" id="L201">	m_sons[i] = getNewTree(localTrain[i], localTest[i]);</span>
+<span class="nc" id="L202">	localTrain[i] = null;</span>
+<span class="nc" id="L203">	localTest[i] = null;</span>
+      }
+    }else{
+<span class="nc" id="L206">      m_isLeaf = true;</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">      if (Utils.eq(train.sumOfWeights(), 0))</span>
+<span class="nc" id="L208">	m_isEmpty = true;</span>
+<span class="nc" id="L209">      train = test = null;</span>
+    }
+<span class="nc" id="L211">  }</span>
+
+  /** 
+   * Classifies an instance.
+   *
+   * @param instance the instance to classify
+   * @return the classification
+   * @throws Exception if something goes wrong
+   */
+  public double classifyInstance(Instance instance) 
+    throws Exception {
+
+<span class="fc" id="L223">    double maxProb = -1;</span>
+    double currentProb;
+<span class="fc" id="L225">    int maxIndex = 0;</span>
+    int j;
+
+<span class="fc bfc" id="L228" title="All 2 branches covered.">    for (j = 0; j &lt; instance.numClasses(); j++) {</span>
+<span class="fc" id="L229">      currentProb = getProbs(j, instance, 1);</span>
+<span class="fc bfc" id="L230" title="All 2 branches covered.">      if (Utils.gr(currentProb,maxProb)) {</span>
+<span class="fc" id="L231">	maxIndex = j;</span>
+<span class="fc" id="L232">	maxProb = currentProb;</span>
+      }
+    }
+
+<span class="fc" id="L236">    return (double)maxIndex;</span>
+  }
+
+  /**
+   * Cleanup in order to save memory.
+   * 
+   * @param justHeaderInfo
+   */
+  public final void cleanup(Instances justHeaderInfo) {
+
+<span class="fc" id="L246">    m_train = justHeaderInfo;</span>
+<span class="fc" id="L247">    m_test = null;</span>
+<span class="fc bfc" id="L248" title="All 2 branches covered.">    if (!m_isLeaf)</span>
+<span class="fc bfc" id="L249" title="All 2 branches covered.">      for (int i = 0; i &lt; m_sons.length; i++)</span>
+<span class="fc" id="L250">	m_sons[i].cleanup(justHeaderInfo);</span>
+<span class="fc" id="L251">  }</span>
+
+  /** 
+   * Returns class probabilities for a weighted instance.
+   *
+   * @param instance the instance to get the distribution for
+   * @param useLaplace whether to use laplace or not
+   * @return the distribution
+   * @throws Exception if something goes wrong
+   */
+  public final double [] distributionForInstance(Instance instance,
+						 boolean useLaplace) 
+       throws Exception {
+
+<span class="fc" id="L265">    double [] doubles = new double[instance.numClasses()];</span>
+
+<span class="fc bfc" id="L267" title="All 2 branches covered.">    for (int i = 0; i &lt; doubles.length; i++) {</span>
+<span class="pc bpc" id="L268" title="1 of 2 branches missed.">      if (!useLaplace) {</span>
+<span class="fc" id="L269">	doubles[i] = getProbs(i, instance, 1);</span>
+      } else {
+<span class="nc" id="L271">	doubles[i] = getProbsLaplace(i, instance, 1);</span>
+      }
+    }
+
+<span class="fc" id="L275">    return doubles;</span>
+  }
+
+  /**
+   * Assigns a uniqe id to every node in the tree.
+   * 
+   * @param lastID the last ID that was assign
+   * @return the new current ID
+   */
+  public int assignIDs(int lastID) {
+
+<span class="fc" id="L286">    int currLastID = lastID + 1;</span>
+
+<span class="fc" id="L288">    m_id = currLastID;</span>
+<span class="pc bpc" id="L289" title="1 of 2 branches missed.">    if (m_sons != null) {</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">      for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="nc" id="L291">	currLastID = m_sons[i].assignIDs(currLastID);</span>
+      }
+    }
+<span class="fc" id="L294">    return currLastID;</span>
+  }
+
+  /**
+   *  Returns the type of graph this classifier
+   *  represents.
+   *  @return Drawable.TREE
+   */   
+  public int graphType() {
+<span class="nc" id="L303">      return Drawable.TREE;</span>
+  }
+
+  /**
+   * Returns graph describing the tree.
+   *
+   * @throws Exception if something goes wrong
+   * @return the tree as graph
+   */
+  public String graph() throws Exception {
+
+<span class="nc" id="L314">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc" id="L316">    assignIDs(-1);</span>
+<span class="nc" id="L317">    text.append(&quot;digraph J48Tree {\n&quot;);</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L319">      text.append(&quot;N&quot; + m_id </span>
+<span class="nc" id="L320">		  + &quot; [label=\&quot;&quot; + </span>
+<span class="nc" id="L321">		  m_localModel.dumpLabel(0,m_train) + &quot;\&quot; &quot; + </span>
+<span class="nc" id="L322">		  &quot;shape=box style=filled &quot;);</span>
+<span class="nc bnc" id="L323" title="All 4 branches missed.">      if (m_train != null &amp;&amp; m_train.numInstances() &gt; 0) {</span>
+<span class="nc" id="L324">	text.append(&quot;data =\n&quot; + m_train + &quot;\n&quot;);</span>
+<span class="nc" id="L325">	text.append(&quot;,\n&quot;);</span>
+
+      }
+<span class="nc" id="L328">      text.append(&quot;]\n&quot;);</span>
+    }else {
+<span class="nc" id="L330">      text.append(&quot;N&quot; + m_id </span>
+<span class="nc" id="L331">		  + &quot; [label=\&quot;&quot; + </span>
+<span class="nc" id="L332">		  m_localModel.leftSide(m_train) + &quot;\&quot; &quot;);</span>
+<span class="nc bnc" id="L333" title="All 4 branches missed.">      if (m_train != null &amp;&amp; m_train.numInstances() &gt; 0) {</span>
+<span class="nc" id="L334">	text.append(&quot;data =\n&quot; + m_train + &quot;\n&quot;);</span>
+<span class="nc" id="L335">	text.append(&quot;,\n&quot;);</span>
+     }
+<span class="nc" id="L337">      text.append(&quot;]\n&quot;);</span>
+<span class="nc" id="L338">      graphTree(text);</span>
+    }
+    
+<span class="nc" id="L341">    return text.toString() +&quot;}\n&quot;;</span>
+  }
+
+  /**
+   * Returns tree in prefix order.
+   *
+   * @throws Exception if something goes wrong
+   * @return the prefix order
+   */
+  public String prefix() throws Exception {
+    
+    StringBuffer text;
+
+<span class="nc" id="L354">    text = new StringBuffer();</span>
+<span class="nc bnc" id="L355" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L356">      text.append(&quot;[&quot;+m_localModel.dumpLabel(0,m_train)+&quot;]&quot;);</span>
+    }else {
+<span class="nc" id="L358">      prefixTree(text);</span>
+    }
+    
+<span class="nc" id="L361">    return text.toString();</span>
+  }
+
+  /**
+   * Returns source code for the tree as an if-then statement. The 
+   * class is assigned to variable &quot;p&quot;, and assumes the tested 
+   * instance is named &quot;i&quot;. The results are returned as two stringbuffers: 
+   * a section of code for assignment of the class, and a section of
+   * code containing support code (eg: other support methods).
+   *
+   * @param className the classname that this static classifier has
+   * @return an array containing two stringbuffers, the first string containing
+   * assignment code, and the second containing source for support code.
+   * @throws Exception if something goes wrong
+   */
+  public StringBuffer [] toSource(String className) throws Exception {
+    
+<span class="nc" id="L378">    StringBuffer [] result = new StringBuffer [2];</span>
+<span class="nc bnc" id="L379" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L380">      result[0] = new StringBuffer(&quot;    p = &quot; </span>
+<span class="nc" id="L381">	+ m_localModel.distribution().maxClass(0) + &quot;;\n&quot;);</span>
+<span class="nc" id="L382">      result[1] = new StringBuffer(&quot;&quot;);</span>
+    } else {
+<span class="nc" id="L384">      StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L385">      StringBuffer atEnd = new StringBuffer();</span>
+
+<span class="nc" id="L387">      long printID = ClassifierTree.nextID();</span>
+
+<span class="nc" id="L389">      text.append(&quot;  static double N&quot;) </span>
+<span class="nc" id="L390">	.append(Integer.toHexString(m_localModel.hashCode()) + printID)</span>
+<span class="nc" id="L391">	.append(&quot;(Object []i) {\n&quot;)</span>
+<span class="nc" id="L392">	.append(&quot;    double p = Double.NaN;\n&quot;);</span>
+
+<span class="nc" id="L394">      text.append(&quot;    if (&quot;)</span>
+<span class="nc" id="L395">	.append(m_localModel.sourceExpression(-1, m_train))</span>
+<span class="nc" id="L396">	.append(&quot;) {\n&quot;);</span>
+<span class="nc" id="L397">      text.append(&quot;      p = &quot;)</span>
+<span class="nc" id="L398">	.append(m_localModel.distribution().maxClass(0))</span>
+<span class="nc" id="L399">	.append(&quot;;\n&quot;);</span>
+<span class="nc" id="L400">      text.append(&quot;    } &quot;);</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">      for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="nc" id="L402">	text.append(&quot;else if (&quot; + m_localModel.sourceExpression(i, m_train) </span>
+<span class="nc" id="L403">		    + &quot;) {\n&quot;);</span>
+<span class="nc bnc" id="L404" title="All 2 branches missed.">	if (m_sons[i].m_isLeaf) {</span>
+<span class="nc" id="L405">	  text.append(&quot;      p = &quot; </span>
+<span class="nc" id="L406">		      + m_localModel.distribution().maxClass(i) + &quot;;\n&quot;);</span>
+	} else {
+<span class="nc" id="L408">	  StringBuffer [] sub = m_sons[i].toSource(className);</span>
+<span class="nc" id="L409">	  text.append(sub[0]);</span>
+<span class="nc" id="L410">	  atEnd.append(sub[1]);</span>
+	}
+<span class="nc" id="L412">	text.append(&quot;    } &quot;);</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">	if (i == m_sons.length - 1) {</span>
+<span class="nc" id="L414">	  text.append('\n');</span>
+	}
+      }
+
+<span class="nc" id="L418">      text.append(&quot;    return p;\n  }\n&quot;);</span>
+
+<span class="nc" id="L420">      result[0] = new StringBuffer(&quot;    p = &quot; + className + &quot;.N&quot;);</span>
+<span class="nc" id="L421">      result[0].append(Integer.toHexString(m_localModel.hashCode()) +  printID)</span>
+<span class="nc" id="L422">	.append(&quot;(i);\n&quot;);</span>
+<span class="nc" id="L423">      result[1] = text.append(atEnd);</span>
+    }
+<span class="nc" id="L425">    return result;</span>
+  }
+
+  /**
+   * Returns number of leaves in tree structure.
+   * 
+   * @return the number of leaves
+   */
+  public int numLeaves() {
+    
+<span class="nc" id="L435">    int num = 0;</span>
+    int i;
+    
+<span class="nc bnc" id="L438" title="All 2 branches missed.">    if (m_isLeaf)</span>
+<span class="nc" id="L439">      return 1;</span>
+    else
+<span class="nc bnc" id="L441" title="All 2 branches missed.">      for (i=0;i&lt;m_sons.length;i++)</span>
+<span class="nc" id="L442">	num = num+m_sons[i].numLeaves();</span>
+        
+<span class="nc" id="L444">    return num;</span>
+  }
+
+  /**
+   * Returns number of nodes in tree structure.
+   * 
+   * @return the number of nodes
+   */
+  public int numNodes() {
+    
+<span class="nc" id="L454">    int no = 1;</span>
+    int i;
+    
+<span class="nc bnc" id="L457" title="All 2 branches missed.">    if (!m_isLeaf)</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">      for (i=0;i&lt;m_sons.length;i++)</span>
+<span class="nc" id="L459">	no = no+m_sons[i].numNodes();</span>
+    
+<span class="nc" id="L461">    return no;</span>
+  }
+
+  /**
+   * Prints tree structure.
+   * 
+   * @return the tree structure
+   */
+  public String toString() {
+
+    try {
+<span class="nc" id="L472">      StringBuffer text = new StringBuffer();</span>
+      
+<span class="nc bnc" id="L474" title="All 2 branches missed.">      if (m_isLeaf) {</span>
+<span class="nc" id="L475">	text.append(&quot;: &quot;);</span>
+<span class="nc" id="L476">	text.append(m_localModel.dumpLabel(0,m_train));</span>
+      }else
+<span class="nc" id="L478">	dumpTree(0,text);</span>
+<span class="nc" id="L479">      text.append(&quot;\n\nNumber of Leaves  : \t&quot;+numLeaves()+&quot;\n&quot;);</span>
+<span class="nc" id="L480">      text.append(&quot;\nSize of the tree : \t&quot;+numNodes()+&quot;\n&quot;);</span>
+ 
+<span class="nc" id="L482">      return text.toString();</span>
+<span class="nc" id="L483">    } catch (Exception e) {</span>
+<span class="nc" id="L484">      return &quot;Can't print classification tree.&quot;;</span>
+    }
+  }
+
+  /**
+   * Returns a newly created tree.
+   *
+   * @param data the training data
+   * @return the generated tree
+   * @throws Exception if something goes wrong
+   */
+  protected ClassifierTree getNewTree(Instances data) throws Exception {
+	 
+<span class="nc" id="L497">    ClassifierTree newTree = new ClassifierTree(m_toSelectModel);</span>
+<span class="nc" id="L498">    newTree.buildTree(data, false);</span>
+    
+<span class="nc" id="L500">    return newTree;</span>
+  }
+
+  /**
+   * Returns a newly created tree.
+   *
+   * @param train the training data
+   * @param test the pruning data.
+   * @return the generated tree
+   * @throws Exception if something goes wrong
+   */
+  protected ClassifierTree getNewTree(Instances train, Instances test) 
+       throws Exception {
+	 
+<span class="nc" id="L514">    ClassifierTree newTree = new ClassifierTree(m_toSelectModel);</span>
+<span class="nc" id="L515">    newTree.buildTree(train, test, false);</span>
+    
+<span class="nc" id="L517">    return newTree;</span>
+  }
+
+  /**
+   * Help method for printing tree structure.
+   *
+   * @param depth the current depth
+   * @param text for outputting the structure
+   * @throws Exception if something goes wrong
+   */
+  private void dumpTree(int depth, StringBuffer text) 
+       throws Exception {
+    
+    int i,j;
+    
+<span class="nc bnc" id="L532" title="All 2 branches missed.">    for (i=0;i&lt;m_sons.length;i++) {</span>
+<span class="nc" id="L533">      text.append(&quot;\n&quot;);;</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">      for (j=0;j&lt;depth;j++)</span>
+<span class="nc" id="L535">	text.append(&quot;|   &quot;);</span>
+<span class="nc" id="L536">      text.append(m_localModel.leftSide(m_train));</span>
+<span class="nc" id="L537">      text.append(m_localModel.rightSide(i, m_train));</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">      if (m_sons[i].m_isLeaf) {</span>
+<span class="nc" id="L539">	text.append(&quot;: &quot;);</span>
+<span class="nc" id="L540">	text.append(m_localModel.dumpLabel(i,m_train));</span>
+      }else
+<span class="nc" id="L542">	m_sons[i].dumpTree(depth+1,text);</span>
+    }
+<span class="nc" id="L544">  }</span>
+
+  /**
+   * Help method for printing tree structure as a graph.
+   *
+   * @param text for outputting the tree
+   * @throws Exception if something goes wrong
+   */
+  private void graphTree(StringBuffer text) throws Exception {
+    
+<span class="nc bnc" id="L554" title="All 2 branches missed.">    for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="nc" id="L555">      text.append(&quot;N&quot; + m_id  </span>
+<span class="nc" id="L556">		  + &quot;-&gt;&quot; + </span>
+<span class="nc" id="L557">		  &quot;N&quot; + m_sons[i].m_id +</span>
+<span class="nc" id="L558">		  &quot; [label=\&quot;&quot; + m_localModel.rightSide(i,m_train).trim() + </span>
+<span class="nc" id="L559">		  &quot;\&quot;]\n&quot;);</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">      if (m_sons[i].m_isLeaf) {</span>
+<span class="nc" id="L561">	text.append(&quot;N&quot; + m_sons[i].m_id +</span>
+<span class="nc" id="L562">		    &quot; [label=\&quot;&quot;+m_localModel.dumpLabel(i,m_train)+&quot;\&quot; &quot;+ </span>
+<span class="nc" id="L563">		    &quot;shape=box style=filled &quot;);</span>
+<span class="nc bnc" id="L564" title="All 4 branches missed.">	if (m_train != null &amp;&amp; m_train.numInstances() &gt; 0) {</span>
+<span class="nc" id="L565">	  text.append(&quot;data =\n&quot; + m_sons[i].m_train + &quot;\n&quot;);</span>
+<span class="nc" id="L566">	  text.append(&quot;,\n&quot;);</span>
+	}
+<span class="nc" id="L568">	text.append(&quot;]\n&quot;);</span>
+      } else {
+<span class="nc" id="L570">	text.append(&quot;N&quot; + m_sons[i].m_id +</span>
+<span class="nc" id="L571">		    &quot; [label=\&quot;&quot;+m_sons[i].m_localModel.leftSide(m_train) + </span>
+<span class="nc" id="L572">		    &quot;\&quot; &quot;);</span>
+<span class="nc bnc" id="L573" title="All 4 branches missed.">	if (m_train != null &amp;&amp; m_train.numInstances() &gt; 0) {</span>
+<span class="nc" id="L574">	  text.append(&quot;data =\n&quot; + m_sons[i].m_train + &quot;\n&quot;);</span>
+<span class="nc" id="L575">	  text.append(&quot;,\n&quot;);</span>
+	}
+<span class="nc" id="L577">	text.append(&quot;]\n&quot;);</span>
+<span class="nc" id="L578">	m_sons[i].graphTree(text);</span>
+      }
+    }
+<span class="nc" id="L581">  }</span>
+
+  /**
+   * Prints the tree in prefix form
+   * 
+   * @param text the buffer to output the prefix form to
+   * @throws Exception if something goes wrong
+   */
+  private void prefixTree(StringBuffer text) throws Exception {
+
+<span class="nc" id="L591">    text.append(&quot;[&quot;);</span>
+<span class="nc" id="L592">    text.append(m_localModel.leftSide(m_train)+&quot;:&quot;);</span>
+<span class="nc bnc" id="L593" title="All 2 branches missed.">    for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="nc bnc" id="L594" title="All 2 branches missed.">      if (i &gt; 0) {</span>
+<span class="nc" id="L595">	text.append(&quot;,\n&quot;);</span>
+      }
+<span class="nc" id="L597">      text.append(m_localModel.rightSide(i, m_train));</span>
+    }
+<span class="nc bnc" id="L599" title="All 2 branches missed.">    for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="nc bnc" id="L600" title="All 2 branches missed.">      if (m_sons[i].m_isLeaf) {</span>
+<span class="nc" id="L601">	text.append(&quot;[&quot;);</span>
+<span class="nc" id="L602">	text.append(m_localModel.dumpLabel(i,m_train));</span>
+<span class="nc" id="L603">	text.append(&quot;]&quot;);</span>
+      } else {
+<span class="nc" id="L605">	m_sons[i].prefixTree(text);</span>
+      }
+    }
+<span class="nc" id="L608">    text.append(&quot;]&quot;);</span>
+<span class="nc" id="L609">  }</span>
+
+  /**
+   * Help method for computing class probabilities of 
+   * a given instance.
+   *
+   * @param classIndex the class index
+   * @param instance the instance to compute the probabilities for
+   * @param weight the weight to use
+   * @return the laplace probs
+   * @throws Exception if something goes wrong
+   */
+  private double getProbsLaplace(int classIndex, Instance instance, double weight) 
+    throws Exception {
+    
+<span class="nc" id="L624">    double prob = 0;</span>
+    
+<span class="nc bnc" id="L626" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L627">      return weight * localModel().classProbLaplace(classIndex, instance, -1);</span>
+    } else {
+<span class="nc" id="L629">      int treeIndex = localModel().whichSubset(instance);</span>
+<span class="nc bnc" id="L630" title="All 2 branches missed.">      if (treeIndex == -1) {</span>
+<span class="nc" id="L631">	double[] weights = localModel().weights(instance);</span>
+<span class="nc bnc" id="L632" title="All 2 branches missed.">	for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="nc bnc" id="L633" title="All 2 branches missed.">	  if (!son(i).m_isEmpty) {</span>
+<span class="nc" id="L634">        prob += son(i).getProbsLaplace(classIndex, instance, </span>
+<span class="nc" id="L635">					     weights[i] * weight);</span>
+	  }
+	}
+<span class="nc" id="L638">	return prob;</span>
+      } else {
+<span class="nc bnc" id="L640" title="All 2 branches missed.">	if (son(treeIndex).m_isEmpty) {</span>
+<span class="nc" id="L641">	  return weight * localModel().classProbLaplace(classIndex, instance, </span>
+<span class="nc" id="L642">							treeIndex);</span>
+	} else {
+<span class="nc" id="L644">	  return son(treeIndex).getProbsLaplace(classIndex, instance, weight);</span>
+	}
+      }
+    }
+  }
+
+  /**
+   * Help method for computing class probabilities of 
+   * a given instance.
+   * 
+   * @param classIndex the class index
+   * @param instance the instance to compute the probabilities for
+   * @param weight the weight to use
+   * @return the probs
+   * @throws Exception if something goes wrong
+   */
+  private double getProbs(int classIndex, Instance instance, double weight) 
+    throws Exception {
+    
+<span class="fc" id="L663">    double prob = 0;</span>
+    
+<span class="fc bfc" id="L665" title="All 2 branches covered.">    if (m_isLeaf) {</span>
+<span class="fc" id="L666">      return weight * localModel().classProb(classIndex, instance, -1);</span>
+    } else {
+<span class="fc" id="L668">      int treeIndex = localModel().whichSubset(instance);</span>
+<span class="fc bfc" id="L669" title="All 2 branches covered.">      if (treeIndex == -1) {</span>
+<span class="fc" id="L670">	double[] weights = localModel().weights(instance);</span>
+<span class="fc bfc" id="L671" title="All 2 branches covered.">	for (int i = 0; i &lt; m_sons.length; i++) {</span>
+<span class="fc bfc" id="L672" title="All 2 branches covered.">	  if (!son(i).m_isEmpty) {</span>
+<span class="fc" id="L673">	    prob += son(i).getProbs(classIndex, instance, </span>
+<span class="fc" id="L674">				    weights[i] * weight);</span>
+	  }
+	}
+<span class="fc" id="L677">	return prob;</span>
+      } else {
+<span class="fc bfc" id="L679" title="All 2 branches covered.">	if (son(treeIndex).m_isEmpty) {</span>
+<span class="fc" id="L680">	  return weight * localModel().classProb(classIndex, instance, </span>
+<span class="fc" id="L681">						 treeIndex);</span>
+	} else {
+<span class="fc" id="L683">	  return son(treeIndex).getProbs(classIndex, instance, weight);</span>
+	}
+      }
+    }
+  }
+
+  /**
+   * Method just exists to make program easier to read.
+   */
+  private ClassifierSplitModel localModel() {
+    
+<span class="fc" id="L694">    return (ClassifierSplitModel)m_localModel;</span>
+  }
+  
+  /**
+   * Method just exists to make program easier to read.
+   */
+  private ClassifierTree son(int index) {
+    
+<span class="fc" id="L702">    return (ClassifierTree)m_sons[index];</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L711">    return RevisionUtils.extract(&quot;$Revision: 5531 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

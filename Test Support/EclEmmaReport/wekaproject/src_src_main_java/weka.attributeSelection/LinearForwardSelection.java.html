@@ -1,0 +1,874 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>LinearForwardSelection.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">LinearForwardSelection.java</span></div><h1>LinearForwardSelection.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    LinearForwardSelection.java
+ *    Copyright (C) 2007 Martin Guetlein
+ *
+ */
+
+package weka.attributeSelection;
+
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.Range;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.Utils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import java.util.BitSet;
+import java.util.Enumeration;
+import java.util.Vector;
+
+
+/**
+  &lt;!-- globalinfo-start --&gt;
+  * LinearForwardSelection:&lt;br/&gt;
+  * &lt;br/&gt;
+  * Extension of BestFirst. Takes a restricted number of k attributes into account. Fixed-set selects a fixed number k of attributes, whereas k is increased in each step when fixed-width is selected. The search uses either the initial ordering to select the top k attributes, or performs a ranking (with the same evalutator the search uses later on). The search direction can be forward, or floating forward selection (with opitional backward search steps).&lt;br/&gt;
+  * &lt;br/&gt;
+  * For more information see:&lt;br/&gt;
+  * &lt;br/&gt;
+  * Martin Guetlein (2006). Large Scale Attribute Selection Using Wrappers. Freiburg, Germany.
+  * &lt;p/&gt;
+  &lt;!-- globalinfo-end --&gt;
+ *
+  &lt;!-- options-start --&gt;
+  * Valid options are: &lt;p/&gt;
+  * 
+  * &lt;pre&gt; -P &amp;lt;start set&amp;gt;
+  *  Specify a starting set of attributes.
+  *  Eg. 1,3,5-7.&lt;/pre&gt;
+  * 
+  * &lt;pre&gt; -D &amp;lt;0 = forward selection | 1 = floating forward selection&amp;gt;
+  *  Forward selection method. (default = 0).&lt;/pre&gt;
+  * 
+  * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+  *  Number of non-improving nodes to
+  *  consider before terminating search.&lt;/pre&gt;
+  * 
+  * &lt;pre&gt; -I
+  *  Perform initial ranking to select the
+  *  top-ranked attributes.&lt;/pre&gt;
+  * 
+  * &lt;pre&gt; -K &amp;lt;num&amp;gt;
+  *  Number of top-ranked attributes that are 
+  *  taken into account by the search.&lt;/pre&gt;
+  * 
+  * &lt;pre&gt; -T &amp;lt;0 = fixed-set | 1 = fixed-width&amp;gt;
+  *  Type of Linear Forward Selection (default = 0).&lt;/pre&gt;
+  * 
+  * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+  *  Size of lookup cache for evaluated subsets.
+  *  Expressed as a multiple of the number of
+  *  attributes in the data set. (default = 1)&lt;/pre&gt;
+  * 
+  * &lt;pre&gt; -Z
+  *  verbose on/off&lt;/pre&gt;
+  * 
+  &lt;!-- options-end --&gt;
+ *
+ * @author Martin Guetlein (martin.guetlein@gmail.com)
+ * @version $Revision: 6161 $
+ */
+<span class="fc" id="L92">public class LinearForwardSelection </span>
+  extends ASSearch 
+  implements OptionHandler,
+             StartSetHandler, 
+             TechnicalInformationHandler {
+  /** search directions */
+  protected static final int SEARCH_METHOD_FORWARD = 0;
+  protected static final int SEARCH_METHOD_FLOATING = 1;
+<span class="fc" id="L100">  public static final Tag[] TAGS_SEARCH_METHOD = {</span>
+<span class="fc" id="L101">    new Tag(SEARCH_METHOD_FORWARD, &quot;Forward selection&quot;),</span>
+<span class="fc" id="L102">    new Tag(SEARCH_METHOD_FLOATING, &quot;Floating forward selection&quot;),</span>
+  };
+
+  /** search directions */
+  protected static final int TYPE_FIXED_SET = 0;
+  protected static final int TYPE_FIXED_WIDTH = 1;
+<span class="fc" id="L108">  public static final Tag[] TAGS_TYPE = {</span>
+<span class="fc" id="L109">    new Tag(TYPE_FIXED_SET, &quot;Fixed-set&quot;),</span>
+<span class="fc" id="L110">    new Tag(TYPE_FIXED_WIDTH, &quot;Fixed-width&quot;),</span>
+  };
+
+  // member variables
+  /** maximum number of stale nodes before terminating search */
+  protected int m_maxStale;
+
+  /** 0 == forward selection, 1 == floating forward search */
+  protected int m_forwardSearchMethod;
+
+  /** perform initial ranking to select top-ranked attributes */
+  protected boolean m_performRanking;
+
+  /**
+   * number of top-ranked attributes that are taken into account for the
+   * search
+   */
+  protected int m_numUsedAttributes;
+
+  /** 0 == fixed-set, 1 == fixed-width */
+  protected int m_linearSelectionType;
+
+  /** holds an array of starting attributes */
+  protected int[] m_starting;
+
+  /** holds the start set for the search as a Range */
+  protected Range m_startRange;
+
+  /** does the data have a class */
+  protected boolean m_hasClass;
+
+  /** holds the class index */
+  protected int m_classIndex;
+
+  /** number of attributes in the data */
+  protected int m_numAttribs;
+
+  /** total number of subsets evaluated during a search */
+  protected int m_totalEvals;
+
+  /** for debugging */
+  protected boolean m_verbose;
+
+  /** holds the merit of the best subset found */
+  protected double m_bestMerit;
+
+  /** holds the maximum size of the lookup cache for evaluated subsets */
+  protected int m_cacheSize;
+
+  /**
+   * Constructor
+   */
+<span class="nc" id="L162">  public LinearForwardSelection() {</span>
+<span class="nc" id="L163">    resetOptions();</span>
+<span class="nc" id="L164">  }</span>
+
+  /**
+   * Returns a string describing this search method
+   *
+   * @return a description of the search method suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L173">    return &quot;LinearForwardSelection:\n\n&quot; +</span>
+      &quot;Extension of BestFirst. Takes a restricted number of k attributes &quot; +
+      &quot;into account. Fixed-set selects a fixed number k of attributes, &quot; +
+      &quot;whereas k is increased in each step when fixed-width is selected. &quot; +
+      &quot;The search uses either the initial ordering to select the &quot; +
+      &quot;top k attributes, or performs a ranking (with the same evalutator the &quot; +
+      &quot;search uses later on). The search direction can be forward, &quot; +
+      &quot;or floating forward selection (with opitional backward search steps).\n\n&quot;
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L182">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation        result;
+    TechnicalInformation        additional;
+    
+<span class="nc" id="L196">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L197">    result.setValue(Field.AUTHOR, &quot;Martin Guetlein and Eibe Frank and Mark Hall and Andreas Karwath&quot;);</span>
+<span class="nc" id="L198">    result.setValue(Field.YEAR, &quot;2009&quot;);</span>
+<span class="nc" id="L199">    result.setValue(Field.TITLE, &quot;Large Scale Attribute Selection Using Wrappers&quot;);</span>
+<span class="nc" id="L200">    result.setValue(Field.BOOKTITLE, &quot;Proc IEEE Symposium on Computational Intelligence and Data Mining&quot;);</span>
+<span class="nc" id="L201">    result.setValue(Field.PAGES, &quot;332-339&quot;);</span>
+<span class="nc" id="L202">    result.setValue(Field.PUBLISHER, &quot;IEEE&quot;);</span>
+    
+<span class="nc" id="L204">    additional = result.add(Type.MASTERSTHESIS);</span>
+<span class="nc" id="L205">    additional.setValue(Field.AUTHOR, &quot;Martin Guetlein&quot;);</span>
+<span class="nc" id="L206">    additional.setValue(Field.YEAR, &quot;2006&quot;);</span>
+<span class="nc" id="L207">    additional.setValue(Field.TITLE, &quot;Large Scale Attribute Selection Using Wrappers&quot;);</span>
+<span class="nc" id="L208">    additional.setValue(Field.SCHOOL, &quot;Albert-Ludwigs-Universitaet&quot;);</span>
+<span class="nc" id="L209">    additional.setValue(Field.ADDRESS, &quot;Freiburg, Germany&quot;);</span>
+    
+<span class="nc" id="L211">    return result;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   *
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L221">    Vector newVector = new Vector(8);</span>
+
+<span class="nc" id="L223">    newVector.addElement(new Option(&quot;\tSpecify a starting set of attributes.&quot; +</span>
+<span class="nc" id="L224">                                    &quot;\n\tEg. 1,3,5-7.&quot;, &quot;P&quot;, 1, &quot;-P &lt;start set&gt;&quot;));</span>
+<span class="nc" id="L225">    newVector.addElement(new Option(</span>
+<span class="nc" id="L226">                                    &quot;\tForward selection method. (default = 0).&quot;, &quot;D&quot;, 1,</span>
+<span class="nc" id="L227">                                    &quot;-D &lt;0 = forward selection | 1 = floating forward selection&gt;&quot;));</span>
+<span class="nc" id="L228">    newVector.addElement(new Option(&quot;\tNumber of non-improving nodes to&quot; +</span>
+<span class="nc" id="L229">                                    &quot;\n\tconsider before terminating search.&quot;, &quot;N&quot;, 1, &quot;-N &lt;num&gt;&quot;));</span>
+<span class="nc" id="L230">    newVector.addElement(new Option(&quot;\tPerform initial ranking to select the&quot; +</span>
+<span class="nc" id="L231">                                    &quot;\n\ttop-ranked attributes.&quot;, &quot;I&quot;, 0, &quot;-I&quot;));</span>
+<span class="nc" id="L232">    newVector.addElement(new Option(</span>
+<span class="nc" id="L233">                                    &quot;\tNumber of top-ranked attributes that are &quot; +</span>
+<span class="nc" id="L234">                                    &quot;\n\ttaken into account by the search.&quot;, &quot;K&quot;, 1, &quot;-K &lt;num&gt;&quot;));</span>
+<span class="nc" id="L235">    newVector.addElement(new Option(</span>
+<span class="nc" id="L236">                                    &quot;\tType of Linear Forward Selection (default = 0).&quot;, &quot;T&quot;, 1,</span>
+<span class="nc" id="L237">                                    &quot;-T &lt;0 = fixed-set | 1 = fixed-width&gt;&quot;));</span>
+<span class="nc" id="L238">    newVector.addElement(new Option(</span>
+<span class="nc" id="L239">                                    &quot;\tSize of lookup cache for evaluated subsets.&quot; +</span>
+                                    &quot;\n\tExpressed as a multiple of the number of&quot; +
+<span class="nc" id="L241">                                    &quot;\n\tattributes in the data set. (default = 1)&quot;, &quot;S&quot;, 1, &quot;-S &lt;num&gt;&quot;));</span>
+<span class="nc" id="L242">    newVector.addElement(new Option(&quot;\tverbose on/off&quot;, &quot;Z&quot;, 0, &quot;-Z&quot;));</span>
+
+<span class="nc" id="L244">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options.
+   *
+   * Valid options are:
+   * &lt;p&gt;
+   *
+   * -P &lt;start set&gt; &lt;br&gt;
+   * Specify a starting set of attributes. Eg 1,4,7-9.
+   * &lt;p&gt;
+   *
+   * -D &lt;0 = forward selection | 1 = floating forward selection&gt; &lt;br&gt;
+   * Forward selection method of the search. (default = 0).
+   * &lt;p&gt;
+   *
+   * -N &lt;num&gt; &lt;br&gt;
+   * Number of non improving nodes to consider before terminating search.
+   * (default = 5).
+   * &lt;p&gt;
+   *
+   * -I &lt;br&gt;
+   * Perform initial ranking to select top-ranked attributes.
+   * &lt;p&gt;
+   *
+   * -K &lt;num&gt; &lt;br&gt;
+   * Number of top-ranked attributes that are taken into account.
+   * &lt;p&gt;
+   *
+   * -T &lt;0 = fixed-set | 1 = fixed-width&gt; &lt;br&gt;
+   * Typ of Linear Forward Selection (default = 0).
+   * &lt;p&gt;
+   *
+   * -S &lt;num&gt; &lt;br&gt;
+   * Size of lookup cache for evaluated subsets. Expressed as a multiple of
+   * the number of attributes in the data set. (default = 1).
+   * &lt;p&gt;
+   *
+   * -Z &lt;br&gt;
+   * verbose on/off.
+   * &lt;p&gt;
+   *
+   * @param options
+   *            the list of options as an array of strings
+   * @exception Exception
+   *                if an option is not supported
+   *
+   */
+  public void setOptions(String[] options) throws Exception {
+    String optionString;
+<span class="nc" id="L295">    resetOptions();</span>
+
+<span class="nc" id="L297">    optionString = Utils.getOption('P', options);</span>
+
+<span class="nc bnc" id="L299" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L300">      setStartSet(optionString);</span>
+    }
+
+<span class="nc" id="L303">    optionString = Utils.getOption('D', options);</span>
+
+<span class="nc bnc" id="L305" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L306">      setForwardSelectionMethod(new SelectedTag(Integer.parseInt(optionString),</span>
+<span class="nc" id="L307">                                                TAGS_SEARCH_METHOD));</span>
+    } else {
+<span class="nc" id="L309">      setForwardSelectionMethod(new SelectedTag(SEARCH_METHOD_FORWARD,</span>
+<span class="nc" id="L310">                                                TAGS_SEARCH_METHOD));</span>
+    }
+
+<span class="nc" id="L313">    optionString = Utils.getOption('N', options);</span>
+
+<span class="nc bnc" id="L315" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L316">      setSearchTermination(Integer.parseInt(optionString));</span>
+    }
+
+<span class="nc" id="L319">    setPerformRanking(Utils.getFlag('I', options));</span>
+
+<span class="nc" id="L321">    optionString = Utils.getOption('K', options);</span>
+
+<span class="nc bnc" id="L323" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L324">      setNumUsedAttributes(Integer.parseInt(optionString));</span>
+    }
+
+<span class="nc" id="L327">    optionString = Utils.getOption('T', options);</span>
+
+<span class="nc bnc" id="L329" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L330">      setType(new SelectedTag(Integer.parseInt(optionString), TAGS_TYPE));</span>
+    } else {
+<span class="nc" id="L332">      setType(new SelectedTag(TYPE_FIXED_SET, TAGS_TYPE));</span>
+    }
+
+<span class="nc" id="L335">    optionString = Utils.getOption('S', options);</span>
+
+<span class="nc bnc" id="L337" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L338">      setLookupCacheSize(Integer.parseInt(optionString));</span>
+    }
+
+<span class="nc" id="L341">    m_verbose = Utils.getFlag('Z', options);</span>
+<span class="nc" id="L342">  }</span>
+
+  /**
+   * Set the maximum size of the evaluated subset cache (hashtable). This is
+   * expressed as a multiplier for the number of attributes in the data set.
+   * (default = 1).
+   *
+   * @param size
+   *            the maximum size of the hashtable
+   */
+  public void setLookupCacheSize(int size) {
+<span class="nc bnc" id="L353" title="All 2 branches missed.">    if (size &gt;= 0) {</span>
+<span class="nc" id="L354">      m_cacheSize = size;</span>
+    }
+<span class="nc" id="L356">  }</span>
+
+  /**
+   * Return the maximum size of the evaluated subset cache (expressed as a
+   * multiplier for the number of attributes in a data set.
+   *
+   * @return the maximum size of the hashtable.
+   */
+  public int getLookupCacheSize() {
+<span class="nc" id="L365">    return m_cacheSize;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String lookupCacheSizeTipText() {
+<span class="nc" id="L375">    return &quot;Set the maximum size of the lookup cache of evaluated subsets. This is &quot; +</span>
+      &quot;expressed as a multiplier of the number of attributes in the data set. &quot; +
+      &quot;(default = 1).&quot;;
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String startSetTipText() {
+<span class="nc" id="L387">    return &quot;Set the start point for the search. This is specified as a comma &quot; +</span>
+      &quot;seperated list off attribute indexes starting at 1. It can include &quot; +
+      &quot;ranges. Eg. 1,2,5-9,17.&quot;;
+  }
+
+  /**
+   * Sets a starting set of attributes for the search. It is the search
+   * method's responsibility to report this start set (if any) in its
+   * toString() method.
+   *
+   * @param startSet
+   *            a string containing a list of attributes (and or ranges), eg.
+   *            1,2,6,10-15.
+   * @exception Exception
+   *                if start set can't be set.
+   */
+  public void setStartSet(String startSet) throws Exception {
+<span class="nc" id="L404">    m_startRange.setRanges(startSet);</span>
+<span class="nc" id="L405">  }</span>
+
+  /**
+   * Returns a list of attributes (and or attribute ranges) as a String
+   *
+   * @return a list of attributes (and or attribute ranges)
+   */
+  public String getStartSet() {
+<span class="nc" id="L413">    return m_startRange.getRanges();</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String searchTerminationTipText() {
+<span class="nc" id="L423">    return &quot;Set the amount of backtracking. Specify the number of &quot;;</span>
+  }
+
+  /**
+   * Set the numnber of non-improving nodes to consider before terminating
+   * search.
+   *
+   * @param t
+   *            the number of non-improving nodes
+   * @exception Exception
+   *                if t is less than 1
+   */
+  public void setSearchTermination(int t) throws Exception {
+<span class="nc bnc" id="L436" title="All 2 branches missed.">    if (t &lt; 1) {</span>
+<span class="nc" id="L437">      throw new Exception(&quot;Value of -N must be &gt; 0.&quot;);</span>
+    }
+
+<span class="nc" id="L440">    m_maxStale = t;</span>
+<span class="nc" id="L441">  }</span>
+
+  /**
+   * Get the termination criterion (number of non-improving nodes).
+   *
+   * @return the number of non-improving nodes
+   */
+  public int getSearchTermination() {
+<span class="nc" id="L449">    return m_maxStale;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String performRankingTipText() {
+<span class="nc" id="L459">    return &quot;Perform initial ranking to select top-ranked attributes.&quot;;</span>
+  }
+
+  /**
+   * Perform initial ranking to select top-ranked attributes.
+   *
+   * @param b
+   *            true if initial ranking should be performed
+   */
+  public void setPerformRanking(boolean b) {
+<span class="nc" id="L469">    m_performRanking = b;</span>
+<span class="nc" id="L470">  }</span>
+
+  /**
+   * Get boolean if initial ranking should be performed to select the
+   * top-ranked attributes
+   *
+   * @return true if initial ranking should be performed
+   */
+  public boolean getPerformRanking() {
+<span class="nc" id="L479">    return m_performRanking;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String numUsedAttributesTipText() {
+<span class="nc" id="L489">    return &quot;Set the amount of top-ranked attributes that are taken into account by the search process.&quot;;</span>
+  }
+
+  /**
+   * Set the number of top-ranked attributes that taken into account by the
+   * search process.
+   *
+   * @param k
+   *            the number of attributes
+   * @exception Exception
+   *                if k is less than 2
+   */
+  public void setNumUsedAttributes(int k) throws Exception {
+<span class="nc bnc" id="L502" title="All 2 branches missed.">    if (k &lt; 2) {</span>
+<span class="nc" id="L503">      throw new Exception(&quot;Value of -K must be &gt;= 2.&quot;);</span>
+    }
+
+<span class="nc" id="L506">    m_numUsedAttributes = k;</span>
+<span class="nc" id="L507">  }</span>
+
+  /**
+   * Get the number of top-ranked attributes that taken into account by the
+   * search process.
+   *
+   * @return the number of top-ranked attributes that taken into account
+   */
+  public int getNumUsedAttributes() {
+<span class="nc" id="L516">    return m_numUsedAttributes;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String forwardSelectionMethodTipText() {
+<span class="nc" id="L526">    return &quot;Set the direction of the search.&quot;;</span>
+  }
+
+  /**
+   * Set the search direction
+   *
+   * @param d
+   *            the direction of the search
+   */
+  public void setForwardSelectionMethod(SelectedTag d) {
+<span class="nc bnc" id="L536" title="All 2 branches missed.">    if (d.getTags() == TAGS_SEARCH_METHOD) {</span>
+<span class="nc" id="L537">      m_forwardSearchMethod = d.getSelectedTag().getID();</span>
+    }
+<span class="nc" id="L539">  }</span>
+
+  /**
+   * Get the search direction
+   *
+   * @return the direction of the search
+   */
+  public SelectedTag getForwardSelectionMethod() {
+<span class="nc" id="L547">    return new SelectedTag(m_forwardSearchMethod, TAGS_SEARCH_METHOD);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String typeTipText() {
+<span class="nc" id="L557">    return &quot;Set the type of the search.&quot;;</span>
+  }
+
+  /**
+   * Set the type
+   *
+   * @param t
+   *            the Linear Forward Selection type
+   */
+  public void setType(SelectedTag t) {
+<span class="nc bnc" id="L567" title="All 2 branches missed.">    if (t.getTags() == TAGS_TYPE) {</span>
+<span class="nc" id="L568">      m_linearSelectionType = t.getSelectedTag().getID();</span>
+    }
+<span class="nc" id="L570">  }</span>
+
+  /**
+   * Get the type
+   *
+   * @return the Linear Forward Selection type
+   */
+  public SelectedTag getType() {
+<span class="nc" id="L578">    return new SelectedTag(m_linearSelectionType, TAGS_TYPE);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String verboseTipText() {
+<span class="nc" id="L588">    return &quot;Turn on verbose output for monitoring the search's progress.&quot;;</span>
+  }
+
+  /**
+   * Set whether verbose output should be generated.
+   *
+   * @param d
+   *            true if output is to be verbose.
+   */
+  public void setVerbose(boolean b) {
+<span class="nc" id="L598">    m_verbose = b;</span>
+<span class="nc" id="L599">  }</span>
+
+  /**
+   * Get whether output is to be verbose
+   *
+   * @return true if output will be verbose
+   */
+  public boolean getVerbose() {
+<span class="nc" id="L607">    return m_verbose;</span>
+  }
+
+  /**
+   * Gets the current settings of LinearForwardSelection.
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions() {
+<span class="nc" id="L616">    String[] options = new String[13];</span>
+<span class="nc" id="L617">    int current = 0;</span>
+
+<span class="nc bnc" id="L619" title="All 2 branches missed.">    if (!(getStartSet().equals(&quot;&quot;))) {</span>
+<span class="nc" id="L620">      options[current++] = &quot;-P&quot;;</span>
+<span class="nc" id="L621">      options[current++] = &quot;&quot; + startSetToString();</span>
+    }
+
+<span class="nc" id="L624">    options[current++] = &quot;-D&quot;;</span>
+<span class="nc" id="L625">    options[current++] = &quot;&quot; + m_forwardSearchMethod;</span>
+<span class="nc" id="L626">    options[current++] = &quot;-N&quot;;</span>
+<span class="nc" id="L627">    options[current++] = &quot;&quot; + m_maxStale;</span>
+
+<span class="nc bnc" id="L629" title="All 2 branches missed.">    if (m_performRanking) {</span>
+<span class="nc" id="L630">      options[current++] = &quot;-I&quot;;</span>
+    }
+
+<span class="nc" id="L633">    options[current++] = &quot;-K&quot;;</span>
+<span class="nc" id="L634">    options[current++] = &quot;&quot; + m_numUsedAttributes;</span>
+<span class="nc" id="L635">    options[current++] = &quot;-T&quot;;</span>
+<span class="nc" id="L636">    options[current++] = &quot;&quot; + m_linearSelectionType;</span>
+
+<span class="nc bnc" id="L638" title="All 2 branches missed.">    if (m_verbose)</span>
+<span class="nc" id="L639">      options[current++] = &quot;-Z&quot;;</span>
+
+<span class="nc bnc" id="L641" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L642">      options[current++] = &quot;&quot;;</span>
+    }
+
+<span class="nc" id="L645">    return options;</span>
+  }
+
+  /**
+   * converts the array of starting attributes to a string. This is used by
+   * getOptions to return the actual attributes specified as the starting set.
+   * This is better than using m_startRanges.getRanges() as the same start set
+   * can be specified in different ways from the command line---eg 1,2,3 ==
+   * 1-3. This is to ensure that stuff that is stored in a database is
+   * comparable.
+   *
+   * @return a comma seperated list of individual attribute numbers as a
+   *         String
+   */
+  private String startSetToString() {
+<span class="nc" id="L660">    StringBuffer FString = new StringBuffer();</span>
+    boolean didPrint;
+
+<span class="nc bnc" id="L663" title="All 2 branches missed.">    if (m_starting == null) {</span>
+<span class="nc" id="L664">      return getStartSet();</span>
+    }
+
+<span class="nc bnc" id="L667" title="All 2 branches missed.">    for (int i = 0; i &lt; m_starting.length; i++) {</span>
+<span class="nc" id="L668">      didPrint = false;</span>
+
+<span class="nc bnc" id="L670" title="All 2 branches missed.">      if ((m_hasClass == false) ||</span>
+<span class="nc bnc" id="L671" title="All 4 branches missed.">          ((m_hasClass == true) &amp;&amp; (i != m_classIndex))) {</span>
+<span class="nc" id="L672">        FString.append((m_starting[i] + 1));</span>
+<span class="nc" id="L673">        didPrint = true;</span>
+      }
+
+<span class="nc bnc" id="L676" title="All 2 branches missed.">      if (i == (m_starting.length - 1)) {</span>
+<span class="nc" id="L677">        FString.append(&quot;&quot;);</span>
+      } else {
+<span class="nc bnc" id="L679" title="All 2 branches missed.">        if (didPrint) {</span>
+<span class="nc" id="L680">          FString.append(&quot;,&quot;);</span>
+        }
+      }
+    }
+
+<span class="nc" id="L685">    return FString.toString();</span>
+  }
+
+  /**
+   * returns a description of the search as a String
+   *
+   * @return a description of the search
+   */
+  public String toString() {
+<span class="nc" id="L694">    StringBuffer LFSString = new StringBuffer();</span>
+
+<span class="nc" id="L696">    LFSString.append(&quot;\tLinear Forward Selection.\n\tStart set: &quot;);</span>
+
+<span class="nc bnc" id="L698" title="All 2 branches missed.">    if (m_starting == null) {</span>
+<span class="nc" id="L699">      LFSString.append(&quot;no attributes\n&quot;);</span>
+    } else {
+<span class="nc" id="L701">      LFSString.append(startSetToString() + &quot;\n&quot;);</span>
+    }
+
+<span class="nc" id="L704">    LFSString.append(&quot;\tForward selection method: &quot;);</span>
+
+<span class="nc bnc" id="L706" title="All 2 branches missed.">    if (m_forwardSearchMethod == SEARCH_METHOD_FORWARD) {</span>
+<span class="nc" id="L707">      LFSString.append(&quot;forward selection\n&quot;);</span>
+    } else {
+<span class="nc" id="L709">      LFSString.append(&quot;floating forward selection\n&quot;);</span>
+    }
+
+<span class="nc" id="L712">    LFSString.append(&quot;\tStale search after &quot; + m_maxStale +</span>
+<span class="nc" id="L713">                     &quot; node expansions\n&quot;);</span>
+
+<span class="nc" id="L715">    LFSString.append(&quot;\tLinear Forward Selection Type: &quot;);</span>
+
+<span class="nc bnc" id="L717" title="All 2 branches missed.">    if (m_linearSelectionType == TYPE_FIXED_SET) {</span>
+<span class="nc" id="L718">      LFSString.append(&quot;fixed-set\n&quot;);</span>
+    } else {
+<span class="nc" id="L720">      LFSString.append(&quot;fixed-width\n&quot;);</span>
+    }
+
+<span class="nc" id="L723">    LFSString.append(&quot;\tNumber of top-ranked attributes that are used: &quot; +</span>
+<span class="nc" id="L724">                     m_numUsedAttributes + &quot;\n&quot;);</span>
+
+<span class="nc" id="L726">    LFSString.append(&quot;\tTotal number of subsets evaluated: &quot; + m_totalEvals +</span>
+<span class="nc" id="L727">                     &quot;\n&quot;);</span>
+<span class="nc" id="L728">    LFSString.append(&quot;\tMerit of best subset found: &quot; +</span>
+<span class="nc" id="L729">                     Utils.doubleToString(Math.abs(m_bestMerit), 8, 3) + &quot;\n&quot;);</span>
+
+<span class="nc" id="L731">    return LFSString.toString();</span>
+  }
+
+  /**
+   * Searches the attribute subset space by linear forward selection
+   *
+   * @param ASEvaluator
+   *            the attribute evaluator to guide the search
+   * @param data
+   *            the training instances.
+   * @return an array (not necessarily ordered) of selected attribute indexes
+   * @exception Exception
+   *                if the search can't be completed
+   */
+  public int[] search(ASEvaluation ASEval, Instances data)
+    throws Exception {
+<span class="nc" id="L747">    m_totalEvals = 0;</span>
+
+<span class="nc bnc" id="L749" title="All 2 branches missed.">    if (!(ASEval instanceof SubsetEvaluator)) {</span>
+<span class="nc" id="L750">      throw new Exception(ASEval.getClass().getName() + &quot; is not a &quot; +</span>
+<span class="nc" id="L751">                          &quot;Subset evaluator!&quot;);</span>
+    }
+
+<span class="nc bnc" id="L754" title="All 2 branches missed.">    if (ASEval instanceof UnsupervisedSubsetEvaluator) {</span>
+<span class="nc" id="L755">      m_hasClass = false;</span>
+    } else {
+<span class="nc" id="L757">      m_hasClass = true;</span>
+<span class="nc" id="L758">      m_classIndex = data.classIndex();</span>
+    }
+
+<span class="nc" id="L761">    ((ASEvaluation) ASEval).buildEvaluator(data);</span>
+
+<span class="nc" id="L763">    m_numAttribs = data.numAttributes();</span>
+
+<span class="nc bnc" id="L765" title="All 2 branches missed.">    if (m_numUsedAttributes &gt; m_numAttribs) {</span>
+<span class="nc" id="L766">      System.out.println(</span>
+<span class="nc" id="L767">                         &quot;Decreasing number of top-ranked attributes to total number of attributes: &quot; +</span>
+<span class="nc" id="L768">                         data.numAttributes());</span>
+<span class="nc" id="L769">      m_numUsedAttributes = m_numAttribs;</span>
+    }
+
+<span class="nc" id="L772">    BitSet start_group = new BitSet(m_numAttribs);</span>
+<span class="nc" id="L773">    m_startRange.setUpper(m_numAttribs - 1);</span>
+
+<span class="nc bnc" id="L775" title="All 2 branches missed.">    if (!(getStartSet().equals(&quot;&quot;))) {</span>
+<span class="nc" id="L776">      m_starting = m_startRange.getSelection();</span>
+    }
+
+    // If a starting subset has been supplied, then initialise the bitset
+<span class="nc bnc" id="L780" title="All 2 branches missed.">    if (m_starting != null) {</span>
+<span class="nc bnc" id="L781" title="All 2 branches missed.">      for (int i = 0; i &lt; m_starting.length; i++) {</span>
+<span class="nc bnc" id="L782" title="All 2 branches missed.">        if ((m_starting[i]) != m_classIndex) {</span>
+<span class="nc" id="L783">          start_group.set(m_starting[i]);</span>
+        }
+      }
+    }
+
+<span class="nc" id="L788">    LFSMethods LFS = new LFSMethods();</span>
+
+    int[] ranking;
+
+<span class="nc bnc" id="L792" title="All 2 branches missed.">    if (m_performRanking) {</span>
+<span class="nc" id="L793">      ranking = LFS.rankAttributes(data, (SubsetEvaluator) ASEval, m_verbose);</span>
+    } else {
+<span class="nc" id="L795">      ranking = new int[m_numAttribs];</span>
+
+<span class="nc bnc" id="L797" title="All 2 branches missed.">      for (int i = 0; i &lt; ranking.length; i++) {</span>
+<span class="nc" id="L798">        ranking[i] = i;</span>
+      }
+    }
+
+<span class="nc bnc" id="L802" title="All 2 branches missed.">    if (m_forwardSearchMethod == SEARCH_METHOD_FORWARD) {</span>
+<span class="nc" id="L803">      LFS.forwardSearch(m_cacheSize, start_group, ranking, m_numUsedAttributes,</span>
+<span class="nc bnc" id="L804" title="All 2 branches missed.">                        m_linearSelectionType == TYPE_FIXED_WIDTH, m_maxStale, -1, data,</span>
+<span class="nc" id="L805">                        (SubsetEvaluator) ASEval, m_verbose);</span>
+<span class="nc bnc" id="L806" title="All 2 branches missed.">    } else if (m_forwardSearchMethod == SEARCH_METHOD_FLOATING) {</span>
+<span class="nc" id="L807">      LFS.floatingForwardSearch(m_cacheSize, start_group, ranking,</span>
+<span class="nc bnc" id="L808" title="All 2 branches missed.">                                m_numUsedAttributes, m_linearSelectionType == TYPE_FIXED_WIDTH,</span>
+<span class="nc" id="L809">                                m_maxStale, data, (SubsetEvaluator) ASEval, m_verbose);</span>
+    }
+
+<span class="nc" id="L812">    m_totalEvals = LFS.getNumEvalsTotal();</span>
+<span class="nc" id="L813">    m_bestMerit = LFS.getBestMerit();</span>
+
+<span class="nc" id="L815">    return attributeList(LFS.getBestGroup());</span>
+  }
+
+  /**
+   * Reset options to default values
+   */
+  protected void resetOptions() {
+<span class="nc" id="L822">    m_maxStale = 5;</span>
+<span class="nc" id="L823">    m_forwardSearchMethod = SEARCH_METHOD_FORWARD;</span>
+<span class="nc" id="L824">    m_performRanking = true;</span>
+<span class="nc" id="L825">    m_numUsedAttributes = 50;</span>
+<span class="nc" id="L826">    m_linearSelectionType = TYPE_FIXED_SET;</span>
+<span class="nc" id="L827">    m_starting = null;</span>
+<span class="nc" id="L828">    m_startRange = new Range();</span>
+<span class="nc" id="L829">    m_classIndex = -1;</span>
+<span class="nc" id="L830">    m_totalEvals = 0;</span>
+<span class="nc" id="L831">    m_cacheSize = 1;</span>
+<span class="nc" id="L832">    m_verbose = false;</span>
+<span class="nc" id="L833">  }</span>
+
+  /**
+   * converts a BitSet into a list of attribute indexes
+   *
+   * @param group
+   *            the BitSet to convert
+   * @return an array of attribute indexes
+   */
+  protected int[] attributeList(BitSet group) {
+<span class="nc" id="L843">    int count = 0;</span>
+
+    // count how many were selected
+<span class="nc bnc" id="L846" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="nc bnc" id="L847" title="All 2 branches missed.">      if (group.get(i)) {</span>
+<span class="nc" id="L848">        count++;</span>
+      }
+    }
+
+<span class="nc" id="L852">    int[] list = new int[count];</span>
+<span class="nc" id="L853">    count = 0;</span>
+
+<span class="nc bnc" id="L855" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="nc bnc" id="L856" title="All 2 branches missed.">      if (group.get(i)) {</span>
+<span class="nc" id="L857">        list[count++] = i;</span>
+      }
+    }
+
+<span class="nc" id="L861">    return list;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L870">    return RevisionUtils.extract(&quot;$Revision: 6161 $&quot;);</span>
+  }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

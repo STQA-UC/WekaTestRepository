@@ -1,0 +1,904 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>AODEsr.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.bayes</a> &gt; <span class="el_source">AODEsr.java</span></div><h1>AODEsr.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    AODEsr.java
+ *    Copyright (C) 2007
+ *    Algorithm developed by: Fei ZHENG and Geoff Webb
+ *    Code written by: Fei ZHENG and Janice Boughton
+ */
+
+package weka.classifiers.bayes;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.UpdateableClassifier;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ *
+ &lt;!-- globalinfo-start --&gt;
+ * AODEsr augments AODE with Subsumption Resolution.AODEsr detects specializations between two attribute values at classification time and deletes the generalization attribute value.&lt;br/&gt;
+ * For more information, see:&lt;br/&gt;
+ * Fei Zheng, Geoffrey I. Webb: Efficient Lazy Elimination for Averaged-One Dependence Estimators. In: Proceedings of the Twenty-third International Conference on Machine  Learning (ICML 2006), 1113-1120, 2006.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Zheng2006,
+ *    author = {Fei Zheng and Geoffrey I. Webb},
+ *    booktitle = {Proceedings of the Twenty-third International Conference on Machine  Learning (ICML 2006)},
+ *    pages = {1113-1120},
+ *    publisher = {ACM Press},
+ *    title = {Efficient Lazy Elimination for Averaged-One Dependence Estimators},
+ *    year = {2006},
+ *    ISBN = {1-59593-383-2}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Output debugging information
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C
+ *  Impose a critcal value for specialization-generalization relationship
+ *  (default is 50)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -F
+ *  Impose a frequency limit for superParents
+ *  (default is 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -L
+ *  Using Laplace estimation
+ *  (default is m-esimation (m=1))&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Weight value for m-estimation
+ *  (default is 1.0)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Fei Zheng
+ * @author Janice Boughton
+ * @version $Revision: 5516 $
+ */
+<span class="fc" id="L99">public class AODEsr extends Classifier</span>
+    implements OptionHandler, WeightedInstancesHandler, UpdateableClassifier,
+               TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 5602143019183068848L;
+
+  /**
+   * 3D array (m_NumClasses * m_TotalAttValues * m_TotalAttValues)
+   * of attribute counts, i.e. the number of times an attribute value occurs
+   * in conjunction with another attribute value and a class value.  
+   */
+  private double [][][] m_CondiCounts;
+ 
+  /**
+   * 2D array (m_TotalAttValues * m_TotalAttValues) of attributes counts.
+   * similar to m_CondiCounts, but ignoring class value.
+   */  
+  private double [][] m_CondiCountsNoClass; 
+    
+  /** The number of times each class value occurs in the dataset */
+  private double [] m_ClassCounts;
+    
+  /** The sums of attribute-class counts  
+   *    -- if there are no missing values for att, then
+   *       m_SumForCounts[classVal][att] will be the same as
+   *       m_ClassCounts[classVal] 
+   */
+  private double [][] m_SumForCounts;
+
+  /** The number of classes */
+  private int m_NumClasses;
+ 
+  /** The number of attributes in dataset, including class */
+  private int m_NumAttributes;
+    
+  /** The number of instances in the dataset */
+  private int m_NumInstances;
+    
+  /** The index of the class attribute */
+  private int m_ClassIndex;
+    
+  /** The dataset */
+  private Instances m_Instances;
+    
+  /**
+   * The total number of values (including an extra for each attribute's 
+   * missing value, which are included in m_CondiCounts) for all attributes 
+   * (not including class).  Eg. for three atts each with two possible values,
+   * m_TotalAttValues would be 9 (6 values + 3 missing).
+   * This variable is used when allocating space for m_CondiCounts matrix.
+   */
+  private int m_TotalAttValues;
+    
+  /** The starting index (in the m_CondiCounts matrix) of the values for each attribute */
+  private int [] m_StartAttIndex;
+    
+  /** The number of values for each attribute */
+  private int [] m_NumAttValues;
+    
+  /** The frequency of each attribute value for the dataset */
+  private double [] m_Frequencies;
+
+  /** The number of valid class values observed in dataset 
+   *  -- with no missing classes, this number is the same as m_NumInstances.
+   */
+  private double m_SumInstances;
+
+  /** An att's frequency must be this value or more to be a superParent */
+<span class="fc" id="L168">  private int m_Limit = 1;</span>
+
+  /** If true, outputs debugging info */
+<span class="fc" id="L171">  private boolean m_Debug = false;</span>
+  
+  /** m value for m-estimation */
+<span class="fc" id="L174">  protected  double m_MWeight = 1.0;</span>
+  
+  /** Using LapLace estimation or not*/
+<span class="fc" id="L177">  private boolean m_Laplace = false;</span>
+  
+  /** the critical value for the specialization-generalization */
+<span class="fc" id="L180">  private int m_Critical = 50;</span>
+
+ 
+  /**
+   * Returns a string describing this classifier
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L190">    return &quot;AODEsr augments AODE with Subsumption Resolution.&quot;</span>
+      +&quot;AODEsr detects specializations between two attribute &quot;
+      +&quot;values at classification time and deletes the generalization &quot;
+      +&quot;attribute value.\n&quot;
+      +&quot;For more information, see:\n&quot;
+<span class="nc" id="L195">      + getTechnicalInformation().toString();</span>
+  }
+ 
+  /**
+   * Returns an instance of a TechnicalInformation object, containing
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   *
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation        result;
+
+<span class="nc" id="L208">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L209">    result.setValue(Field.AUTHOR, &quot;Fei Zheng and Geoffrey I. Webb&quot;);</span>
+<span class="nc" id="L210">    result.setValue(Field.YEAR, &quot;2006&quot;);</span>
+<span class="nc" id="L211">    result.setValue(Field.TITLE, &quot;Efficient Lazy Elimination for Averaged-One Dependence Estimators&quot;);</span>
+<span class="nc" id="L212">    result.setValue(Field.PAGES, &quot;1113-1120&quot;);</span>
+<span class="nc" id="L213">    result.setValue(Field.BOOKTITLE, &quot;Proceedings of the Twenty-third International Conference on Machine  Learning (ICML 2006)&quot;);</span>
+<span class="nc" id="L214">    result.setValue(Field.PUBLISHER, &quot;ACM Press&quot;);</span>
+<span class="nc" id="L215">    result.setValue(Field.ISBN, &quot;1-59593-383-2&quot;);</span>
+
+<span class="nc" id="L217">    return result;</span>
+  }
+
+ /**
+  * Returns default capabilities of the classifier.
+  *
+  * @return      the capabilities of this classifier
+  */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L226">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L227">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L230">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L231">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L234">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L235">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+
+    // instances
+<span class="fc" id="L238">    result.setMinimumNumberInstances(0);</span>
+
+<span class="fc" id="L240">    return result;</span>
+  }
+
+  /**
+   * Generates the classifier.
+   *
+   * @param instances set of instances serving as training data
+   * @throws Exception if the classifier has not been generated
+   * successfully
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L253">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L256">    m_Instances = new Instances(instances);</span>
+<span class="fc" id="L257">    m_Instances.deleteWithMissingClass();</span>
+
+    // reset variable for this fold
+<span class="fc" id="L260">    m_SumInstances = 0;</span>
+<span class="fc" id="L261">    m_ClassIndex = instances.classIndex();</span>
+<span class="fc" id="L262">    m_NumInstances = m_Instances.numInstances();</span>
+<span class="fc" id="L263">    m_NumAttributes = instances.numAttributes();</span>
+<span class="fc" id="L264">    m_NumClasses = instances.numClasses();</span>
+
+    // allocate space for attribute reference arrays
+<span class="fc" id="L267">    m_StartAttIndex = new int[m_NumAttributes];</span>
+<span class="fc" id="L268">    m_NumAttValues = new int[m_NumAttributes];</span>
+ 
+<span class="fc" id="L270">    m_TotalAttValues = 0;</span>
+<span class="fc bfc" id="L271" title="All 2 branches covered.">    for(int i = 0; i &lt; m_NumAttributes; i++) {</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">       if(i != m_ClassIndex) {</span>
+<span class="fc" id="L273">          m_StartAttIndex[i] = m_TotalAttValues;</span>
+<span class="fc" id="L274">          m_NumAttValues[i] = m_Instances.attribute(i).numValues();</span>
+<span class="fc" id="L275">          m_TotalAttValues += m_NumAttValues[i] + 1;</span>
+          // + 1 so room for missing value count
+       } else {
+          // m_StartAttIndex[i] = -1;  // class isn't included
+<span class="fc" id="L279">          m_NumAttValues[i] = m_NumClasses;</span>
+       }
+    }
+
+    // allocate space for counts and frequencies
+<span class="fc" id="L284">    m_CondiCounts = new double[m_NumClasses][m_TotalAttValues][m_TotalAttValues];</span>
+<span class="fc" id="L285">    m_ClassCounts = new double[m_NumClasses];</span>
+<span class="fc" id="L286">    m_SumForCounts = new double[m_NumClasses][m_NumAttributes];</span>
+<span class="fc" id="L287">    m_Frequencies = new double[m_TotalAttValues];</span>
+<span class="fc" id="L288">    m_CondiCountsNoClass = new double[m_TotalAttValues][m_TotalAttValues];</span>
+    
+    // calculate the counts
+<span class="fc bfc" id="L291" title="All 2 branches covered.">    for(int k = 0; k &lt; m_NumInstances; k++) {</span>
+<span class="fc" id="L292">       addToCounts((Instance)m_Instances.instance(k));</span>
+    }
+
+    // free up some space
+<span class="fc" id="L296">    m_Instances = new Instances(m_Instances, 0);</span>
+<span class="fc" id="L297">  }</span>
+ 
+
+  /**
+   * Updates the classifier with the given instance.
+   *
+   * @param instance the new training instance to include in the model 
+   * @throws Exception if the instance could not be incorporated in
+   * the model.
+   */
+  public void updateClassifier(Instance instance) {
+<span class="fc" id="L308">    this.addToCounts(instance);</span>
+<span class="fc" id="L309">  }</span>
+
+  /**
+   * Puts an instance's values into m_CondiCounts, m_ClassCounts and 
+   * m_SumInstances.
+   *
+   * @param instance the instance whose values are to be put into the 
+   *                 counts variables
+   */
+  private void addToCounts(Instance instance) {
+ 
+    double [] countsPointer;
+    double [] countsNoClassPointer;
+ 
+<span class="pc bpc" id="L323" title="1 of 2 branches missed.">    if(instance.classIsMissing())</span>
+<span class="nc" id="L324">       return;   // ignore instances with missing class</span>
+
+<span class="fc" id="L326">    int classVal = (int)instance.classValue();</span>
+<span class="fc" id="L327">    double weight = instance.weight();</span>
+ 
+<span class="fc" id="L329">    m_ClassCounts[classVal] += weight;</span>
+<span class="fc" id="L330">    m_SumInstances += weight;</span>
+   
+    // store instance's att val indexes in an array, b/c accessing it 
+    // in loop(s) is more efficient
+<span class="fc" id="L334">    int [] attIndex = new int[m_NumAttributes];</span>
+<span class="fc bfc" id="L335" title="All 2 branches covered.">    for(int i = 0; i &lt; m_NumAttributes; i++) {</span>
+<span class="fc bfc" id="L336" title="All 2 branches covered.">       if(i == m_ClassIndex)</span>
+<span class="fc" id="L337">          attIndex[i] = -1;  // we don't use the class attribute in counts</span>
+       else {
+<span class="fc bfc" id="L339" title="All 2 branches covered.">          if(instance.isMissing(i))</span>
+<span class="fc" id="L340">             attIndex[i] = m_StartAttIndex[i] + m_NumAttValues[i];</span>
+          else
+<span class="fc" id="L342">             attIndex[i] = m_StartAttIndex[i] + (int)instance.value(i);</span>
+       }
+    }
+
+<span class="fc bfc" id="L346" title="All 2 branches covered.">    for(int Att1 = 0; Att1 &lt; m_NumAttributes; Att1++) {</span>
+<span class="fc bfc" id="L347" title="All 2 branches covered.">       if(attIndex[Att1] == -1)</span>
+<span class="fc" id="L348">          continue;   // avoid pointless looping as Att1 is currently the class attribute</span>
+
+<span class="fc" id="L350">       m_Frequencies[attIndex[Att1]] += weight;</span>
+       
+       // if this is a missing value, we don't want to increase sumforcounts
+<span class="fc bfc" id="L353" title="All 2 branches covered.">       if(!instance.isMissing(Att1))</span>
+<span class="fc" id="L354">          m_SumForCounts[classVal][Att1] += weight;</span>
+
+       // save time by referencing this now, rather than repeatedly in the loop
+<span class="fc" id="L357">       countsPointer = m_CondiCounts[classVal][attIndex[Att1]];</span>
+<span class="fc" id="L358">       countsNoClassPointer = m_CondiCountsNoClass[attIndex[Att1]];</span>
+
+<span class="fc bfc" id="L360" title="All 2 branches covered.">       for(int Att2 = 0; Att2 &lt; m_NumAttributes; Att2++) {</span>
+<span class="fc bfc" id="L361" title="All 2 branches covered.">          if(attIndex[Att2] != -1) {</span>
+<span class="fc" id="L362">             countsPointer[attIndex[Att2]] += weight;</span>
+<span class="fc" id="L363">             countsNoClassPointer[attIndex[Att2]] += weight;</span>
+          }
+       }
+    }
+<span class="fc" id="L367">  }</span>
+ 
+ 
+  /**
+   * Calculates the class membership probabilities for the given test
+   * instance.
+   *
+   * @param instance the instance to be classified
+   * @return predicted class probability distribution
+   * @throws Exception if there is a problem generating the prediction
+   */
+  public double [] distributionForInstance(Instance instance) throws Exception {
+
+    // accumulates posterior probabilities for each class
+<span class="fc" id="L381">    double [] probs = new double[m_NumClasses];</span>
+
+    // index for parent attribute value, and a count of parents used
+    int pIndex, parentCount; 
+
+<span class="fc" id="L386">    int [] SpecialGeneralArray = new int[m_NumAttributes];</span>
+    
+    // pointers for efficiency
+    double [][] countsForClass;
+    double [] countsForClassParent;
+    double [] countsForAtti;
+    double [] countsForAttj;
+
+    // store instance's att values in an int array, so accessing them 
+    // is more efficient in loop(s).
+<span class="fc" id="L396">    int [] attIndex = new int[m_NumAttributes];</span>
+<span class="fc bfc" id="L397" title="All 2 branches covered.">    for(int att = 0; att &lt; m_NumAttributes; att++) {</span>
+<span class="fc bfc" id="L398" title="All 4 branches covered.">       if(instance.isMissing(att) || att == m_ClassIndex)</span>
+<span class="fc" id="L399">          attIndex[att] = -1; // can't use class &amp; missing vals in calculations</span>
+       else
+<span class="fc" id="L401">          attIndex[att] = m_StartAttIndex[att] + (int)instance.value(att);</span>
+    }
+    // -1 indicates attribute is not a generalization of any other attributes
+<span class="fc bfc" id="L404" title="All 2 branches covered.">    for(int i = 0; i &lt; m_NumAttributes; i++) {</span>
+<span class="fc" id="L405">       SpecialGeneralArray[i] = -1;</span>
+    }
+
+    // calculate the specialization-generalization array
+<span class="fc bfc" id="L409" title="All 2 branches covered.">    for(int i = 0; i &lt; m_NumAttributes; i++){</span>
+       // skip i if it's the class or is missing
+<span class="fc bfc" id="L411" title="All 2 branches covered.">       if(attIndex[i] == -1)  continue;</span>
+<span class="fc" id="L412">       countsForAtti = m_CondiCountsNoClass[attIndex[i]];</span>
+ 
+<span class="fc bfc" id="L414" title="All 2 branches covered.">       for(int j = 0; j &lt; m_NumAttributes; j++) {</span>
+          // skip j if it's the class, missing, is i or a generalization of i
+<span class="pc bpc" id="L416" title="1 of 6 branches missed.">          if((attIndex[j] == -1) || (i == j) || (SpecialGeneralArray[j] == i))</span>
+<span class="nc" id="L417">            continue;</span>
+         
+<span class="fc" id="L419">          countsForAttj = m_CondiCountsNoClass[attIndex[j]];</span>
+
+          // check j's frequency is above critical value
+<span class="fc bfc" id="L422" title="All 2 branches covered.">          if(countsForAttj[attIndex[j]] &gt; m_Critical) {</span>
+
+             // skip j if the frequency of i and j together is not equivalent
+	     // to the frequency of j alone
+<span class="fc bfc" id="L426" title="All 2 branches covered.">             if(countsForAttj[attIndex[j]] == countsForAtti[attIndex[j]]) {</span>
+
+             // if attributes i and j are both a specialization of each other
+             // avoid deleting both by skipping j
+<span class="pc bpc" id="L430" title="1 of 2 branches missed.">                if((countsForAttj[attIndex[j]] == countsForAtti[attIndex[i]])</span>
+<span class="fc bfc" id="L431" title="All 2 branches covered.">                 &amp;&amp; (i &lt; j)){</span>
+<span class="fc" id="L432">                  continue;</span>
+                } else {
+                    // set the specialization relationship
+<span class="fc" id="L435">                    SpecialGeneralArray[i] = j;</span>
+<span class="fc" id="L436">                    break; // break out of j loop because a specialization has been found</span>
+                }
+             }
+          }
+       }
+    }
+ 
+    // calculate probabilities for each possible class value
+<span class="fc bfc" id="L444" title="All 2 branches covered.">    for(int classVal = 0; classVal &lt; m_NumClasses; classVal++) {</span>
+ 
+<span class="fc" id="L446">       probs[classVal] = 0;</span>
+<span class="fc" id="L447">       double x = 0;</span>
+<span class="fc" id="L448">       parentCount = 0;</span>
+ 
+<span class="fc" id="L450">       countsForClass = m_CondiCounts[classVal];</span>
+
+       // each attribute has a turn of being the parent
+<span class="fc bfc" id="L453" title="All 2 branches covered.">       for(int parent = 0; parent &lt; m_NumAttributes; parent++) {</span>
+<span class="fc bfc" id="L454" title="All 2 branches covered.">          if(attIndex[parent] == -1)</span>
+<span class="fc" id="L455">             continue;  // skip class attribute or missing value</span>
+
+          // determine correct index for the parent in m_CondiCounts matrix
+<span class="fc" id="L458">          pIndex = attIndex[parent];</span>
+
+          // check that the att value has a frequency of m_Limit or greater
+<span class="fc bfc" id="L461" title="All 2 branches covered.">	  if(m_Frequencies[pIndex] &lt; m_Limit) </span>
+<span class="fc" id="L462">             continue;</span>
+          
+          // delete the generalization attributes.
+<span class="fc bfc" id="L465" title="All 2 branches covered.">          if(SpecialGeneralArray[parent] != -1)</span>
+<span class="fc" id="L466">             continue;</span>
+
+<span class="fc" id="L468">          countsForClassParent = countsForClass[pIndex];</span>
+
+          // block the parent from being its own child
+<span class="fc" id="L471">          attIndex[parent] = -1;</span>
+
+<span class="fc" id="L473">          parentCount++;</span>
+
+<span class="fc" id="L475">          double classparentfreq = countsForClassParent[pIndex];</span>
+
+          // find the number of missing values for parent's attribute
+<span class="fc" id="L478">          double missing4ParentAtt = </span>
+<span class="fc" id="L479">            m_Frequencies[m_StartAttIndex[parent] + m_NumAttValues[parent]];</span>
+
+          // calculate the prior probability -- P(parent &amp; classVal)
+<span class="pc bpc" id="L482" title="1 of 2 branches missed.">           if (m_Laplace){</span>
+<span class="nc" id="L483">             x = LaplaceEstimate(classparentfreq, m_SumInstances - missing4ParentAtt, </span>
+<span class="nc" id="L484">                                    m_NumClasses * m_NumAttValues[parent]);</span>
+          } else {
+          
+<span class="fc" id="L487">             x = MEstimate(classparentfreq, m_SumInstances - missing4ParentAtt, </span>
+<span class="fc" id="L488">                                    m_NumClasses * m_NumAttValues[parent]);</span>
+          }
+
+
+    
+          // take into account the value of each attribute
+<span class="fc bfc" id="L494" title="All 2 branches covered.">          for(int att = 0; att &lt; m_NumAttributes; att++) {</span>
+<span class="fc bfc" id="L495" title="All 2 branches covered.">             if(attIndex[att] == -1) // skip class attribute or missing value</span>
+<span class="fc" id="L496">                continue;</span>
+             // delete the generalization attributes.
+<span class="fc bfc" id="L498" title="All 2 branches covered.">             if(SpecialGeneralArray[att] != -1)</span>
+<span class="fc" id="L499">                continue;</span>
+            
+ 
+<span class="fc" id="L502">             double missingForParentandChildAtt = </span>
+<span class="fc" id="L503">                      countsForClassParent[m_StartAttIndex[att] + m_NumAttValues[att]];</span>
+
+<span class="pc bpc" id="L505" title="1 of 2 branches missed.">             if (m_Laplace){</span>
+<span class="nc" id="L506">                x *= LaplaceEstimate(countsForClassParent[attIndex[att]], </span>
+<span class="nc" id="L507">                    classparentfreq - missingForParentandChildAtt, m_NumAttValues[att]);</span>
+             } else {
+<span class="fc" id="L509">                x *= MEstimate(countsForClassParent[attIndex[att]], </span>
+<span class="fc" id="L510">                    classparentfreq - missingForParentandChildAtt, m_NumAttValues[att]);</span>
+             }
+          }
+
+          // add this probability to the overall probability
+<span class="fc" id="L515">          probs[classVal] += x;</span>
+ 
+          // unblock the parent
+<span class="fc" id="L518">          attIndex[parent] = pIndex;</span>
+       }
+ 
+       // check that at least one att was a parent
+<span class="fc bfc" id="L522" title="All 2 branches covered.">       if(parentCount &lt; 1) {</span>
+
+          // do plain naive bayes conditional prob
+<span class="fc" id="L525">	  probs[classVal] = NBconditionalProb(instance, classVal);</span>
+          //probs[classVal] = Double.NaN;
+
+       } else {
+ 
+          // divide by number of parent atts to get the mean
+<span class="fc" id="L531">          probs[classVal] /= (double)(parentCount);</span>
+       }
+    }
+<span class="fc" id="L534">    Utils.normalize(probs);</span>
+<span class="fc" id="L535">    return probs;</span>
+  }
+
+
+  /**
+   * Calculates the probability of the specified class for the given test
+   * instance, using naive Bayes.
+   *
+   * @param instance the instance to be classified
+   * @param classVal the class for which to calculate the probability
+   * @return predicted class probability
+   * @throws Exception if there is a problem generating the prediction
+   */
+  public double NBconditionalProb(Instance instance, int classVal)
+                                                     throws Exception {
+    double prob;
+    int attIndex;
+    double [][] pointer;
+
+    // calculate the prior probability
+<span class="pc bpc" id="L555" title="1 of 2 branches missed.">    if(m_Laplace) {</span>
+<span class="nc" id="L556">       prob = LaplaceEstimate(m_ClassCounts[classVal],m_SumInstances,m_NumClasses); </span>
+    } else {
+<span class="fc" id="L558">       prob = MEstimate(m_ClassCounts[classVal], m_SumInstances, m_NumClasses);</span>
+    }
+<span class="fc" id="L560">    pointer = m_CondiCounts[classVal];</span>
+    
+    // consider effect of each att value
+<span class="fc bfc" id="L563" title="All 2 branches covered.">    for(int att = 0; att &lt; m_NumAttributes; att++) {</span>
+<span class="fc bfc" id="L564" title="All 4 branches covered.">       if(att == m_ClassIndex || instance.isMissing(att))</span>
+<span class="fc" id="L565">          continue;</span>
+       
+       // determine correct index for att in m_CondiCounts
+<span class="fc" id="L568">       attIndex = m_StartAttIndex[att] + (int)instance.value(att);</span>
+<span class="pc bpc" id="L569" title="1 of 2 branches missed.">       if (m_Laplace){</span>
+<span class="nc" id="L570">         prob *= LaplaceEstimate((double)pointer[attIndex][attIndex], </span>
+<span class="nc" id="L571">                   (double)m_SumForCounts[classVal][att], m_NumAttValues[att]);</span>
+       } else {
+<span class="fc" id="L573">           prob *= MEstimate((double)pointer[attIndex][attIndex], </span>
+<span class="fc" id="L574">                   (double)m_SumForCounts[classVal][att], m_NumAttValues[att]);</span>
+       }
+    }
+<span class="fc" id="L577">    return prob;</span>
+  }
+
+
+  /**
+   * Returns the probability estimate, using m-estimate
+   *
+   * @param frequency frequency of value of interest
+   * @param total count of all values
+   * @param numValues number of different values
+   * @return the probability estimate
+   */
+  public double MEstimate(double frequency, double total,
+                          double numValues) {
+    
+<span class="fc" id="L592">    return (frequency + m_MWeight / numValues) / (total + m_MWeight);</span>
+  }
+   
+  /**
+   * Returns the probability estimate, using laplace correction
+   *
+   * @param frequency frequency of value of interest
+   * @param total count of all values
+   * @param numValues number of different values
+   * @return the probability estimate
+   */
+  public double LaplaceEstimate(double frequency, double total,
+                                double numValues) {
+    
+<span class="nc" id="L606">    return (frequency + 1.0) / (total + numValues);</span>
+  }
+    
+   
+  /**
+   * Returns an enumeration describing the available options
+   *
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+
+<span class="fc" id="L617">    Vector newVector = new Vector(5);</span>
+        
+<span class="fc" id="L619">    newVector.addElement(</span>
+<span class="fc" id="L620">       new Option(&quot;\tOutput debugging information\n&quot;,</span>
+<span class="fc" id="L621">                  &quot;D&quot;, 0,&quot;-D&quot;));</span>
+<span class="fc" id="L622">    newVector.addElement(</span>
+<span class="fc" id="L623">       new Option(&quot;\tImpose a critcal value for specialization-generalization relationship\n&quot;</span>
+<span class="fc" id="L624">                  + &quot;\t(default is 50)&quot;, &quot;C&quot;, 1,&quot;-C&quot;));</span>
+<span class="fc" id="L625">    newVector.addElement(</span>
+<span class="fc" id="L626">       new Option(&quot;\tImpose a frequency limit for superParents\n&quot;</span>
+<span class="fc" id="L627">                  + &quot;\t(default is 1)&quot;, &quot;F&quot;, 2,&quot;-F&quot;));</span>
+<span class="fc" id="L628">    newVector.addElement(</span>
+<span class="fc" id="L629">       new Option(&quot;\tUsing Laplace estimation\n&quot;</span>
+                  + &quot;\t(default is m-esimation (m=1))&quot;,
+<span class="fc" id="L631">                  &quot;L&quot;, 3,&quot;-L&quot;));</span>
+<span class="fc" id="L632">    newVector.addElement(</span>
+<span class="fc" id="L633">       new Option(&quot;\tWeight value for m-estimation\n&quot;</span>
+<span class="fc" id="L634">                  + &quot;\t(default is 1.0)&quot;, &quot;M&quot;, 4,&quot;-M&quot;));</span>
+
+<span class="fc" id="L636">    return newVector.elements();</span>
+  }
+
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Output debugging information
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C
+   *  Impose a critcal value for specialization-generalization relationship
+   *  (default is 50)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -F
+   *  Impose a frequency limit for superParents
+   *  (default is 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -L
+   *  Using Laplace estimation
+   *  (default is m-esimation (m=1))&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  Weight value for m-estimation
+   *  (default is 1.0)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="fc" id="L673">    m_Debug = Utils.getFlag('D', options);</span>
+
+<span class="fc" id="L675">    String Critical = Utils.getOption('C', options);</span>
+<span class="fc bfc" id="L676" title="All 2 branches covered.">    if(Critical.length() != 0) </span>
+<span class="fc" id="L677">       m_Critical = Integer.parseInt(Critical);</span>
+    else
+<span class="fc" id="L679">       m_Critical = 50;</span>
+    
+<span class="fc" id="L681">    String Freq = Utils.getOption('F', options);</span>
+<span class="fc bfc" id="L682" title="All 2 branches covered.">    if(Freq.length() != 0) </span>
+<span class="fc" id="L683">       m_Limit = Integer.parseInt(Freq);</span>
+    else
+<span class="fc" id="L685">       m_Limit = 1;</span>
+    
+<span class="fc" id="L687">    m_Laplace = Utils.getFlag('L', options);</span>
+<span class="fc" id="L688">    String MWeight = Utils.getOption('M', options); </span>
+<span class="fc bfc" id="L689" title="All 2 branches covered.">    if(MWeight.length() != 0) {</span>
+<span class="pc bpc" id="L690" title="1 of 2 branches missed.">       if(m_Laplace)</span>
+<span class="nc" id="L691">          throw new Exception(&quot;weight for m-estimate is pointless if using laplace estimation!&quot;);</span>
+<span class="fc" id="L692">       m_MWeight = Double.parseDouble(MWeight);</span>
+    } else
+<span class="fc" id="L694">       m_MWeight = 1.0;</span>
+    
+<span class="fc" id="L696">    Utils.checkForRemainingOptions(options);</span>
+<span class="fc" id="L697">  }</span>
+    
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+        
+<span class="fc" id="L706">    Vector result  = new Vector();</span>
+
+<span class="pc bpc" id="L708" title="1 of 2 branches missed.">    if (m_Debug)</span>
+<span class="nc" id="L709">       result.add(&quot;-D&quot;);</span>
+
+<span class="fc" id="L711">    result.add(&quot;-F&quot;);</span>
+<span class="fc" id="L712">    result.add(&quot;&quot; + m_Limit);</span>
+
+<span class="pc bpc" id="L714" title="1 of 2 branches missed.">    if (m_Laplace) {</span>
+<span class="nc" id="L715">       result.add(&quot;-L&quot;);</span>
+    } else {
+<span class="fc" id="L717">       result.add(&quot;-M&quot;);</span>
+<span class="fc" id="L718">       result.add(&quot;&quot; + m_MWeight);</span>
+    }
+        
+<span class="fc" id="L721">    result.add(&quot;-C&quot;);</span>
+<span class="fc" id="L722">    result.add(&quot;&quot; + m_Critical);</span>
+
+<span class="fc" id="L724">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+ 
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String mestWeightTipText() {
+<span class="nc" id="L733">    return &quot;Set the weight for m-estimate.&quot;;</span>
+  }
+
+  /**
+   * Sets the weight for m-estimate
+   *
+   * @param w the weight
+   */
+  public void setMestWeight(double w) {
+<span class="nc bnc" id="L742" title="All 2 branches missed.">    if (getUseLaplace()) {</span>
+<span class="nc" id="L743">       System.out.println(</span>
+<span class="nc" id="L744">          &quot;Weight is only used in conjunction with m-estimate - ignored!&quot;);</span>
+    } else {
+<span class="nc bnc" id="L746" title="All 2 branches missed.">      if(w &gt; 0)</span>
+<span class="nc" id="L747">         m_MWeight = w;</span>
+      else
+<span class="nc" id="L749">         System.out.println(&quot;M-Estimate Weight must be greater than 0!&quot;);</span>
+    }
+<span class="nc" id="L751">  }</span>
+
+  /**
+   * Gets the weight used in m-estimate
+   *
+   * @return the weight for m-estimation
+   */
+  public double getMestWeight() {
+<span class="nc" id="L759">    return m_MWeight;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String useLaplaceTipText() {
+<span class="nc" id="L768">    return &quot;Use Laplace correction instead of m-estimation.&quot;;</span>
+  }
+
+  /**
+   * Gets if laplace correction is being used.
+   *
+   * @return Value of m_Laplace.
+   */
+  public boolean getUseLaplace() {
+<span class="nc" id="L777">    return m_Laplace;</span>
+  }
+
+  /**
+   * Sets if laplace correction is to be used.
+   *
+   * @param value Value to assign to m_Laplace.
+   */
+  public void setUseLaplace(boolean value) {
+<span class="nc" id="L786">    m_Laplace = value;</span>
+<span class="nc" id="L787">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String frequencyLimitTipText() {
+<span class="nc" id="L795">    return &quot;Attributes with a frequency in the train set below &quot;</span>
+           + &quot;this value aren't used as parents.&quot;;
+  }
+
+  /**
+   * Sets the frequency limit
+   *
+   * @param f the frequency limit
+   */
+  public void setFrequencyLimit(int f) {
+<span class="nc" id="L805">    m_Limit = f;</span>
+<span class="nc" id="L806">  }</span>
+
+  /**
+   * Gets the frequency limit.
+   *
+   * @return the frequency limit
+   */
+  public int getFrequencyLimit() {
+<span class="nc" id="L814">    return m_Limit;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String criticalValueTipText() {
+<span class="nc" id="L823">    return &quot;Specify critical value for specialization-generalization &quot;</span>
+           + &quot;relationship (default 50).&quot;;
+  }
+
+  /**
+   * Sets the critical value
+   *
+   * @param c the critical value
+   */
+  public void setCriticalValue(int c) {
+<span class="nc" id="L833">    m_Critical = c;</span>
+<span class="nc" id="L834">  }</span>
+
+  /**
+   * Gets the critical value.
+   *
+   * @return the critical value
+   */
+  public int getCriticalValue() {
+<span class="nc" id="L842">    return m_Critical;</span>
+  }
+
+  /**
+   * Returns a description of the classifier.
+   *
+   * @return a description of the classifier as a string.
+   */
+  public String toString() {
+ 
+<span class="fc" id="L852">    StringBuffer text = new StringBuffer();</span>
+        
+<span class="fc" id="L854">    text.append(&quot;The AODEsr Classifier&quot;);</span>
+<span class="pc bpc" id="L855" title="1 of 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="fc" id="L856">       text.append(&quot;: No model built yet.&quot;);</span>
+    } else {
+       try {
+<span class="nc bnc" id="L859" title="All 2 branches missed.">          for (int i = 0; i &lt; m_NumClasses; i++) {</span>
+             // print to string, the prior probabilities of class values
+<span class="nc" id="L861">             text.append(&quot;\nClass &quot; + m_Instances.classAttribute().value(i) +</span>
+<span class="nc" id="L862">                       &quot;: Prior probability = &quot; + Utils.</span>
+<span class="nc" id="L863">                          doubleToString(((m_ClassCounts[i] + 1)</span>
+<span class="nc" id="L864">                       /(m_SumInstances + m_NumClasses)), 4, 2)+&quot;\n\n&quot;);</span>
+          }
+                
+<span class="nc" id="L867">          text.append(&quot;Dataset: &quot; + m_Instances.relationName() + &quot;\n&quot;</span>
+<span class="nc" id="L868">                      + &quot;Instances: &quot; + m_NumInstances + &quot;\n&quot;</span>
+<span class="nc" id="L869">                      + &quot;Attributes: &quot; + m_NumAttributes + &quot;\n&quot;</span>
+<span class="nc" id="L870">		      + &quot;Frequency limit for superParents: &quot; + m_Limit + &quot;\n&quot;</span>
+<span class="nc" id="L871">                      + &quot;Critical value for the specializtion-generalization &quot;</span>
+<span class="nc" id="L872">                      + &quot;relationship: &quot; + m_Critical + &quot;\n&quot;);</span>
+<span class="nc bnc" id="L873" title="All 2 branches missed.">          if(m_Laplace) {</span>
+<span class="nc" id="L874">            text.append(&quot;Using LapLace estimation.&quot;);</span>
+          } else {
+<span class="nc" id="L876">              text.append(&quot;Using m-estimation, m = &quot; + m_MWeight); </span>
+          }
+<span class="nc" id="L878">       } catch (Exception ex) {</span>
+<span class="nc" id="L879">          text.append(ex.getMessage());</span>
+       }
+    }
+<span class="fc" id="L882">    return text.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L891">    return RevisionUtils.extract(&quot;$Revision: 5516 $&quot;);</span>
+  }
+    
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L900">    runClassifier(new AODEsr(), argv);</span>
+<span class="nc" id="L901">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

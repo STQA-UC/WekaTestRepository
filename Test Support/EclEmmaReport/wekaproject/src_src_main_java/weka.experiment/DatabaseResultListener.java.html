@@ -1,0 +1,407 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>DatabaseResultListener.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.experiment</a> &gt; <span class="el_source">DatabaseResultListener.java</span></div><h1>DatabaseResultListener.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    DatabaseResultListener.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+
+package weka.experiment;
+
+import weka.core.FastVector;
+import weka.core.RevisionUtils;
+
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Takes results from a result producer and sends them to a database.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 5125 $
+ */
+public class DatabaseResultListener 
+  extends DatabaseUtils
+  implements ResultListener {
+
+  /** for serialization */
+  static final long serialVersionUID = 7388014746954652818L;  
+  
+  /** The ResultProducer to listen to */
+  protected ResultProducer m_ResultProducer;
+  
+  /** The name of the current results table */
+  protected String m_ResultsTableName;
+
+  /** True if debugging output should be printed */
+<span class="nc" id="L55">  protected boolean m_Debug = true;</span>
+
+  /** Holds the name of the key field to cache upon, or null if no caching */
+<span class="nc" id="L58">  protected String m_CacheKeyName = &quot;&quot;;</span>
+
+  /** Stores the index of the key column holding the cache key data */
+  protected int m_CacheKeyIndex;
+
+  /** Stores the key for which the cache is valid */
+  protected Object [] m_CacheKey;
+
+  /** Stores the cached values */
+<span class="nc" id="L67">  protected FastVector m_Cache = new FastVector();</span>
+
+
+  /**
+   * Returns a string describing this result listener
+   * @return a description of the result listener suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L76">    return &quot;Takes results from a result producer and sends them to a &quot;</span>
+      +&quot;database.&quot;;
+  }
+
+  /**
+   * Sets up the database drivers
+   *
+   * @throws Exception if an error occurs
+   */
+  public DatabaseResultListener() throws Exception {
+
+<span class="nc" id="L87">    super();</span>
+<span class="nc" id="L88">  }</span>
+
+  /**
+   * Prepare for the results to be received.
+   *
+   * @param rp the ResultProducer that will generate the results
+   * @throws Exception if an error occurs during preprocessing.
+   */
+  public void preProcess(ResultProducer rp) throws Exception {
+
+<span class="nc" id="L98">    m_ResultProducer = rp;</span>
+    // Connect to the database and find out what table corresponds to this
+    //   ResultProducer
+<span class="nc" id="L101">    updateResultsTableName(m_ResultProducer);</span>
+<span class="nc" id="L102">  }</span>
+  
+  /**
+   * Perform any postprocessing. When this method is called, it indicates
+   * that no more results will be sent that need to be grouped together
+   * in any way.
+   *
+   * @param rp the ResultProducer that generated the results
+   * @throws Exception if an error occurs
+   */
+  public void postProcess(ResultProducer rp) throws Exception {
+
+<span class="nc bnc" id="L114" title="All 2 branches missed.">    if (m_ResultProducer != rp) {</span>
+<span class="nc" id="L115">      throw new Error(&quot;Unrecognized ResultProducer calling postProcess!!&quot;);</span>
+    }
+<span class="nc" id="L117">    disconnectFromDatabase();</span>
+<span class="nc" id="L118">  }</span>
+  
+  /**
+   * Determines if there are any constraints (imposed by the
+   * destination) on any additional measures produced by
+   * resultProducers. Null should be returned if there are NO
+   * constraints, otherwise a list of column names should be
+   * returned as an array of Strings. In the case of
+   * DatabaseResultListener, the structure of an existing database
+   * will impose constraints.
+   * @param rp the ResultProducer to which the constraints will apply
+   * @return an array of column names to which resutltProducer's
+   * results will be restricted.
+   * @throws Exception if an error occurs.
+   */
+  public String [] determineColumnConstraints(ResultProducer rp) 
+    throws Exception {
+<span class="nc" id="L135">    FastVector cNames = new FastVector();</span>
+<span class="nc" id="L136">    updateResultsTableName(rp);</span>
+<span class="nc" id="L137">    DatabaseMetaData dbmd = m_Connection.getMetaData();</span>
+    ResultSet rs;
+    // gets a result set where each row is info on a column
+<span class="nc bnc" id="L140" title="All 2 branches missed.">    if (m_checkForUpperCaseNames) {</span>
+<span class="nc" id="L141">      rs = dbmd.getColumns(null, null, m_ResultsTableName.toUpperCase(), null);</span>
+    } else {
+<span class="nc" id="L143">      rs = dbmd.getColumns(null, null, m_ResultsTableName, null);</span>
+    }
+<span class="nc" id="L145">    boolean tableExists=false;</span>
+<span class="nc" id="L146">    int numColumns = 0;</span>
+   
+<span class="nc bnc" id="L148" title="All 2 branches missed.">    while (rs.next()) {</span>
+<span class="nc" id="L149">      tableExists = true;</span>
+      // column four contains the column name
+<span class="nc" id="L151">      String name = rs.getString(4);</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">      if (name.toLowerCase().startsWith(&quot;measure&quot;)) {</span>
+<span class="nc" id="L153">	numColumns++;</span>
+<span class="nc" id="L154">	cNames.addElement(name);</span>
+      }
+    }
+
+    // no constraints on any additional measures if the table does not exist
+<span class="nc bnc" id="L159" title="All 2 branches missed.">    if (!tableExists) {</span>
+<span class="nc" id="L160">      return null;</span>
+    }
+
+    // a zero element array indicates maximum constraint
+<span class="nc" id="L164">    String [] columnNames = new String [numColumns];</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">    for (int i=0;i&lt;numColumns;i++) {</span>
+<span class="nc" id="L166">      columnNames[i] = (String)(cNames.elementAt(i));</span>
+    }
+
+<span class="nc" id="L169">    return columnNames;</span>
+  }
+
+  /**
+   * Submit the result to the appropriate table of the database
+   *
+   * @param rp the ResultProducer that generated the result
+   * @param key The key for the results.
+   * @param result The actual results.
+   * @throws Exception if the result couldn't be sent to the database
+   */
+  public void acceptResult(ResultProducer rp, Object[] key, Object[] result) 
+    throws Exception {
+
+<span class="nc bnc" id="L183" title="All 2 branches missed.">    if (m_ResultProducer != rp) {</span>
+<span class="nc" id="L184">      throw new Error(&quot;Unrecognized ResultProducer calling acceptResult!!&quot;);</span>
+    }
+
+    // null result could occur from a chain of doRunKeys calls
+<span class="nc bnc" id="L188" title="All 2 branches missed.">    if (result != null) {</span>
+<span class="nc" id="L189">      putResultInTable(m_ResultsTableName, rp, key, result);      </span>
+    }
+<span class="nc" id="L191">  }</span>
+
+  /**
+   * Always says a result is required. If this is the first call,
+   * prints out the header for the Database output.
+   *
+   * @param rp the ResultProducer wanting to generate the result
+   * @param key The key for which a result may be needed.
+   * @return true if the result should be calculated.
+   * @throws Exception if the database couldn't be queried
+   */
+  public boolean isResultRequired(ResultProducer rp, Object[] key)
+    throws Exception {
+    
+<span class="nc bnc" id="L205" title="All 2 branches missed.">    if (m_ResultProducer != rp) {</span>
+<span class="nc" id="L206">      throw new Error(&quot;Unrecognized ResultProducer calling isResultRequired!&quot;);</span>
+    }
+<span class="nc bnc" id="L208" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L209">      System.err.print(&quot;Is result required...&quot;);</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">      for (int i = 0; i &lt; key.length; i++) {</span>
+<span class="nc" id="L211">	System.err.print(&quot; &quot; + key[i]);</span>
+      }
+<span class="nc" id="L213">      System.err.flush();</span>
+    }
+<span class="nc" id="L215">    boolean retval = false;</span>
+
+    // Check the key cache first
+<span class="nc bnc" id="L218" title="All 2 branches missed.">    if (!m_CacheKeyName.equals(&quot;&quot;)) {</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">      if (!isCacheValid(key)) {</span>
+<span class="nc" id="L220">	loadCache(rp, key);</span>
+      }
+<span class="nc bnc" id="L222" title="All 2 branches missed.">      retval = !isKeyInCache(rp, key);</span>
+    } else {
+      // Ask whether the results are needed
+<span class="nc bnc" id="L225" title="All 2 branches missed.">      retval = !isKeyInTable(m_ResultsTableName,</span>
+<span class="nc" id="L226">					     rp, key);</span>
+    }
+    
+<span class="nc bnc" id="L229" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">      System.err.println(&quot; ...&quot; + (retval ? &quot;required&quot; : &quot;not required&quot;)</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">			 + (m_CacheKeyName.equals(&quot;&quot;) ? &quot;&quot; : &quot; (cache)&quot;));</span>
+<span class="nc" id="L232">      System.err.flush();</span>
+    }
+<span class="nc" id="L234">    return retval;</span>
+  }
+
+  
+  /**
+   * Determines the table name that results will be inserted into. If
+   * required: a connection will be opened, an experiment index table created,
+   * and the results table created.
+   *
+   * @param rp the ResultProducer
+   * @throws Exception if an error occurs
+   */
+  protected void updateResultsTableName(ResultProducer rp) throws Exception {
+
+<span class="nc bnc" id="L248" title="All 2 branches missed.">    if (!isConnected()) {</span>
+<span class="nc" id="L249">      connectToDatabase();</span>
+    }
+<span class="nc bnc" id="L251" title="All 2 branches missed.">    if (!experimentIndexExists()) {</span>
+<span class="nc" id="L252">      createExperimentIndex();</span>
+    }
+
+<span class="nc" id="L255">    String tableName = getResultsTableName(rp);</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">    if (tableName == null) {</span>
+<span class="nc" id="L257">      tableName = createExperimentIndexEntry(rp);</span>
+    }
+<span class="nc bnc" id="L259" title="All 2 branches missed.">    if (!tableExists(tableName)) {</span>
+<span class="nc" id="L260">      createResultsTable(rp, tableName);</span>
+    }
+<span class="nc" id="L262">    m_ResultsTableName = tableName;</span>
+<span class="nc" id="L263">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String cacheKeyNameTipText() {
+<span class="nc" id="L271">    return &quot;Set the name of the key field by which to cache.&quot;;</span>
+  }
+  
+  /**
+   * Get the value of CacheKeyName.
+   *
+   * @return Value of CacheKeyName.
+   */
+  public String getCacheKeyName() {
+    
+<span class="nc" id="L281">    return m_CacheKeyName;</span>
+  }
+
+  
+  /**
+   * Set the value of CacheKeyName.
+   *
+   * @param newCacheKeyName Value to assign to CacheKeyName.
+   */
+  public void setCacheKeyName(String newCacheKeyName) {
+    
+<span class="nc" id="L292">    m_CacheKeyName = newCacheKeyName;</span>
+<span class="nc" id="L293">  }</span>
+
+  
+
+  /**
+   * Checks whether the current cache contents are valid for the supplied
+   * key.
+   *
+   * @param key the results key
+   * @return true if the cache contents are valid for the key given
+   */
+  protected boolean isCacheValid(Object []key) {
+
+<span class="nc bnc" id="L306" title="All 2 branches missed.">    if (m_CacheKey == null) {</span>
+<span class="nc" id="L307">      return false;</span>
+    }
+<span class="nc bnc" id="L309" title="All 2 branches missed.">    if (m_CacheKey.length != key.length) {</span>
+<span class="nc" id="L310">      return false;</span>
+    }
+<span class="nc bnc" id="L312" title="All 2 branches missed.">    for (int i = 0; i &lt; key.length; i++) {</span>
+<span class="nc bnc" id="L313" title="All 4 branches missed.">      if ((i != m_CacheKeyIndex) &amp;&amp; (!m_CacheKey[i].equals(key[i]))) {</span>
+<span class="nc" id="L314">	return false;</span>
+      }
+    }
+<span class="nc" id="L317">    return true;</span>
+  }
+
+  /**
+   * Returns true if the supplied key is in the key cache (and thus
+   * we do not need to execute a database query).
+   *
+   * @param rp the ResultProducer the key belongs to.
+   * @param key the result key
+   * @return true if the key is in the key cache
+   * @throws Exception if an error occurs
+   */
+  protected boolean isKeyInCache(ResultProducer rp, Object[] key)
+    throws Exception {
+
+<span class="nc bnc" id="L332" title="All 2 branches missed.">    for (int i = 0; i &lt; m_Cache.size(); i++) {</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">      if (m_Cache.elementAt(i).equals(key[m_CacheKeyIndex])) {</span>
+<span class="nc" id="L334">	return true;</span>
+      }
+    }
+<span class="nc" id="L337">    return false;</span>
+  }
+  
+  /**
+   * Executes a database query to fill the key cache
+   *
+   * @param rp the ResultProducer the key belongs to
+   * @param key the key
+   * @throws Exception if an error occurs
+   */
+  protected void loadCache(ResultProducer rp, Object[] key)
+    throws Exception {
+
+<span class="nc" id="L350">    System.err.print(&quot; (updating cache)&quot;); System.err.flush();</span>
+<span class="nc" id="L351">    m_Cache.removeAllElements();</span>
+<span class="nc" id="L352">    m_CacheKey = null;</span>
+<span class="nc" id="L353">    String query = &quot;SELECT Key_&quot; + m_CacheKeyName</span>
+<span class="nc" id="L354">      + &quot; FROM &quot; + m_ResultsTableName;</span>
+<span class="nc" id="L355">    String [] keyNames = rp.getKeyNames();</span>
+<span class="nc bnc" id="L356" title="All 2 branches missed.">    if (keyNames.length != key.length) {</span>
+<span class="nc" id="L357">      throw new Exception(&quot;Key names and key values of different lengths&quot;);</span>
+    }
+<span class="nc" id="L359">    m_CacheKeyIndex = -1;</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">    for (int i = 0; i &lt; keyNames.length; i++) {</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">      if (keyNames[i].equalsIgnoreCase(m_CacheKeyName)) {</span>
+<span class="nc" id="L362">	m_CacheKeyIndex = i;</span>
+<span class="nc" id="L363">	break;</span>
+      }
+    }
+<span class="nc bnc" id="L366" title="All 2 branches missed.">    if (m_CacheKeyIndex == -1) {</span>
+<span class="nc" id="L367">      throw new Exception(&quot;No key field named &quot; + m_CacheKeyName</span>
+<span class="nc" id="L368">			  + &quot; (as specified for caching)&quot;);</span>
+    }
+<span class="nc" id="L370">    boolean first = true;</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">    for (int i = 0; i &lt; key.length; i++) {</span>
+<span class="nc bnc" id="L372" title="All 4 branches missed.">      if ((key[i] != null) &amp;&amp; (i != m_CacheKeyIndex)) {</span>
+<span class="nc bnc" id="L373" title="All 2 branches missed.">	if (first) {</span>
+<span class="nc" id="L374">	  query += &quot; WHERE &quot;;</span>
+<span class="nc" id="L375">	  first = false;</span>
+	} else {
+<span class="nc" id="L377">	  query += &quot; AND &quot;;</span>
+	}
+<span class="nc" id="L379">	query += &quot;Key_&quot; + keyNames[i] + '=';</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">	if (key[i] instanceof String) {</span>
+<span class="nc" id="L381">	  query += &quot;'&quot; + DatabaseUtils.processKeyString(key[i].toString()) + &quot;'&quot;;</span>
+	} else {
+<span class="nc" id="L383">	  query += key[i].toString();</span>
+	}
+      }
+    }
+<span class="nc" id="L387">    ResultSet rs = select(query);</span>
+<span class="nc bnc" id="L388" title="All 2 branches missed.">    while (rs.next()) {</span>
+<span class="nc" id="L389">      String keyVal = rs.getString(1);</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">      if (!rs.wasNull()) {</span>
+<span class="nc" id="L391">	m_Cache.addElement(keyVal);</span>
+      }
+    }
+<span class="nc" id="L394">    close(rs);</span>
+<span class="nc" id="L395">    m_CacheKey = (Object [])key.clone();</span>
+<span class="nc" id="L396">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L404">    return RevisionUtils.extract(&quot;$Revision: 5125 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

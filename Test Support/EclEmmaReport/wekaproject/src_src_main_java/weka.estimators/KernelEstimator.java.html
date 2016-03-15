@@ -1,0 +1,366 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>KernelEstimator.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.estimators</a> &gt; <span class="el_source">KernelEstimator.java</span></div><h1>KernelEstimator.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    KernelEstimator.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.estimators;
+
+import weka.core.Capabilities.Capability;
+import weka.core.Capabilities;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.Statistics;
+
+/** 
+ * Simple kernel density estimator. Uses one gaussian kernel per observed
+ * data value.
+ *
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 5540 $
+ */
+<span class="fc" id="L38">public class KernelEstimator extends Estimator implements IncrementalEstimator {</span>
+
+  /** for serialization */
+  private static final long serialVersionUID = 3646923563367683925L;
+
+  /** Vector containing all of the values seen */
+  private double [] m_Values;
+
+  /** Vector containing the associated weights */
+  private double [] m_Weights;
+
+  /** Number of values stored in m_Weights and m_Values so far */
+  private int m_NumValues;
+
+  /** The sum of the weights so far */
+  private double m_SumOfWeights;
+
+  /** The standard deviation */
+  private double m_StandardDev;
+
+  /** The precision of data values */
+  private double m_Precision;
+
+  /** Whether we can optimise the kernel summation */
+  private boolean m_AllWeightsOne;
+
+  /** Maximum percentage error permitted in probability calculations */
+<span class="fc" id="L65">  private static double MAX_ERROR = 0.01;</span>
+
+
+  /**
+   * Execute a binary search to locate the nearest data value
+   *
+   * @param the data value to locate
+   * @return the index of the nearest data value
+   */
+  private int findNearestValue(double key) {
+
+<span class="fc" id="L76">    int low = 0; </span>
+<span class="fc" id="L77">    int high = m_NumValues;</span>
+<span class="fc" id="L78">    int middle = 0;</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">    while (low &lt; high) {</span>
+<span class="fc" id="L80">      middle = (low + high) / 2;</span>
+<span class="fc" id="L81">      double current = m_Values[middle];</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">      if (current == key) {</span>
+<span class="fc" id="L83">	return middle;</span>
+      }
+<span class="fc bfc" id="L85" title="All 2 branches covered.">      if (current &gt; key) {</span>
+<span class="fc" id="L86">	high = middle;</span>
+<span class="pc bpc" id="L87" title="1 of 2 branches missed.">      } else if (current &lt; key) {</span>
+<span class="fc" id="L88">	low = middle + 1;</span>
+      }
+    }
+<span class="fc" id="L91">    return low;</span>
+  }
+
+  /**
+   * Round a data value using the defined precision for this estimator
+   *
+   * @param data the value to round
+   * @return the rounded data value
+   */
+  private double round(double data) {
+
+<span class="fc" id="L102">    return Math.rint(data / m_Precision) * m_Precision;</span>
+  }
+  
+  // ===============
+  // Public methods.
+  // ===============
+  
+  /**
+   * Constructor that takes a precision argument.
+   *
+   * @param precision the  precision to which numeric values are given. For
+   * example, if the precision is stated to be 0.1, the values in the
+   * interval (0.25,0.35] are all treated as 0.3. 
+   */
+<span class="fc" id="L116">  public KernelEstimator(double precision) {</span>
+
+<span class="fc" id="L118">    m_Values = new double [50];</span>
+<span class="fc" id="L119">    m_Weights = new double [50];</span>
+<span class="fc" id="L120">    m_NumValues = 0;</span>
+<span class="fc" id="L121">    m_SumOfWeights = 0;</span>
+<span class="fc" id="L122">    m_AllWeightsOne = true;</span>
+<span class="fc" id="L123">    m_Precision = precision;</span>
+    // precision cannot be zero
+<span class="pc bpc" id="L125" title="1 of 2 branches missed.">    if (m_Precision &lt; Utils.SMALL) m_Precision = Utils.SMALL;</span>
+    //    m_StandardDev = 1e10 * m_Precision; // Set the standard deviation initially very wide
+<span class="fc" id="L127">    m_StandardDev = m_Precision / (2 * 3);</span>
+<span class="fc" id="L128">  }</span>
+
+  /**
+   * Add a new data value to the current estimator.
+   *
+   * @param data the new data value 
+   * @param weight the weight assigned to the data value 
+   */
+  public void addValue(double data, double weight) {
+    
+<span class="fc bfc" id="L138" title="All 2 branches covered.">    if (weight == 0) {</span>
+<span class="fc" id="L139">      return;</span>
+    }
+<span class="fc" id="L141">    data = round(data);</span>
+<span class="fc" id="L142">    int insertIndex = findNearestValue(data);</span>
+<span class="fc bfc" id="L143" title="All 4 branches covered.">    if ((m_NumValues &lt;= insertIndex) || (m_Values[insertIndex] != data)) {</span>
+<span class="fc bfc" id="L144" title="All 2 branches covered.">      if (m_NumValues &lt; m_Values.length) {</span>
+<span class="fc" id="L145">        int left = m_NumValues - insertIndex; </span>
+<span class="fc" id="L146">        System.arraycopy(m_Values, insertIndex, </span>
+<span class="fc" id="L147">            m_Values, insertIndex + 1, left);</span>
+<span class="fc" id="L148">        System.arraycopy(m_Weights, insertIndex, </span>
+<span class="fc" id="L149">            m_Weights, insertIndex + 1, left);</span>
+        
+<span class="fc" id="L151">        m_Values[insertIndex] = data;</span>
+<span class="fc" id="L152">        m_Weights[insertIndex] = weight;</span>
+<span class="fc" id="L153">        m_NumValues++;</span>
+      } else {
+<span class="fc" id="L155">        double [] newValues = new double [m_Values.length * 2];</span>
+<span class="fc" id="L156">        double [] newWeights = new double [m_Values.length * 2];</span>
+<span class="fc" id="L157">        int left = m_NumValues - insertIndex; </span>
+<span class="fc" id="L158">        System.arraycopy(m_Values, 0, newValues, 0, insertIndex);</span>
+<span class="fc" id="L159">        System.arraycopy(m_Weights, 0, newWeights, 0, insertIndex);</span>
+<span class="fc" id="L160">        newValues[insertIndex] = data;</span>
+<span class="fc" id="L161">        newWeights[insertIndex] = weight;</span>
+<span class="fc" id="L162">        System.arraycopy(m_Values, insertIndex, </span>
+<span class="fc" id="L163">            newValues, insertIndex + 1, left);</span>
+<span class="fc" id="L164">        System.arraycopy(m_Weights, insertIndex, </span>
+<span class="fc" id="L165">            newWeights, insertIndex + 1, left);</span>
+<span class="fc" id="L166">        m_NumValues++;</span>
+<span class="fc" id="L167">        m_Values = newValues;</span>
+<span class="fc" id="L168">        m_Weights = newWeights;</span>
+      }
+<span class="fc bfc" id="L170" title="All 2 branches covered.">      if (weight != 1) {</span>
+<span class="fc" id="L171">        m_AllWeightsOne = false;</span>
+      }
+    } else {
+<span class="fc" id="L174">      m_Weights[insertIndex] += weight;</span>
+<span class="fc" id="L175">      m_AllWeightsOne = false;      </span>
+    }
+<span class="fc" id="L177">    m_SumOfWeights += weight;</span>
+<span class="fc" id="L178">    double range = m_Values[m_NumValues - 1] - m_Values[0];</span>
+<span class="fc bfc" id="L179" title="All 2 branches covered.">    if (range &gt; 0) {</span>
+<span class="fc" id="L180">      m_StandardDev = Math.max(range / Math.sqrt(m_SumOfWeights), </span>
+          // allow at most 3 sds within one interval
+<span class="fc" id="L182">          m_Precision / (2 * 3));</span>
+    }
+<span class="fc" id="L184">  }</span>
+  
+  /**
+   * Get a probability estimate for a value.
+   *
+   * @param data the value to estimate the probability of
+   * @return the estimated probability of the supplied value
+   */
+  public double getProbability(double data) {
+
+<span class="fc" id="L194">    double delta = 0, sum = 0, currentProb = 0;</span>
+<span class="fc" id="L195">    double zLower = 0, zUpper = 0;</span>
+<span class="fc bfc" id="L196" title="All 2 branches covered.">    if (m_NumValues == 0) {</span>
+<span class="fc" id="L197">      zLower = (data - (m_Precision / 2)) / m_StandardDev;</span>
+<span class="fc" id="L198">      zUpper = (data + (m_Precision / 2)) / m_StandardDev;</span>
+<span class="fc" id="L199">      return (Statistics.normalProbability(zUpper)</span>
+<span class="fc" id="L200">	      - Statistics.normalProbability(zLower));</span>
+    }
+<span class="fc" id="L202">    double weightSum = 0;</span>
+<span class="fc" id="L203">    int start = findNearestValue(data);</span>
+<span class="fc bfc" id="L204" title="All 2 branches covered.">    for (int i = start; i &lt; m_NumValues; i++) {</span>
+<span class="fc" id="L205">      delta = m_Values[i] - data;</span>
+<span class="fc" id="L206">      zLower = (delta - (m_Precision / 2)) / m_StandardDev;</span>
+<span class="fc" id="L207">      zUpper = (delta + (m_Precision / 2)) / m_StandardDev;</span>
+<span class="fc" id="L208">      currentProb = (Statistics.normalProbability(zUpper)</span>
+<span class="fc" id="L209">		     - Statistics.normalProbability(zLower));</span>
+<span class="fc" id="L210">      sum += currentProb * m_Weights[i];</span>
+      /*
+      System.out.print(&quot;zL&quot; + (i + 1) + &quot;: &quot; + zLower + &quot; &quot;);
+      System.out.print(&quot;zU&quot; + (i + 1) + &quot;: &quot; + zUpper + &quot; &quot;);
+      System.out.print(&quot;P&quot; + (i + 1) + &quot;: &quot; + currentProb + &quot; &quot;);
+      System.out.println(&quot;total: &quot; + (currentProb * m_Weights[i]) + &quot; &quot;);
+      */
+<span class="fc" id="L217">      weightSum += m_Weights[i];</span>
+<span class="fc bfc" id="L218" title="All 2 branches covered.">      if (currentProb * (m_SumOfWeights - weightSum) &lt; sum * MAX_ERROR) {</span>
+<span class="fc" id="L219">	break;</span>
+      }
+    }
+<span class="fc bfc" id="L222" title="All 2 branches covered.">    for (int i = start - 1; i &gt;= 0; i--) {</span>
+<span class="fc" id="L223">      delta = m_Values[i] - data;</span>
+<span class="fc" id="L224">      zLower = (delta - (m_Precision / 2)) / m_StandardDev;</span>
+<span class="fc" id="L225">      zUpper = (delta + (m_Precision / 2)) / m_StandardDev;</span>
+<span class="fc" id="L226">      currentProb = (Statistics.normalProbability(zUpper)</span>
+<span class="fc" id="L227">		     - Statistics.normalProbability(zLower));</span>
+<span class="fc" id="L228">      sum += currentProb * m_Weights[i];</span>
+<span class="fc" id="L229">      weightSum += m_Weights[i];</span>
+<span class="fc bfc" id="L230" title="All 2 branches covered.">      if (currentProb * (m_SumOfWeights - weightSum) &lt; sum * MAX_ERROR) {</span>
+<span class="fc" id="L231">	break;</span>
+      }
+    }
+<span class="fc" id="L234">    return sum / m_SumOfWeights;</span>
+  }
+
+  /** Display a representation of this estimator */
+  public String toString() {
+
+<span class="nc" id="L240">    String result = m_NumValues + &quot; Normal Kernels. \nStandardDev = &quot; </span>
+<span class="nc" id="L241">      + Utils.doubleToString(m_StandardDev,6,4)</span>
+<span class="nc" id="L242">      + &quot; Precision = &quot; + m_Precision;</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">    if (m_NumValues == 0) {</span>
+<span class="nc" id="L244">      result += &quot;  \nMean = 0&quot;;</span>
+    } else {
+<span class="nc" id="L246">      result += &quot;  \nMeans =&quot;;</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">      for (int i = 0; i &lt; m_NumValues; i++) {</span>
+<span class="nc" id="L248">	result += &quot; &quot; + m_Values[i];</span>
+      }
+<span class="nc bnc" id="L250" title="All 2 branches missed.">      if (!m_AllWeightsOne) {</span>
+<span class="nc" id="L251">	result += &quot;\nWeights = &quot;;</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">	for (int i = 0; i &lt; m_NumValues; i++) {</span>
+<span class="nc" id="L253">	  result += &quot; &quot; + m_Weights[i];</span>
+	}
+      }
+    }
+<span class="nc" id="L257">    return result + &quot;\n&quot;;</span>
+  }
+
+  /**
+   * Return the number of kernels in this kernel estimator
+   *
+   * @return the number of kernels
+   */
+  public int getNumKernels() {
+<span class="nc" id="L266">    return m_NumValues;</span>
+  }
+
+  /**
+   * Return the means of the kernels.
+   *
+   * @return the means of the kernels
+   */
+  public double[] getMeans() {
+<span class="nc" id="L275">    return m_Values;</span>
+  }
+
+  /**
+   * Return the weights of the kernels.
+   *
+   * @return the weights of the kernels
+   */
+  public double[] getWeights() {
+<span class="nc" id="L284">    return m_Weights;</span>
+  }
+
+  /**
+   * Return the precision of this kernel estimator.
+   *
+   * @return the precision
+   */
+  public double getPrecision() {
+<span class="nc" id="L293">    return m_Precision;</span>
+  }
+
+  /**
+   * Return the standard deviation of this kernel estimator.
+   *
+   * @return the standard deviation
+   */
+  public double getStdDev() {
+<span class="nc" id="L302">    return m_StandardDev;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L311">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L312">    result.disableAll();</span>
+    // class
+<span class="nc bnc" id="L314" title="All 2 branches missed.">    if (!m_noClass) {</span>
+<span class="nc" id="L315">      result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="nc" id="L316">      result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    } else {
+<span class="nc" id="L318">      result.enable(Capability.NO_CLASS);</span>
+    }
+    
+    // attributes
+<span class="nc" id="L322">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L323">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L332">    return RevisionUtils.extract(&quot;$Revision: 5540 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain a sequence of numeric values
+   */
+  public static void main(String [] argv) {
+
+    try {
+<span class="nc bnc" id="L343" title="All 2 branches missed.">      if (argv.length &lt; 2) {</span>
+<span class="nc" id="L344">	System.out.println(&quot;Please specify a set of instances.&quot;);</span>
+<span class="nc" id="L345">	return;</span>
+      }
+<span class="nc" id="L347">      KernelEstimator newEst = new KernelEstimator(0.01);</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">      for (int i = 0; i &lt; argv.length - 3; i += 2) {</span>
+<span class="nc" id="L349">	newEst.addValue(Double.valueOf(argv[i]).doubleValue(), </span>
+<span class="nc" id="L350">			Double.valueOf(argv[i + 1]).doubleValue());</span>
+      }
+<span class="nc" id="L352">      System.out.println(newEst);</span>
+
+<span class="nc" id="L354">      double start = Double.valueOf(argv[argv.length - 2]).doubleValue();</span>
+<span class="nc" id="L355">      double finish = Double.valueOf(argv[argv.length - 1]).doubleValue();</span>
+<span class="nc bnc" id="L356" title="All 2 branches missed.">      for (double current = start; current &lt; finish; </span>
+<span class="nc" id="L357">	  current += (finish - start) / 50) {</span>
+<span class="nc" id="L358">	System.out.println(&quot;Data: &quot; + current + &quot; &quot; </span>
+<span class="nc" id="L359">			   + newEst.getProbability(current));</span>
+      }
+<span class="nc" id="L361">    } catch (Exception e) {</span>
+<span class="nc" id="L362">      System.out.println(e.getMessage());</span>
+    }
+<span class="nc" id="L364">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

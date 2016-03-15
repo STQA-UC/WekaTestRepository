@@ -1,0 +1,719 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>KStar.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.lazy</a> &gt; <span class="el_source">KStar.java</span></div><h1>KStar.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    KStar.java
+ *    Copyright (C) 1995-97 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.lazy;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.UpdateableClassifier;
+import weka.classifiers.lazy.kstar.KStarCache;
+import weka.classifiers.lazy.kstar.KStarConstants;
+import weka.classifiers.lazy.kstar.KStarNominalAttribute;
+import weka.classifiers.lazy.kstar.KStarNumericAttribute;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * K* is an instance-based classifier, that is the class of a test instance is based upon the class of those training instances similar to it, as determined by some similarity function.  It differs from other instance-based learners in that it uses an entropy-based distance function.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information on K*, see&lt;br/&gt;
+ * &lt;br/&gt;
+ * John G. Cleary, Leonard E. Trigg: K*: An Instance-based Learner Using an Entropic Distance Measure. In: 12th International Conference on Machine Learning, 108-114, 1995.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Cleary1995,
+ *    author = {John G. Cleary and Leonard E. Trigg},
+ *    booktitle = {12th International Conference on Machine Learning},
+ *    pages = {108-114},
+ *    title = {K*: An Instance-based Learner Using an Entropic Distance Measure},
+ *    year = {1995}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;num&amp;gt;
+ *  Manual blend setting (default 20%)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -E
+ *  Enable entropic auto-blend setting (symbolic class only)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;char&amp;gt;
+ *  Specify the missing value treatment mode (default a)
+ *  Valid options are: a(verage), d(elete), m(axdiff), n(ormal)
+ * &lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Len Trigg (len@reeltwo.com)
+ * @author Abdelaziz Mahoui (am14@cs.waikato.ac.nz) - Java port
+ * @version $Revision: 5525 $
+ */
+<span class="fc" id="L96">public class KStar </span>
+  extends Classifier
+  implements KStarConstants, UpdateableClassifier, TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 332458330800479083L;
+  
+  /** The training instances used for classification. */
+  protected Instances m_Train; 
+
+  /** The number of instances in the dataset */
+  protected int m_NumInstances;
+
+  /** The number of class values */
+  protected int m_NumClasses;
+
+  /** The number of attributes */
+  protected int m_NumAttributes;
+
+  /** The class attribute type */
+  protected int m_ClassType;
+
+  /** Table of random class value colomns */
+  protected int [][] m_RandClassCols;
+
+  /** Flag turning on and off the computation of random class colomns */
+<span class="fc" id="L122">  protected int m_ComputeRandomCols = ON;</span>
+
+  /** Flag turning on and off the initialisation of config variables */
+<span class="fc" id="L125">  protected int m_InitFlag = ON;</span>
+
+  /**
+   * A custom data structure for caching distinct attribute values
+   * and their scale factor or stop parameter.
+   */
+  protected KStarCache [] m_Cache;
+
+  /** missing value treatment */
+<span class="fc" id="L134">  protected int m_MissingMode = M_AVERAGE;</span>
+
+  /** 0 = use specified blend, 1 = entropic blend setting */
+<span class="fc" id="L137">  protected int m_BlendMethod = B_SPHERE;</span>
+
+  /** default sphere of influence blend setting */
+<span class="fc" id="L140">  protected int m_GlobalBlend = 20;</span>
+
+  /** Define possible missing value handling methods */
+<span class="fc" id="L143">  public static final Tag [] TAGS_MISSING = {</span>
+<span class="fc" id="L144">    new Tag(M_DELETE, &quot;Ignore the instances with missing values&quot;),</span>
+<span class="fc" id="L145">    new Tag(M_MAXDIFF, &quot;Treat missing values as maximally different&quot;),</span>
+<span class="fc" id="L146">    new Tag(M_NORMAL, &quot;Normalize over the attributes&quot;),</span>
+<span class="fc" id="L147">    new Tag(M_AVERAGE, &quot;Average column entropy curves&quot;)</span>
+      };
+    
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L157">    return &quot;K* is an instance-based classifier, that is the class of a test &quot;</span>
+      + &quot;instance is based upon the class of those training instances &quot;
+      + &quot;similar to it, as determined by some similarity function.  It differs &quot;
+      + &quot;from other instance-based learners in that it uses an entropy-based &quot;
+      + &quot;distance function.\n\n&quot;
+      + &quot;For more information on K*, see\n\n&quot;
+<span class="nc" id="L163">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L176">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L177">    result.setValue(Field.AUTHOR, &quot;John G. Cleary and Leonard E. Trigg&quot;);</span>
+<span class="nc" id="L178">    result.setValue(Field.TITLE, &quot;K*: An Instance-based Learner Using an Entropic Distance Measure&quot;);</span>
+<span class="nc" id="L179">    result.setValue(Field.BOOKTITLE, &quot;12th International Conference on Machine Learning&quot;);</span>
+<span class="nc" id="L180">    result.setValue(Field.YEAR, &quot;1995&quot;);</span>
+<span class="nc" id="L181">    result.setValue(Field.PAGES, &quot;108-114&quot;);</span>
+    
+<span class="nc" id="L183">    return result;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L192">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L193">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L196">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L197">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L198">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L199">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L202">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L203">    result.enable(Capability.NUMERIC_CLASS);</span>
+<span class="fc" id="L204">    result.enable(Capability.DATE_CLASS);</span>
+<span class="fc" id="L205">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+
+    // instances
+<span class="fc" id="L208">    result.setMinimumNumberInstances(0);</span>
+    
+<span class="fc" id="L210">    return result;</span>
+  }
+
+  /**
+   * Generates the classifier.
+   *
+   * @param instances set of instances serving as training data 
+   * @throws Exception if the classifier has not been generated successfully
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+<span class="fc" id="L220">    String debug = &quot;(KStar.buildClassifier) &quot;;</span>
+
+    // can classifier handle the data?
+<span class="fc" id="L223">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L226">    instances = new Instances(instances);</span>
+<span class="fc" id="L227">    instances.deleteWithMissingClass();</span>
+    
+<span class="fc" id="L229">    m_Train = new Instances(instances, 0, instances.numInstances());</span>
+
+    // initializes class attributes ** java-speaking! :-) **
+<span class="fc" id="L232">    init_m_Attributes();</span>
+<span class="fc" id="L233">  }</span>
+  
+  /**
+   * Adds the supplied instance to the training set
+   *
+   * @param instance the instance to add
+   * @throws Exception if instance could not be incorporated successfully
+   */
+  public void updateClassifier(Instance instance) throws Exception {
+<span class="fc" id="L242">    String debug = &quot;(KStar.updateClassifier) &quot;;</span>
+
+<span class="pc bpc" id="L244" title="1 of 2 branches missed.">    if (m_Train.equalHeaders(instance.dataset()) == false)</span>
+<span class="nc" id="L245">      throw new Exception(&quot;Incompatible instance types&quot;);</span>
+<span class="pc bpc" id="L246" title="1 of 2 branches missed.">    if ( instance.classIsMissing() )</span>
+<span class="nc" id="L247">      return;</span>
+<span class="fc" id="L248">    m_Train.add(instance);</span>
+    // update relevant attributes ...
+<span class="fc" id="L250">    update_m_Attributes();</span>
+<span class="fc" id="L251">  }</span>
+
+  /**
+   * Calculates the class membership probabilities for the given test instance.
+   *
+   * @param instance the instance to be classified
+   * @return predicted class probability distribution
+   * @throws Exception if an error occurred during the prediction
+   */
+  public double [] distributionForInstance(Instance instance) throws Exception {
+
+<span class="fc" id="L262">    String debug = &quot;(KStar.distributionForInstance) &quot;;</span>
+<span class="fc" id="L263">    double transProb = 0.0, temp = 0.0;</span>
+<span class="fc" id="L264">    double [] classProbability = new double[m_NumClasses];</span>
+<span class="fc" id="L265">    double [] predictedValue = new double[1];</span>
+
+    // initialization ...
+<span class="fc bfc" id="L268" title="All 2 branches covered.">    for (int i=0; i&lt;classProbability.length; i++) {</span>
+<span class="fc" id="L269">      classProbability[i] = 0.0;</span>
+    }
+<span class="fc" id="L271">    predictedValue[0] = 0.0;</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">    if (m_InitFlag == ON) {</span>
+	// need to compute them only once and will be used for all instances.
+	// We are doing this because the evaluation module controls the calls. 
+<span class="pc bpc" id="L275" title="1 of 2 branches missed.">      if (m_BlendMethod == B_ENTROPY) {</span>
+<span class="nc" id="L276">	generateRandomClassColomns();</span>
+      }
+<span class="fc" id="L278">      m_Cache = new KStarCache[m_NumAttributes];</span>
+<span class="fc bfc" id="L279" title="All 2 branches covered.">      for (int i=0; i&lt;m_NumAttributes;i++) {</span>
+<span class="fc" id="L280">	m_Cache[i] = new KStarCache();</span>
+      }
+<span class="fc" id="L282">      m_InitFlag = OFF;</span>
+      //      System.out.println(&quot;Computing...&quot;);
+    }
+    // init done.
+    Instance trainInstance;
+<span class="fc" id="L287">    Enumeration enu = m_Train.enumerateInstances();</span>
+<span class="fc bfc" id="L288" title="All 2 branches covered.">    while ( enu.hasMoreElements() ) {</span>
+<span class="fc" id="L289">      trainInstance = (Instance)enu.nextElement();</span>
+<span class="fc" id="L290">      transProb = instanceTransformationProbability(instance, trainInstance);      </span>
+<span class="fc bfc" id="L291" title="All 3 branches covered.">      switch ( m_ClassType )</span>
+	{
+	case Attribute.NOMINAL:
+<span class="fc" id="L294">	  classProbability[(int)trainInstance.classValue()] += transProb;</span>
+<span class="fc" id="L295">	  break;</span>
+	case Attribute.NUMERIC:
+<span class="fc" id="L297">	  predictedValue[0] += transProb * trainInstance.classValue();</span>
+<span class="fc" id="L298">	  temp += transProb;</span>
+	  break;
+	}
+    }
+<span class="fc bfc" id="L302" title="All 2 branches covered.">    if (m_ClassType == Attribute.NOMINAL) {</span>
+<span class="fc" id="L303">      double sum = Utils.sum(classProbability);</span>
+<span class="fc bfc" id="L304" title="All 2 branches covered.">      if (sum &lt;= 0.0)</span>
+<span class="fc bfc" id="L305" title="All 2 branches covered.">	for (int i=0; i&lt;classProbability.length; i++)</span>
+<span class="fc" id="L306">	  classProbability[i] = (double) 1/ (double) m_NumClasses;</span>
+<span class="fc" id="L307">      else Utils.normalize(classProbability, sum);</span>
+<span class="fc" id="L308">      return classProbability;</span>
+    }
+    else {
+<span class="fc bfc" id="L311" title="All 2 branches covered.">      predictedValue[0] = (temp != 0) ? predictedValue[0] / temp : 0.0;</span>
+<span class="fc" id="L312">      return predictedValue;</span>
+    }
+  }
+
+  /**
+   * Calculate the probability of the first instance transforming into the 
+   * second instance:
+   * the probability is the product of the transformation probabilities of 
+   * the attributes normilized over the number of instances used.
+   * 
+   * @param first the test instance
+   * @param second the train instance
+   * @return transformation probability value
+   */
+  private double instanceTransformationProbability(Instance first, 
+						   Instance second) {
+<span class="fc" id="L328">    String debug = &quot;(KStar.instanceTransformationProbability) &quot;;</span>
+<span class="fc" id="L329">    double transProb = 1.0;</span>
+<span class="fc" id="L330">    int numMissAttr = 0;</span>
+<span class="fc bfc" id="L331" title="All 2 branches covered.">    for (int i = 0; i &lt; m_NumAttributes; i++) {</span>
+<span class="fc bfc" id="L332" title="All 2 branches covered.">      if (i == m_Train.classIndex()) {</span>
+<span class="fc" id="L333">	continue; // ignore class attribute</span>
+      }
+<span class="fc bfc" id="L335" title="All 2 branches covered.">      if (first.isMissing(i)) { // test instance attribute value is missing</span>
+<span class="fc" id="L336">	numMissAttr++;</span>
+<span class="fc" id="L337">	continue;</span>
+      }
+<span class="fc" id="L339">      transProb *= attrTransProb(first, second, i);</span>
+      // normilize for missing values
+<span class="pc bpc" id="L341" title="1 of 2 branches missed.">      if (numMissAttr != m_NumAttributes) {</span>
+<span class="fc" id="L342">	transProb = Math.pow(transProb, (double)m_NumAttributes / </span>
+<span class="fc" id="L343">			     (m_NumAttributes - numMissAttr));</span>
+      }
+      else { // weird case!
+<span class="nc" id="L346">	transProb = 0.0;</span>
+      }
+    }
+    // normilize for the train dataset
+<span class="fc" id="L350">     return transProb / m_NumInstances;</span>
+  }
+
+  /**
+   * Calculates the transformation probability of the indexed test attribute 
+   * to the indexed train attribute.
+   *
+   * @param first the test instance.
+   * @param second the train instance.
+   * @param col the index of the attribute in the instance.
+   * @return the value of the transformation probability.
+   */
+  private double attrTransProb(Instance first, Instance second, int col) {
+<span class="fc" id="L363">    String debug = &quot;(KStar.attrTransProb)&quot;;</span>
+<span class="fc" id="L364">    double transProb = 0.0;</span>
+    KStarNominalAttribute ksNominalAttr;
+    KStarNumericAttribute ksNumericAttr;
+<span class="fc bfc" id="L367" title="All 3 branches covered.">    switch ( m_Train.attribute(col).type() )</span>
+      {
+      case Attribute.NOMINAL:
+<span class="fc" id="L370">	ksNominalAttr = new KStarNominalAttribute(first, second, col, m_Train, </span>
+<span class="fc" id="L371">						  m_RandClassCols, </span>
+<span class="fc" id="L372">						  m_Cache[col]);</span>
+<span class="fc" id="L373">	ksNominalAttr.setOptions(m_MissingMode, m_BlendMethod, m_GlobalBlend);</span>
+<span class="fc" id="L374">	transProb = ksNominalAttr.transProb();</span>
+<span class="fc" id="L375">	ksNominalAttr = null;</span>
+<span class="fc" id="L376">	break;</span>
+
+      case Attribute.NUMERIC:
+<span class="fc" id="L379">	ksNumericAttr = new KStarNumericAttribute(first, second, col, </span>
+<span class="fc" id="L380">						  m_Train, m_RandClassCols, </span>
+<span class="fc" id="L381">						  m_Cache[col]);</span>
+<span class="fc" id="L382">	ksNumericAttr.setOptions(m_MissingMode, m_BlendMethod, m_GlobalBlend);</span>
+<span class="fc" id="L383">	transProb = ksNumericAttr.transProb();</span>
+<span class="fc" id="L384">	ksNumericAttr = null;</span>
+	break;
+      }
+<span class="fc" id="L387">    return transProb;</span>
+  }
+   
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String missingModeTipText() {
+<span class="nc" id="L396">    return &quot;Determines how missing attribute values are treated.&quot;;</span>
+  }
+
+  /**
+   * Gets the method to use for handling missing values. Will be one of
+   * M_NORMAL, M_AVERAGE, M_MAXDIFF or M_DELETE.
+   *
+   * @return the method used for handling missing values.
+   */
+  public SelectedTag getMissingMode() {
+
+<span class="nc" id="L407">    return new SelectedTag(m_MissingMode, TAGS_MISSING);</span>
+  }
+  
+  /**
+   * Sets the method to use for handling missing values. Values other than
+   * M_NORMAL, M_AVERAGE, M_MAXDIFF and M_DELETE will be ignored.
+   *
+   * @param newMode the method to use for handling missing values.
+   */
+  public void setMissingMode(SelectedTag newMode) {
+    
+<span class="pc bpc" id="L418" title="1 of 2 branches missed.">    if (newMode.getTags() == TAGS_MISSING) {</span>
+<span class="fc" id="L419">      m_MissingMode = newMode.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L421">  }</span>
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="fc" id="L430">    Vector optVector = new Vector( 3 );</span>
+<span class="fc" id="L431">    optVector.addElement(new Option(</span>
+<span class="fc" id="L432">	      &quot;\tManual blend setting (default 20%)\n&quot;,</span>
+<span class="fc" id="L433">	      &quot;B&quot;, 1, &quot;-B &lt;num&gt;&quot;));</span>
+<span class="fc" id="L434">    optVector.addElement(new Option(</span>
+<span class="fc" id="L435">	      &quot;\tEnable entropic auto-blend setting (symbolic class only)\n&quot;,</span>
+<span class="fc" id="L436">	      &quot;E&quot;, 0, &quot;-E&quot;));</span>
+<span class="fc" id="L437">    optVector.addElement(new Option(</span>
+<span class="fc" id="L438">	      &quot;\tSpecify the missing value treatment mode (default a)\n&quot;</span>
+	      +&quot;\tValid options are: a(verage), d(elete), m(axdiff), n(ormal)\n&quot;,
+<span class="fc" id="L440">	      &quot;M&quot;, 1,&quot;-M &lt;char&gt;&quot;));</span>
+<span class="fc" id="L441">    return optVector.elements();</span>
+  }
+   
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalBlendTipText() {
+<span class="nc" id="L450">    return &quot;The parameter for global blending. Values are restricted to [0,100].&quot;;</span>
+  }
+
+  /**
+   * Set the global blend parameter
+   * @param b the value for global blending
+   */
+  public void setGlobalBlend(int b) {
+<span class="fc" id="L458">     m_GlobalBlend = b;</span>
+<span class="pc bpc" id="L459" title="1 of 2 branches missed.">      if ( m_GlobalBlend &gt; 100 ) {</span>
+<span class="nc" id="L460">	m_GlobalBlend = 100;</span>
+      }
+<span class="pc bpc" id="L462" title="1 of 2 branches missed.">      if ( m_GlobalBlend &lt; 0 ) {</span>
+<span class="nc" id="L463">	m_GlobalBlend = 0;</span>
+      }
+<span class="fc" id="L465">  }</span>
+
+  /**
+   * Get the value of the global blend parameter
+   * @return the value of the global blend parameter
+   */
+  public int getGlobalBlend() {
+<span class="nc" id="L472">    return m_GlobalBlend;</span>
+  }
+   
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String entropicAutoBlendTipText() {
+<span class="nc" id="L481">    return &quot;Whether entropy-based blending is to be used.&quot;;</span>
+  }
+
+  /**
+   * Set whether entropic blending is to be used.
+   * @param e true if entropic blending is to be used
+   */
+  public void setEntropicAutoBlend(boolean e) {
+<span class="pc bpc" id="L489" title="1 of 2 branches missed.">    if (e) {</span>
+<span class="nc" id="L490">      m_BlendMethod = B_ENTROPY;</span>
+    } else {
+<span class="fc" id="L492">      m_BlendMethod = B_SPHERE;</span>
+    }
+<span class="fc" id="L494">  }</span>
+
+  /**
+   * Get whether entropic blending being used
+   * @return true if entropic blending is used
+   */
+  public boolean getEntropicAutoBlend() {
+<span class="pc bpc" id="L501" title="1 of 2 branches missed.">    if (m_BlendMethod == B_ENTROPY) {</span>
+<span class="nc" id="L502">      return true;</span>
+    }
+
+<span class="fc" id="L505">    return false;</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -B &amp;lt;num&amp;gt;
+   *  Manual blend setting (default 20%)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -E
+   *  Enable entropic auto-blend setting (symbolic class only)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;char&amp;gt;
+   *  Specify the missing value treatment mode (default a)
+   *  Valid options are: a(verage), d(elete), m(axdiff), n(ormal)
+   * &lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="fc" id="L533">    String debug = &quot;(KStar.setOptions)&quot;;</span>
+<span class="fc" id="L534">    String blendStr = Utils.getOption('B', options);</span>
+<span class="fc bfc" id="L535" title="All 2 branches covered.">    if (blendStr.length() != 0) {</span>
+<span class="fc" id="L536">      setGlobalBlend(Integer.parseInt(blendStr));</span>
+    }
+
+<span class="fc" id="L539">    setEntropicAutoBlend(Utils.getFlag('E', options));</span>
+    
+<span class="fc" id="L541">    String missingModeStr = Utils.getOption('M', options);</span>
+<span class="fc bfc" id="L542" title="All 2 branches covered.">    if (missingModeStr.length() != 0) {</span>
+<span class="pc bpc" id="L543" title="4 of 5 branches missed.">      switch ( missingModeStr.charAt(0) ) {</span>
+      case 'a':
+<span class="fc" id="L545">	setMissingMode(new SelectedTag(M_AVERAGE, TAGS_MISSING));</span>
+<span class="fc" id="L546">	break;</span>
+      case 'd':
+<span class="nc" id="L548">	setMissingMode(new SelectedTag(M_DELETE, TAGS_MISSING));</span>
+<span class="nc" id="L549">	break;</span>
+      case 'm':
+<span class="nc" id="L551">	setMissingMode(new SelectedTag(M_MAXDIFF, TAGS_MISSING));</span>
+<span class="nc" id="L552">	break;</span>
+      case 'n':
+<span class="nc" id="L554">	setMissingMode(new SelectedTag(M_NORMAL, TAGS_MISSING));</span>
+<span class="nc" id="L555">	break;</span>
+      default:
+<span class="nc" id="L557">	setMissingMode(new SelectedTag(M_AVERAGE, TAGS_MISSING));</span>
+      }
+    }
+<span class="fc" id="L560">    Utils.checkForRemainingOptions(options);</span>
+<span class="fc" id="L561">  }</span>
+
+
+  /**
+   * Gets the current settings of K*.
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String [] getOptions() {
+    // -B &lt;num&gt; -E -M &lt;char&gt;
+<span class="fc" id="L571">    String [] options = new String [ 5 ];</span>
+<span class="fc" id="L572">    int itr = 0;</span>
+<span class="fc" id="L573">    options[itr++] = &quot;-B&quot;;</span>
+<span class="fc" id="L574">    options[itr++] = &quot;&quot; + m_GlobalBlend;</span>
+
+<span class="pc bpc" id="L576" title="1 of 2 branches missed.">    if (getEntropicAutoBlend()) {</span>
+<span class="nc" id="L577">      options[itr++] = &quot;-E&quot;;</span>
+    }
+
+<span class="fc" id="L580">    options[itr++] = &quot;-M&quot;;</span>
+<span class="pc bpc" id="L581" title="1 of 2 branches missed.">    if (m_MissingMode == M_AVERAGE) {</span>
+<span class="fc" id="L582">      options[itr++] = &quot;&quot; + &quot;a&quot;;</span>
+    }
+<span class="nc bnc" id="L584" title="All 2 branches missed.">    else if (m_MissingMode == M_DELETE) {</span>
+<span class="nc" id="L585">      options[itr++] = &quot;&quot; + &quot;d&quot;;</span>
+    }
+<span class="nc bnc" id="L587" title="All 2 branches missed.">    else if (m_MissingMode == M_MAXDIFF) {</span>
+<span class="nc" id="L588">      options[itr++] = &quot;&quot; + &quot;m&quot;;</span>
+    }
+<span class="nc bnc" id="L590" title="All 2 branches missed.">    else if (m_MissingMode == M_NORMAL) {</span>
+<span class="nc" id="L591">      options[itr++] = &quot;&quot; + &quot;n&quot;;</span>
+    }
+<span class="pc bfc" id="L593" title="All 2 branches covered.">    while (itr &lt; options.length) {</span>
+<span class="fc" id="L594">      options[itr++] = &quot;&quot;;</span>
+    }
+<span class="fc" id="L596">    return options;</span>
+  }
+
+  /**
+   * Returns a description of this classifier.
+   *
+   * @return a description of this classifier as a string.
+   */
+  public String toString() {
+<span class="fc" id="L605">    StringBuffer st = new StringBuffer();</span>
+<span class="fc" id="L606">    st.append(&quot;KStar Beta Verion (0.1b).\n&quot;</span>
+	      +&quot;Copyright (c) 1995-97 by Len Trigg (trigg@cs.waikato.ac.nz).\n&quot;
+	      +&quot;Java port to Weka by Abdelaziz Mahoui &quot;
+	      +&quot;(am14@cs.waikato.ac.nz).\n\nKStar options : &quot;);
+<span class="fc" id="L610">    String [] ops = getOptions();</span>
+<span class="fc bfc" id="L611" title="All 2 branches covered.">    for (int i=0;i&lt;ops.length;i++) {</span>
+<span class="fc" id="L612">      st.append(ops[i]+' ');</span>
+    }
+<span class="fc" id="L614">    return st.toString();</span>
+  }
+  
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain command line options (see setOptions)
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L623">    runClassifier(new KStar(), argv);</span>
+<span class="nc" id="L624">  }</span>
+
+  /**
+   * Initializes the m_Attributes of the class.
+   */
+  private void init_m_Attributes() {
+    try {
+<span class="fc" id="L631">      m_NumInstances = m_Train.numInstances();</span>
+<span class="fc" id="L632">      m_NumClasses = m_Train.numClasses();</span>
+<span class="fc" id="L633">      m_NumAttributes = m_Train.numAttributes();</span>
+<span class="fc" id="L634">      m_ClassType = m_Train.classAttribute().type();</span>
+<span class="fc" id="L635">      m_InitFlag = ON;</span>
+<span class="nc" id="L636">    } catch(Exception e) {</span>
+<span class="nc" id="L637">      e.printStackTrace();</span>
+    }
+<span class="fc" id="L639">  }</span>
+
+  /**
+   * Updates the m_attributes of the class.
+   */
+  private void update_m_Attributes() {
+<span class="fc" id="L645">    m_NumInstances = m_Train.numInstances();</span>
+<span class="fc" id="L646">    m_InitFlag = ON;</span>
+<span class="fc" id="L647">  }</span>
+
+  /**
+   * Note: for Nominal Class Only!
+   * Generates a set of random versions of the class colomn.
+   */
+  private void generateRandomClassColomns() {
+<span class="nc" id="L654">    String debug = &quot;(KStar.generateRandomClassColomns)&quot;;</span>
+<span class="nc" id="L655">    Random generator = new Random(42);</span>
+    //    Random generator = new Random();
+<span class="nc" id="L657">    m_RandClassCols = new int [NUM_RAND_COLS+1][];</span>
+<span class="nc" id="L658">    int [] classvals = classValues();</span>
+<span class="nc bnc" id="L659" title="All 2 branches missed.">    for (int i=0; i &lt; NUM_RAND_COLS; i++) {</span>
+      // generate a randomized version of the class colomn
+<span class="nc" id="L661">      m_RandClassCols[i] = randomize(classvals, generator);</span>
+    }
+    // original colomn is preserved in colomn NUM_RAND_COLS
+<span class="nc" id="L664">    m_RandClassCols[NUM_RAND_COLS] = classvals;</span>
+<span class="nc" id="L665">  }</span>
+
+  /**
+   * Note: for Nominal Class Only!
+   * Returns an array of the class values
+   *
+   * @return an array of class values
+   */
+  private int [] classValues() {
+<span class="nc" id="L674">    String debug = &quot;(KStar.classValues)&quot;;</span>
+<span class="nc" id="L675">    int [] classval = new int[m_NumInstances];</span>
+<span class="nc bnc" id="L676" title="All 2 branches missed.">    for (int i=0; i &lt; m_NumInstances; i++) {</span>
+      try {
+<span class="nc" id="L678">	classval[i] = (int)m_Train.instance(i).classValue();</span>
+<span class="nc" id="L679">      } catch (Exception ex) {</span>
+<span class="nc" id="L680">	ex.printStackTrace();</span>
+      }
+    }
+<span class="nc" id="L683">    return classval;</span>
+  }
+
+  /**
+   * Returns a copy of the array with its elements randomly redistributed.
+   *
+   * @param array the array to randomize.
+   * @param generator the random number generator to use
+   * @return a copy of the array with its elements randomly redistributed.
+   */
+  private int [] randomize(int [] array, Random generator) {
+<span class="nc" id="L694">    String debug = &quot;(KStar.randomize)&quot;;</span>
+    int index;
+    int temp;
+<span class="nc" id="L697">    int [] newArray = new int[array.length];</span>
+<span class="nc" id="L698">    System.arraycopy(array, 0, newArray, 0, array.length);</span>
+<span class="nc bnc" id="L699" title="All 2 branches missed.">    for (int j = newArray.length - 1; j &gt; 0; j--) {</span>
+<span class="nc" id="L700">      index = (int) ( generator.nextDouble() * (double)j );</span>
+<span class="nc" id="L701">      temp = newArray[j];</span>
+<span class="nc" id="L702">      newArray[j] = newArray[index];</span>
+<span class="nc" id="L703">      newArray[index] = temp;</span>
+    }
+<span class="nc" id="L705">    return newArray;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L714">    return RevisionUtils.extract(&quot;$Revision: 5525 $&quot;);</span>
+  }
+
+} // class end
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

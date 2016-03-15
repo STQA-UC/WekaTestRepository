@@ -1,0 +1,898 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>StripChart.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui.beans</a> &gt; <span class="el_source">StripChart.java</span></div><h1>StripChart.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+<span class="nc" id="L5"> *    (at your option) any later version.</span>
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    StripChart.java
+ *    Copyright (C) 2002 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.gui.beans;
+
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.gui.visualize.PrintableComponent;
+import weka.gui.visualize.VisualizeUtils;
+
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.Image;
+import java.beans.EventSetDescriptor;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.util.Enumeration;
+import java.util.LinkedList;
+import java.util.Random;
+import java.util.Vector;
+
+import javax.swing.BorderFactory;
+import javax.swing.JComponent;
+import javax.swing.JFrame;
+import javax.swing.JPanel;
+import javax.swing.border.TitledBorder;
+
+/**
+ * Bean that can display a horizontally scrolling strip chart. Can
+ * display multiple plots simultaneously
+ *
+ * @author &lt;a href=&quot;mailto:mhall@cs.waikato.ac.nz&quot;&gt;Mark Hall&lt;/a&gt;
+ * @version $Revision: 7261 $
+ */
+public class StripChart
+  extends JPanel
+  implements ChartListener, InstanceListener, Visible,
+	     BeanCommon, UserRequestAcceptor {
+
+  /** for serialization */
+  private static final long serialVersionUID = 1483649041577695019L;
+
+  /** default colours for colouring lines */
+<span class="nc" id="L67">  protected Color [] m_colorList = {Color.green,</span>
+<span class="nc" id="L68">				    Color.red,</span>
+<span class="nc" id="L69">				    Color.blue,</span>
+<span class="nc" id="L70">				    Color.cyan,</span>
+<span class="nc" id="L71">				    Color.pink,</span>
+<span class="nc" id="L72">				    new Color(255, 0, 255),</span>
+				    Color.orange,
+<span class="nc" id="L74">				    new Color(255, 0, 0),</span>
+<span class="nc" id="L75">				    new Color(0, 255, 0),</span>
+<span class="nc" id="L76">				    Color.white};</span>
+
+  /** the background color. */
+  protected Color m_BackgroundColor;
+  
+  /** the color of the legend panel's border. */
+  protected Color m_LegendPanelBorderColor;
+  
+  /**
+   * Class providing a panel for the plot.
+   */
+<span class="nc" id="L87">  private class StripPlotter</span>
+    extends JPanel {
+
+    /** for serialization. */
+    private static final long serialVersionUID = -7056271598761675879L;
+
+    public void paintComponent(Graphics g) {
+<span class="nc" id="L94">      super.paintComponent(g);</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">      if (m_osi != null) {</span>
+<span class="nc" id="L96">	g.drawImage(m_osi,0,0,this);</span>
+      }
+<span class="nc" id="L98">    }</span>
+  }
+
+<span class="nc" id="L101">  private transient JFrame m_outputFrame = null;</span>
+<span class="nc" id="L102">  private transient StripPlotter m_plotPanel = null;</span>
+
+  /**
+   * The off screen image for rendering to.
+   */
+<span class="nc" id="L107">  private transient Image m_osi = null;</span>
+
+  /**
+   * Width and height of the off screen image.
+   */
+  private int m_iheight;
+  private int m_iwidth;
+
+  /**
+   * Max value for the y axis.
+   */
+<span class="nc" id="L118">  private double m_max = 1;</span>
+
+  /**
+   * Min value for the y axis.
+   */
+<span class="nc" id="L123">  private double m_min = 0;</span>
+
+  /**
+   * Scale update requested.
+   */
+<span class="nc" id="L128">  private boolean m_yScaleUpdate = false;</span>
+  private double m_oldMax;
+  private double m_oldMin;
+
+<span class="nc" id="L132">  private Font m_labelFont = new Font(&quot;Monospaced&quot;, Font.PLAIN, 10);</span>
+  private FontMetrics m_labelMetrics;
+
+  //  private int m_plotCount = 0;
+
+<span class="nc" id="L137">  private Vector m_legendText = new Vector();</span>
+
+  /**
+   * Class providing a panel for displaying the y axis.
+   */
+<span class="nc" id="L142">  private class ScalePanel </span>
+    extends JPanel {
+
+    /** for serialization. */
+    private static final long serialVersionUID = 6416998474984829434L;
+
+    public void paintComponent(Graphics gx) {
+<span class="nc" id="L149">      super.paintComponent(gx);</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">      if (m_labelMetrics == null) {</span>
+<span class="nc" id="L151">	m_labelMetrics = gx.getFontMetrics(m_labelFont);</span>
+      }
+<span class="nc" id="L153">      gx.setFont(m_labelFont);</span>
+<span class="nc" id="L154">      int hf = m_labelMetrics.getAscent();</span>
+<span class="nc" id="L155">      String temp = &quot;&quot;+m_max;</span>
+<span class="nc" id="L156">      gx.setColor(m_colorList[m_colorList.length-1]);</span>
+<span class="nc" id="L157">      gx.drawString(temp, 1, hf-2);</span>
+<span class="nc" id="L158">      temp = &quot;&quot;+(m_min + ((m_max - m_min)/2.0));</span>
+<span class="nc" id="L159">      gx.drawString(temp, 1, (this.getHeight() / 2)+(hf / 2));</span>
+<span class="nc" id="L160">      temp = &quot;&quot;+m_min;</span>
+<span class="nc" id="L161">      gx.drawString(temp, 1, this.getHeight()-1);</span>
+<span class="nc" id="L162">    }</span>
+  };
+  
+  /** the scale. */
+<span class="nc" id="L166">  private ScalePanel m_scalePanel = new ScalePanel();</span>
+
+  /**
+   * Class providing a panel for the legend.
+   */
+<span class="nc" id="L171">  private class LegendPanel </span>
+    extends JPanel {
+
+    /** for serialization. */
+    private static final long serialVersionUID = 7713986576833797583L;
+
+    public void paintComponent(Graphics gx) {
+<span class="nc" id="L178">      super.paintComponent(gx);</span>
+
+<span class="nc bnc" id="L180" title="All 2 branches missed.">      if (m_labelMetrics == null) {</span>
+<span class="nc" id="L181">	m_labelMetrics = gx.getFontMetrics(m_labelFont);</span>
+      }
+<span class="nc" id="L183">      int hf = m_labelMetrics.getAscent();</span>
+<span class="nc" id="L184">      int x = 10; int y = hf+15;</span>
+<span class="nc" id="L185">      gx.setFont(m_labelFont);</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">      for (int i = 0; i &lt; m_legendText.size(); i++) {</span>
+<span class="nc" id="L187">	String temp = (String)m_legendText.elementAt(i);</span>
+<span class="nc" id="L188">	gx.setColor(m_colorList[(i % m_colorList.length)]);</span>
+<span class="nc" id="L189">	gx.drawString(temp,x,y);</span>
+<span class="nc" id="L190">	y+=hf;</span>
+      }
+<span class="nc" id="L192">      StripChart.this.revalidate();</span>
+<span class="nc" id="L193">    }</span>
+  };
+  
+  /** the legend. */
+<span class="nc" id="L197">  private LegendPanel m_legendPanel = new LegendPanel();</span>
+
+  /**
+   * Holds the data to be plotted. Entries in the list are arrays of
+   * y points.
+   */
+<span class="nc" id="L203">  private LinkedList m_dataList = new LinkedList();</span>
+  //  private double [] m_dataPoint = new double[1];
+<span class="nc" id="L205">  private double [] m_previousY = new double[1];</span>
+
+  private transient Thread m_updateHandler;
+
+<span class="nc" id="L209">  protected BeanVisual m_visual =</span>
+<span class="nc" id="L210">    new BeanVisual(&quot;StripChart&quot;,</span>
+<span class="nc" id="L211">		   BeanVisual.ICON_PATH+&quot;StripChart.gif&quot;,</span>
+<span class="nc" id="L212">		   BeanVisual.ICON_PATH+&quot;StripChart_animated.gif&quot;);</span>
+
+<span class="nc" id="L214">  private Object m_listenee = null;</span>
+<span class="nc" id="L215">  private transient weka.gui.Logger m_log = null;</span>
+
+  /**
+   * Print x axis labels every m_xValFreq points
+   */
+<span class="nc" id="L220">  private int m_xValFreq = 500;</span>
+<span class="nc" id="L221">  private int m_xCount = 0;</span>
+
+  /**
+   * Shift the plot by this many pixels every time a point is plotted
+   */
+<span class="nc" id="L226">  private int m_refreshWidth = 1;</span>
+
+  /**
+   * Plot every m_refreshFrequency'th point
+   */
+<span class="nc" id="L231">  private int m_refreshFrequency = 5;</span>
+
+  /** the class responsible for printing */
+<span class="nc" id="L234">  protected PrintableComponent m_Printer = null;</span>
+
+<span class="nc" id="L236">  public StripChart() {</span>
+
+    //    m_plotPanel.setBorder(BorderFactory.createEmptyBorder(5,5,5,5));
+
+<span class="nc" id="L240">    setLayout(new BorderLayout());</span>
+<span class="nc" id="L241">    add(m_visual, BorderLayout.CENTER);</span>
+
+    // start a thread to handle plot updates
+<span class="nc" id="L244">    initPlot();</span>
+<span class="nc" id="L245">  }</span>
+
+  /**
+   * Set a custom (descriptive) name for this bean
+   *
+   * @param name the name to use
+   */
+  public void setCustomName(String name) {
+<span class="nc" id="L253">    m_visual.setText(name);</span>
+<span class="nc" id="L254">  }</span>
+
+  /**
+   * Get the custom (descriptive) name for this bean (if one has been set)
+   *
+   * @return the custom name (or the default name)
+   */
+  public String getCustomName() {
+<span class="nc" id="L262">    return m_visual.getText();</span>
+  }
+
+  /**
+   * Global info for this bean
+   *
+   * @return a &lt;code&gt;String&lt;/code&gt; value
+   */
+  public String globalInfo() {
+<span class="nc" id="L271">    return Messages.getInstance().getString(&quot;StripChart_GlobalInfo_Text&quot;);</span>
+  }
+
+  /**
+   * GUI Tip text
+   *
+   * @return a &lt;code&gt;String&lt;/code&gt; value
+   */
+  public String xLabelFreqTipText() {
+<span class="nc" id="L280">    return Messages.getInstance().getString(&quot;StripChart_XLabelFreqTipText_Text&quot;);</span>
+  }
+
+  /**
+   * Set the frequency for printing x label values
+   *
+   * @param freq an &lt;code&gt;int&lt;/code&gt; value
+   */
+  public void setXLabelFreq(int freq) {
+<span class="nc" id="L289">    m_xValFreq = freq;</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">    if (getGraphics() != null)</span>
+<span class="nc" id="L291">      setRefreshWidth();</span>
+<span class="nc" id="L292">  }</span>
+
+  /**
+   * Get the frequency by which x axis values are printed
+   *
+   * @return an &lt;code&gt;int&lt;/code&gt; value
+   */
+  public int getXLabelFreq() {
+<span class="nc" id="L300">    return m_xValFreq;</span>
+  }
+
+  /**
+   * GUI Tip text
+   *
+   * @return a &lt;code&gt;String&lt;/code&gt; value
+   */
+  public String refreshFreqTipText() {
+<span class="nc" id="L309">    return Messages.getInstance().getString(&quot;StripChart_RefreshFreqTipText_Text&quot;);</span>
+  }
+
+  /**
+   * Set how often (in x axis points) to refresh the display
+   *
+   * @param freq an &lt;code&gt;int&lt;/code&gt; value
+   */
+  public void setRefreshFreq(int freq) {
+<span class="nc" id="L318">    m_refreshFrequency = freq;</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">    if (getGraphics() != null)</span>
+<span class="nc" id="L320">      setRefreshWidth();</span>
+<span class="nc" id="L321">  }</span>
+
+  /**
+   * Get the refresh frequency
+   *
+   * @return an &lt;code&gt;int&lt;/code&gt; value
+   */
+  public int getRefreshFreq() {
+<span class="nc" id="L329">    return m_refreshFrequency;</span>
+  }
+
+  private void setRefreshWidth() {
+<span class="nc" id="L333">    m_refreshWidth = 1;</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">    if (m_labelMetrics == null) {</span>
+<span class="nc" id="L335">      getGraphics().setFont(m_labelFont);</span>
+<span class="nc" id="L336">      m_labelMetrics = getGraphics().getFontMetrics(m_labelFont);</span>
+    }
+
+<span class="nc" id="L339">    int refWidth = m_labelMetrics.stringWidth(&quot;99000&quot;);</span>
+    // compute how often x label will be rendered
+<span class="nc" id="L341">    int z = (getXLabelFreq() / getRefreshFreq());</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">    if (z &lt; 1) {</span>
+<span class="nc" id="L343">      z = 1;</span>
+    }
+
+<span class="nc bnc" id="L346" title="All 2 branches missed.">    if (z * m_refreshWidth &lt; refWidth+5) {</span>
+<span class="nc" id="L347">      m_refreshWidth *= (((refWidth+5) / z) + 1) ;</span>
+    }
+<span class="nc" id="L349">  }</span>
+
+  /**
+   * Provide some necessary initialization after object has
+   * been deserialized.
+   *
+   * @param ois an &lt;code&gt;ObjectInputStream&lt;/code&gt; value
+   * @exception IOException if an error occurs
+   * @exception ClassNotFoundException if an error occurs
+   */
+  private void readObject(ObjectInputStream ois)
+    throws IOException, ClassNotFoundException {
+    try {
+<span class="nc" id="L362">      ois.defaultReadObject();</span>
+<span class="nc" id="L363">      initPlot();</span>
+      //      startHandler();
+<span class="nc" id="L365">    } catch (Exception ex) {</span>
+<span class="nc" id="L366">      ex.printStackTrace();</span>
+    }
+<span class="nc" id="L368">  }</span>
+
+  /**
+   * Loads properties from properties file.
+   * 
+   * @see	KnowledgeFlowApp#BEAN_PROPERTIES
+   */
+  private void setProperties() {
+    String 	key;
+    String 	color;
+
+    // background color
+<span class="nc" id="L380">    key   = this.getClass().getName() + &quot;.backgroundColour&quot;;</span>
+<span class="nc" id="L381">    color = KnowledgeFlowApp.BEAN_PROPERTIES.getProperty(key);</span>
+<span class="nc" id="L382">    m_BackgroundColor = Color.BLACK;</span>
+<span class="nc bnc" id="L383" title="All 2 branches missed.">    if (color != null)</span>
+<span class="nc" id="L384">      m_BackgroundColor = VisualizeUtils.processColour(color, m_BackgroundColor);</span>
+
+    // legend color (border)
+<span class="nc" id="L387">    key   = m_legendPanel.getClass().getName() + &quot;.borderColour&quot;;</span>
+<span class="nc" id="L388">    color = KnowledgeFlowApp.BEAN_PROPERTIES.getProperty(key);</span>
+<span class="nc" id="L389">    m_LegendPanelBorderColor = Color.BLUE;</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">    if (color != null)</span>
+<span class="nc" id="L391">      m_LegendPanelBorderColor = VisualizeUtils.processColour(color, m_LegendPanelBorderColor);</span>
+<span class="nc" id="L392">  }</span>
+
+  private void initPlot() {
+<span class="nc" id="L395">    setProperties();</span>
+<span class="nc" id="L396">    m_plotPanel = new StripPlotter();</span>
+<span class="nc" id="L397">    m_plotPanel.setBackground(m_BackgroundColor);</span>
+<span class="nc" id="L398">    m_scalePanel.setBackground(m_BackgroundColor);</span>
+<span class="nc" id="L399">    m_legendPanel.setBackground(m_BackgroundColor);</span>
+<span class="nc" id="L400">    m_xCount = 0;</span>
+<span class="nc" id="L401">  }</span>
+
+  private void startHandler() {
+<span class="nc bnc" id="L404" title="All 2 branches missed.">    if (m_updateHandler == null) {</span>
+<span class="nc" id="L405">      m_updateHandler = new Thread() {</span>
+	  private double [] dataPoint;
+	  public void run() {
+<span class="nc" id="L408">	    while (true) {</span>
+<span class="nc bnc" id="L409" title="All 2 branches missed.">	      if (m_outputFrame != null) {</span>
+<span class="nc" id="L410">		synchronized(m_dataList) {</span>
+<span class="nc bnc" id="L411" title="All 2 branches missed.">		  while(m_dataList.isEmpty()) {</span>
+		  //		  while (m_dataList.empty()) {
+		    try {
+<span class="nc" id="L414">		      m_dataList.wait();</span>
+<span class="nc" id="L415">		    } catch (InterruptedException ex) {</span>
+<span class="nc" id="L416">		      return;</span>
+		    }
+		  }
+<span class="nc" id="L419">		  dataPoint = (double [])m_dataList.remove(0);</span>
+		  //dataPoint  = (double [])m_dataList.pop();
+		}
+<span class="nc bnc" id="L422" title="All 2 branches missed.">		if (m_outputFrame != null) {</span>
+<span class="nc" id="L423">		  StripChart.this.updateChart(dataPoint);</span>
+		}
+	      }
+	    }
+	  }
+	};
+      //      m_updateHandler.setPriority(Thread.MIN_PRIORITY);
+<span class="nc" id="L430">      m_updateHandler.start();</span>
+    }
+<span class="nc" id="L432">  }</span>
+
+  /**
+   * Popup the chart panel
+   */
+  public void showChart() {
+<span class="nc bnc" id="L438" title="All 2 branches missed.">    if (m_outputFrame == null) {</span>
+<span class="nc" id="L439">      m_outputFrame = new JFrame(Messages.getInstance().getString(&quot;StripChart_ShowChart_OutputFrame_JFrame_Text&quot;));</span>
+<span class="nc" id="L440">      m_outputFrame.getContentPane().setLayout(new BorderLayout());</span>
+<span class="nc" id="L441">      JPanel panel = new JPanel(new BorderLayout());</span>
+<span class="nc" id="L442">      new PrintableComponent(panel);</span>
+<span class="nc" id="L443">      m_outputFrame.getContentPane().add(panel, BorderLayout.CENTER);</span>
+<span class="nc" id="L444">      panel.add(m_legendPanel, BorderLayout.WEST);</span>
+<span class="nc" id="L445">      panel.add(m_plotPanel, BorderLayout.CENTER);</span>
+<span class="nc" id="L446">      panel.add(m_scalePanel, BorderLayout.EAST);</span>
+<span class="nc" id="L447">      m_legendPanel.setMinimumSize(new Dimension(100,getHeight()));</span>
+<span class="nc" id="L448">      m_legendPanel.setPreferredSize(new Dimension(100,getHeight()));</span>
+<span class="nc" id="L449">      m_scalePanel.setMinimumSize(new Dimension(30, getHeight()));</span>
+<span class="nc" id="L450">      m_scalePanel.setPreferredSize(new Dimension(30, getHeight()));</span>
+<span class="nc" id="L451">      Font lf = new Font(&quot;Monospaced&quot;, Font.PLAIN, 12);</span>
+<span class="nc" id="L452">      m_legendPanel.setBorder(BorderFactory.</span>
+<span class="nc" id="L453">			      createTitledBorder(BorderFactory.</span>
+<span class="nc" id="L454">				    createEtchedBorder(Color.gray,</span>
+<span class="nc" id="L455">						       Color.darkGray),</span>
+<span class="nc" id="L456">						       Messages.getInstance().getString(&quot;StripChart_ShowChart_LegendPanel_SetBorder_BorderFactoryCreateEtchedBorder_Text&quot;) ,</span>
+<span class="nc" id="L457">				    TitledBorder.CENTER,</span>
+<span class="nc" id="L458">				    TitledBorder.DEFAULT_POSITION, lf,</span>
+<span class="nc" id="L459">				    m_LegendPanelBorderColor));</span>
+<span class="nc" id="L460">      m_outputFrame.addWindowListener(new java.awt.event.WindowAdapter() {</span>
+	  public void windowClosing(java.awt.event.WindowEvent e) {
+<span class="nc bnc" id="L462" title="All 2 branches missed.">	    if (m_updateHandler != null) {</span>
+<span class="nc" id="L463">	      System.err.println(Messages.getInstance().getString(&quot;StripChart_ShowChart_WindowClosing_Error_Text&quot;));</span>
+<span class="nc" id="L464">	      m_updateHandler.interrupt();</span>
+<span class="nc" id="L465">	      m_updateHandler = null;</span>
+	    }
+<span class="nc" id="L467">	    synchronized (m_dataList) {</span>
+<span class="nc" id="L468">	      m_dataList = new LinkedList();</span>
+	    }
+<span class="nc" id="L470">	    m_outputFrame.dispose();</span>
+<span class="nc" id="L471">	    m_outputFrame = null;</span>
+<span class="nc" id="L472">	  }</span>
+	});
+<span class="nc" id="L474">      m_outputFrame.pack();</span>
+<span class="nc" id="L475">      m_outputFrame.setSize(600,150);</span>
+<span class="nc" id="L476">      m_outputFrame.setResizable(false);</span>
+<span class="nc" id="L477">      m_outputFrame.setVisible(true);</span>
+<span class="nc" id="L478">      m_outputFrame.setAlwaysOnTop(true);</span>
+<span class="nc" id="L479">      int iwidth = m_plotPanel.getWidth();</span>
+<span class="nc" id="L480">      int iheight = m_plotPanel.getHeight();</span>
+<span class="nc" id="L481">      m_osi = m_plotPanel.createImage(iwidth, iheight);</span>
+<span class="nc" id="L482">      Graphics m = m_osi.getGraphics();</span>
+<span class="nc" id="L483">      m.setColor(m_BackgroundColor);</span>
+<span class="nc" id="L484">      m.fillRect(0,0,iwidth,iheight);</span>
+<span class="nc" id="L485">      m_previousY[0] = -1;</span>
+<span class="nc" id="L486">      setRefreshWidth();</span>
+<span class="nc bnc" id="L487" title="All 2 branches missed.">      if (m_updateHandler == null) {</span>
+<span class="nc" id="L488">	System.err.println(Messages.getInstance().getString(&quot;StripChart_ShowChart_Error_Text&quot;));</span>
+<span class="nc" id="L489">	startHandler();</span>
+      }
+    } else {
+<span class="nc" id="L492">      m_outputFrame.toFront();</span>
+    }
+<span class="nc" id="L494">  }</span>
+
+  private int convertToPanelY(double yval) {
+<span class="nc" id="L497">    int height = m_plotPanel.getHeight();</span>
+<span class="nc" id="L498">    double temp = (yval - m_min) / (m_max - m_min);</span>
+<span class="nc" id="L499">    temp = temp * height;</span>
+<span class="nc" id="L500">    temp = height - temp;</span>
+<span class="nc" id="L501">    return (int)temp;</span>
+  }
+
+  /**
+   * Update the plot
+   *
+   * @param dataPoint contains y values to plot
+   */
+  protected void updateChart(double [] dataPoint) {
+<span class="nc bnc" id="L510" title="All 2 branches missed.">    if (m_previousY[0] == -1) {</span>
+<span class="nc" id="L511">      int iw = m_plotPanel.getWidth();</span>
+<span class="nc" id="L512">      int ih = m_plotPanel.getHeight();</span>
+<span class="nc" id="L513">      m_osi = m_plotPanel.createImage(iw, ih);</span>
+<span class="nc" id="L514">      Graphics m = m_osi.getGraphics();</span>
+<span class="nc" id="L515">      m.setColor(m_BackgroundColor);</span>
+<span class="nc" id="L516">      m.fillRect(0,0,iw,ih);</span>
+<span class="nc" id="L517">      m_previousY[0] = convertToPanelY(0);</span>
+<span class="nc" id="L518">      m_iheight = ih; m_iwidth = iw;</span>
+    }
+
+<span class="nc bnc" id="L521" title="All 2 branches missed.">    if (dataPoint.length-1 != m_previousY.length) {</span>
+<span class="nc" id="L522">      m_previousY = new double [dataPoint.length-1];</span>
+      //      m_plotCount = 0;
+<span class="nc bnc" id="L524" title="All 2 branches missed.">      for (int i = 0; i &lt; dataPoint.length-1; i++) {</span>
+<span class="nc" id="L525">	m_previousY[i] = convertToPanelY(0);</span>
+      }
+    }
+
+<span class="nc" id="L529">    Graphics osg = m_osi.getGraphics();</span>
+<span class="nc" id="L530">    Graphics g = m_plotPanel.getGraphics();</span>
+
+<span class="nc" id="L532">    osg.copyArea(m_refreshWidth,0,m_iwidth-m_refreshWidth,</span>
+<span class="nc" id="L533">		 m_iheight,-m_refreshWidth,0);</span>
+<span class="nc" id="L534">    osg.setColor(m_BackgroundColor);</span>
+<span class="nc" id="L535">    osg.fillRect(m_iwidth-m_refreshWidth,0, m_iwidth, m_iheight);</span>
+
+    // paint the old scale onto the plot if a scale update has occured
+<span class="nc bnc" id="L538" title="All 2 branches missed.">    if (m_yScaleUpdate) {</span>
+<span class="nc" id="L539">      String maxVal = numToString(m_oldMax);</span>
+<span class="nc" id="L540">      String minVal = numToString(m_oldMin);</span>
+<span class="nc" id="L541">      String midVal = numToString((m_oldMax - m_oldMin) / 2.0);</span>
+<span class="nc bnc" id="L542" title="All 2 branches missed.">      if (m_labelMetrics == null) {</span>
+<span class="nc" id="L543">	m_labelMetrics = g.getFontMetrics(m_labelFont);</span>
+      }
+<span class="nc" id="L545">      osg.setFont(m_labelFont);</span>
+<span class="nc" id="L546">      int wmx = m_labelMetrics.stringWidth(maxVal);</span>
+<span class="nc" id="L547">      int wmn = m_labelMetrics.stringWidth(minVal);</span>
+<span class="nc" id="L548">      int wmd = m_labelMetrics.stringWidth(midVal);</span>
+
+<span class="nc" id="L550">      int hf = m_labelMetrics.getAscent();</span>
+<span class="nc" id="L551">      osg.setColor(m_colorList[m_colorList.length-1]);</span>
+<span class="nc" id="L552">      osg.drawString(maxVal, m_iwidth-wmx, hf-2);</span>
+<span class="nc" id="L553">      osg.drawString(midVal, m_iwidth-wmd, (m_iheight / 2)+(hf / 2));</span>
+<span class="nc" id="L554">      osg.drawString(minVal, m_iwidth-wmn, m_iheight-1);</span>
+<span class="nc" id="L555">      m_yScaleUpdate = false;</span>
+    }
+
+    double pos;
+<span class="nc bnc" id="L559" title="All 2 branches missed.">    for (int i = 0; i &lt; dataPoint.length-1; i++) {</span>
+<span class="nc" id="L560">      osg.setColor(m_colorList[(i % m_colorList.length)]);</span>
+<span class="nc" id="L561">      pos = convertToPanelY(dataPoint[i]);</span>
+<span class="nc" id="L562">      osg.drawLine(m_iwidth-m_refreshWidth, (int)m_previousY[i],</span>
+<span class="nc" id="L563">		   m_iwidth-1, (int)pos);</span>
+<span class="nc" id="L564">      m_previousY[i] = pos;</span>
+<span class="nc bnc" id="L565" title="All 2 branches missed.">      if (dataPoint[dataPoint.length-1] % m_xValFreq == 0) {</span>
+	// draw the actual y value onto the plot for this curve
+<span class="nc" id="L567">	String val = numToString(dataPoint[i]);</span>
+<span class="nc bnc" id="L568" title="All 2 branches missed.">	if (m_labelMetrics == null) {</span>
+<span class="nc" id="L569">	  m_labelMetrics = g.getFontMetrics(m_labelFont);</span>
+	}
+<span class="nc" id="L571">	int hf = m_labelMetrics.getAscent();</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">	if (pos - hf &lt; 0) {</span>
+<span class="nc" id="L573">	  pos += hf;</span>
+	}
+<span class="nc" id="L575">	int w = m_labelMetrics.stringWidth(val);</span>
+<span class="nc" id="L576">	osg.setFont(m_labelFont);</span>
+<span class="nc" id="L577">	osg.drawString(val, m_iwidth-w, (int)pos);</span>
+      }
+    }
+
+    // last element in the data point array contains the data point number
+<span class="nc bnc" id="L582" title="All 2 branches missed.">    if (dataPoint[dataPoint.length-1] % m_xValFreq == 0) {</span>
+
+<span class="nc" id="L584">      String xVal = &quot;&quot;+(int)dataPoint[dataPoint.length-1];</span>
+<span class="nc" id="L585">      osg.setColor(m_colorList[m_colorList.length-1]);</span>
+<span class="nc" id="L586">      int w = m_labelMetrics.stringWidth(xVal);</span>
+<span class="nc" id="L587">      osg.setFont(m_labelFont);</span>
+<span class="nc" id="L588">      osg.drawString(xVal, m_iwidth-w, m_iheight - 1);</span>
+    }
+<span class="nc" id="L590">    g.drawImage(m_osi,0,0,m_plotPanel);</span>
+    //    System.err.println(&quot;Finished&quot;);
+    //    m_plotCount++;
+<span class="nc" id="L593">  }</span>
+
+  private static String numToString(double num) {
+<span class="nc" id="L596">    int precision = 1;</span>
+<span class="nc" id="L597">    int whole = (int)Math.abs(num);</span>
+<span class="nc" id="L598">    double decimal = Math.abs(num) - whole;</span>
+    int nondecimal;
+<span class="nc bnc" id="L600" title="All 2 branches missed.">    nondecimal = (whole &gt; 0)</span>
+<span class="nc" id="L601">      ? (int)(Math.log(whole) / Math.log(10))</span>
+<span class="nc" id="L602">      : 1;</span>
+
+<span class="nc bnc" id="L604" title="All 2 branches missed.">    precision = (decimal &gt; 0)</span>
+<span class="nc" id="L605">      ? (int)Math.abs(((Math.log(Math.abs(num)) /</span>
+<span class="nc" id="L606">				      Math.log(10))))+2</span>
+<span class="nc" id="L607">      : 1;</span>
+<span class="nc bnc" id="L608" title="All 2 branches missed.">    if (precision &gt; 5) {</span>
+<span class="nc" id="L609">      precision = 1;</span>
+    }
+
+<span class="nc" id="L612">    String numString = weka.core.Utils.doubleToString(num,</span>
+<span class="nc" id="L613">						      nondecimal+1+precision</span>
+<span class="nc" id="L614">						      ,precision);</span>
+
+<span class="nc" id="L616">    return numString;</span>
+  }
+
+<span class="nc" id="L619">  ChartEvent m_ce = new ChartEvent(this);</span>
+<span class="nc" id="L620">  double [] m_dataPoint = null;</span>
+  public void acceptInstance(InstanceEvent e) {
+<span class="nc bnc" id="L622" title="All 2 branches missed.">    if (e.getStatus() == InstanceEvent.FORMAT_AVAILABLE) {</span>
+<span class="nc" id="L623">      Instances structure = e.getStructure();</span>
+<span class="nc" id="L624">      m_legendText = new Vector();</span>
+<span class="nc" id="L625">      m_max = 1.0;</span>
+<span class="nc" id="L626">      m_min = 0;</span>
+<span class="nc" id="L627">      int i = 0;</span>
+<span class="nc bnc" id="L628" title="All 2 branches missed.">      for (i =0; i &lt; structure.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L629" title="All 2 branches missed.">	if (i &gt; 10) {</span>
+<span class="nc" id="L630">	  i--;</span>
+<span class="nc" id="L631">	  break;</span>
+	}
+<span class="nc" id="L633">	m_legendText.addElement(structure.attribute(i).name());</span>
+<span class="nc" id="L634">	m_legendPanel.repaint();</span>
+<span class="nc" id="L635">	m_scalePanel.repaint();</span>
+      }
+<span class="nc" id="L637">      m_dataPoint = new double[i];</span>
+<span class="nc" id="L638">      m_xCount = 0;</span>
+<span class="nc" id="L639">      return;</span>
+    }
+
+    // process data point
+<span class="nc" id="L643">    Instance inst = e.getInstance();</span>
+<span class="nc bnc" id="L644" title="All 2 branches missed.">    for (int i = 0; i &lt; m_dataPoint.length; i++) {</span>
+<span class="nc bnc" id="L645" title="All 2 branches missed.">      if (!inst.isMissing(i)) {</span>
+<span class="nc" id="L646">	m_dataPoint[i] = inst.value(i);</span>
+      }
+    }
+<span class="nc" id="L649">    acceptDataPoint(m_dataPoint);</span>
+<span class="nc" id="L650">    m_xCount++;</span>
+<span class="nc" id="L651">  }</span>
+
+  /**
+   * Accept a data point (encapsulated in a chart event) to plot
+   *
+   * @param e a &lt;code&gt;ChartEvent&lt;/code&gt; value
+   */
+  public void acceptDataPoint(ChartEvent e) {
+<span class="nc bnc" id="L659" title="All 2 branches missed.">    if (e.getReset()) {</span>
+<span class="nc" id="L660">      m_xCount = 0;</span>
+<span class="nc" id="L661">      m_max = 1;</span>
+<span class="nc" id="L662">      m_min = 0;</span>
+    }
+<span class="nc bnc" id="L664" title="All 2 branches missed.">    if (m_outputFrame != null) {</span>
+<span class="nc" id="L665">      boolean refresh = false;</span>
+<span class="nc bnc" id="L666" title="All 6 branches missed.">      if (e.getLegendText() != null &amp; e.getLegendText() != m_legendText) {</span>
+<span class="nc" id="L667">	m_legendText = e.getLegendText();</span>
+<span class="nc" id="L668">	refresh = true;</span>
+      }
+
+<span class="nc bnc" id="L671" title="All 4 branches missed.">      if (e.getMin() != m_min || e.getMax() != m_max) {</span>
+<span class="nc" id="L672">	m_oldMax = m_max; m_oldMin = m_min;</span>
+<span class="nc" id="L673">	m_max = e.getMax();</span>
+<span class="nc" id="L674">	m_min = e.getMin();</span>
+<span class="nc" id="L675">	refresh = true;</span>
+<span class="nc" id="L676">	m_yScaleUpdate = true;</span>
+      }
+
+<span class="nc bnc" id="L679" title="All 2 branches missed.">      if (refresh) {</span>
+<span class="nc" id="L680">	m_legendPanel.repaint();</span>
+<span class="nc" id="L681">	m_scalePanel.repaint();</span>
+      }
+
+<span class="nc" id="L684">      acceptDataPoint(e.getDataPoint());</span>
+    }
+<span class="nc" id="L686">    m_xCount++;</span>
+<span class="nc" id="L687">  }</span>
+
+  /**
+   * Accept a data point to plot
+   *
+   * @param dataPoint a &lt;code&gt;double[]&lt;/code&gt; value
+   */
+  public void acceptDataPoint(double [] dataPoint) {
+
+<span class="nc bnc" id="L696" title="All 4 branches missed.">    if (m_outputFrame != null &amp;&amp; (m_xCount % m_refreshFrequency == 0 )) {</span>
+<span class="nc" id="L697">      double [] dp = new double[dataPoint.length+1];</span>
+<span class="nc" id="L698">      dp[dp.length-1] = m_xCount;</span>
+<span class="nc" id="L699">      System.arraycopy(dataPoint, 0, dp, 0, dataPoint.length);</span>
+      // check for out of scale values
+<span class="nc bnc" id="L701" title="All 2 branches missed.">      for (int i = 0; i &lt; dataPoint.length; i++) {</span>
+<span class="nc bnc" id="L702" title="All 2 branches missed.">	if (dataPoint[i] &lt; m_min) {</span>
+<span class="nc" id="L703">	  m_oldMin = m_min; m_min = dataPoint[i];</span>
+<span class="nc" id="L704">	  m_yScaleUpdate = true;</span>
+	}
+
+<span class="nc bnc" id="L707" title="All 2 branches missed.">	if (dataPoint[i] &gt; m_max) {</span>
+<span class="nc" id="L708">	  m_oldMax = m_max; m_max = dataPoint[i];</span>
+<span class="nc" id="L709">	  m_yScaleUpdate = true;</span>
+	}
+      }
+<span class="nc bnc" id="L712" title="All 2 branches missed.">      if (m_yScaleUpdate) {</span>
+<span class="nc" id="L713">	m_scalePanel.repaint();</span>
+<span class="nc" id="L714">	m_yScaleUpdate = false;</span>
+      }
+<span class="nc" id="L716">      synchronized(m_dataList) {</span>
+<span class="nc" id="L717">	m_dataList.add(m_dataList.size(), dp);</span>
+	//	m_dataList.push(dp);
+<span class="nc" id="L719">	m_dataList.notifyAll();</span>
+	/*	if (m_dataList.size() != 0) {
+	  System.err.println(&quot;***** &quot;+m_dataList.size());
+	  } */
+
+	//      System.err.println(m_xCount);
+      }
+    }
+<span class="nc" id="L727">  }</span>
+
+  /**
+   * Set the visual appearance of this bean
+   *
+   * @param newVisual a &lt;code&gt;BeanVisual&lt;/code&gt; value
+   */
+  public void setVisual(BeanVisual newVisual) {
+<span class="nc" id="L735">    m_visual = newVisual;</span>
+<span class="nc" id="L736">  }</span>
+
+  /**
+   * Get the visual appearance of this bean
+   */
+  public BeanVisual getVisual() {
+<span class="nc" id="L742">    return m_visual;</span>
+  }
+
+  /**
+   * Use the default visual appearance for this bean
+   */
+  public void useDefaultVisual() {
+<span class="nc" id="L749">    m_visual.loadIcons(BeanVisual.ICON_PATH+&quot;StripChart.gif&quot;,</span>
+<span class="nc" id="L750">		       BeanVisual.ICON_PATH+&quot;StripChart_animated.gif&quot;);</span>
+<span class="nc" id="L751">  }</span>
+
+  /**
+   * Stop any processing that the bean might be doing.
+   */
+  public void stop() {
+    // tell the listenee (upstream bean) to stop
+<span class="nc bnc" id="L758" title="All 2 branches missed.">    if (m_listenee instanceof BeanCommon) {</span>
+<span class="nc" id="L759">      ((BeanCommon)m_listenee).stop();</span>
+    }
+<span class="nc" id="L761">  }</span>
+  
+  /**
+   * Returns true if. at this time, the bean is busy with some
+   * (i.e. perhaps a worker thread is performing some calculation).
+   * 
+   * @return true if the bean is busy.
+   */
+  public boolean isBusy() {
+<span class="nc bnc" id="L770" title="All 2 branches missed.">    return (m_updateHandler != null);</span>
+  }
+
+  /**
+   * Set a logger
+   *
+   * @param logger a &lt;code&gt;weka.gui.Logger&lt;/code&gt; value
+   */
+  public void setLog(weka.gui.Logger logger) {
+<span class="nc" id="L779">    m_log = logger;</span>
+<span class="nc" id="L780">  }</span>
+
+  /**
+   * Returns true if, at this time,
+   * the object will accept a connection via the named event
+   *
+   * @param eventName the name of the event
+   * @return true if the object will accept a connection
+   */
+  public boolean connectionAllowed(String eventName) {
+<span class="nc bnc" id="L790" title="All 2 branches missed.">    if (m_listenee == null) {</span>
+<span class="nc" id="L791">      return true;</span>
+    }
+<span class="nc" id="L793">    return false;</span>
+  }
+
+  /**
+   * Returns true if, at this time,
+   * the object will accept a connection according to the supplied
+   * EventSetDescriptor
+   *
+   * @param esd the EventSetDescriptor
+   * @return true if the object will accept a connection
+   */
+  public boolean connectionAllowed(EventSetDescriptor esd) {
+<span class="nc" id="L805">    return connectionAllowed(esd.getName());</span>
+  }
+
+  /**
+   * Notify this object that it has been registered as a listener with
+   * a source for recieving events described by the named event
+   * This object is responsible for recording this fact.
+   *
+   * @param eventName the event
+   * @param source the source with which this object has been registered as
+   * a listener
+   */
+  public void connectionNotification(String eventName, Object source) {
+<span class="nc bnc" id="L818" title="All 2 branches missed.">    if (connectionAllowed(eventName)) {</span>
+<span class="nc" id="L819">      m_listenee = source;</span>
+    }
+<span class="nc" id="L821">  }</span>
+
+  /**
+   * Notify this object that it has been deregistered as a listener with
+   * a source for named event. This object is responsible
+   * for recording this fact.
+   *
+   * @param eventName the event
+   * @param source the source with which this object has been registered as
+   * a listener
+   */
+  public void disconnectionNotification(String eventName, Object source) {
+<span class="nc" id="L833">    m_listenee = null;</span>
+<span class="nc" id="L834">  }</span>
+
+  /**
+   * Describe &lt;code&gt;enumerateRequests&lt;/code&gt; method here.
+   *
+   * @return an &lt;code&gt;Enumeration&lt;/code&gt; value
+   */
+  public Enumeration enumerateRequests() {
+<span class="nc" id="L842">    Vector newVector = new Vector(0);</span>
+<span class="nc" id="L843">    newVector.addElement(&quot;Show chart&quot;);</span>
+<span class="nc" id="L844">    return newVector.elements();</span>
+  }
+
+  /**
+   * Describe &lt;code&gt;performRequest&lt;/code&gt; method here.
+   *
+   * @param request a &lt;code&gt;String&lt;/code&gt; value
+   * @exception IllegalArgumentException if an error occurs
+   */
+  public void performRequest(String request) {
+<span class="nc bnc" id="L854" title="All 2 branches missed.">    if (request.compareTo(&quot;Show chart&quot;) == 0) {</span>
+<span class="nc" id="L855">      showChart();</span>
+    } else {
+<span class="nc" id="L857">      throw new</span>
+<span class="nc" id="L858">	IllegalArgumentException(request</span>
+<span class="nc" id="L859">				 + Messages.getInstance().getString(&quot;StripChart_PerformRequest_IllegalArgumentException_Text&quot;));</span>
+    }
+<span class="nc" id="L861">  }</span>
+
+  /**
+   * Tests out the StripChart from the command line
+   *
+   * @param args ignored
+   */
+  public static void main(String [] args) {
+
+    try {
+<span class="nc" id="L871">      final javax.swing.JFrame jf =</span>
+<span class="nc" id="L872">	new javax.swing.JFrame(Messages.getInstance().getString(&quot;StripChart_Main_Jf_JFrame_Text&quot;));</span>
+<span class="nc" id="L873">      jf.getContentPane().setLayout(new BorderLayout());</span>
+<span class="nc" id="L874">      final StripChart jd = new StripChart();</span>
+<span class="nc" id="L875">      jf.getContentPane().add(jd, BorderLayout.CENTER);</span>
+<span class="nc" id="L876">      jf.addWindowListener(new java.awt.event.WindowAdapter() {</span>
+	public void windowClosing(java.awt.event.WindowEvent e) {
+<span class="nc" id="L878">	  jf.dispose();</span>
+<span class="nc" id="L879">	  System.exit(0);</span>
+<span class="nc" id="L880">	}</span>
+      });
+<span class="nc" id="L882">      jf.pack();</span>
+<span class="nc" id="L883">      jf.setVisible(true);</span>
+<span class="nc" id="L884">      jd.showChart();</span>
+<span class="nc" id="L885">      Random r = new Random(1);</span>
+<span class="nc bnc" id="L886" title="All 2 branches missed.">      for (int i = 0; i &lt; 1020; i++) {</span>
+<span class="nc" id="L887">	double [] pos = new double[1];</span>
+<span class="nc" id="L888">	pos[0] = r.nextDouble();</span>
+<span class="nc" id="L889">	jd.acceptDataPoint(pos);</span>
+      }
+<span class="nc" id="L891">      System.err.println(Messages.getInstance().getString(&quot;StripChart_Main_Error_Text&quot;));</span>
+<span class="nc" id="L892">    } catch (Exception ex) {</span>
+<span class="nc" id="L893">      ex.printStackTrace();</span>
+<span class="nc" id="L894">      System.err.println(ex.getMessage());</span>
+    }
+<span class="nc" id="L896">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

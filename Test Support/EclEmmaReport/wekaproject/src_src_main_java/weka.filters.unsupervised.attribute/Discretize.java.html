@@ -1,0 +1,1088 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Discretize.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.filters.unsupervised.attribute</a> &gt; <span class="el_source">Discretize.java</span></div><h1>Discretize.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Discretize.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+
+package weka.filters.unsupervised.attribute;
+
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.Range;
+import weka.core.RevisionUtils;
+import weka.core.SparseInstance;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.filters.UnsupervisedFilter;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * An instance filter that discretizes a range of numeric attributes in the dataset into nominal attributes. Discretization is by simple binning. Skips the class attribute if set.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -unset-class-temporarily
+ *  Unsets the class index temporarily before the filter is
+ *  applied to the data.
+ *  (default: no)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;num&amp;gt;
+ *  Specifies the (maximum) number of bins to divide numeric attributes into.
+ *  (default = 10)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;num&amp;gt;
+ *  Specifies the desired weight of instances per bin for
+ *  equal-frequency binning. If this is set to a positive
+ *  number then the -B option will be ignored.
+ *  (default = -1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -F
+ *  Use equal-frequency instead of equal-width discretization.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -O
+ *  Optimize number of bins using leave-one-out estimate
+ *  of estimated entropy (for equal-width discretization).
+ *  If this is set then the -B option will be ignored.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;col1,col2-col4,...&amp;gt;
+ *  Specifies list of columns to Discretize. First and last are valid indexes.
+ *  (default: first-last)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V
+ *  Invert matching sense of column indexes.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Output binary attributes for discretized attributes.&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @version $Revision: 8284 $
+ */
+public class Discretize 
+  extends PotentialClassIgnorer 
+  implements UnsupervisedFilter, WeightedInstancesHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = -1358531742174527279L;
+
+  /** Stores which columns to Discretize */
+<span class="pc" id="L99">  protected Range m_DiscretizeCols = new Range();</span>
+
+  /** The number of bins to divide the attribute into */
+<span class="pc" id="L102">  protected int m_NumBins = 10;</span>
+
+  /** The desired weight of instances per bin */
+<span class="pc" id="L105">  protected double m_DesiredWeightOfInstancesPerInterval = -1;</span>
+
+  /** Store the current cutpoints */
+<span class="pc" id="L108">  protected double [][] m_CutPoints = null;</span>
+
+  /** Output binary attributes for discretized attributes. */
+<span class="pc" id="L111">  protected boolean m_MakeBinary = false;</span>
+
+  /** Find the number of bins using cross-validated entropy. */
+<span class="pc" id="L114">  protected boolean m_FindNumBins = false;</span>
+
+  /** Use equal-frequency binning if unsupervised discretization turned on */
+<span class="pc" id="L117">  protected boolean m_UseEqualFrequency = false;</span>
+
+  /** The default columns to discretize */
+  protected String m_DefaultCols;
+
+  /** Constructor - initialises the filter */
+<span class="fc" id="L123">  public Discretize() {</span>
+
+<span class="fc" id="L125">    m_DefaultCols = &quot;first-last&quot;;</span>
+<span class="fc" id="L126">    setAttributeIndices(&quot;first-last&quot;);</span>
+<span class="fc" id="L127">  }</span>
+
+  /** 
+   * Another constructor, sets the attribute indices immediately
+   * 
+   * @param cols the attribute indices
+   */
+<span class="nc" id="L134">  public Discretize(String cols) {</span>
+
+<span class="nc" id="L136">    m_DefaultCols = cols;</span>
+<span class="nc" id="L137">    setAttributeIndices(cols);</span>
+<span class="nc" id="L138">  }</span>
+
+  /**
+   * Gets an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="fc" id="L146">    Vector result = new Vector();</span>
+<span class="fc" id="L147">    Enumeration enm = super.listOptions();</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">    while (enm.hasMoreElements())</span>
+<span class="fc" id="L149">      result.add(enm.nextElement());</span>
+      
+<span class="fc" id="L151">    result.addElement(new Option(</span>
+<span class="fc" id="L152">	&quot;\tSpecifies the (maximum) number of bins to divide numeric&quot;</span>
+	+ &quot; attributes into.\n&quot;
+	+ &quot;\t(default = 10)&quot;,
+<span class="fc" id="L155">	&quot;B&quot;, 1, &quot;-B &lt;num&gt;&quot;));</span>
+    
+<span class="fc" id="L157">    result.addElement(new Option(</span>
+<span class="fc" id="L158">	&quot;\tSpecifies the desired weight of instances per bin for\n&quot;</span>
+	+ &quot;\tequal-frequency binning. If this is set to a positive\n&quot;
+	+ &quot;\tnumber then the -B option will be ignored.\n&quot;
+	+ &quot;\t(default = -1)&quot;,
+<span class="fc" id="L162">	&quot;M&quot;, 1, &quot;-M &lt;num&gt;&quot;));</span>
+    
+<span class="fc" id="L164">    result.addElement(new Option(</span>
+<span class="fc" id="L165">	&quot;\tUse equal-frequency instead of equal-width discretization.&quot;,</span>
+<span class="fc" id="L166">	&quot;F&quot;, 0, &quot;-F&quot;));</span>
+    
+<span class="fc" id="L168">    result.addElement(new Option(</span>
+<span class="fc" id="L169">	&quot;\tOptimize number of bins using leave-one-out estimate\n&quot;+</span>
+	&quot;\tof estimated entropy (for equal-width discretization).\n&quot;+
+	&quot;\tIf this is set then the -B option will be ignored.&quot;,
+<span class="fc" id="L172">	&quot;O&quot;, 0, &quot;-O&quot;));</span>
+    
+<span class="fc" id="L174">    result.addElement(new Option(</span>
+<span class="fc" id="L175">	&quot;\tSpecifies list of columns to Discretize. First&quot;</span>
+	+ &quot; and last are valid indexes.\n&quot;
+	+ &quot;\t(default: first-last)&quot;,
+<span class="fc" id="L178">	&quot;R&quot;, 1, &quot;-R &lt;col1,col2-col4,...&gt;&quot;));</span>
+    
+<span class="fc" id="L180">    result.addElement(new Option(</span>
+<span class="fc" id="L181">	&quot;\tInvert matching sense of column indexes.&quot;,</span>
+<span class="fc" id="L182">	&quot;V&quot;, 0, &quot;-V&quot;));</span>
+    
+<span class="fc" id="L184">    result.addElement(new Option(</span>
+<span class="fc" id="L185">	&quot;\tOutput binary attributes for discretized attributes.&quot;,</span>
+<span class="fc" id="L186">	&quot;D&quot;, 0, &quot;-D&quot;));</span>
+
+<span class="fc" id="L188">    return result.elements();</span>
+  }
+
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -unset-class-temporarily
+   *  Unsets the class index temporarily before the filter is
+   *  applied to the data.
+   *  (default: no)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -B &amp;lt;num&amp;gt;
+   *  Specifies the (maximum) number of bins to divide numeric attributes into.
+   *  (default = 10)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;num&amp;gt;
+   *  Specifies the desired weight of instances per bin for
+   *  equal-frequency binning. If this is set to a positive
+   *  number then the -B option will be ignored.
+   *  (default = -1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -F
+   *  Use equal-frequency instead of equal-width discretization.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -O
+   *  Optimize number of bins using leave-one-out estimate
+   *  of estimated entropy (for equal-width discretization).
+   *  If this is set then the -B option will be ignored.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;col1,col2-col4,...&amp;gt;
+   *  Specifies list of columns to Discretize. First and last are valid indexes.
+   *  (default: first-last)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V
+   *  Invert matching sense of column indexes.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Output binary attributes for discretized attributes.&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="nc" id="L238">    super.setOptions(options);</span>
+
+<span class="nc" id="L240">    setMakeBinary(Utils.getFlag('D', options));</span>
+<span class="nc" id="L241">    setUseEqualFrequency(Utils.getFlag('F', options));</span>
+<span class="nc" id="L242">    setFindNumBins(Utils.getFlag('O', options));</span>
+<span class="nc" id="L243">    setInvertSelection(Utils.getFlag('V', options));</span>
+
+<span class="nc" id="L245">    String weight = Utils.getOption('M', options);</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">    if (weight.length() != 0) {</span>
+<span class="nc" id="L247">      setDesiredWeightOfInstancesPerInterval((new Double(weight)).doubleValue());</span>
+    } else {
+<span class="nc" id="L249">      setDesiredWeightOfInstancesPerInterval(-1);</span>
+    }
+
+<span class="nc" id="L252">    String numBins = Utils.getOption('B', options);</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">    if (numBins.length() != 0) {</span>
+<span class="nc" id="L254">      setBins(Integer.parseInt(numBins));</span>
+    } else {
+<span class="nc" id="L256">      setBins(10);</span>
+    }
+    
+<span class="nc" id="L259">    String convertList = Utils.getOption('R', options);</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">    if (convertList.length() != 0) {</span>
+<span class="nc" id="L261">      setAttributeIndices(convertList);</span>
+    } else {
+<span class="nc" id="L263">      setAttributeIndices(m_DefaultCols);</span>
+    }
+
+<span class="nc bnc" id="L266" title="All 2 branches missed.">    if (getInputFormat() != null) {</span>
+<span class="nc" id="L267">      setInputFormat(getInputFormat());</span>
+    }
+<span class="nc" id="L269">  }</span>
+
+  /**
+   * Gets the current settings of the filter.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+    Vector        result;
+    String[]      options;
+    int           i;
+
+<span class="fc" id="L281">    result = new Vector();</span>
+
+<span class="fc" id="L283">    options = super.getOptions();</span>
+<span class="fc bfc" id="L284" title="All 2 branches covered.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="fc" id="L285">      result.add(options[i]);</span>
+
+<span class="pc bpc" id="L287" title="1 of 2 branches missed.">    if (getMakeBinary())</span>
+<span class="nc" id="L288">      result.add(&quot;-D&quot;);</span>
+    
+<span class="pc bpc" id="L290" title="1 of 2 branches missed.">    if (getUseEqualFrequency())</span>
+<span class="nc" id="L291">      result.add(&quot;-F&quot;);</span>
+    
+<span class="pc bpc" id="L293" title="1 of 2 branches missed.">    if (getFindNumBins())</span>
+<span class="nc" id="L294">      result.add(&quot;-O&quot;);</span>
+    
+<span class="fc bfc" id="L296" title="All 2 branches covered.">    if (getInvertSelection())</span>
+<span class="fc" id="L297">      result.add(&quot;-V&quot;);</span>
+    
+<span class="fc" id="L299">    result.add(&quot;-B&quot;);</span>
+<span class="fc" id="L300">    result.add(&quot;&quot; + getBins());</span>
+    
+<span class="fc" id="L302">    result.add(&quot;-M&quot;);</span>
+<span class="fc" id="L303">    result.add(&quot;&quot; + getDesiredWeightOfInstancesPerInterval());</span>
+    
+<span class="pc bpc" id="L305" title="1 of 2 branches missed.">    if (!getAttributeIndices().equals(&quot;&quot;)) {</span>
+<span class="fc" id="L306">      result.add(&quot;-R&quot;);</span>
+<span class="fc" id="L307">      result.add(getAttributeIndices());</span>
+    }
+
+<span class="fc" id="L310">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+
+  /** 
+   * Returns the Capabilities of this filter.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L320">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L321">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L324">    result.enableAllAttributes();</span>
+<span class="fc" id="L325">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="fc" id="L328">    result.enableAllClasses();</span>
+<span class="fc" id="L329">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+<span class="pc bpc" id="L330" title="1 of 2 branches missed.">    if (!getMakeBinary())</span>
+<span class="fc" id="L331">      result.enable(Capability.NO_CLASS);</span>
+    
+<span class="fc" id="L333">    return result;</span>
+  }
+
+  /**
+   * Sets the format of the input instances.
+   *
+   * @param instanceInfo an Instances object containing the input instance
+   * structure (any instances contained in the object are ignored - only the
+   * structure is required).
+   * @return true if the outputFormat may be collected immediately
+   * @throws Exception if the input format can't be set successfully
+   */
+  public boolean setInputFormat(Instances instanceInfo) throws Exception {
+
+<span class="pc bpc" id="L347" title="3 of 4 branches missed.">    if (m_MakeBinary &amp;&amp; m_IgnoreClass) {</span>
+<span class="nc" id="L348">      throw new IllegalArgumentException(&quot;Can't ignore class when &quot; +</span>
+					 &quot;changing the number of attributes!&quot;);
+    }
+
+<span class="fc" id="L352">    super.setInputFormat(instanceInfo);</span>
+
+<span class="fc" id="L354">    m_DiscretizeCols.setUpper(instanceInfo.numAttributes() - 1);</span>
+<span class="fc" id="L355">    m_CutPoints = null;</span>
+    
+<span class="pc bpc" id="L357" title="3 of 4 branches missed.">    if (getFindNumBins() &amp;&amp; getUseEqualFrequency()) {</span>
+<span class="nc" id="L358">      throw new IllegalArgumentException(&quot;Bin number optimization in conjunction &quot;+</span>
+					 &quot;with equal-frequency binning not implemented.&quot;);
+    }
+
+    // If we implement loading cutfiles, then load 
+    //them here and set the output format
+<span class="fc" id="L364">    return false;</span>
+  }
+
+  /**
+   * Input an instance for filtering. Ordinarily the instance is processed
+   * and made available for output immediately. Some filters require all
+   * instances be read before producing output.
+   *
+   * @param instance the input instance
+   * @return true if the filtered instance may now be
+   * collected with output().
+   * @throws IllegalStateException if no input format has been defined.
+   */
+  public boolean input(Instance instance) {
+
+<span class="pc bpc" id="L379" title="1 of 2 branches missed.">    if (getInputFormat() == null) {</span>
+<span class="nc" id="L380">      throw new IllegalStateException(&quot;No input instance format defined&quot;);</span>
+    }
+<span class="fc bfc" id="L382" title="All 2 branches covered.">    if (m_NewBatch) {</span>
+<span class="fc" id="L383">      resetQueue();</span>
+<span class="fc" id="L384">      m_NewBatch = false;</span>
+    }
+    
+<span class="fc bfc" id="L387" title="All 2 branches covered.">    if (m_CutPoints != null) {</span>
+<span class="fc" id="L388">      convertInstance(instance);</span>
+<span class="fc" id="L389">      return true;</span>
+    }
+
+<span class="fc" id="L392">    bufferInput(instance);</span>
+<span class="fc" id="L393">    return false;</span>
+  }
+
+  /**
+   * Signifies that this batch of input to the filter is finished. If the 
+   * filter requires all instances prior to filtering, output() may now 
+   * be called to retrieve the filtered instances.
+   *
+   * @return true if there are instances pending output
+   * @throws IllegalStateException if no input structure has been defined
+   */
+  public boolean batchFinished() {
+
+<span class="pc bpc" id="L406" title="1 of 2 branches missed.">    if (getInputFormat() == null) {</span>
+<span class="nc" id="L407">      throw new IllegalStateException(&quot;No input instance format defined&quot;);</span>
+    }
+<span class="fc bfc" id="L409" title="All 2 branches covered.">    if (m_CutPoints == null) {</span>
+<span class="fc" id="L410">      calculateCutPoints();</span>
+
+<span class="fc" id="L412">      setOutputFormat();</span>
+
+      // If we implement saving cutfiles, save the cuts here
+
+      // Convert pending input instances
+<span class="fc bfc" id="L417" title="All 2 branches covered.">      for(int i = 0; i &lt; getInputFormat().numInstances(); i++) {</span>
+<span class="fc" id="L418">	convertInstance(getInputFormat().instance(i));</span>
+      }
+    } 
+<span class="fc" id="L421">    flushInput();</span>
+
+<span class="fc" id="L423">    m_NewBatch = true;</span>
+<span class="pc bpc" id="L424" title="1 of 2 branches missed.">    return (numPendingOutput() != 0);</span>
+  }
+
+  /**
+   * Returns a string describing this filter
+   *
+   * @return a description of the filter suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L435">    return &quot;An instance filter that discretizes a range of numeric&quot;</span>
+      + &quot; attributes in the dataset into nominal attributes.&quot;
+      + &quot; Discretization is by simple binning. Skips the class&quot;
+      + &quot; attribute if set.&quot;;
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String findNumBinsTipText() {
+
+<span class="nc" id="L449">    return &quot;Optimize number of equal-width bins using leave-one-out. Doesn't &quot; +</span>
+      &quot;work for equal-frequency binning&quot;;
+  }
+
+  /**
+   * Get the value of FindNumBins.
+   *
+   * @return Value of FindNumBins.
+   */
+  public boolean getFindNumBins() {
+    
+<span class="fc" id="L460">    return m_FindNumBins;</span>
+  }
+  
+  /**
+   * Set the value of FindNumBins.
+   *
+   * @param newFindNumBins Value to assign to FindNumBins.
+   */
+  public void setFindNumBins(boolean newFindNumBins) {
+    
+<span class="nc" id="L470">    m_FindNumBins = newFindNumBins;</span>
+<span class="nc" id="L471">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String makeBinaryTipText() {
+
+<span class="nc" id="L481">    return &quot;Make resulting attributes binary.&quot;;</span>
+  }
+
+  /**
+   * Gets whether binary attributes should be made for discretized ones.
+   *
+   * @return true if attributes will be binarized
+   */
+  public boolean getMakeBinary() {
+
+<span class="fc" id="L491">    return m_MakeBinary;</span>
+  }
+
+  /** 
+   * Sets whether binary attributes should be made for discretized ones.
+   *
+   * @param makeBinary if binary attributes are to be made
+   */
+  public void setMakeBinary(boolean makeBinary) {
+
+<span class="nc" id="L501">    m_MakeBinary = makeBinary;</span>
+<span class="nc" id="L502">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String desiredWeightOfInstancesPerIntervalTipText() {
+
+<span class="nc" id="L512">    return &quot;Sets the desired weight of instances per interval for &quot; +</span>
+      &quot;equal-frequency binning.&quot;;
+  }
+  
+  /**
+   * Get the DesiredWeightOfInstancesPerInterval value.
+   * @return the DesiredWeightOfInstancesPerInterval value.
+   */
+  public double getDesiredWeightOfInstancesPerInterval() {
+
+<span class="fc" id="L522">    return m_DesiredWeightOfInstancesPerInterval;</span>
+  }
+
+  /**
+   * Set the DesiredWeightOfInstancesPerInterval value.
+   * @param newDesiredNumber The new DesiredNumber value.
+   */
+  public void setDesiredWeightOfInstancesPerInterval(double newDesiredNumber) {
+    
+<span class="nc" id="L531">    m_DesiredWeightOfInstancesPerInterval = newDesiredNumber;</span>
+<span class="nc" id="L532">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String useEqualFrequencyTipText() {
+
+<span class="nc" id="L542">    return &quot;If set to true, equal-frequency binning will be used instead of&quot; +</span>
+      &quot; equal-width binning.&quot;;
+  }
+  
+  /**
+   * Get the value of UseEqualFrequency.
+   *
+   * @return Value of UseEqualFrequency.
+   */
+  public boolean getUseEqualFrequency() {
+    
+<span class="fc" id="L553">    return m_UseEqualFrequency;</span>
+  }
+  
+  /**
+   * Set the value of UseEqualFrequency.
+   *
+   * @param newUseEqualFrequency Value to assign to UseEqualFrequency.
+   */
+  public void setUseEqualFrequency(boolean newUseEqualFrequency) {
+    
+<span class="fc" id="L563">    m_UseEqualFrequency = newUseEqualFrequency;</span>
+<span class="fc" id="L564">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String binsTipText() {
+
+<span class="nc" id="L574">    return &quot;Number of bins.&quot;;</span>
+  }
+
+  /**
+   * Gets the number of bins numeric attributes will be divided into
+   *
+   * @return the number of bins.
+   */
+  public int getBins() {
+
+<span class="fc" id="L584">    return m_NumBins;</span>
+  }
+
+  /**
+   * Sets the number of bins to divide each selected numeric attribute into
+   *
+   * @param numBins the number of bins
+   */
+  public void setBins(int numBins) {
+
+<span class="fc" id="L594">    m_NumBins = numBins;</span>
+<span class="fc" id="L595">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String invertSelectionTipText() {
+
+<span class="nc" id="L605">    return &quot;Set attribute selection mode. If false, only selected&quot;</span>
+      + &quot; (numeric) attributes in the range will be discretized; if&quot;
+      + &quot; true, only non-selected attributes will be discretized.&quot;;
+  }
+
+  /**
+   * Gets whether the supplied columns are to be removed or kept
+   *
+   * @return true if the supplied columns will be kept
+   */
+  public boolean getInvertSelection() {
+
+<span class="fc" id="L617">    return m_DiscretizeCols.getInvert();</span>
+  }
+
+  /**
+   * Sets whether selected columns should be removed or kept. If true the 
+   * selected columns are kept and unselected columns are deleted. If false
+   * selected columns are deleted and unselected columns are kept.
+   *
+   * @param invert the new invert setting
+   */
+  public void setInvertSelection(boolean invert) {
+
+<span class="fc" id="L629">    m_DiscretizeCols.setInvert(invert);</span>
+<span class="fc" id="L630">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String attributeIndicesTipText() {
+<span class="nc" id="L639">    return &quot;Specify range of attributes to act on.&quot;</span>
+      + &quot; This is a comma separated list of attribute indices, with&quot;
+      + &quot; \&quot;first\&quot; and \&quot;last\&quot; valid values. Specify an inclusive&quot;
+      + &quot; range with \&quot;-\&quot;. E.g: \&quot;first-3,5,6-10,last\&quot;.&quot;;
+  }
+
+  /**
+   * Gets the current range selection
+   *
+   * @return a string containing a comma separated list of ranges
+   */
+  public String getAttributeIndices() {
+
+<span class="fc" id="L652">    return m_DiscretizeCols.getRanges();</span>
+  }
+
+  /**
+   * Sets which attributes are to be Discretized (only numeric
+   * attributes among the selection will be Discretized).
+   *
+   * @param rangeList a string representing the list of attributes. Since
+   * the string will typically come from a user, attributes are indexed from
+   * 1. &lt;br&gt;
+   * eg: first-3,5,6-last
+   * @throws IllegalArgumentException if an invalid range list is supplied 
+   */
+  public void setAttributeIndices(String rangeList) {
+
+<span class="fc" id="L667">    m_DiscretizeCols.setRanges(rangeList);</span>
+<span class="fc" id="L668">  }</span>
+
+  /**
+   * Sets which attributes are to be Discretized (only numeric
+   * attributes among the selection will be Discretized).
+   *
+   * @param attributes an array containing indexes of attributes to Discretize.
+   * Since the array will typically come from a program, attributes are indexed
+   * from 0.
+   * @throws IllegalArgumentException if an invalid set of ranges
+   * is supplied 
+   */
+  public void setAttributeIndicesArray(int [] attributes) {
+
+<span class="nc" id="L682">    setAttributeIndices(Range.indicesToRangeList(attributes));</span>
+<span class="nc" id="L683">  }</span>
+
+  /**
+   * Gets the cut points for an attribute
+   *
+   * @param attributeIndex the index (from 0) of the attribute to get the cut points of
+   * @return an array containing the cutpoints (or null if the
+   * attribute requested has been discretized into only one interval.)
+   */
+  public double [] getCutPoints(int attributeIndex) {
+
+<span class="nc bnc" id="L694" title="All 2 branches missed.">    if (m_CutPoints == null) {</span>
+<span class="nc" id="L695">      return null;</span>
+    }
+<span class="nc" id="L697">    return m_CutPoints[attributeIndex];</span>
+  }
+
+  /** Generate the cutpoints for each attribute */
+  protected void calculateCutPoints() {
+
+<span class="fc" id="L703">    m_CutPoints = new double [getInputFormat().numAttributes()] [];</span>
+<span class="fc bfc" id="L704" title="All 2 branches covered.">    for(int i = getInputFormat().numAttributes() - 1; i &gt;= 0; i--) {</span>
+<span class="fc bfc" id="L705" title="All 2 branches covered.">      if ((m_DiscretizeCols.isInRange(i)) &amp;&amp; </span>
+<span class="fc bfc" id="L706" title="All 2 branches covered.">	  (getInputFormat().attribute(i).isNumeric()) &amp;&amp;</span>
+<span class="fc bfc" id="L707" title="All 2 branches covered.">	  (getInputFormat().classIndex() != i)) {</span>
+<span class="pc bpc" id="L708" title="1 of 2 branches missed.">	if (m_FindNumBins) {</span>
+<span class="nc" id="L709">	  findNumBins(i);</span>
+<span class="pc bpc" id="L710" title="1 of 2 branches missed.">	} else if (!m_UseEqualFrequency) {</span>
+<span class="fc" id="L711">	  calculateCutPointsByEqualWidthBinning(i);</span>
+	} else {
+<span class="nc" id="L713">	  calculateCutPointsByEqualFrequencyBinning(i);</span>
+	}
+      }
+    }
+<span class="fc" id="L717">  }</span>
+ 
+  /**
+   * Set cutpoints for a single attribute.
+   *
+   * @param index the index of the attribute to set cutpoints for
+   */
+  protected void calculateCutPointsByEqualWidthBinning(int index) {
+
+    // Scan for max and min values
+<span class="fc" id="L727">    double max = 0, min = 1, currentVal;</span>
+    Instance currentInstance;
+<span class="fc bfc" id="L729" title="All 2 branches covered.">    for(int i = 0; i &lt; getInputFormat().numInstances(); i++) {</span>
+<span class="fc" id="L730">      currentInstance = getInputFormat().instance(i);</span>
+<span class="fc bfc" id="L731" title="All 2 branches covered.">      if (!currentInstance.isMissing(index)) {</span>
+<span class="fc" id="L732">	currentVal = currentInstance.value(index);</span>
+<span class="fc bfc" id="L733" title="All 2 branches covered.">	if (max &lt; min) {</span>
+<span class="fc" id="L734">	  max = min = currentVal;</span>
+	}
+<span class="fc bfc" id="L736" title="All 2 branches covered.">	if (currentVal &gt; max) {</span>
+<span class="fc" id="L737">	  max = currentVal;</span>
+	}
+<span class="fc bfc" id="L739" title="All 2 branches covered.">	if (currentVal &lt; min) {</span>
+<span class="fc" id="L740">	  min = currentVal;</span>
+	}
+      }
+    }
+<span class="fc" id="L744">    double binWidth = (max - min) / m_NumBins;</span>
+<span class="fc" id="L745">    double [] cutPoints = null;</span>
+<span class="pc bpc" id="L746" title="1 of 4 branches missed.">    if ((m_NumBins &gt; 1) &amp;&amp; (binWidth &gt; 0)) {</span>
+<span class="fc" id="L747">      cutPoints = new double [m_NumBins - 1];</span>
+<span class="fc bfc" id="L748" title="All 2 branches covered.">      for(int i = 1; i &lt; m_NumBins; i++) {</span>
+<span class="fc" id="L749">	cutPoints[i - 1] = min + binWidth * i;</span>
+      }
+    }
+<span class="fc" id="L752">    m_CutPoints[index] = cutPoints;</span>
+<span class="fc" id="L753">  }</span>
+ 
+  /**
+   * Set cutpoints for a single attribute.
+   *
+   * @param index the index of the attribute to set cutpoints for
+   */
+  protected void calculateCutPointsByEqualFrequencyBinning(int index) {
+
+    // Copy data so that it can be sorted
+<span class="nc" id="L763">    Instances data = new Instances(getInputFormat());</span>
+
+    // Sort input data
+<span class="nc" id="L766">    data.sort(index);</span>
+
+    // Compute weight of instances without missing values
+<span class="nc" id="L769">    double sumOfWeights = 0;</span>
+<span class="nc bnc" id="L770" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="nc bnc" id="L771" title="All 2 branches missed.">      if (data.instance(i).isMissing(index)) {</span>
+<span class="nc" id="L772">	break;</span>
+      } else {
+<span class="nc" id="L774">	sumOfWeights += data.instance(i).weight();</span>
+      }
+    }
+    double freq;
+<span class="nc" id="L778">    double[] cutPoints = new double[m_NumBins - 1];</span>
+<span class="nc bnc" id="L779" title="All 2 branches missed.">    if (getDesiredWeightOfInstancesPerInterval() &gt; 0) {</span>
+<span class="nc" id="L780">      freq = getDesiredWeightOfInstancesPerInterval();</span>
+<span class="nc" id="L781">      cutPoints = new double[(int)(sumOfWeights / freq)];</span>
+    } else {
+<span class="nc" id="L783">      freq = sumOfWeights / m_NumBins;</span>
+<span class="nc" id="L784">      cutPoints = new double[m_NumBins - 1];</span>
+    }
+
+    // Compute break points
+<span class="nc" id="L788">    double counter = 0, last = 0;</span>
+<span class="nc" id="L789">    int cpindex = 0, lastIndex = -1;</span>
+<span class="nc bnc" id="L790" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances() - 1; i++) {</span>
+
+      // Stop if value missing
+<span class="nc bnc" id="L793" title="All 2 branches missed.">      if (data.instance(i).isMissing(index)) {</span>
+<span class="nc" id="L794">	break;</span>
+      }
+<span class="nc" id="L796">      counter += data.instance(i).weight();</span>
+<span class="nc" id="L797">      sumOfWeights -= data.instance(i).weight();</span>
+
+      // Do we have a potential breakpoint?
+<span class="nc" id="L800">      if (data.instance(i).value(index) &lt; </span>
+<span class="nc bnc" id="L801" title="All 2 branches missed.">	  data.instance(i + 1).value(index)) {</span>
+
+	// Have we passed the ideal size?
+<span class="nc bnc" id="L804" title="All 2 branches missed.">	if (counter &gt;= freq) {</span>
+
+	  // Is this break point worse than the last one?
+<span class="nc bnc" id="L807" title="All 4 branches missed.">	  if (((freq - last) &lt; (counter - freq)) &amp;&amp; (lastIndex != -1)) {</span>
+<span class="nc" id="L808">	    cutPoints[cpindex] = (data.instance(lastIndex).value(index) +</span>
+<span class="nc" id="L809">				  data.instance(lastIndex + 1).value(index)) / 2;</span>
+<span class="nc" id="L810">	    counter -= last;</span>
+<span class="nc" id="L811">	    last = counter;</span>
+<span class="nc" id="L812">	    lastIndex = i;</span>
+	  } else {
+<span class="nc" id="L814">	    cutPoints[cpindex] = (data.instance(i).value(index) +</span>
+<span class="nc" id="L815">				  data.instance(i + 1).value(index)) / 2;</span>
+<span class="nc" id="L816">	    counter = 0;</span>
+<span class="nc" id="L817">	    last = 0;</span>
+<span class="nc" id="L818">	    lastIndex = -1;</span>
+	  }
+<span class="nc" id="L820">	  cpindex++;</span>
+<span class="nc" id="L821">	  freq = (sumOfWeights + counter) / ((cutPoints.length + 1) - cpindex);</span>
+	} else {
+<span class="nc" id="L823">	  lastIndex = i;</span>
+<span class="nc" id="L824">	  last = counter;</span>
+	}
+      }
+    }
+
+    // Check whether there was another possibility for a cut point
+<span class="nc bnc" id="L830" title="All 4 branches missed.">    if ((cpindex &lt; cutPoints.length) &amp;&amp; (lastIndex != -1)) {</span>
+<span class="nc" id="L831">      cutPoints[cpindex] = (data.instance(lastIndex).value(index) +</span>
+<span class="nc" id="L832">			    data.instance(lastIndex + 1).value(index)) / 2;      </span>
+<span class="nc" id="L833">      cpindex++;</span>
+    }
+
+    // Did we find any cutpoints?
+<span class="nc bnc" id="L837" title="All 2 branches missed.">    if (cpindex == 0) {</span>
+<span class="nc" id="L838">      m_CutPoints[index] = null;</span>
+    } else {
+<span class="nc" id="L840">      double[] cp = new double[cpindex];</span>
+<span class="nc bnc" id="L841" title="All 2 branches missed.">      for (int i = 0; i &lt; cpindex; i++) {</span>
+<span class="nc" id="L842">	cp[i] = cutPoints[i];</span>
+      }
+<span class="nc" id="L844">      m_CutPoints[index] = cp;</span>
+    }
+<span class="nc" id="L846">  }</span>
+
+  /**
+   * Optimizes the number of bins using leave-one-out cross-validation.
+   *
+   * @param index the attribute index
+   */
+  protected void findNumBins(int index) {
+
+<span class="nc" id="L855">    double min = Double.MAX_VALUE, max = -Double.MAX_VALUE, binWidth = 0, </span>
+<span class="nc" id="L856">      entropy, bestEntropy = Double.MAX_VALUE, currentVal;</span>
+    double[] distribution;
+<span class="nc" id="L858">    int bestNumBins  = 1;</span>
+    Instance currentInstance;
+
+    // Find minimum and maximum
+<span class="nc bnc" id="L862" title="All 2 branches missed.">    for (int i = 0; i &lt; getInputFormat().numInstances(); i++) {</span>
+<span class="nc" id="L863">      currentInstance = getInputFormat().instance(i);</span>
+<span class="nc bnc" id="L864" title="All 2 branches missed.">      if (!currentInstance.isMissing(index)) {</span>
+<span class="nc" id="L865">	currentVal = currentInstance.value(index);</span>
+<span class="nc bnc" id="L866" title="All 2 branches missed.">	if (currentVal &gt; max) {</span>
+<span class="nc" id="L867">	  max = currentVal;</span>
+	}
+<span class="nc bnc" id="L869" title="All 2 branches missed.">	if (currentVal &lt; min) {</span>
+<span class="nc" id="L870">	  min = currentVal;</span>
+	}
+      }
+    }
+
+    // Find best number of bins
+<span class="nc bnc" id="L876" title="All 2 branches missed.">    for (int i = 0; i &lt; m_NumBins; i++) {</span>
+<span class="nc" id="L877">      distribution = new double[i + 1];</span>
+<span class="nc" id="L878">      binWidth = (max - min) / (i + 1);</span>
+
+      // Compute distribution
+<span class="nc bnc" id="L881" title="All 2 branches missed.">      for (int j = 0; j &lt; getInputFormat().numInstances(); j++) {</span>
+<span class="nc" id="L882">	currentInstance = getInputFormat().instance(j);</span>
+<span class="nc bnc" id="L883" title="All 2 branches missed.">	if (!currentInstance.isMissing(index)) {</span>
+<span class="nc bnc" id="L884" title="All 2 branches missed.">	  for (int k = 0; k &lt; i + 1; k++) {</span>
+<span class="nc" id="L885">	    if (currentInstance.value(index) &lt;= </span>
+<span class="nc bnc" id="L886" title="All 2 branches missed.">		(min + (((double)k + 1) * binWidth))) {</span>
+<span class="nc" id="L887">	      distribution[k] += currentInstance.weight();</span>
+<span class="nc" id="L888">	      break;</span>
+	    }
+	  }
+	}
+      }
+
+      // Compute cross-validated entropy
+<span class="nc" id="L895">      entropy = 0;</span>
+<span class="nc bnc" id="L896" title="All 2 branches missed.">      for (int k = 0; k &lt; i + 1; k++) {</span>
+<span class="nc bnc" id="L897" title="All 2 branches missed.">	if (distribution[k] &lt; 2) {</span>
+<span class="nc" id="L898">	  entropy = Double.MAX_VALUE;</span>
+<span class="nc" id="L899">	  break;</span>
+	}
+<span class="nc" id="L901">	entropy -= distribution[k] * Math.log((distribution[k] - 1) / </span>
+<span class="nc" id="L902">					      binWidth);</span>
+      }
+
+      // Best entropy so far?
+<span class="nc bnc" id="L906" title="All 2 branches missed.">      if (entropy &lt; bestEntropy) {</span>
+<span class="nc" id="L907">	bestEntropy = entropy;</span>
+<span class="nc" id="L908">	bestNumBins = i + 1;</span>
+      }
+    }
+
+    // Compute cut points
+<span class="nc" id="L913">    double [] cutPoints = null;</span>
+<span class="nc bnc" id="L914" title="All 4 branches missed.">    if ((bestNumBins &gt; 1) &amp;&amp; (binWidth &gt; 0)) {</span>
+<span class="nc" id="L915">      cutPoints = new double [bestNumBins - 1];</span>
+<span class="nc bnc" id="L916" title="All 2 branches missed.">      for(int i = 1; i &lt; bestNumBins; i++) {</span>
+<span class="nc" id="L917">	cutPoints[i - 1] = min + binWidth * i;</span>
+      }
+    }
+<span class="nc" id="L920">    m_CutPoints[index] = cutPoints;</span>
+<span class="nc" id="L921">   }</span>
+
+  /**
+   * Set the output format. Takes the currently defined cutpoints and 
+   * m_InputFormat and calls setOutputFormat(Instances) appropriately.
+   */
+  protected void setOutputFormat() {
+
+<span class="pc bpc" id="L929" title="1 of 2 branches missed.">    if (m_CutPoints == null) {</span>
+<span class="nc" id="L930">      setOutputFormat(null);</span>
+<span class="nc" id="L931">      return;</span>
+    }
+<span class="fc" id="L933">    FastVector attributes = new FastVector(getInputFormat().numAttributes());</span>
+<span class="fc" id="L934">    int classIndex = getInputFormat().classIndex();</span>
+<span class="fc bfc" id="L935" title="All 2 branches covered.">    for(int i = 0; i &lt; getInputFormat().numAttributes(); i++) {</span>
+<span class="fc bfc" id="L936" title="All 2 branches covered.">      if ((m_DiscretizeCols.isInRange(i)) </span>
+<span class="fc bfc" id="L937" title="All 2 branches covered.">	  &amp;&amp; (getInputFormat().attribute(i).isNumeric())</span>
+<span class="fc bfc" id="L938" title="All 2 branches covered.">	  &amp;&amp; (getInputFormat().classIndex() != i)) {</span>
+<span class="pc bpc" id="L939" title="1 of 2 branches missed.">	if (!m_MakeBinary) {</span>
+<span class="fc" id="L940">	  FastVector attribValues = new FastVector(1);</span>
+<span class="fc bfc" id="L941" title="All 2 branches covered.">	  if (m_CutPoints[i] == null) {</span>
+<span class="fc" id="L942">	    attribValues.addElement(&quot;'All'&quot;);</span>
+	  } else {
+<span class="fc bfc" id="L944" title="All 2 branches covered.">	    for(int j = 0; j &lt;= m_CutPoints[i].length; j++) {</span>
+<span class="fc bfc" id="L945" title="All 2 branches covered.">	      if (j == 0) {</span>
+<span class="fc" id="L946">		attribValues.addElement(&quot;'(-inf-&quot;</span>
+<span class="fc" id="L947">			+ Utils.doubleToString(m_CutPoints[i][j], 6) + &quot;]'&quot;);</span>
+<span class="fc bfc" id="L948" title="All 2 branches covered.">	      } else if (j == m_CutPoints[i].length) {</span>
+<span class="fc" id="L949">		attribValues.addElement(&quot;'(&quot;</span>
+<span class="fc" id="L950">			+ Utils.doubleToString(m_CutPoints[i][j - 1], 6) </span>
+<span class="fc" id="L951">					+ &quot;-inf)'&quot;);</span>
+	      } else {
+<span class="fc" id="L953">		attribValues.addElement(&quot;'(&quot;</span>
+<span class="fc" id="L954">			+ Utils.doubleToString(m_CutPoints[i][j - 1], 6) + &quot;-&quot;</span>
+<span class="fc" id="L955">			+ Utils.doubleToString(m_CutPoints[i][j], 6) + &quot;]'&quot;);</span>
+	      }
+	    }
+	  }
+<span class="fc" id="L959">	  Attribute newAtt = new Attribute(getInputFormat().</span>
+<span class="fc" id="L960">	      attribute(i).name(),</span>
+<span class="fc" id="L961">	      attribValues);</span>
+<span class="fc" id="L962">	  newAtt.setWeight(getInputFormat().attribute(i).weight());</span>
+<span class="fc" id="L963">	  attributes.addElement(newAtt);</span>
+	} else {
+<span class="nc bnc" id="L965" title="All 2 branches missed.">	  if (m_CutPoints[i] == null) {</span>
+<span class="nc" id="L966">	    FastVector attribValues = new FastVector(1);</span>
+<span class="nc" id="L967">	    attribValues.addElement(&quot;'All'&quot;);</span>
+<span class="nc" id="L968">	    Attribute newAtt = new Attribute(getInputFormat().</span>
+<span class="nc" id="L969">	        attribute(i).name(),</span>
+<span class="nc" id="L970">	        attribValues);</span>
+<span class="nc" id="L971">	    newAtt.setWeight(getInputFormat().attribute(i).weight());</span>
+<span class="nc" id="L972">	    attributes.addElement(newAtt);</span>
+	  } else {
+<span class="nc bnc" id="L974" title="All 2 branches missed.">	    if (i &lt; getInputFormat().classIndex()) {</span>
+<span class="nc" id="L975">	      classIndex += m_CutPoints[i].length - 1;</span>
+	    }
+<span class="nc bnc" id="L977" title="All 2 branches missed.">	    for(int j = 0; j &lt; m_CutPoints[i].length; j++) {</span>
+<span class="nc" id="L978">	      FastVector attribValues = new FastVector(2);</span>
+<span class="nc" id="L979">	      attribValues.addElement(&quot;'(-inf-&quot;</span>
+<span class="nc" id="L980">		      + Utils.doubleToString(m_CutPoints[i][j], 6) + &quot;]'&quot;);</span>
+<span class="nc" id="L981">	      attribValues.addElement(&quot;'(&quot;</span>
+<span class="nc" id="L982">		      + Utils.doubleToString(m_CutPoints[i][j], 6) + &quot;-inf)'&quot;);</span>
+	      
+<span class="nc" id="L984">	      Attribute newAtt = new Attribute(getInputFormat().</span>
+<span class="nc" id="L985">                  attribute(i).name() + &quot;_&quot; + (j+1),</span>
+<span class="nc" id="L986">                  attribValues);</span>
+<span class="nc" id="L987">	      newAtt.setWeight(getInputFormat().attribute(i).weight());</span>
+<span class="nc" id="L988">	      attributes.addElement(newAtt);</span>
+	    }
+	  }
+	}
+      } else {
+<span class="fc" id="L993">	attributes.addElement(getInputFormat().attribute(i).copy());</span>
+      }
+    }
+<span class="fc" id="L996">    Instances outputFormat = </span>
+<span class="fc" id="L997">      new Instances(getInputFormat().relationName(), attributes, 0);</span>
+<span class="fc" id="L998">    outputFormat.setClassIndex(classIndex);</span>
+<span class="fc" id="L999">    setOutputFormat(outputFormat);</span>
+<span class="fc" id="L1000">  }</span>
+
+  /**
+   * Convert a single instance over. The converted instance is added to 
+   * the end of the output queue.
+   *
+   * @param instance the instance to convert
+   */
+  protected void convertInstance(Instance instance) {
+
+<span class="fc" id="L1010">    int index = 0;</span>
+<span class="fc" id="L1011">    double [] vals = new double [outputFormatPeek().numAttributes()];</span>
+    // Copy and convert the values
+<span class="fc bfc" id="L1013" title="All 2 branches covered.">    for(int i = 0; i &lt; getInputFormat().numAttributes(); i++) {</span>
+<span class="fc bfc" id="L1014" title="All 2 branches covered.">      if (m_DiscretizeCols.isInRange(i) &amp;&amp; </span>
+<span class="fc bfc" id="L1015" title="All 2 branches covered.">	  getInputFormat().attribute(i).isNumeric() &amp;&amp;</span>
+<span class="fc bfc" id="L1016" title="All 2 branches covered.">	  (getInputFormat().classIndex() != i)) {</span>
+	int j;
+<span class="fc" id="L1018">	double currentVal = instance.value(i);</span>
+<span class="fc bfc" id="L1019" title="All 2 branches covered.">	if (m_CutPoints[i] == null) {</span>
+<span class="fc bfc" id="L1020" title="All 2 branches covered.">	  if (instance.isMissing(i)) {</span>
+<span class="fc" id="L1021">	    vals[index] = Instance.missingValue();</span>
+	  } else {
+<span class="fc" id="L1023">	    vals[index] = 0;</span>
+	  }
+<span class="fc" id="L1025">	  index++;</span>
+	} else {
+<span class="pc bpc" id="L1027" title="1 of 2 branches missed.">	  if (!m_MakeBinary) {</span>
+<span class="fc bfc" id="L1028" title="All 2 branches covered.">	    if (instance.isMissing(i)) {</span>
+<span class="fc" id="L1029">	      vals[index] = Instance.missingValue();</span>
+	    } else {
+<span class="fc bfc" id="L1031" title="All 2 branches covered.">	      for (j = 0; j &lt; m_CutPoints[i].length; j++) {</span>
+<span class="fc bfc" id="L1032" title="All 2 branches covered.">		if (currentVal &lt;= m_CutPoints[i][j]) {</span>
+<span class="fc" id="L1033">		  break;</span>
+		}
+	      }
+<span class="fc" id="L1036">              vals[index] = j;</span>
+	    }
+<span class="fc" id="L1038">	    index++;</span>
+	  } else {
+<span class="nc bnc" id="L1040" title="All 2 branches missed.">	    for (j = 0; j &lt; m_CutPoints[i].length; j++) {</span>
+<span class="nc bnc" id="L1041" title="All 2 branches missed.">	      if (instance.isMissing(i)) {</span>
+<span class="nc" id="L1042">                vals[index] = Instance.missingValue();</span>
+<span class="nc bnc" id="L1043" title="All 2 branches missed.">	      } else if (currentVal &lt;= m_CutPoints[i][j]) {</span>
+<span class="nc" id="L1044">                vals[index] = 0;</span>
+	      } else {
+<span class="nc" id="L1046">                vals[index] = 1;</span>
+	      }
+<span class="nc" id="L1048">	      index++;</span>
+	    }
+	  }   
+	}
+      } else {
+<span class="fc" id="L1053">        vals[index] = instance.value(i);</span>
+<span class="fc" id="L1054">	index++;</span>
+      }
+    }
+    
+<span class="fc" id="L1058">    Instance inst = null;</span>
+<span class="pc bpc" id="L1059" title="1 of 2 branches missed.">    if (instance instanceof SparseInstance) {</span>
+<span class="nc" id="L1060">      inst = new SparseInstance(instance.weight(), vals);</span>
+    } else {
+<span class="fc" id="L1062">      inst = new Instance(instance.weight(), vals);</span>
+    }
+<span class="fc" id="L1064">    inst.setDataset(getOutputFormat());</span>
+<span class="fc" id="L1065">    copyValues(inst, false, instance.dataset(), getOutputFormat());</span>
+<span class="fc" id="L1066">    inst.setDataset(getOutputFormat());</span>
+<span class="fc" id="L1067">    push(inst);</span>
+<span class="fc" id="L1068">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1076">    return RevisionUtils.extract(&quot;$Revision: 8284 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain arguments to the filter: use -h for help
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L1085">    runFilter(new Discretize(), argv);</span>
+<span class="nc" id="L1086">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

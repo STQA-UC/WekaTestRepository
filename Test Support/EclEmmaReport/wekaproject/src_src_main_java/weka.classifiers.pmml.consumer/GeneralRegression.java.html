@@ -1,0 +1,1473 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>GeneralRegression.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.pmml.consumer</a> &gt; <span class="el_source">GeneralRegression.java</span></div><h1>GeneralRegression.java</h1><pre class="source lang-java linenums"><span class="pc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    GeneralRegression.java
+ *    Copyright (C) 2008 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.pmml.consumer;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+import weka.core.Attribute;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.pmml.*;
+
+/**
+ * Class implementing import of PMML General Regression model. Can be
+ * used as a Weka classifier for prediction (buildClassifier()
+ * raises an Exception).
+ *
+ * @author Mark Hall (mhall{[at]}pentaho{[dot]}com)
+ * @version $Revision: 5562 $
+ */
+public class GeneralRegression extends PMMLClassifier
+  implements Serializable {
+
+  /**
+   * For serialization
+   */
+  private static final long serialVersionUID = 2583880411828388959L;
+
+  /**
+   * Enumerated type for the model type.
+   */
+<span class="fc" id="L57">  enum ModelType {</span>
+
+    // same type of model
+<span class="fc" id="L60">    REGRESSION (&quot;regression&quot;), </span>
+<span class="fc" id="L61">      GENERALLINEAR (&quot;generalLinear&quot;), </span>
+<span class="fc" id="L62">      MULTINOMIALLOGISTIC (&quot;multinomialLogistic&quot;),</span>
+<span class="fc" id="L63">      ORDINALMULTINOMIAL (&quot;ordinalMultinomial&quot;), </span>
+<span class="fc" id="L64">      GENERALIZEDLINEAR (&quot;generalizedLinear&quot;);</span>
+
+    private final String m_stringVal;
+<span class="fc" id="L67">    ModelType(String name) {</span>
+<span class="fc" id="L68">      m_stringVal = name;</span>
+<span class="fc" id="L69">    }</span>
+    
+    public String toString() {
+<span class="fc" id="L72">      return m_stringVal;</span>
+    }
+  }
+  
+  // the model type
+<span class="fc" id="L77">  protected ModelType m_modelType = ModelType.REGRESSION;</span>
+
+  // the model name (if defined)
+  protected String m_modelName;
+    
+  // the algorithm name (if defined)
+  protected String m_algorithmName;
+
+  // the function type (regression or classification)
+<span class="fc" id="L86">  protected int m_functionType = Regression.RegressionTable.REGRESSION;</span>
+
+  /**
+   * Enumerated type for the cumulative link function
+   * (ordinal multinomial model type only).
+   */
+<span class="fc" id="L92">  enum CumulativeLinkFunction {</span>
+<span class="fc" id="L93">    NONE (&quot;none&quot;) {</span>
+      double eval(double value, double offset) {
+<span class="nc" id="L95">        return Double.NaN; // no evaluation defined in this case!</span>
+      }
+    },
+<span class="fc" id="L98">    LOGIT (&quot;logit&quot;) {</span>
+      double eval(double value, double offset) {
+<span class="nc" id="L100">        return 1.0 / (1.0 + Math.exp(-(value + offset)));</span>
+      }
+    },
+<span class="fc" id="L103">    PROBIT (&quot;probit&quot;) {</span>
+      double eval(double value, double offset) {
+<span class="nc" id="L105">        return weka.core.matrix.Maths.pnorm(value + offset); </span>
+      }
+    },
+<span class="fc" id="L108">    CLOGLOG (&quot;cloglog&quot;) {</span>
+      double eval(double value, double offset) {
+<span class="nc" id="L110">        return 1.0 - Math.exp(-Math.exp(value + offset));</span>
+      }
+    },
+<span class="fc" id="L113">    LOGLOG (&quot;loglog&quot;) {</span>
+      double eval(double value, double offset) {
+<span class="nc" id="L115">        return Math.exp(-Math.exp(-(value + offset))); </span>
+      }
+    },
+<span class="fc" id="L118">    CAUCHIT (&quot;cauchit&quot;) {</span>
+      double eval(double value, double offset) {
+<span class="nc" id="L120">        return 0.5 + (1.0 / Math.PI) * Math.atan(value + offset);</span>
+      }
+    };
+
+    /**
+     * Evaluation function.
+     * 
+     * @param value the raw response value
+     * @param offset the offset to add to the raw value 
+     * @return the result of the link function
+     */
+    abstract double eval(double value, double offset);
+    
+    private final String m_stringVal;
+    
+    /**
+     * Constructor
+     * 
+     * @param name textual name for this enum
+     */
+<span class="fc" id="L140">    CumulativeLinkFunction(String name) {</span>
+<span class="fc" id="L141">      m_stringVal = name;</span>
+<span class="fc" id="L142">    }</span>
+    
+    /* (non-Javadoc)
+     * @see java.lang.Enum#toString()
+     */
+    public String toString() {
+<span class="nc" id="L148">      return m_stringVal;</span>
+    }
+  }
+  
+  // cumulative link function (ordinal multinomial only)
+<span class="fc" id="L153">  protected CumulativeLinkFunction m_cumulativeLinkFunction </span>
+<span class="fc" id="L154">    = CumulativeLinkFunction.NONE;</span>
+
+
+  /**
+   * Enumerated type for the link function (general linear and
+   * generalized linear model types only).
+   */
+<span class="fc" id="L161">  enum LinkFunction {</span>
+<span class="fc" id="L162">    NONE (&quot;none&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc" id="L165">        return Double.NaN; // no evaluation defined in this case!</span>
+      }
+    },
+<span class="fc" id="L168">    CLOGLOG (&quot;cloglog&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc" id="L171">        return (1.0 - Math.exp(-Math.exp(value + offset))) * trials;</span>
+      }
+    },
+<span class="fc" id="L174">    IDENTITY (&quot;identity&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc" id="L177">        return (value + offset) * trials;</span>
+      }
+    },
+<span class="fc" id="L180">    LOG (&quot;log&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc" id="L183">        return Math.exp(value + offset) * trials;</span>
+      }
+    },
+<span class="fc" id="L186">    LOGC (&quot;logc&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc" id="L189">        return (1.0 - Math.exp(value + offset)) * trials;</span>
+      }
+    },
+<span class="fc" id="L192">    LOGIT (&quot;logit&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc" id="L195">        return (1.0 / (1.0 + Math.exp(-(value + offset)))) * trials;</span>
+      }
+    },
+<span class="fc" id="L198">    LOGLOG (&quot;loglog&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc" id="L201">        return Math.exp(-Math.exp(-(value + offset))) * trials;</span>
+      }
+    },
+<span class="fc" id="L204">    NEGBIN (&quot;negbin&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc" id="L207">        return (1.0 / (distParam * (Math.exp(-(value + offset)) - 1.0))) * trials;</span>
+      }
+    },
+<span class="fc" id="L210">    ODDSPOWER (&quot;oddspower&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc bnc" id="L213" title="All 4 branches missed.">        return (linkParam &lt; 0.0 || linkParam &gt; 0.0)</span>
+<span class="nc" id="L214">        ? (1.0 / (1.0 + Math.pow(1.0 + linkParam * (value + offset), (-1.0 / linkParam)))) * trials</span>
+<span class="nc" id="L215">        : (1.0 / (1.0 + Math.exp(-(value + offset)))) * trials;</span>
+      }
+    },
+<span class="fc" id="L218">    POWER (&quot;power&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc bnc" id="L221" title="All 4 branches missed.">        return (linkParam &lt; 0.0 || linkParam &gt; 0.0)</span>
+<span class="nc" id="L222">        ? Math.pow(value + offset, (1.0 / linkParam)) * trials</span>
+<span class="nc" id="L223">            : Math.exp(value + offset) * trials;</span>
+      }
+    },
+<span class="fc" id="L226">    PROBIT (&quot;probit&quot;) {</span>
+      double eval(double value, double offset, double trials,
+                  double distParam, double linkParam) {
+<span class="nc" id="L229">        return weka.core.matrix.Maths.pnorm(value + offset) * trials;</span>
+      }
+    };
+
+    /**
+     * Evaluation function.
+     * 
+     * @param value the raw response value
+     * @param offset the offset to add to the raw value
+     * @param trials the trials value to multiply the result by
+     * @param distParam the distribution parameter (negbin only)
+     * @param linkParam the link parameter (power and oddspower only) 
+     * @return the result of the link function
+     */
+    abstract double eval(double value, double offset, double trials, 
+                         double distParam, double linkParam);
+    
+    private final String m_stringVal;
+    
+    /**
+     * Constructor.
+     * 
+     * @param name the textual name of this link function
+     */
+<span class="fc" id="L253">    LinkFunction(String name) {</span>
+<span class="fc" id="L254">      m_stringVal = name;</span>
+<span class="fc" id="L255">    }</span>
+
+    /* (non-Javadoc)
+     * @see java.lang.Enum#toString()
+     */
+    public String toString() {
+<span class="nc" id="L261">      return m_stringVal;</span>
+    }
+  }
+  
+  // link function (generalLinear model type only)
+<span class="fc" id="L266">  protected LinkFunction m_linkFunction = LinkFunction.NONE;</span>
+<span class="fc" id="L267">  protected double m_linkParameter = Double.NaN;</span>
+  protected String m_trialsVariable;
+<span class="fc" id="L269">  protected double m_trialsValue = Double.NaN;</span>
+
+  /**
+   * Enumerated type for the distribution (general linear
+   * and generalized linear model types only).
+   */
+<span class="fc" id="L275">  enum Distribution {</span>
+<span class="fc" id="L276">    NONE (&quot;none&quot;),</span>
+<span class="fc" id="L277">    NORMAL (&quot;normal&quot;),</span>
+<span class="fc" id="L278">    BINOMIAL (&quot;binomial&quot;),</span>
+<span class="fc" id="L279">    GAMMA (&quot;gamma&quot;),</span>
+<span class="fc" id="L280">    INVGAUSSIAN (&quot;igauss&quot;),</span>
+<span class="fc" id="L281">    NEGBINOMIAL (&quot;negbin&quot;),</span>
+<span class="fc" id="L282">    POISSON (&quot;poisson&quot;);</span>
+
+    private final String m_stringVal;
+<span class="fc" id="L285">    Distribution(String name) {</span>
+<span class="fc" id="L286">      m_stringVal = name;</span>
+<span class="fc" id="L287">    }</span>
+
+    /* (non-Javadoc)
+     * @see java.lang.Enum#toString()
+     */
+    public String toString() {
+<span class="nc" id="L293">      return m_stringVal;</span>
+    }
+  }
+  
+  // generalLinear and generalizedLinear model type only
+<span class="fc" id="L298">  protected Distribution m_distribution = Distribution.NORMAL;</span>
+
+  // ancillary parameter value for the negative binomial distribution
+<span class="fc" id="L301">  protected double m_distParameter = Double.NaN;</span>
+
+  // if present, this variable is used during scoring generalizedLinear/generalLinear or
+  // ordinalMultinomial models
+  protected String m_offsetVariable;
+
+  // if present, this variable is used during scoring generalizedLinear/generalLinear or
+  // ordinalMultinomial models. It works like a user-specified intercept.
+  // At most, only one of offsetVariable or offsetValue may be specified.
+<span class="fc" id="L310">  protected double m_offsetValue = Double.NaN;</span>
+
+  /**
+   * Small inner class to hold the name of a parameter plus
+   * its optional descriptive label
+   */
+<span class="fc" id="L316">  static class Parameter implements Serializable {</span>
+    // ESCA-JAVA0096:
+    /** For serialization */
+    // CHECK ME WITH serialver
+    private static final long serialVersionUID = 6502780192411755341L;
+
+<span class="fc" id="L322">    protected String m_name = null;</span>
+<span class="fc" id="L323">    protected String m_label = null;</span>
+  }
+
+  // List of model parameters
+<span class="fc" id="L327">  protected ArrayList&lt;Parameter&gt; m_parameterList = new ArrayList&lt;Parameter&gt;();</span>
+
+  /**
+   * Small inner class to hold the name of a factor or covariate,
+   * plus the index of the attribute it corresponds to in the
+   * mining schema.
+   */
+<span class="fc" id="L334">  static class Predictor implements Serializable {</span>
+    /** For serialization */
+    // CHECK ME WITH serialver
+    private static final long serialVersionUID = 6502780192411755341L;
+
+<span class="fc" id="L339">    protected String m_name = null;</span>
+<span class="fc" id="L340">    protected int m_miningSchemaIndex = -1;</span>
+    
+    public String toString() {
+<span class="nc" id="L343">      return m_name;</span>
+    }
+  }
+  
+  // FactorList
+<span class="fc" id="L348">  protected ArrayList&lt;Predictor&gt; m_factorList = new ArrayList&lt;Predictor&gt;();</span>
+
+  // CovariateList
+<span class="fc" id="L351">  protected ArrayList&lt;Predictor&gt; m_covariateList = new ArrayList&lt;Predictor&gt;();</span>
+
+  /**
+   * Small inner class to hold details on a predictor-to-parameter
+   * correlation.
+   */
+<span class="fc" id="L357">  static class PPCell implements Serializable {</span>
+    /** For serialization */
+    // CHECK ME WITH serialver
+    private static final long serialVersionUID = 6502780192411755341L;
+    
+<span class="fc" id="L362">    protected String m_predictorName = null;</span>
+<span class="fc" id="L363">    protected String m_parameterName = null;</span>
+
+    // either the exponent of a numeric attribute or the index of
+    // a discrete value
+<span class="fc" id="L367">    protected double m_value = 0;</span>
+
+    // optional. The default is for all target categories to
+    // share the same PPMatrix.
+    // TO-DO: implement multiple PPMatrixes 
+<span class="fc" id="L372">    protected String m_targetCategory = null;</span>
+    
+  }
+  
+  // PPMatrix (predictor-to-parameter matrix)
+  // rows = parameters, columns = predictors (attributes)
+  protected PPCell[][] m_ppMatrix;
+
+  /**
+   * Small inner class to hold a single entry in the 
+   * ParamMatrix (parameter matrix).
+   */
+<span class="fc" id="L384">  static class PCell implements Serializable {</span>
+    
+    /** For serialization */
+    // CHECK ME WITH serialver
+    private static final long serialVersionUID = 6502780192411755341L;
+
+    // may be null for numeric target. May also be null if this coefficent
+    // applies to all target categories.
+<span class="fc" id="L392">    protected String m_targetCategory = null;</span>
+<span class="fc" id="L393">    protected String m_parameterName = null;</span>
+    // coefficient
+<span class="fc" id="L395">    protected double m_beta = 0.0;</span>
+    // optional degrees of freedom
+<span class="fc" id="L397">    protected int m_df = -1;</span>
+  }
+  
+  // ParamMatrix. rows = target categories (only one if target is numeric),
+  // columns = parameters (in order that they occur in the parameter list).
+  protected PCell[][] m_paramMatrix;
+
+  /**
+   * Constructs a GeneralRegression classifier.
+   * 
+   * @param model the Element that holds the model definition
+   * @param dataDictionary the data dictionary as a set of Instances
+   * @param miningSchema the mining schema
+   * @throws Exception if there is a problem constructing the general regression
+   * object from the PMML.
+   */
+  public GeneralRegression(Element model, Instances dataDictionary,
+                           MiningSchema miningSchema) throws Exception {
+
+<span class="fc" id="L416">    super(dataDictionary, miningSchema);</span>
+ 
+    // get the model type
+<span class="fc" id="L419">    String mType = model.getAttribute(&quot;modelType&quot;);</span>
+<span class="fc" id="L420">    boolean found = false;</span>
+<span class="pc bpc" id="L421" title="1 of 2 branches missed.">    for (ModelType m : ModelType.values()) {</span>
+<span class="fc bfc" id="L422" title="All 2 branches covered.">      if (m.toString().equals(mType)) {</span>
+<span class="fc" id="L423">        m_modelType = m;</span>
+<span class="fc" id="L424">        found = true;</span>
+<span class="fc" id="L425">        break;</span>
+      }      
+    }
+<span class="pc bpc" id="L428" title="1 of 2 branches missed.">    if (!found) {</span>
+<span class="nc" id="L429">      throw new Exception(&quot;[GeneralRegression] unknown model type: &quot; + mType);</span>
+    }
+
+<span class="pc bpc" id="L432" title="1 of 2 branches missed.">    if (m_modelType == ModelType.ORDINALMULTINOMIAL) {</span>
+      // get the cumulative link function
+<span class="nc" id="L434">      String cLink = model.getAttribute(&quot;cumulativeLink&quot;);</span>
+<span class="nc" id="L435">      found = false;</span>
+<span class="nc bnc" id="L436" title="All 2 branches missed.">      for (CumulativeLinkFunction c : CumulativeLinkFunction.values()) {</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">        if (c.toString().equals(cLink)) {</span>
+<span class="nc" id="L438">          m_cumulativeLinkFunction = c;</span>
+<span class="nc" id="L439">          found = true;</span>
+<span class="nc" id="L440">          break;</span>
+        }
+      }
+<span class="nc bnc" id="L443" title="All 2 branches missed.">      if (!found) {</span>
+<span class="nc" id="L444">        throw new Exception(&quot;[GeneralRegression] cumulative link function &quot; + cLink);</span>
+      }
+<span class="pc bpc" id="L446" title="1 of 2 branches missed.">    } else if (m_modelType == ModelType.GENERALIZEDLINEAR || </span>
+<span class="pc bpc" id="L447" title="1 of 2 branches missed.">                m_modelType == ModelType.GENERALLINEAR) {</span>
+      // get the link function
+<span class="nc" id="L449">      String link = model.getAttribute(&quot;linkFunction&quot;);</span>
+<span class="nc" id="L450">      found = false;</span>
+<span class="nc bnc" id="L451" title="All 2 branches missed.">      for (LinkFunction l : LinkFunction.values()) {</span>
+<span class="nc bnc" id="L452" title="All 2 branches missed.">        if (l.toString().equals(link)) {</span>
+<span class="nc" id="L453">          m_linkFunction = l;</span>
+<span class="nc" id="L454">          found = true;</span>
+<span class="nc" id="L455">          break;</span>
+        }
+      }
+<span class="nc bnc" id="L458" title="All 2 branches missed.">      if (!found) {</span>
+<span class="nc" id="L459">        throw new Exception(&quot;[GeneralRegression] unknown link function &quot; + link);</span>
+      }
+
+      // get the link parameter
+<span class="nc" id="L463">      String linkP = model.getAttribute(&quot;linkParameter&quot;);</span>
+<span class="nc bnc" id="L464" title="All 4 branches missed.">      if (linkP != null &amp;&amp; linkP.length() &gt; 0) {</span>
+        try {
+<span class="nc" id="L466">          m_linkParameter = Double.parseDouble(linkP);</span>
+<span class="nc" id="L467">        } catch (IllegalArgumentException ex) {</span>
+<span class="nc" id="L468">          throw new Exception(&quot;[GeneralRegression] unable to parse the link parameter&quot;);</span>
+        }
+      }
+
+      // get the trials variable
+<span class="nc" id="L473">      String trials = model.getAttribute(&quot;trialsVariable&quot;);</span>
+<span class="nc bnc" id="L474" title="All 4 branches missed.">      if (trials != null &amp;&amp; trials.length() &gt; 0) {</span>
+<span class="nc" id="L475">        m_trialsVariable = trials;</span>
+      }
+
+      // get the trials value
+<span class="nc" id="L479">      String trialsV = model.getAttribute(&quot;trialsValue&quot;);</span>
+<span class="nc bnc" id="L480" title="All 4 branches missed.">      if (trialsV != null &amp;&amp; trialsV.length() &gt; 0) {</span>
+        try {
+<span class="nc" id="L482">          m_trialsValue = Double.parseDouble(trialsV);</span>
+<span class="nc" id="L483">        } catch (IllegalArgumentException ex) {</span>
+<span class="nc" id="L484">          throw new Exception(&quot;[GeneralRegression] unable to parse the trials value&quot;); </span>
+        }
+      }
+    }
+  
+<span class="fc" id="L489">    String mName = model.getAttribute(&quot;modelName&quot;);</span>
+<span class="pc bpc" id="L490" title="2 of 4 branches missed.">    if (mName != null &amp;&amp; mName.length() &gt; 0) {</span>
+<span class="fc" id="L491">      m_modelName = mName;</span>
+    }
+
+<span class="fc" id="L494">    String fName = model.getAttribute(&quot;functionName&quot;);</span>
+<span class="pc bpc" id="L495" title="1 of 2 branches missed.">    if (fName.equals(&quot;classification&quot;)) {</span>
+<span class="fc" id="L496">      m_functionType = Regression.RegressionTable.CLASSIFICATION;</span>
+    }
+
+<span class="fc" id="L499">    String algName = model.getAttribute(&quot;algorithmName&quot;);</span>
+<span class="pc bpc" id="L500" title="2 of 4 branches missed.">    if (algName != null &amp;&amp; algName.length() &gt; 0) {</span>
+<span class="nc" id="L501">      m_algorithmName = algName;</span>
+    }
+
+<span class="fc" id="L504">    String distribution = model.getAttribute(&quot;distribution&quot;);</span>
+<span class="pc bpc" id="L505" title="2 of 4 branches missed.">    if (distribution != null &amp;&amp; distribution.length() &gt; 0) {</span>
+<span class="nc" id="L506">      found = false;</span>
+<span class="nc bnc" id="L507" title="All 2 branches missed.">      for (Distribution d : Distribution.values()) {</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">        if (d.toString().equals(distribution)) {</span>
+<span class="nc" id="L509">          m_distribution = d;</span>
+<span class="nc" id="L510">          found = true;</span>
+<span class="nc" id="L511">          break;</span>
+        }
+      }
+<span class="nc bnc" id="L514" title="All 2 branches missed.">      if (!found) {</span>
+<span class="nc" id="L515">        throw new Exception(&quot;[GeneralRegression] unknown distribution type &quot; + distribution);</span>
+      }
+    }
+
+<span class="fc" id="L519">    String distP = model.getAttribute(&quot;distParameter&quot;);</span>
+<span class="pc bpc" id="L520" title="2 of 4 branches missed.">    if (distP != null &amp;&amp; distP.length() &gt; 0) {</span>
+      try {
+<span class="nc" id="L522">        m_distParameter = Double.parseDouble(distP);</span>
+<span class="nc" id="L523">      } catch (IllegalArgumentException ex) {</span>
+<span class="nc" id="L524">        throw new Exception(&quot;[GeneralRegression] unable to parse the distribution parameter&quot;);</span>
+      }
+    }
+
+<span class="fc" id="L528">    String offsetV = model.getAttribute(&quot;offsetVariable&quot;);</span>
+<span class="pc bpc" id="L529" title="2 of 4 branches missed.">    if (offsetV != null &amp;&amp; offsetV.length() &gt; 0) {</span>
+<span class="nc" id="L530">       m_offsetVariable = offsetV;</span>
+    }
+
+<span class="fc" id="L533">    String offsetVal = model.getAttribute(&quot;offsetValue&quot;);</span>
+<span class="pc bpc" id="L534" title="2 of 4 branches missed.">    if (offsetVal != null &amp;&amp; offsetVal.length() &gt; 0) {</span>
+      try {
+<span class="nc" id="L536">        m_offsetValue = Double.parseDouble(offsetVal);</span>
+<span class="nc" id="L537">      } catch (IllegalArgumentException ex) {</span>
+<span class="nc" id="L538">        throw new Exception(&quot;[GeneralRegression] unable to parse the offset value&quot;);</span>
+      }
+    }
+
+    // get the parameter list
+<span class="fc" id="L543">    readParameterList(model);</span>
+    
+    // get the factors and covariates
+<span class="fc" id="L546">    readFactorsAndCovariates(model, &quot;FactorList&quot;);</span>
+<span class="fc" id="L547">    readFactorsAndCovariates(model, &quot;CovariateList&quot;);</span>
+
+    // read the PPMatrix
+<span class="fc" id="L550">    readPPMatrix(model);</span>
+
+    // read the parameter estimates
+<span class="fc" id="L553">    readParamMatrix(model);</span>
+<span class="fc" id="L554">  }</span>
+
+  /**
+   * Read the list of parameters.
+   *
+   * @param model the Element that contains the model
+   * @throws Exception if there is some problem with extracting the
+   * parameters.
+   */
+  protected void readParameterList(Element model) throws Exception {
+<span class="fc" id="L564">    NodeList paramL = model.getElementsByTagName(&quot;ParameterList&quot;);</span>
+
+    // should be just one parameter list
+<span class="pc bpc" id="L567" title="1 of 2 branches missed.">    if (paramL.getLength() == 1) {</span>
+<span class="fc" id="L568">      Node paramN = paramL.item(0);</span>
+<span class="pc bpc" id="L569" title="1 of 2 branches missed.">      if (paramN.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L570">        NodeList parameterList = ((Element)paramN).getElementsByTagName(&quot;Parameter&quot;);</span>
+<span class="fc bfc" id="L571" title="All 2 branches covered.">        for (int i = 0; i &lt; parameterList.getLength(); i++) {</span>
+<span class="fc" id="L572">          Node parameter = parameterList.item(i);</span>
+<span class="pc bpc" id="L573" title="1 of 2 branches missed.">          if (parameter.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L574">            Parameter p = new Parameter();</span>
+<span class="fc" id="L575">            p.m_name = ((Element)parameter).getAttribute(&quot;name&quot;);</span>
+<span class="fc" id="L576">            String label = ((Element)parameter).getAttribute(&quot;label&quot;);</span>
+<span class="pc bpc" id="L577" title="2 of 4 branches missed.">            if (label != null &amp;&amp; label.length() &gt; 0) {</span>
+<span class="fc" id="L578">              p.m_label = label;</span>
+            }
+<span class="fc" id="L580">            m_parameterList.add(p);</span>
+          }
+        }
+      }
+    } else {
+<span class="nc" id="L585">      throw new Exception(&quot;[GeneralRegression] more than one parameter list!&quot;);</span>
+    }
+<span class="fc" id="L587">  }</span>
+
+  /**
+   * Read the lists of factors and covariates.
+   *
+   * @param model the Element that contains the model
+   * @param factorOrCovariate holds the String &quot;FactorList&quot; or
+   * &quot;CovariateList&quot;
+   * @throws Exception if there is a factor or covariate listed
+   * that isn't in the mining schema
+   */
+  protected void readFactorsAndCovariates(Element model, 
+                                          String factorOrCovariate) 
+    throws Exception {
+<span class="fc" id="L601">    Instances miningSchemaI = m_miningSchema.getFieldsAsInstances();</span>
+
+<span class="fc" id="L603">    NodeList factorL = model.getElementsByTagName(factorOrCovariate);</span>
+<span class="pc bpc" id="L604" title="1 of 2 branches missed.">    if (factorL.getLength() == 1) { // should be 0 or 1 FactorList element</span>
+<span class="fc" id="L605">      Node factor = factorL.item(0);</span>
+<span class="pc bpc" id="L606" title="1 of 2 branches missed.">      if (factor.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L607">        NodeList predL = ((Element)factor).getElementsByTagName(&quot;Predictor&quot;);</span>
+<span class="fc bfc" id="L608" title="All 2 branches covered.">        for (int i = 0; i &lt; predL.getLength(); i++) {</span>
+<span class="fc" id="L609">          Node pred = predL.item(i);</span>
+<span class="pc bpc" id="L610" title="1 of 2 branches missed.">          if (pred.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L611">            Predictor p = new Predictor();</span>
+<span class="fc" id="L612">            p.m_name = ((Element)pred).getAttribute(&quot;name&quot;);</span>
+            // find the index of this predictor in the mining schema
+<span class="fc" id="L614">            boolean found = false;</span>
+<span class="pc bpc" id="L615" title="1 of 2 branches missed.">            for (int j = 0; j &lt; miningSchemaI.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L616" title="All 2 branches covered.">              if (miningSchemaI.attribute(j).name().equals(p.m_name)) {</span>
+<span class="fc" id="L617">                found = true;</span>
+<span class="fc" id="L618">                p.m_miningSchemaIndex = j;</span>
+<span class="fc" id="L619">                break;</span>
+              }
+            }
+<span class="pc bpc" id="L622" title="1 of 2 branches missed.">            if (found) {</span>
+<span class="fc bfc" id="L623" title="All 2 branches covered.">              if (factorOrCovariate.equals(&quot;FactorList&quot;)) {</span>
+<span class="fc" id="L624">                m_factorList.add(p);</span>
+              } else {
+<span class="fc" id="L626">                m_covariateList.add(p);</span>
+              }
+            } else {
+<span class="nc" id="L629">              throw new Exception(&quot;[GeneralRegression] reading factors and covariates - &quot;</span>
+                                  + &quot;unable to find predictor &quot; +
+<span class="nc" id="L631">                                  p.m_name + &quot; in the mining schema&quot;);</span>
+            }
+          }
+        }
+      }
+<span class="nc bnc" id="L636" title="All 2 branches missed.">    } else if (factorL.getLength() &gt; 1){</span>
+<span class="nc" id="L637">      throw new Exception(&quot;[GeneralRegression] more than one &quot; + factorOrCovariate</span>
+<span class="nc" id="L638">                          + &quot;! &quot;);</span>
+    }
+<span class="fc" id="L640">  }</span>
+
+  /**
+   * Read the PPMatrix from the xml. Does not handle multiple PPMatrixes yet.
+   *
+   * @param model the Element that contains the model
+   * @throws Exception if there is a problem parsing cell values.
+   */
+  protected void readPPMatrix(Element model) throws Exception {
+<span class="fc" id="L649">    Instances miningSchemaI = m_miningSchema.getFieldsAsInstances();</span>
+    
+<span class="fc" id="L651">    NodeList matrixL = model.getElementsByTagName(&quot;PPMatrix&quot;);</span>
+
+    // should be exactly one PPMatrix
+<span class="pc bpc" id="L654" title="1 of 2 branches missed.">    if (matrixL.getLength() == 1) {</span>
+      // allocate space for the matrix
+      // column that corresponds to the class will be empty (and will be missed out
+      // when printing the model).
+<span class="fc" id="L658">      m_ppMatrix = new PPCell[m_parameterList.size()][miningSchemaI.numAttributes()];</span>
+
+<span class="fc" id="L660">      Node ppM = matrixL.item(0);</span>
+<span class="pc bpc" id="L661" title="1 of 2 branches missed.">      if (ppM.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L662">        NodeList cellL = ((Element)ppM).getElementsByTagName(&quot;PPCell&quot;);</span>
+<span class="fc bfc" id="L663" title="All 2 branches covered.">        for (int i = 0; i &lt; cellL.getLength(); i++) {</span>
+<span class="fc" id="L664">          Node cell = cellL.item(i);</span>
+<span class="pc bpc" id="L665" title="1 of 2 branches missed.">          if (cell.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L666">            String predictorName = ((Element)cell).getAttribute(&quot;predictorName&quot;);</span>
+<span class="fc" id="L667">            String parameterName = ((Element)cell).getAttribute(&quot;parameterName&quot;);</span>
+<span class="fc" id="L668">            String value = ((Element)cell).getAttribute(&quot;value&quot;);</span>
+<span class="fc" id="L669">            double expOrIndex = -1;</span>
+<span class="fc" id="L670">            int predictorIndex = -1;</span>
+<span class="fc" id="L671">            int parameterIndex = -1;</span>
+<span class="pc bpc" id="L672" title="1 of 2 branches missed.">            for (int j = 0; j &lt; m_parameterList.size(); j++) {</span>
+<span class="fc bfc" id="L673" title="All 2 branches covered.">              if (m_parameterList.get(j).m_name.equals(parameterName)) {</span>
+<span class="fc" id="L674">                parameterIndex = j;</span>
+<span class="fc" id="L675">                break;</span>
+              }
+            }
+<span class="pc bpc" id="L678" title="1 of 2 branches missed.">            if (parameterIndex == -1) {</span>
+<span class="nc" id="L679">              throw new Exception(&quot;[GeneralRegression] unable to find parameter name &quot;</span>
+<span class="nc" id="L680">                                  + parameterName + &quot; in parameter list&quot;);</span>
+            }
+
+<span class="fc" id="L683">            Predictor p = getCovariate(predictorName);</span>
+<span class="fc bfc" id="L684" title="All 2 branches covered.">            if (p != null) {</span>
+              try {
+<span class="fc" id="L686">                expOrIndex = Double.parseDouble(value);</span>
+<span class="fc" id="L687">                predictorIndex = p.m_miningSchemaIndex;</span>
+<span class="nc" id="L688">              } catch (IllegalArgumentException ex) {</span>
+<span class="nc" id="L689">                throw new Exception(&quot;[GeneralRegression] unable to parse PPCell value: &quot;</span>
+<span class="nc" id="L690">                                    + value);</span>
+              }
+            } else {
+              // try as a factor
+<span class="fc" id="L694">              p = getFactor(predictorName);</span>
+<span class="pc bpc" id="L695" title="1 of 2 branches missed.">              if (p != null) {</span>
+                // An example pmml file from DMG seems to suggest that it
+                // is possible for a continuous variable in the mining schema
+                // to be treated as a factor, so we have to check for this
+<span class="pc bpc" id="L699" title="1 of 2 branches missed.">                if (miningSchemaI.attribute(p.m_miningSchemaIndex).isNumeric()) {</span>
+                  // parse this value as a double. It will be treated as a value
+                  // to match rather than an exponent since we are dealing with
+                  // a factor here
+                  try {
+<span class="nc" id="L704">                    expOrIndex = Double.parseDouble(value);</span>
+<span class="nc" id="L705">                  } catch (IllegalArgumentException ex) {</span>
+<span class="nc" id="L706">                    throw new Exception(&quot;[GeneralRegresion] unable to parse PPCell value: &quot;</span>
+<span class="nc" id="L707">                                        + value);</span>
+                  }
+                } else {
+                  // it is a nominal attribute in the mining schema so find
+                  // the index that correponds to this value
+<span class="fc" id="L712">                  Attribute att = miningSchemaI.attribute(p.m_miningSchemaIndex); </span>
+<span class="fc" id="L713">                  expOrIndex = att.indexOfValue(value);</span>
+<span class="pc bpc" id="L714" title="1 of 2 branches missed.">                  if (expOrIndex == -1) {</span>
+<span class="nc" id="L715">                    throw new Exception(&quot;[GeneralRegression] unable to find PPCell value &quot;</span>
+<span class="nc" id="L716">                                        + value + &quot; in mining schema attribute &quot;</span>
+<span class="nc" id="L717">                                        + att.name());</span>
+                  }
+                }
+              } else {
+<span class="nc" id="L721">                throw new Exception(&quot;[GeneralRegression] cant find predictor &quot;</span>
+<span class="nc" id="L722">                                    + predictorName + &quot;in either the factors list &quot;</span>
+<span class="nc" id="L723">                                    + &quot;or the covariates list&quot;);</span>
+              }
+<span class="fc" id="L725">              predictorIndex = p.m_miningSchemaIndex;</span>
+            }
+
+            // fill in cell value
+<span class="fc" id="L729">            PPCell ppc = new PPCell();</span>
+<span class="fc" id="L730">            ppc.m_predictorName = predictorName; ppc.m_parameterName = parameterName;</span>
+<span class="fc" id="L731">            ppc.m_value = expOrIndex;</span>
+
+            // TO-DO: ppc.m_targetCategory (when handling for multiple PPMatrixes is implemented)
+<span class="fc" id="L734">            m_ppMatrix[parameterIndex][predictorIndex] = ppc;</span>
+          }
+        }
+      }
+    } else {
+<span class="nc" id="L739">      throw new Exception(&quot;[GeneralRegression] more than one PPMatrix!&quot;);</span>
+    }
+<span class="fc" id="L741">  }</span>
+
+  private Predictor getCovariate(String predictorName) {
+<span class="fc bfc" id="L744" title="All 2 branches covered.">    for (int i = 0; i &lt; m_covariateList.size(); i++) {</span>
+<span class="fc bfc" id="L745" title="All 2 branches covered.">      if (predictorName.equals(m_covariateList.get(i).m_name)) {</span>
+<span class="fc" id="L746">        return m_covariateList.get(i);</span>
+      }
+    }
+<span class="fc" id="L749">    return null;</span>
+  }
+
+  private Predictor getFactor(String predictorName) {
+<span class="fc bfc" id="L753" title="All 2 branches covered.">    for (int i = 0; i &lt; m_factorList.size(); i++) {</span>
+<span class="fc bfc" id="L754" title="All 2 branches covered.">      if (predictorName.equals(m_factorList.get(i).m_name)) {</span>
+<span class="fc" id="L755">        return m_factorList.get(i);</span>
+      }
+    }
+<span class="fc" id="L758">    return null;</span>
+  }
+
+  /**
+   * Read the parameter matrix from the xml.
+   * 
+   * @param model Element that holds the model
+   * @throws Exception if a problem is encountered during extraction of
+   * the parameter matrix
+   */
+  private void readParamMatrix(Element model) throws Exception {
+
+<span class="fc" id="L770">    Instances miningSchemaI = m_miningSchema.getFieldsAsInstances();</span>
+<span class="fc" id="L771">    Attribute classAtt = miningSchemaI.classAttribute();</span>
+    // used when function type is classification but class attribute is numeric
+    // in the mining schema. We will assume that there is a Target specified in
+    // the pmml that defines the legal values for this class.
+<span class="fc" id="L775">    ArrayList&lt;String&gt; targetVals = null;</span>
+
+<span class="fc" id="L777">    NodeList matrixL = model.getElementsByTagName(&quot;ParamMatrix&quot;);</span>
+<span class="pc bpc" id="L778" title="1 of 2 branches missed.">    if (matrixL.getLength() != 1) {</span>
+<span class="nc" id="L779">      throw new Exception(&quot;[GeneralRegression] more than one ParamMatrix!&quot;);</span>
+    }
+<span class="fc" id="L781">    Element matrix = (Element)matrixL.item(0);</span>
+
+
+    // check for the case where the class in the mining schema is numeric,
+    // but this attribute is treated as discrete
+<span class="pc bpc" id="L786" title="1 of 2 branches missed.">    if (m_functionType == Regression.RegressionTable.CLASSIFICATION &amp;&amp;</span>
+<span class="pc bpc" id="L787" title="1 of 2 branches missed.">        classAtt.isNumeric()) {</span>
+      // try and convert the class attribute to nominal. For this to succeed
+      // there has to be a Target element defined in the PMML.
+<span class="nc bnc" id="L790" title="All 2 branches missed.">      if (!m_miningSchema.hasTargetMetaData()) {</span>
+<span class="nc" id="L791">        throw new Exception(&quot;[GeneralRegression] function type is classification and &quot;</span>
+                            + &quot;class attribute in mining schema is numeric, however, &quot;
+                            + &quot;there is no Target element &quot;
+                            + &quot;specifying legal discrete values for the target!&quot;);
+
+      }
+
+<span class="nc bnc" id="L798" title="All 2 branches missed.">      if (m_miningSchema.getTargetMetaData().getOptype() </span>
+<span class="nc" id="L799">          != TargetMetaInfo.Optype.CATEGORICAL) {</span>
+<span class="nc" id="L800">        throw new Exception(&quot;[GeneralRegression] function type is classification and &quot;</span>
+                            + &quot;class attribute in mining schema is numeric, however &quot;
+                            + &quot;Target element in PMML does not have optype categorical!&quot;);
+      }
+
+      // OK now get legal values
+<span class="nc" id="L806">      targetVals = m_miningSchema.getTargetMetaData().getValues();</span>
+<span class="nc bnc" id="L807" title="All 2 branches missed.">      if (targetVals.size() == 0) {</span>
+<span class="nc" id="L808">        throw new Exception(&quot;[GeneralRegression] function type is classification and &quot;</span>
+                            + &quot;class attribute in mining schema is numeric, however &quot;
+                            + &quot;Target element in PMML does not have any discrete values &quot;
+                            + &quot;defined!&quot;);
+      }
+
+      // Finally, convert the class in the mining schema to nominal
+<span class="nc" id="L815">      m_miningSchema.convertNumericAttToNominal(miningSchemaI.classIndex(), targetVals);</span>
+    }
+    
+    // allocate space for the matrix 
+<span class="fc" id="L819">    m_paramMatrix = </span>
+<span class="pc bpc" id="L820" title="1 of 2 branches missed.">        new PCell[(classAtt.isNumeric())</span>
+<span class="nc" id="L821">                  ? 1</span>
+<span class="fc" id="L822">                  : classAtt.numValues()][m_parameterList.size()];</span>
+
+<span class="fc" id="L824">    NodeList pcellL = matrix.getElementsByTagName(&quot;PCell&quot;);</span>
+<span class="fc bfc" id="L825" title="All 2 branches covered.">    for (int i = 0; i &lt; pcellL.getLength(); i++) {</span>
+      // indicates that that this beta applies to all target categories
+      // or target is numeric
+<span class="fc" id="L828">      int targetCategoryIndex = -1;</span>
+<span class="fc" id="L829">      int parameterIndex = -1;</span>
+<span class="fc" id="L830">      Node pcell = pcellL.item(i);</span>
+<span class="pc bpc" id="L831" title="1 of 2 branches missed.">      if (pcell.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L832">        String paramName = ((Element)pcell).getAttribute(&quot;parameterName&quot;);</span>
+<span class="fc" id="L833">        String targetCatName = ((Element)pcell).getAttribute(&quot;targetCategory&quot;);</span>
+<span class="fc" id="L834">        String coefficient = ((Element)pcell).getAttribute(&quot;beta&quot;);</span>
+<span class="fc" id="L835">        String df = ((Element)pcell).getAttribute(&quot;df&quot;);</span>
+
+<span class="pc bpc" id="L837" title="1 of 2 branches missed.">        for (int j = 0; j &lt; m_parameterList.size(); j++) {</span>
+<span class="fc bfc" id="L838" title="All 2 branches covered.">          if (m_parameterList.get(j).m_name.equals(paramName)) {</span>
+<span class="fc" id="L839">            parameterIndex = j;</span>
+            // use the label if defined
+<span class="pc bpc" id="L841" title="1 of 2 branches missed.">            if (m_parameterList.get(j).m_label != null) {</span>
+<span class="fc" id="L842">              paramName = m_parameterList.get(j).m_label;</span>
+            }
+<span class="fc" id="L844">            break;</span>
+          }
+        }
+<span class="pc bpc" id="L847" title="1 of 2 branches missed.">        if (parameterIndex == -1) {</span>
+<span class="nc" id="L848">          throw new Exception(&quot;[GeneralRegression] unable to find parameter name &quot;</span>
+<span class="nc" id="L849">                              + paramName + &quot; in parameter list&quot;);</span>
+        }
+
+<span class="pc bpc" id="L852" title="2 of 4 branches missed.">        if (targetCatName != null &amp;&amp; targetCatName.length() &gt; 0) {</span>
+<span class="pc bpc" id="L853" title="3 of 4 branches missed.">          if (classAtt.isNominal() || classAtt.isString()) {</span>
+<span class="fc" id="L854">            targetCategoryIndex = classAtt.indexOfValue(targetCatName);</span>
+          } else {
+<span class="nc" id="L856">            throw new Exception(&quot;[GeneralRegression] found a PCell with a named &quot;</span>
+<span class="nc" id="L857">                                + &quot;target category: &quot; + targetCatName</span>
+<span class="nc" id="L858">                                + &quot; but class attribute is numeric in &quot;</span>
+<span class="nc" id="L859">                                + &quot;mining schema&quot;);</span>
+          }
+        }
+
+<span class="fc" id="L863">        PCell p = new PCell();</span>
+<span class="pc bpc" id="L864" title="1 of 2 branches missed.">        if (targetCategoryIndex != -1) {</span>
+<span class="fc" id="L865">          p.m_targetCategory = targetCatName;</span>
+        }
+<span class="fc" id="L867">        p.m_parameterName = paramName;</span>
+        try {
+<span class="fc" id="L869">          p.m_beta = Double.parseDouble(coefficient);</span>
+<span class="nc" id="L870">        } catch (IllegalArgumentException ex) {</span>
+<span class="nc" id="L871">          throw new Exception(&quot;[GeneralRegression] unable to parse beta value &quot;</span>
+<span class="nc" id="L872">                              + coefficient + &quot; as a double from PCell&quot;);</span>
+        }
+<span class="pc bpc" id="L874" title="2 of 4 branches missed.">        if (df != null &amp;&amp; df.length() &gt; 0) {</span>
+          try {
+<span class="fc" id="L876">            p.m_df = Integer.parseInt(df);</span>
+<span class="nc" id="L877">          } catch (IllegalArgumentException ex) {</span>
+<span class="nc" id="L878">            throw new Exception(&quot;[GeneralRegression] unable to parse df value &quot;</span>
+<span class="nc" id="L879">                              + df + &quot; as an int from PCell&quot;);</span>
+          }
+        }
+        
+<span class="pc bpc" id="L883" title="1 of 2 branches missed.">        if (targetCategoryIndex != -1) {</span>
+<span class="fc" id="L884">          m_paramMatrix[targetCategoryIndex][parameterIndex] = p;</span>
+        } else {
+          // this PCell to all target categories (covers numeric class, in
+          // which case there will be only one row in the matrix anyway)
+<span class="nc bnc" id="L888" title="All 2 branches missed.">          for (int j = 0; j &lt; m_paramMatrix.length; j++) {</span>
+<span class="nc" id="L889">            m_paramMatrix[j][parameterIndex] = p;</span>
+          }
+        }
+      }
+    }
+<span class="fc" id="L894">  }</span>
+
+  /**
+   * Return a textual description of this general regression.
+   * 
+   * @return a description of this general regression
+   */
+  public String toString() {
+<span class="nc" id="L902">    StringBuffer temp = new StringBuffer();</span>
+<span class="nc" id="L903">    temp.append(&quot;PMML version &quot; + getPMMLVersion());</span>
+<span class="nc bnc" id="L904" title="All 2 branches missed.">    if (!getCreatorApplication().equals(&quot;?&quot;)) {</span>
+<span class="nc" id="L905">      temp.append(&quot;\nApplication: &quot; + getCreatorApplication());</span>
+    }
+<span class="nc" id="L907">    temp.append(&quot;\nPMML Model: &quot; + m_modelType);</span>
+<span class="nc" id="L908">    temp.append(&quot;\n\n&quot;);</span>
+<span class="nc" id="L909">    temp.append(m_miningSchema);</span>
+
+<span class="nc bnc" id="L911" title="All 2 branches missed.">    if (m_factorList.size() &gt; 0) {</span>
+<span class="nc" id="L912">      temp.append(&quot;Factors:\n&quot;);</span>
+<span class="nc bnc" id="L913" title="All 2 branches missed.">      for (Predictor p : m_factorList) {</span>
+<span class="nc" id="L914">        temp.append(&quot;\t&quot; + p + &quot;\n&quot;);</span>
+      }
+    }
+<span class="nc" id="L917">    temp.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L918" title="All 2 branches missed.">    if (m_covariateList.size() &gt; 0) {</span>
+<span class="nc" id="L919">      temp.append(&quot;Covariates:\n&quot;);</span>
+<span class="nc bnc" id="L920" title="All 2 branches missed.">      for (Predictor p : m_covariateList) {</span>
+<span class="nc" id="L921">        temp.append(&quot;\t&quot; + p + &quot;\n&quot;);</span>
+      }
+    }
+<span class="nc" id="L924">    temp.append(&quot;\n&quot;);</span>
+    
+<span class="nc" id="L926">    printPPMatrix(temp);</span>
+<span class="nc" id="L927">    temp.append(&quot;\n&quot;);</span>
+<span class="nc" id="L928">    printParameterMatrix(temp);</span>
+    
+    // do the link function stuff
+<span class="nc" id="L931">    temp.append(&quot;\n&quot;);</span>
+    
+<span class="nc bnc" id="L933" title="All 2 branches missed.">    if (m_linkFunction != LinkFunction.NONE) {</span>
+<span class="nc" id="L934">      temp.append(&quot;Link function: &quot; + m_linkFunction);</span>
+<span class="nc bnc" id="L935" title="All 2 branches missed.">      if (m_offsetVariable != null) {</span>
+<span class="nc" id="L936">        temp.append(&quot;\n\tOffset variable &quot; + m_offsetVariable);</span>
+<span class="nc bnc" id="L937" title="All 2 branches missed.">      } else if (!Double.isNaN(m_offsetValue)) {</span>
+<span class="nc" id="L938">        temp.append(&quot;\n\tOffset value &quot; + m_offsetValue);</span>
+      }
+      
+<span class="nc bnc" id="L941" title="All 2 branches missed.">      if (m_trialsVariable != null) {</span>
+<span class="nc" id="L942">        temp.append(&quot;\n\tTrials variable &quot; + m_trialsVariable);</span>
+<span class="nc bnc" id="L943" title="All 2 branches missed.">      } else if (!Double.isNaN(m_trialsValue)) {</span>
+<span class="nc" id="L944">        temp.append(&quot;\n\tTrials value &quot; + m_trialsValue);</span>
+      }
+      
+<span class="nc bnc" id="L947" title="All 2 branches missed.">      if (m_distribution != Distribution.NONE) {</span>
+<span class="nc" id="L948">        temp.append(&quot;\nDistribution: &quot; + m_distribution);</span>
+      }
+      
+<span class="nc bnc" id="L951" title="All 2 branches missed.">      if (m_linkFunction == LinkFunction.NEGBIN &amp;&amp;</span>
+<span class="nc bnc" id="L952" title="All 2 branches missed.">          m_distribution == Distribution.NEGBINOMIAL &amp;&amp;</span>
+<span class="nc bnc" id="L953" title="All 2 branches missed.">          !Double.isNaN(m_distParameter)) {</span>
+<span class="nc" id="L954">        temp.append(&quot;\n\tDistribution parameter &quot; + m_distParameter);</span>
+      }
+      
+<span class="nc bnc" id="L957" title="All 2 branches missed.">      if (m_linkFunction == LinkFunction.POWER ||</span>
+<span class="nc bnc" id="L958" title="All 2 branches missed.">          m_linkFunction == LinkFunction.ODDSPOWER) {</span>
+<span class="nc bnc" id="L959" title="All 2 branches missed.">        if (!Double.isNaN(m_linkParameter)) {</span>
+<span class="nc" id="L960">          temp.append(&quot;\n\nLink parameter &quot; + m_linkParameter);</span>
+        }
+      }
+    }
+    
+<span class="nc bnc" id="L965" title="All 2 branches missed.">    if (m_cumulativeLinkFunction != CumulativeLinkFunction.NONE) {</span>
+<span class="nc" id="L966">      temp.append(&quot;Cumulative link function: &quot; + m_cumulativeLinkFunction);</span>
+      
+<span class="nc bnc" id="L968" title="All 2 branches missed.">      if (m_offsetVariable != null) {</span>
+<span class="nc" id="L969">        temp.append(&quot;\n\tOffset variable &quot; + m_offsetVariable);</span>
+<span class="nc bnc" id="L970" title="All 2 branches missed.">      } else if (!Double.isNaN(m_offsetValue)) {</span>
+<span class="nc" id="L971">        temp.append(&quot;\n\tOffset value &quot; + m_offsetValue);</span>
+      }
+    }
+<span class="nc" id="L974">    temp.append(&quot;\n&quot;);</span>
+    
+<span class="nc" id="L976">    return temp.toString();</span>
+  }
+  
+  /**
+   * Format and print the PPMatrix to the supplied StringBuffer.
+   * 
+   * @param buff the StringBuffer to append to
+   */
+  protected void printPPMatrix(StringBuffer buff) {
+<span class="nc" id="L985">    Instances miningSchemaI = m_miningSchema.getFieldsAsInstances();</span>
+<span class="nc" id="L986">    int maxAttWidth = 0;</span>
+<span class="nc bnc" id="L987" title="All 2 branches missed.">    for (int i = 0; i &lt; miningSchemaI.numAttributes(); i++) {</span>
+<span class="nc" id="L988">      Attribute a = miningSchemaI.attribute(i);</span>
+<span class="nc bnc" id="L989" title="All 2 branches missed.">      if (a.name().length() &gt; maxAttWidth) {</span>
+<span class="nc" id="L990">        maxAttWidth = a.name().length();</span>
+      }
+    }
+
+    // check the width of the values
+<span class="nc bnc" id="L995" title="All 2 branches missed.">    for (int i = 0; i &lt; m_parameterList.size(); i++) {</span>
+<span class="nc bnc" id="L996" title="All 2 branches missed.">      for (int j = 0; j &lt; miningSchemaI.numAttributes(); j++) {</span>
+<span class="nc bnc" id="L997" title="All 2 branches missed.">        if (m_ppMatrix[i][j] != null) {</span>
+<span class="nc" id="L998">          double width = Math.log(Math.abs(m_ppMatrix[i][j].m_value)) /</span>
+<span class="nc" id="L999">            Math.log(10.0);</span>
+<span class="nc bnc" id="L1000" title="All 2 branches missed.">          if (width &lt; 0) {</span>
+<span class="nc" id="L1001">            width = 1;</span>
+          }
+          // decimal + # decimal places + 1
+<span class="nc" id="L1004">          width += 2.0;</span>
+<span class="nc bnc" id="L1005" title="All 2 branches missed.">          if ((int)width &gt; maxAttWidth) {</span>
+<span class="nc" id="L1006">            maxAttWidth = (int)width;</span>
+          }
+<span class="nc bnc" id="L1008" title="All 2 branches missed.">          if (miningSchemaI.attribute(j).isNominal() || </span>
+<span class="nc bnc" id="L1009" title="All 2 branches missed.">              miningSchemaI.attribute(j).isString()) {</span>
+            // check the width of this value
+<span class="nc" id="L1011">            String val = miningSchemaI.attribute(j).value((int)m_ppMatrix[i][j].m_value) + &quot; &quot;;</span>
+<span class="nc bnc" id="L1012" title="All 2 branches missed.">            if (val.length() &gt; maxAttWidth) {</span>
+<span class="nc" id="L1013">              maxAttWidth = val.length();</span>
+            }
+          }
+        }
+      }
+    }
+
+    // get the max parameter width
+<span class="nc" id="L1021">    int maxParamWidth = &quot;Parameter  &quot;.length();</span>
+<span class="nc bnc" id="L1022" title="All 2 branches missed.">    for (Parameter p : m_parameterList) {</span>
+<span class="nc bnc" id="L1023" title="All 2 branches missed.">      String temp = (p.m_label != null)</span>
+<span class="nc" id="L1024">        ? p.m_label + &quot; &quot;</span>
+<span class="nc" id="L1025">        : p.m_name + &quot; &quot;;</span>
+
+<span class="nc bnc" id="L1027" title="All 2 branches missed.">      if (temp.length() &gt; maxParamWidth) {</span>
+<span class="nc" id="L1028">        maxParamWidth = temp.length();</span>
+      }
+    }
+
+<span class="nc" id="L1032">    buff.append(&quot;Predictor-to-Parameter matrix:\n&quot;);</span>
+<span class="nc" id="L1033">    buff.append(PMMLUtils.pad(&quot;Predictor&quot;, &quot; &quot;, (maxParamWidth + (maxAttWidth * 2 + 2))</span>
+<span class="nc" id="L1034">                              - &quot;Predictor&quot;.length(), true));</span>
+<span class="nc" id="L1035">    buff.append(&quot;\n&quot; + PMMLUtils.pad(&quot;Parameter&quot;, &quot; &quot;, maxParamWidth - &quot;Parameter&quot;.length(), false));</span>
+    // attribute names
+<span class="nc bnc" id="L1037" title="All 2 branches missed.">    for (int i = 0; i &lt; miningSchemaI.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L1038" title="All 2 branches missed.">      if (i != miningSchemaI.classIndex()) {</span>
+<span class="nc" id="L1039">        String attName = miningSchemaI.attribute(i).name();</span>
+<span class="nc" id="L1040">        buff.append(PMMLUtils.pad(attName, &quot; &quot;, maxAttWidth + 1 - attName.length(), true));</span>
+      }
+    }
+<span class="nc" id="L1043">    buff.append(&quot;\n&quot;);</span>
+
+<span class="nc bnc" id="L1045" title="All 2 branches missed.">    for (int i = 0; i &lt; m_parameterList.size(); i++) {</span>
+<span class="nc" id="L1046">      Parameter param = m_parameterList.get(i);</span>
+<span class="nc bnc" id="L1047" title="All 2 branches missed.">      String paramS = (param.m_label != null)</span>
+<span class="nc" id="L1048">        ? param.m_label</span>
+<span class="nc" id="L1049">        : param.m_name;</span>
+<span class="nc" id="L1050">      buff.append(PMMLUtils.pad(paramS, &quot; &quot;, </span>
+<span class="nc" id="L1051">                                maxParamWidth - paramS.length(), false));</span>
+<span class="nc bnc" id="L1052" title="All 2 branches missed.">      for (int j = 0; j &lt; miningSchemaI.numAttributes(); j++) {</span>
+<span class="nc bnc" id="L1053" title="All 2 branches missed.">        if (j != miningSchemaI.classIndex()) {</span>
+<span class="nc" id="L1054">          PPCell p = m_ppMatrix[i][j];</span>
+<span class="nc" id="L1055">          String val = &quot; &quot;;</span>
+<span class="nc bnc" id="L1056" title="All 2 branches missed.">          if (p != null) {</span>
+<span class="nc bnc" id="L1057" title="All 2 branches missed.">            if (miningSchemaI.attribute(j).isNominal() ||</span>
+<span class="nc bnc" id="L1058" title="All 2 branches missed.">                miningSchemaI.attribute(j).isString()) {</span>
+<span class="nc" id="L1059">              val = miningSchemaI.attribute(j).value((int)p.m_value);</span>
+            } else {
+<span class="nc" id="L1061">              val = &quot;&quot; + Utils.doubleToString(p.m_value, maxAttWidth, 4).trim();</span>
+            }
+          }
+<span class="nc" id="L1064">          buff.append(PMMLUtils.pad(val, &quot; &quot;, maxAttWidth + 1 - val.length(), true));</span>
+        }
+      }
+<span class="nc" id="L1067">      buff.append(&quot;\n&quot;);</span>
+    }
+<span class="nc" id="L1069">  }</span>
+
+  /**
+   * Format and print the parameter matrix to the supplied StringBuffer.
+   * 
+   * @param buff the StringBuffer to append to
+   */
+  protected void printParameterMatrix(StringBuffer buff) {
+<span class="nc" id="L1077">    Instances miningSchemaI = m_miningSchema.getFieldsAsInstances();</span>
+
+    // get the maximum class value width (nominal)
+<span class="nc" id="L1080">    int maxClassWidth = miningSchemaI.classAttribute().name().length();</span>
+<span class="nc bnc" id="L1081" title="All 2 branches missed.">    if (miningSchemaI.classAttribute().isNominal()</span>
+<span class="nc bnc" id="L1082" title="All 2 branches missed.">        || miningSchemaI.classAttribute().isString()) {</span>
+<span class="nc bnc" id="L1083" title="All 2 branches missed.">      for (int i = 0; i &lt; miningSchemaI.classAttribute().numValues(); i++) {</span>
+<span class="nc bnc" id="L1084" title="All 2 branches missed.">        if (miningSchemaI.classAttribute().value(i).length() &gt; maxClassWidth) {</span>
+<span class="nc" id="L1085">          maxClassWidth = miningSchemaI.classAttribute().value(i).length();</span>
+        }
+      }
+    }
+
+    // get the maximum parameter name/label width
+<span class="nc" id="L1091">    int maxParamWidth = 0;</span>
+<span class="nc bnc" id="L1092" title="All 2 branches missed.">    for (int i = 0; i &lt; m_parameterList.size(); i++) {</span>
+<span class="nc" id="L1093">      Parameter p = m_parameterList.get(i);</span>
+<span class="nc bnc" id="L1094" title="All 2 branches missed.">      String val = (p.m_label != null)</span>
+<span class="nc" id="L1095">        ? p.m_label + &quot; &quot;</span>
+<span class="nc" id="L1096">        : p.m_name + &quot; &quot;;</span>
+<span class="nc bnc" id="L1097" title="All 2 branches missed.">      if (val.length() &gt; maxParamWidth) {</span>
+<span class="nc" id="L1098">        maxParamWidth = val.length();</span>
+      }
+    }
+
+    // get the max beta value width
+<span class="nc" id="L1103">    int maxBetaWidth = &quot;Coeff.&quot;.length();</span>
+<span class="nc bnc" id="L1104" title="All 2 branches missed.">    for (int i = 0; i &lt; m_paramMatrix.length; i++) {</span>
+<span class="nc bnc" id="L1105" title="All 2 branches missed.">      for (int j = 0; j &lt; m_parameterList.size(); j++) {</span>
+<span class="nc" id="L1106">        PCell p = m_paramMatrix[i][j];</span>
+<span class="nc bnc" id="L1107" title="All 2 branches missed.">        if (p != null) {</span>
+<span class="nc" id="L1108">          double width = Math.log(Math.abs(p.m_beta)) / Math.log(10);</span>
+<span class="nc bnc" id="L1109" title="All 2 branches missed.">          if (width &lt; 0) {</span>
+<span class="nc" id="L1110">            width = 1;</span>
+          }
+          // decimal + # decimal places + 1
+<span class="nc" id="L1113">          width += 7.0;</span>
+<span class="nc bnc" id="L1114" title="All 2 branches missed.">          if ((int)width &gt; maxBetaWidth) {</span>
+<span class="nc" id="L1115">            maxBetaWidth = (int)width;</span>
+          }
+        }
+      }
+    }
+
+<span class="nc" id="L1121">    buff.append(&quot;Parameter estimates:\n&quot;);</span>
+<span class="nc" id="L1122">    buff.append(PMMLUtils.pad(miningSchemaI.classAttribute().name(), &quot; &quot;, </span>
+<span class="nc" id="L1123">                              maxClassWidth + maxParamWidth + 2 - </span>
+<span class="nc" id="L1124">                              miningSchemaI.classAttribute().name().length(), false));</span>
+<span class="nc" id="L1125">    buff.append(PMMLUtils.pad(&quot;Coeff.&quot;, &quot; &quot;, maxBetaWidth + 1 - &quot;Coeff.&quot;.length(), true));</span>
+<span class="nc" id="L1126">    buff.append(PMMLUtils.pad(&quot;df&quot;, &quot; &quot;, maxBetaWidth - &quot;df&quot;.length(), true));</span>
+<span class="nc" id="L1127">    buff.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L1128" title="All 2 branches missed.">    for (int i = 0; i &lt; m_paramMatrix.length; i++) {</span>
+      // scan for non-null entry for this class value
+<span class="nc" id="L1130">      boolean ok = false;</span>
+<span class="nc bnc" id="L1131" title="All 2 branches missed.">      for (int j = 0; j &lt; m_parameterList.size(); j++) {</span>
+<span class="nc bnc" id="L1132" title="All 2 branches missed.">        if (m_paramMatrix[i][j] != null) {</span>
+<span class="nc" id="L1133">          ok = true;</span>
+        }
+      }
+<span class="nc bnc" id="L1136" title="All 2 branches missed.">      if (!ok) {</span>
+<span class="nc" id="L1137">        continue;</span>
+      }
+      // first the class value (if nominal)
+<span class="nc bnc" id="L1140" title="All 2 branches missed.">      String cVal = (miningSchemaI.classAttribute().isNominal() || </span>
+<span class="nc bnc" id="L1141" title="All 2 branches missed.">          miningSchemaI.classAttribute().isString())</span>
+<span class="nc" id="L1142">        ? miningSchemaI.classAttribute().value(i)</span>
+<span class="nc" id="L1143">        : &quot; &quot;;</span>
+<span class="nc" id="L1144">      buff.append(PMMLUtils.pad(cVal, &quot; &quot;, maxClassWidth - cVal.length(), false));     </span>
+<span class="nc" id="L1145">      buff.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L1146" title="All 2 branches missed.">      for (int j = 0; j &lt; m_parameterList.size(); j++) {</span>
+<span class="nc" id="L1147">        PCell p = m_paramMatrix[i][j];</span>
+<span class="nc bnc" id="L1148" title="All 2 branches missed.">        if (p != null) {</span>
+<span class="nc" id="L1149">          String label = p.m_parameterName;</span>
+<span class="nc" id="L1150">          buff.append(PMMLUtils.pad(label, &quot; &quot;, maxClassWidth + maxParamWidth + 2 -</span>
+<span class="nc" id="L1151">                                    label.length(), true));</span>
+<span class="nc" id="L1152">          String betaS = Utils.doubleToString(p.m_beta, maxBetaWidth, 4).trim();</span>
+<span class="nc" id="L1153">          buff.append(PMMLUtils.pad(betaS, &quot; &quot;, maxBetaWidth + 1 - betaS.length(), true));</span>
+<span class="nc" id="L1154">          String dfS = Utils.doubleToString(p.m_df, maxBetaWidth, 4).trim();</span>
+<span class="nc" id="L1155">          buff.append(PMMLUtils.pad(dfS, &quot; &quot;, maxBetaWidth - dfS.length(), true));</span>
+<span class="nc" id="L1156">          buff.append(&quot;\n&quot;);</span>
+        }
+      }
+    }
+<span class="nc" id="L1160">  }</span>
+  
+  /**
+   * Construct the incoming parameter vector based on the values
+   * in the incoming test instance.
+   * 
+   * @param incomingInst the values of the incoming test instance
+   * @return the populated parameter vector ready to be multiplied against
+   * the vector of coefficients.
+   * @throws Exception if there is some problem whilst constructing the
+   * parameter vector
+   */
+  private double[] incomingParamVector(double[] incomingInst) throws Exception {
+<span class="fc" id="L1173">    Instances miningSchemaI = m_miningSchema.getFieldsAsInstances();</span>
+<span class="fc" id="L1174">    double[] incomingPV = new double[m_parameterList.size()];</span>
+    
+<span class="fc bfc" id="L1176" title="All 2 branches covered.">    for (int i = 0; i &lt; m_parameterList.size(); i++) {</span>
+      //
+      // default is that this row represents the intercept.
+      // this will be the case if there are all null entries in this row
+<span class="fc" id="L1180">      incomingPV[i] = 1.0;</span>
+
+      // loop over the attributes (predictors)
+<span class="fc bfc" id="L1183" title="All 2 branches covered.">      for (int j = 0; j &lt; miningSchemaI.numAttributes(); j++) {        </span>
+<span class="fc" id="L1184">        PPCell cellEntry = m_ppMatrix[i][j];</span>
+<span class="fc" id="L1185">        Predictor p = null;</span>
+<span class="fc bfc" id="L1186" title="All 2 branches covered.">        if (cellEntry != null) {</span>
+<span class="fc bfc" id="L1187" title="All 2 branches covered.">          if ((p = getFactor(cellEntry.m_predictorName)) != null) {</span>
+<span class="fc bfc" id="L1188" title="All 2 branches covered.">            if ((int)incomingInst[p.m_miningSchemaIndex] == (int)cellEntry.m_value) {</span>
+<span class="fc" id="L1189">              incomingPV[i] *= 1.0; // we have a match</span>
+            } else {
+<span class="fc" id="L1191">              incomingPV[i] *= 0.0;</span>
+            }
+<span class="pc bpc" id="L1193" title="1 of 2 branches missed.">          } else if ((p = getCovariate(cellEntry.m_predictorName)) != null) {</span>
+<span class="fc" id="L1194">              incomingPV[i] *= Math.pow(incomingInst[p.m_miningSchemaIndex], cellEntry.m_value);</span>
+          } else {
+<span class="nc" id="L1196">            throw new Exception(&quot;[GeneralRegression] can't find predictor &quot;</span>
+<span class="nc" id="L1197">                + cellEntry.m_predictorName + &quot; in either the list of factors or covariates&quot;);</span>
+          }
+        }
+      }
+    }
+    
+<span class="fc" id="L1203">    return incomingPV;</span>
+  }
+
+  /**                                                                                                             
+   * Classifies the given test instance. The instance has to belong to a                                          
+   * dataset when it's being classified.                                                          
+   *                                                                                                              
+   * @param inst the instance to be classified                                                                
+   * @return the predicted most likely class for the instance or                                                  
+   * Instance.missingValue() if no prediction is made                                                             
+   * @exception Exception if an error occurred during the prediction                                              
+   */
+  public double[] distributionForInstance(Instance inst) throws Exception {
+<span class="fc bfc" id="L1216" title="All 2 branches covered.">    if (!m_initialized) {</span>
+<span class="fc" id="L1217">      mapToMiningSchema(inst.dataset());</span>
+    }
+<span class="fc" id="L1219">    double[] preds = null;</span>
+<span class="pc bpc" id="L1220" title="1 of 2 branches missed.">    if (m_miningSchema.getFieldsAsInstances().classAttribute().isNumeric()) {</span>
+<span class="nc" id="L1221">      preds = new double[1];</span>
+    } else {
+<span class="fc" id="L1223">      preds = new double[m_miningSchema.getFieldsAsInstances().classAttribute().numValues()];</span>
+    }
+    
+    // create an array of doubles that holds values from the incoming
+    // instance; in order of the fields in the mining schema. We will
+    // also handle missing values and outliers here.
+<span class="fc" id="L1229">    double[] incoming = m_fieldsMap.instanceToSchema(inst, m_miningSchema);</span>
+    
+    // In this implementation we will default to information in the Target element (default
+    // value for numeric prediction and prior probabilities for classification). If there is
+    // no Target element defined, then an Exception is thrown.
+
+<span class="fc" id="L1235">    boolean hasMissing = false;</span>
+<span class="fc bfc" id="L1236" title="All 2 branches covered.">    for (int i = 0; i &lt; incoming.length; i++) {</span>
+<span class="fc bfc" id="L1237" title="All 2 branches covered.">      if (i != m_miningSchema.getFieldsAsInstances().classIndex() &amp;&amp; </span>
+<span class="pc bpc" id="L1238" title="1 of 2 branches missed.">          Double.isNaN(incoming[i])) {</span>
+<span class="nc" id="L1239">        hasMissing = true;</span>
+<span class="nc" id="L1240">        break;</span>
+      }
+    }
+    
+<span class="pc bpc" id="L1244" title="1 of 2 branches missed.">    if (hasMissing) {</span>
+<span class="nc bnc" id="L1245" title="All 2 branches missed.">      if (!m_miningSchema.hasTargetMetaData()) {</span>
+<span class="nc" id="L1246">        String message = &quot;[GeneralRegression] WARNING: Instance to predict has missing value(s) but &quot;</span>
+          + &quot;there is no missing value handling meta data and no &quot;
+          + &quot;prior probabilities/default value to fall back to. No &quot;
+          + &quot;prediction will be made (&quot; 
+<span class="nc bnc" id="L1250" title="All 2 branches missed.">          + ((m_miningSchema.getFieldsAsInstances().classAttribute().isNominal()</span>
+<span class="nc bnc" id="L1251" title="All 2 branches missed.">              || m_miningSchema.getFieldsAsInstances().classAttribute().isString())</span>
+<span class="nc" id="L1252">              ? &quot;zero probabilities output).&quot;</span>
+<span class="nc" id="L1253">              : &quot;NaN output).&quot;);</span>
+<span class="nc bnc" id="L1254" title="All 2 branches missed.">        if (m_log == null) {</span>
+<span class="nc" id="L1255">          System.err.println(message);</span>
+        } else {
+<span class="nc" id="L1257">          m_log.logMessage(message);</span>
+        }
+        
+<span class="nc bnc" id="L1260" title="All 2 branches missed.">        if (m_miningSchema.getFieldsAsInstances().classAttribute().isNumeric()) {</span>
+<span class="nc" id="L1261">          preds[0] = Instance.missingValue();</span>
+        }
+<span class="nc" id="L1263">        return preds;</span>
+      } else {
+        // use prior probablilities/default value
+<span class="nc" id="L1266">        TargetMetaInfo targetData = m_miningSchema.getTargetMetaData();</span>
+<span class="nc bnc" id="L1267" title="All 2 branches missed.">        if (m_miningSchema.getFieldsAsInstances().classAttribute().isNumeric()) {</span>
+<span class="nc" id="L1268">          preds[0] = targetData.getDefaultValue();</span>
+        } else {
+<span class="nc" id="L1270">          Instances miningSchemaI = m_miningSchema.getFieldsAsInstances();</span>
+<span class="nc bnc" id="L1271" title="All 2 branches missed.">          for (int i = 0; i &lt; miningSchemaI.classAttribute().numValues(); i++) {</span>
+<span class="nc" id="L1272">            preds[i] = targetData.getPriorProbability(miningSchemaI.classAttribute().value(i));</span>
+          }
+        }
+<span class="nc" id="L1275">        return preds;</span>
+      }
+    } else {
+      // construct input parameter vector here
+<span class="fc" id="L1279">      double[] inputParamVector = incomingParamVector(incoming);</span>
+<span class="fc" id="L1280">      computeResponses(incoming, inputParamVector, preds);</span>
+    }
+    
+<span class="fc" id="L1283">    return preds;</span>
+  }
+  
+  /**
+   * Compute the responses for the function given the parameter values corresponding
+   * to the current incoming instance.
+   * 
+   * @param incomingInst raw incoming instance values (after missing value
+   * replacement and outlier treatment)
+   * @param incomingParamVector incoming instance values mapped to parameters
+   * @param responses will contain the responses computed by the function
+   * @throws Exception if something goes wrong
+   */
+  private void computeResponses(double[] incomingInst, 
+                                double[] incomingParamVector,
+                                double[] responses) throws Exception {
+<span class="fc bfc" id="L1299" title="All 2 branches covered.">    for (int i = 0; i &lt; responses.length; i++) {</span>
+<span class="fc bfc" id="L1300" title="All 2 branches covered.">      for (int j = 0; j &lt; m_parameterList.size(); j++) {</span>
+        // a row of the parameter matrix should have all non-null entries
+        // except for the last class (in the case of classification) which
+        // should have just an intercept of 0. Need to handle the case where
+        // no intercept has been defined in the pmml file for the last class
+<span class="fc" id="L1305">        PCell p = m_paramMatrix[i][j];</span>
+<span class="fc bfc" id="L1306" title="All 2 branches covered.">        if (p == null) {</span>
+<span class="fc" id="L1307">          responses[i] += 0.0 * incomingParamVector[j];</span>
+        } else {
+<span class="fc" id="L1309">          responses[i] += incomingParamVector[j] * p.m_beta;</span>
+        }
+      }
+    }
+    
+<span class="pc bpc" id="L1314" title="4 of 5 branches missed.">    switch(m_modelType) {</span>
+    case MULTINOMIALLOGISTIC:
+<span class="fc" id="L1316">      computeProbabilitiesMultinomialLogistic(responses);</span>
+<span class="fc" id="L1317">      break;</span>
+    case REGRESSION:
+      // nothing to be done
+<span class="nc" id="L1320">      break;</span>
+    case GENERALLINEAR:
+    case GENERALIZEDLINEAR:
+<span class="nc bnc" id="L1323" title="All 2 branches missed.">      if (m_linkFunction != LinkFunction.NONE) {</span>
+<span class="nc" id="L1324">        computeResponseGeneralizedLinear(incomingInst, responses);</span>
+      } else {
+<span class="nc" id="L1326">        throw new Exception(&quot;[GeneralRegression] no link function specified!&quot;);</span>
+      }
+      break;
+    case ORDINALMULTINOMIAL:
+<span class="nc bnc" id="L1330" title="All 2 branches missed.">      if (m_cumulativeLinkFunction != CumulativeLinkFunction.NONE) {</span>
+<span class="nc" id="L1331">        computeResponseOrdinalMultinomial(incomingInst, responses);</span>
+      } else {
+<span class="nc" id="L1333">        throw new Exception(&quot;[GeneralRegression] no cumulative link function specified!&quot;);</span>
+      }
+      break;
+      default:
+<span class="nc" id="L1337">        throw new Exception(&quot;[GeneralRegression] unknown model type&quot;);</span>
+    }
+<span class="fc" id="L1339">  }</span>
+  
+  /**
+   * Computes probabilities for the multinomial logistic model type.
+   * 
+   * @param responses will hold the responses computed by the function.
+   */
+  private static void computeProbabilitiesMultinomialLogistic(double[] responses) {
+<span class="fc" id="L1347">    double[] r = responses.clone();</span>
+<span class="fc bfc" id="L1348" title="All 2 branches covered.">    for (int j = 0; j &lt; r.length; j++) {</span>
+<span class="fc" id="L1349">      double sum = 0;</span>
+<span class="fc" id="L1350">      boolean overflow = false;</span>
+<span class="fc bfc" id="L1351" title="All 2 branches covered.">      for (int k = 0; k &lt; r.length; k++) {</span>
+<span class="pc bpc" id="L1352" title="1 of 2 branches missed.">        if (r[k] - r[j] &gt; 700) {</span>
+<span class="nc" id="L1353">          overflow = true;</span>
+<span class="nc" id="L1354">          break;</span>
+        }
+<span class="fc" id="L1356">        sum += Math.exp(r[k] - r[j]);</span>
+      }
+<span class="pc bpc" id="L1358" title="1 of 2 branches missed.">      if (overflow) {</span>
+<span class="nc" id="L1359">        responses[j] = 0.0;</span>
+      } else {
+<span class="fc" id="L1361">        responses[j] = 1.0 / sum;</span>
+      }
+    }
+<span class="fc" id="L1364">  }</span>
+  
+  /**
+   * Computes responses for the general linear and generalized linear model
+   * types.
+   * 
+   * @param incomingInst the raw incoming instance values (after missing value
+   * replacement and outlier treatment etc).
+   * @param responses will hold the responses computed by the function
+   * @throws Exception if a problem occurs. 
+   */
+  private void computeResponseGeneralizedLinear(double[] incomingInst, 
+                                                double[] responses) 
+    throws Exception {
+<span class="nc" id="L1378">    double[] r = responses.clone();</span>
+    
+<span class="nc" id="L1380">    double offset = 0;</span>
+<span class="nc bnc" id="L1381" title="All 2 branches missed.">    if (m_offsetVariable != null) {</span>
+<span class="nc" id="L1382">      Attribute offsetAtt = </span>
+<span class="nc" id="L1383">        m_miningSchema.getFieldsAsInstances().attribute(m_offsetVariable);</span>
+<span class="nc bnc" id="L1384" title="All 2 branches missed.">      if (offsetAtt == null) {</span>
+<span class="nc" id="L1385">        throw new Exception(&quot;[GeneralRegression] unable to find offset variable &quot;</span>
+<span class="nc" id="L1386">            + m_offsetVariable + &quot; in the mining schema!&quot;);</span>
+      }
+<span class="nc" id="L1388">      offset = incomingInst[offsetAtt.index()];</span>
+<span class="nc bnc" id="L1389" title="All 2 branches missed.">    } else if (!Double.isNaN(m_offsetValue)) {</span>
+<span class="nc" id="L1390">      offset = m_offsetValue;</span>
+    }
+    
+<span class="nc" id="L1393">    double trials = 1;</span>
+<span class="nc bnc" id="L1394" title="All 2 branches missed.">    if (m_trialsVariable != null) {</span>
+<span class="nc" id="L1395">      Attribute trialsAtt = m_miningSchema.getFieldsAsInstances().attribute(m_trialsVariable);</span>
+<span class="nc bnc" id="L1396" title="All 2 branches missed.">      if (trialsAtt == null) {</span>
+<span class="nc" id="L1397">        throw new Exception(&quot;[GeneralRegression] unable to find trials variable &quot;</span>
+<span class="nc" id="L1398">            + m_trialsVariable + &quot; in the mining schema!&quot;);</span>
+      }
+<span class="nc" id="L1400">      trials = incomingInst[trialsAtt.index()];</span>
+<span class="nc bnc" id="L1401" title="All 2 branches missed.">    } else if (!Double.isNaN(m_trialsValue)) {</span>
+<span class="nc" id="L1402">      trials = m_trialsValue;</span>
+    }
+    
+<span class="nc" id="L1405">    double distParam = 0;</span>
+<span class="nc bnc" id="L1406" title="All 2 branches missed.">    if (m_linkFunction == LinkFunction.NEGBIN &amp;&amp; </span>
+<span class="nc bnc" id="L1407" title="All 2 branches missed.">        m_distribution == Distribution.NEGBINOMIAL) {</span>
+<span class="nc bnc" id="L1408" title="All 2 branches missed.">      if (Double.isNaN(m_distParameter)) {</span>
+<span class="nc" id="L1409">        throw new Exception(&quot;[GeneralRegression] no distribution parameter defined!&quot;);</span>
+      }
+<span class="nc" id="L1411">      distParam = m_distParameter;</span>
+    }
+    
+<span class="nc" id="L1414">    double linkParam = 0;</span>
+<span class="nc bnc" id="L1415" title="All 2 branches missed.">    if (m_linkFunction == LinkFunction.POWER || </span>
+<span class="nc bnc" id="L1416" title="All 2 branches missed.">        m_linkFunction == LinkFunction.ODDSPOWER) {</span>
+<span class="nc bnc" id="L1417" title="All 2 branches missed.">      if (Double.isNaN(m_linkParameter)) {</span>
+<span class="nc" id="L1418">        throw new Exception(&quot;[GeneralRegression] no link parameter defined!&quot;);</span>
+      }
+<span class="nc" id="L1420">      linkParam = m_linkParameter;</span>
+    }
+   
+<span class="nc bnc" id="L1423" title="All 2 branches missed.">    for (int i = 0; i &lt; r.length; i++) {</span>
+<span class="nc" id="L1424">      responses[i] = m_linkFunction.eval(r[i], offset, trials, distParam, linkParam);</span>
+    }
+<span class="nc" id="L1426">  }</span>
+    
+  /**
+   * Computes responses for the ordinal multinomial model type.
+   * 
+   * @param incomingInst the raw incoming instance values (after missing value
+   * replacement and outlier treatment etc).
+   * @param responses will hold the responses computed by the function
+   * @throws Exception if a problem occurs. 
+   */
+  private void computeResponseOrdinalMultinomial(double[] incomingInst, 
+                                                  double[] responses) throws Exception {
+    
+<span class="nc" id="L1439">    double[] r = responses.clone();</span>
+    
+<span class="nc" id="L1441">    double offset = 0;</span>
+<span class="nc bnc" id="L1442" title="All 2 branches missed.">    if (m_offsetVariable != null) {</span>
+<span class="nc" id="L1443">      Attribute offsetAtt = </span>
+<span class="nc" id="L1444">        m_miningSchema.getFieldsAsInstances().attribute(m_offsetVariable);</span>
+<span class="nc bnc" id="L1445" title="All 2 branches missed.">      if (offsetAtt == null) {</span>
+<span class="nc" id="L1446">        throw new Exception(&quot;[GeneralRegression] unable to find offset variable &quot;</span>
+<span class="nc" id="L1447">            + m_offsetVariable + &quot; in the mining schema!&quot;);</span>
+      }
+<span class="nc" id="L1449">      offset = incomingInst[offsetAtt.index()];</span>
+<span class="nc bnc" id="L1450" title="All 2 branches missed.">    } else if (!Double.isNaN(m_offsetValue)) {</span>
+<span class="nc" id="L1451">      offset = m_offsetValue;</span>
+    }
+    
+<span class="nc bnc" id="L1454" title="All 2 branches missed.">    for (int i = 0; i &lt; r.length; i++) {</span>
+<span class="nc bnc" id="L1455" title="All 2 branches missed.">      if (i == 0) {</span>
+<span class="nc" id="L1456">        responses[i] = m_cumulativeLinkFunction.eval(r[i], offset);</span>
+   
+<span class="nc bnc" id="L1458" title="All 2 branches missed.">      } else if (i == (r.length - 1)) {</span>
+<span class="nc" id="L1459">        responses[i] = 1.0 - responses[i - 1];</span>
+      } else {
+<span class="nc" id="L1461">        responses[i] = m_cumulativeLinkFunction.eval(r[i], offset) - responses[i - 1];</span>
+      }
+    }
+<span class="nc" id="L1464">  }</span>
+
+  /* (non-Javadoc)
+   * @see weka.core.RevisionHandler#getRevision()
+   */
+  public String getRevision() {
+<span class="nc" id="L1470">    return RevisionUtils.extract(&quot;$Revision: 5562 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

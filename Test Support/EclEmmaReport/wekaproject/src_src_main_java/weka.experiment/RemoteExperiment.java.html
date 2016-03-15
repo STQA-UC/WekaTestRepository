@@ -1,0 +1,975 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RemoteExperiment.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.experiment</a> &gt; <span class="el_source">RemoteExperiment.java</span></div><h1>RemoteExperiment.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RemoteExperiment.java
+ *    Copyright (C) 2000 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+
+package weka.experiment;
+
+import weka.core.FastVector;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.Queue;
+import weka.core.RevisionUtils;
+import weka.core.SerializedObject;
+import weka.core.Utils;
+import weka.core.xml.KOML;
+import weka.core.xml.XMLOptions;
+import weka.experiment.xml.XMLExperiment;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.rmi.Naming;
+import java.util.Enumeration;
+
+import javax.swing.DefaultListModel;
+
+/**
+ * Holds all the necessary configuration information for a distributed
+ * experiment. This object is able to be serialized for storage on disk.&lt;p&gt;
+ * 
+ * This class is experimental at present. Has been tested using 
+ * CSVResultListener (sending results to standard out) and 
+ * DatabaseResultListener (InstantDB + RmiJdbc bridge). &lt;p&gt;
+ *
+ * Getting started:&lt;p&gt;
+ *
+ * Start InstantDB (with the RMI bridge) on some machine. If using java2
+ * then specify -Djava.security.policy=db.policy to the
+ * virtual machine. Where db.policy is as follows: &lt;br&gt;
+ * &lt;pre&gt;
+ * grant {
+ *   permission java.security.AllPermission;
+ * };
+ * &lt;/pre&gt;&lt;p&gt;
+ *
+ * Start RemoteEngine servers on x machines as per the instructons in the
+ * README_Experiment_Gui file. There must be a 
+ * DatabaseUtils.props in either the HOME or current directory of each
+ * machine, listing all necessary jdbc drivers.&lt;p&gt;
+ *
+ * The machine where a RemoteExperiment is started must also have a copy
+ * of DatabaseUtils.props listing the URL to the machine where the 
+ * database server is running (RmiJdbc + InstantDB). &lt;p&gt;
+ *
+ * Here is an example of starting a RemoteExperiment: &lt;p&gt;
+ *
+ * &lt;pre&gt;
+ *
+ * java -Djava.rmi.server.codebase=file:/path to weka classes/ \
+ * weka.experiment.RemoteExperiment -L 1 -U 10 \
+ * -T /home/ml/datasets/UCI/iris.arff \
+ * -D &quot;weka.experiment.DatabaseResultListener&quot; \
+ * -P &quot;weka.experiment.RandomSplitResultProducer&quot; \
+ * -h rosebud.cs.waikato.ac.nz -h blackbird.cs.waikato.ac.nz -r -- \
+ * -W weka.experiment.ClassifierSplitEvaluator -- \
+ * -W weka.classifiers.bayes.NaiveBayes
+ *
+ * &lt;/pre&gt; &lt;p&gt;
+ * The &quot;codebase&quot; property tells rmi where to serve up weka classes from.
+ * This can either be a file url (as long as a shared file system is being
+ * used that is accessable by the remoteEngine servers), or http url (which
+ * of course supposes that a web server is running and you have put your
+ * weka classes somewhere that is web accessable). If using a file url the
+ * trailing &quot;/&quot; is *most* important unless the weka classes are in a jar
+ * file. &lt;p&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -L &amp;lt;num&amp;gt;
+ *  The lower run number to start the experiment from.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -U &amp;lt;num&amp;gt;
+ *  The upper run number to end the experiment at (inclusive).
+ *  (default 10)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -T &amp;lt;arff file&amp;gt;
+ *  The dataset to run the experiment on.
+ *  (required, may be specified multiple times)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;class name&amp;gt;
+ *  The full class name of a ResultProducer (required).
+ *  eg: weka.experiment.RandomSplitResultProducer&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D &amp;lt;class name&amp;gt;
+ *  The full class name of a ResultListener (required).
+ *  eg: weka.experiment.CSVResultListener&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;string&amp;gt;
+ *  A string containing any notes about the experiment.
+ *  (default none)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to result producer weka.experiment.RandomSplitResultProducer:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;percent&amp;gt;
+ *  The percentage of instances to use for training.
+ *  (default 66)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ * Save raw split evaluator output.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -O &amp;lt;file/directory name/path&amp;gt;
+ *  The filename where raw output will be stored.
+ *  If a directory name is specified then then individual
+ *  outputs will be gzipped, otherwise all output will be
+ *  zipped to the named file. Use in conjuction with -D. (default splitEvalutorOut.zip)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;class name&amp;gt;
+ *  The full class name of a SplitEvaluator.
+ *  eg: weka.experiment.ClassifierSplitEvaluator&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R
+ *  Set when data is not to be randomized and the data sets' size.
+ *  Is not to be determined via probabilistic rounding.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to split evaluator weka.experiment.ClassifierSplitEvaluator:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;class name&amp;gt;
+ *  The full class name of the classifier.
+ *  eg: weka.classifiers.bayes.NaiveBayes&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;index&amp;gt;
+ *  The index of the class for which IR statistics
+ *  are to be output. (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;index&amp;gt;
+ *  The index of an attribute to output in the
+ *  results. This attribute should identify an
+ *  instance in order to know which instances are
+ *  in the test set of a cross validation. if 0
+ *  no output (default 0).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P
+ *  Add target and prediction columns to the result
+ *  for each fold.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to classifier weka.classifiers.rules.ZeroR:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version $Revision: 1.16 $
+ */
+public class RemoteExperiment 
+  extends Experiment {
+  
+  /** for serialization */
+  static final long serialVersionUID = -7357668825635314937L;
+
+  /** The list of objects listening for remote experiment events */
+<span class="nc" id="L194">  private FastVector m_listeners = new FastVector();</span>
+
+  /** Holds the names of machines with remoteEngine servers running */
+<span class="nc" id="L197">  protected DefaultListModel m_remoteHosts = new DefaultListModel();</span>
+  
+  /** The queue of available hosts */
+<span class="nc" id="L200">  private Queue m_remoteHostsQueue = new Queue();</span>
+
+  /** The status of each of the remote hosts */
+  private int [] m_remoteHostsStatus;
+
+  /** The number of times tasks have failed on each remote host */
+  private int [] m_remoteHostFailureCounts;
+
+  /** status of the remote host: available */
+  protected static final int AVAILABLE=0;
+  /** status of the remote host: in use */
+  protected static final int IN_USE=1;
+  /** status of the remote host: connection failed */
+  protected static final int CONNECTION_FAILED=2;
+  /** status of the remote host: some other failure */
+  protected static final int SOME_OTHER_FAILURE=3;
+
+//    protected static final int TO_BE_RUN=0;
+//    protected static final int PROCESSING=1;
+//    protected static final int FAILED=2;
+//    protected static final int FINISHED=3;
+
+  /** allow at most 3 failures on a host before it is removed from the list
+      of usable hosts */
+  protected static final int MAX_FAILURES=3;
+
+  /** Set to true if MAX_FAILURES exceeded on all hosts or connections fail 
+      on all hosts or user aborts experiment (via gui) */
+<span class="nc" id="L228">  private boolean m_experimentAborted = false;</span>
+
+  /** The number of hosts removed due to exceeding max failures */
+  private int m_removedHosts;
+
+  /** The count of failed sub-experiments */
+  private int m_failedCount;
+
+  /** The count of successfully completed sub-experiments */
+  private int m_finishedCount;
+
+  /** The base experiment to split up into sub experiments for remote
+      execution */
+<span class="nc" id="L241">  private Experiment m_baseExperiment = null;</span>
+
+  /** The sub experiments */
+  protected Experiment [] m_subExperiments;
+
+  /** The queue of sub experiments waiting to be processed */
+<span class="nc" id="L247">  private Queue m_subExpQueue = new Queue();</span>
+
+  /** The status of each of the sub-experiments */
+  protected int [] m_subExpComplete;
+
+  /**
+   * If true, then sub experiments are created on the basis of data sets
+   * rather than run number.
+   */
+<span class="nc" id="L256">  protected boolean m_splitByDataSet = true;</span>
+
+
+  /**
+   * Returns true if sub experiments are to be created on the basis of
+   * data set..
+   *
+   * @return a &lt;code&gt;boolean&lt;/code&gt; value indicating whether sub
+   * experiments are to be created on the basis of data set (true) or
+   * run number (false).
+   */
+  public boolean getSplitByDataSet() {
+<span class="nc" id="L268">    return m_splitByDataSet;</span>
+  }
+
+  /**
+   * Set whether sub experiments are to be created on the basis of
+   * data set.
+   *
+   * @param sd true if sub experiments are to be created on the basis
+   * of data set. Otherwise sub experiments are created on the basis of
+   * run number.
+   */
+  public void setSplitByDataSet(boolean sd) {
+<span class="nc" id="L280">    m_splitByDataSet = sd;</span>
+<span class="nc" id="L281">  }</span>
+  
+  /**
+   * Construct a new RemoteExperiment using an empty Experiment as base 
+   * Experiment
+   * @throws Exception if the base experiment is null
+   */
+  public RemoteExperiment() throws Exception {
+<span class="nc" id="L289">     this(new Experiment());</span>
+<span class="nc" id="L290">  }</span>
+  
+  /**
+   * Construct a new RemoteExperiment using a base Experiment
+   * @param base the base experiment to use
+   * @throws Exception if the base experiment is null
+   */
+<span class="nc" id="L297">  public RemoteExperiment(Experiment base) throws Exception {</span>
+<span class="nc" id="L298">    setBaseExperiment(base);</span>
+<span class="nc" id="L299">  }</span>
+
+  /**
+   * Add an object to the list of those interested in recieving update
+   * information from the RemoteExperiment
+   * @param r a listener
+   */
+  public void addRemoteExperimentListener(RemoteExperimentListener r) {
+<span class="nc" id="L307">    m_listeners.addElement(r);</span>
+<span class="nc" id="L308">  }</span>
+
+  /**
+   * Get the base experiment used by this remote experiment
+   * @return the base experiment
+   */
+  public Experiment getBaseExperiment() {
+<span class="nc" id="L315">    return m_baseExperiment;</span>
+  }
+
+  /**
+   * Set the base experiment. A sub experiment will be created for each
+   * run in the base experiment.
+   * @param base the base experiment to use.
+   * @throws Exception if supplied base experiment is null
+   */
+  public void setBaseExperiment(Experiment base) throws Exception {
+<span class="nc bnc" id="L325" title="All 2 branches missed.">    if (base == null) {</span>
+<span class="nc" id="L326">      throw new Exception(&quot;Base experiment is null!&quot;);</span>
+    }
+<span class="nc" id="L328">    m_baseExperiment = base;</span>
+<span class="nc" id="L329">    setRunLower(m_baseExperiment.getRunLower());</span>
+<span class="nc" id="L330">    setRunUpper(m_baseExperiment.getRunUpper());</span>
+<span class="nc" id="L331">    setResultListener(m_baseExperiment.getResultListener());</span>
+<span class="nc" id="L332">    setResultProducer(m_baseExperiment.getResultProducer());</span>
+<span class="nc" id="L333">    setDatasets(m_baseExperiment.getDatasets());</span>
+<span class="nc" id="L334">    setUsePropertyIterator(m_baseExperiment.getUsePropertyIterator());</span>
+<span class="nc" id="L335">    setPropertyPath(m_baseExperiment.getPropertyPath());</span>
+<span class="nc" id="L336">    setPropertyArray(m_baseExperiment.getPropertyArray());</span>
+<span class="nc" id="L337">    setNotes(m_baseExperiment.getNotes());</span>
+<span class="nc" id="L338">    m_ClassFirst = m_baseExperiment.m_ClassFirst;</span>
+<span class="nc" id="L339">    m_AdvanceDataSetFirst = m_baseExperiment.m_AdvanceDataSetFirst;</span>
+<span class="nc" id="L340">  }</span>
+  
+  /**
+   * Set the user notes.
+   *
+   * @param newNotes New user notes.
+   */
+  public void setNotes(String newNotes) {
+    
+<span class="nc" id="L349">    super.setNotes(newNotes);</span>
+<span class="nc" id="L350">    m_baseExperiment.setNotes(newNotes);</span>
+<span class="nc" id="L351">  }</span>
+
+  /**
+   * Set the lower run number for the experiment.
+   *
+   * @param newRunLower the lower run number for the experiment.
+   */
+  public void setRunLower(int newRunLower) {
+    
+<span class="nc" id="L360">    super.setRunLower(newRunLower);</span>
+<span class="nc" id="L361">    m_baseExperiment.setRunLower(newRunLower);</span>
+<span class="nc" id="L362">  }</span>
+
+  /**
+   * Set the upper run number for the experiment.
+   *
+   * @param newRunUpper the upper run number for the experiment.
+   */
+  public void setRunUpper(int newRunUpper) {
+    
+<span class="nc" id="L371">    super.setRunUpper(newRunUpper);</span>
+<span class="nc" id="L372">    m_baseExperiment.setRunUpper(newRunUpper);</span>
+<span class="nc" id="L373">  }</span>
+
+  /**
+   * Sets the result listener where results will be sent.
+   *
+   * @param newResultListener the result listener where results will be sent.
+   */
+  public void setResultListener(ResultListener newResultListener) {
+    
+<span class="nc" id="L382">    super.setResultListener(newResultListener);</span>
+<span class="nc" id="L383">    m_baseExperiment.setResultListener(newResultListener);</span>
+<span class="nc" id="L384">  }</span>
+
+  /**
+   * Set the result producer used for the current experiment.
+   *
+   * @param newResultProducer result producer to use for the current 
+   * experiment.
+   */
+  public void setResultProducer(ResultProducer newResultProducer) {
+    
+<span class="nc" id="L394">    super.setResultProducer(newResultProducer);</span>
+<span class="nc" id="L395">    m_baseExperiment.setResultProducer(newResultProducer);</span>
+<span class="nc" id="L396">  }</span>
+
+  /**
+   * Set the datasets to use in the experiment
+   * @param ds the list of datasets to use
+   */
+  public void setDatasets(DefaultListModel ds) {
+<span class="nc" id="L403">    super.setDatasets(ds);</span>
+<span class="nc" id="L404">    m_baseExperiment.setDatasets(ds);</span>
+<span class="nc" id="L405">  }</span>
+
+  /**
+   * Sets whether the custom property iterator should be used.
+   *
+   * @param newUsePropertyIterator true if so
+   */
+  public void setUsePropertyIterator(boolean newUsePropertyIterator) {
+    
+<span class="nc" id="L414">    super.setUsePropertyIterator(newUsePropertyIterator);</span>
+<span class="nc" id="L415">    m_baseExperiment.setUsePropertyIterator(newUsePropertyIterator);</span>
+<span class="nc" id="L416">  }</span>
+
+  /**
+   * Sets the path of properties taken to get to the custom property
+   * to iterate over.
+   *
+   * @param newPropertyPath an array of PropertyNodes
+   */
+  public void setPropertyPath(PropertyNode [] newPropertyPath) {
+    
+<span class="nc" id="L426">    super.setPropertyPath(newPropertyPath);</span>
+<span class="nc" id="L427">    m_baseExperiment.setPropertyPath(newPropertyPath);</span>
+<span class="nc" id="L428">  }</span>
+
+  /**
+   * Sets the array of values to set the custom property to.
+   *
+   * @param newPropArray a value of type Object which should be an
+   * array of the appropriate values.
+   */
+  public void setPropertyArray(Object newPropArray) {
+<span class="nc" id="L437">    super.setPropertyArray(newPropArray);</span>
+<span class="nc" id="L438">    m_baseExperiment.setPropertyArray(newPropArray);</span>
+<span class="nc" id="L439">  }</span>
+
+    
+  /**
+   * Prepares a remote experiment for running, creates sub experiments
+   *
+   * @throws Exception if an error occurs
+   */
+  public void initialize() throws Exception {
+<span class="nc bnc" id="L448" title="All 2 branches missed.">    if (m_baseExperiment == null) {</span>
+<span class="nc" id="L449">      throw new Exception(&quot;No base experiment specified!&quot;);</span>
+    }
+
+<span class="nc" id="L452">    m_experimentAborted = false;</span>
+<span class="nc" id="L453">    m_finishedCount = 0;</span>
+<span class="nc" id="L454">    m_failedCount = 0;</span>
+<span class="nc" id="L455">    m_RunNumber = getRunLower();</span>
+<span class="nc" id="L456">    m_DatasetNumber = 0;</span>
+<span class="nc" id="L457">    m_PropertyNumber = 0;</span>
+<span class="nc" id="L458">    m_CurrentProperty = -1;</span>
+<span class="nc" id="L459">    m_CurrentInstances = null;</span>
+<span class="nc" id="L460">    m_Finished = false;</span>
+
+<span class="nc bnc" id="L462" title="All 2 branches missed.">    if (m_remoteHosts.size() == 0) {</span>
+<span class="nc" id="L463">      throw new Exception(&quot;No hosts specified!&quot;);</span>
+    }
+    // initialize all remote hosts to available
+<span class="nc" id="L466">    m_remoteHostsStatus = new int [m_remoteHosts.size()];    </span>
+<span class="nc" id="L467">    m_remoteHostFailureCounts = new int [m_remoteHosts.size()];</span>
+
+<span class="nc" id="L469">    m_remoteHostsQueue = new Queue();</span>
+    // prime the hosts queue
+<span class="nc bnc" id="L471" title="All 2 branches missed.">    for (int i=0;i&lt;m_remoteHosts.size();i++) {</span>
+<span class="nc" id="L472">      m_remoteHostsQueue.push(new Integer(i));</span>
+    }
+
+    // set up sub experiments
+<span class="nc" id="L476">    m_subExpQueue = new Queue();</span>
+    int numExps;
+<span class="nc bnc" id="L478" title="All 2 branches missed.">    if (getSplitByDataSet()) {</span>
+<span class="nc" id="L479">      numExps = m_baseExperiment.getDatasets().size();</span>
+    } else {
+<span class="nc" id="L481">      numExps = getRunUpper() - getRunLower() + 1;</span>
+    }
+<span class="nc" id="L483">    m_subExperiments = new Experiment[numExps];</span>
+<span class="nc" id="L484">    m_subExpComplete = new int[numExps];</span>
+    // create copy of base experiment
+<span class="nc" id="L486">    SerializedObject so = new SerializedObject(m_baseExperiment);</span>
+
+<span class="nc bnc" id="L488" title="All 2 branches missed.">    if (getSplitByDataSet()) {</span>
+<span class="nc bnc" id="L489" title="All 2 branches missed.">      for (int i = 0; i &lt; m_baseExperiment.getDatasets().size(); i++) {</span>
+<span class="nc" id="L490">	m_subExperiments[i] = (Experiment)so.getObject();</span>
+	// one for each data set
+<span class="nc" id="L492">	DefaultListModel temp = new DefaultListModel();</span>
+<span class="nc" id="L493">	temp.addElement(m_baseExperiment.getDatasets().elementAt(i));</span>
+<span class="nc" id="L494">	m_subExperiments[i].setDatasets(temp);</span>
+<span class="nc" id="L495">	m_subExpQueue.push(new Integer(i));</span>
+      }
+    } else {
+<span class="nc bnc" id="L498" title="All 2 branches missed.">      for (int i = getRunLower(); i &lt;= getRunUpper(); i++) {</span>
+<span class="nc" id="L499">	m_subExperiments[i-getRunLower()] = (Experiment)so.getObject();</span>
+	// one run for each sub experiment
+<span class="nc" id="L501">	m_subExperiments[i-getRunLower()].setRunLower(i);</span>
+<span class="nc" id="L502">	m_subExperiments[i-getRunLower()].setRunUpper(i);</span>
+	
+<span class="nc" id="L504">	m_subExpQueue.push(new Integer(i-getRunLower()));</span>
+      }    
+    }
+<span class="nc" id="L507">  }</span>
+
+  /**
+   * Inform all listeners of progress
+   * @param status true if this is a status type of message
+   * @param log true if this is a log type of message
+   * @param finished true if the remote experiment has finished
+   * @param message the message.
+   */
+  private synchronized void notifyListeners(boolean status, 
+					    boolean log, 
+					    boolean finished,
+					    String message) {
+<span class="nc bnc" id="L520" title="All 2 branches missed.">    if (m_listeners.size() &gt; 0) {</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">      for (int i=0;i&lt;m_listeners.size();i++) {</span>
+<span class="nc" id="L522">	RemoteExperimentListener r = </span>
+<span class="nc" id="L523">	  (RemoteExperimentListener)(m_listeners.elementAt(i));</span>
+<span class="nc" id="L524">	r.remoteExperimentStatus(new RemoteExperimentEvent(status,</span>
+<span class="nc" id="L525">							   log,</span>
+<span class="nc" id="L526">							   finished,</span>
+<span class="nc" id="L527">							   message));</span>
+      }
+    } else {
+<span class="nc" id="L530">      System.err.println(message);</span>
+    }
+<span class="nc" id="L532">  }</span>
+
+  /**
+   * Set the abort flag
+   */
+  public void abortExperiment() {
+<span class="nc" id="L538">    m_experimentAborted = true;</span>
+<span class="nc" id="L539">  }</span>
+
+  /**
+   * Increment the number of successfully completed sub experiments
+   */
+  protected synchronized void incrementFinished() {
+<span class="nc" id="L545">    m_finishedCount++;</span>
+<span class="nc" id="L546">  }</span>
+
+  /**
+   * Increment the overall number of failures and the number of failures for
+   * a particular host
+   * @param hostNum the index of the host to increment failure count
+   */
+  protected synchronized void incrementFailed(int hostNum) {
+<span class="nc" id="L554">    m_failedCount++;</span>
+<span class="nc" id="L555">    m_remoteHostFailureCounts[hostNum]++;</span>
+<span class="nc" id="L556">  }</span>
+
+  /**
+   * Push an experiment back on the queue of waiting experiments
+   * @param expNum the index of the experiment to push onto the queue
+   */
+  protected synchronized void waitingExperiment(int expNum) {
+<span class="nc" id="L563">    m_subExpQueue.push(new Integer(expNum));</span>
+<span class="nc" id="L564">  }</span>
+
+  /**
+   * Check to see if we have failed to connect to all hosts
+   * 
+   * @return true if failed to connect to all hosts
+   */
+  private boolean checkForAllFailedHosts() {
+<span class="nc" id="L572">    boolean allbad = true;</span>
+<span class="nc bnc" id="L573" title="All 2 branches missed.">    for (int i = 0; i &lt; m_remoteHostsStatus.length; i++) {</span>
+<span class="nc bnc" id="L574" title="All 2 branches missed.">      if (m_remoteHostsStatus[i] != CONNECTION_FAILED) {</span>
+<span class="nc" id="L575">	allbad = false;</span>
+<span class="nc" id="L576">	break;</span>
+      }
+    }
+<span class="nc bnc" id="L579" title="All 2 branches missed.">    if (allbad) {</span>
+<span class="nc" id="L580">      abortExperiment();</span>
+<span class="nc" id="L581">      notifyListeners(false,true,true,&quot;Experiment aborted! All connections &quot;</span>
+		      +&quot;to remote hosts failed.&quot;);
+    }
+<span class="nc" id="L584">    return allbad;</span>
+  }
+
+  /**
+   * Returns some post experiment information.
+   * @return a String containing some post experiment info
+   */
+  private String postExperimentInfo() {
+<span class="nc" id="L592">    StringBuffer text = new StringBuffer();</span>
+<span class="nc bnc" id="L593" title="All 2 branches missed.">    text.append(m_finishedCount+(m_splitByDataSet </span>
+<span class="nc" id="L594">				 ? &quot; data sets&quot; </span>
+<span class="nc" id="L595">				 : &quot; runs&quot;) + &quot; completed successfully. &quot;</span>
+<span class="nc" id="L596">		+m_failedCount+&quot; failures during running.\n&quot;);</span>
+<span class="nc" id="L597">    System.err.print(text.toString());</span>
+<span class="nc" id="L598">    return text.toString();</span>
+  }
+
+  /**
+   * Pushes a host back onto the queue of available hosts and attempts to
+   * launch a waiting experiment (if any).
+   * @param hostNum the index of the host to push back onto the queue of
+   * available hosts
+   */
+  protected synchronized void availableHost(int hostNum) {
+<span class="nc bnc" id="L608" title="All 2 branches missed.">    if (hostNum &gt;= 0) { </span>
+<span class="nc bnc" id="L609" title="All 2 branches missed.">      if (m_remoteHostFailureCounts[hostNum] &lt; MAX_FAILURES) {</span>
+<span class="nc" id="L610">	m_remoteHostsQueue.push(new Integer(hostNum));</span>
+      } else {
+<span class="nc" id="L612">	notifyListeners(false,true,false,&quot;Max failures exceeded for host &quot;</span>
+<span class="nc" id="L613">			+((String)m_remoteHosts.elementAt(hostNum))</span>
+<span class="nc" id="L614">			+&quot;. Removed from host list.&quot;);</span>
+<span class="nc" id="L615">	m_removedHosts++;</span>
+      }
+    }
+
+    // check for all sub exp complete or all hosts failed or failed count
+    // exceeded
+<span class="nc bnc" id="L621" title="All 2 branches missed.">    if (m_failedCount == (MAX_FAILURES * m_remoteHosts.size())) {</span>
+<span class="nc" id="L622">      abortExperiment();</span>
+<span class="nc" id="L623">      notifyListeners(false,true,true,&quot;Experiment aborted! Max failures &quot;</span>
+		      +&quot;exceeded on all remote hosts.&quot;);
+<span class="nc" id="L625">      return;</span>
+    }
+
+<span class="nc bnc" id="L628" title="All 2 branches missed.">    if ((getSplitByDataSet() &amp;&amp; </span>
+<span class="nc bnc" id="L629" title="All 2 branches missed.">	 (m_baseExperiment.getDatasets().size() == m_finishedCount)) ||</span>
+<span class="nc bnc" id="L630" title="All 2 branches missed.">	(!getSplitByDataSet() &amp;&amp; </span>
+<span class="nc bnc" id="L631" title="All 2 branches missed.">	 ((getRunUpper() - getRunLower() + 1) == m_finishedCount))) {</span>
+<span class="nc" id="L632">      notifyListeners(false,true,false,&quot;Experiment completed successfully.&quot;);</span>
+<span class="nc" id="L633">      notifyListeners(false,true,true,postExperimentInfo());</span>
+<span class="nc" id="L634">      return;</span>
+    }
+    
+<span class="nc bnc" id="L637" title="All 2 branches missed.">    if (checkForAllFailedHosts()) {</span>
+<span class="nc" id="L638">      return;</span>
+    }
+
+<span class="nc bnc" id="L641" title="All 2 branches missed.">    if (m_experimentAborted &amp;&amp; </span>
+<span class="nc bnc" id="L642" title="All 2 branches missed.">	(m_remoteHostsQueue.size() + m_removedHosts) == m_remoteHosts.size()) {</span>
+<span class="nc" id="L643">      notifyListeners(false,true,true,&quot;Experiment aborted. All remote tasks &quot;</span>
+		      +&quot;finished.&quot;);
+    }
+        
+<span class="nc bnc" id="L647" title="All 4 branches missed.">    if (!m_subExpQueue.empty() &amp;&amp; !m_experimentAborted) {</span>
+<span class="nc bnc" id="L648" title="All 2 branches missed.">      if (!m_remoteHostsQueue.empty()) {</span>
+	int availHost, waitingExp;
+	try {
+<span class="nc" id="L651">	  availHost = ((Integer)m_remoteHostsQueue.pop()).intValue();</span>
+<span class="nc" id="L652">	  waitingExp = ((Integer)m_subExpQueue.pop()).intValue();</span>
+<span class="nc" id="L653">	  launchNext(waitingExp, availHost);</span>
+<span class="nc" id="L654">	} catch (Exception ex) {</span>
+<span class="nc" id="L655">	  ex.printStackTrace();</span>
+	}
+      }
+    }    
+<span class="nc" id="L659">  }</span>
+
+  /**
+   * Launch a sub experiment on a remote host
+   * @param wexp the index of the sub experiment to launch
+   * @param ah the index of the available host to launch on
+   */
+  public void launchNext(final int wexp, final int ah) {
+    
+    Thread subExpThread;
+<span class="nc" id="L669">    subExpThread = new Thread() {</span>
+	public void run() {	      
+<span class="nc" id="L671">	  m_remoteHostsStatus[ah] = IN_USE;</span>
+<span class="nc" id="L672">	  m_subExpComplete[wexp] = TaskStatusInfo.PROCESSING;</span>
+<span class="nc" id="L673">	  RemoteExperimentSubTask expSubTsk = new RemoteExperimentSubTask();</span>
+<span class="nc" id="L674">	  expSubTsk.setExperiment(m_subExperiments[wexp]);</span>
+<span class="nc bnc" id="L675" title="All 2 branches missed.">	  String subTaskType = (getSplitByDataSet())</span>
+<span class="nc" id="L676">	    ? &quot;dataset :&quot; + ((File)m_subExperiments[wexp].getDatasets().</span>
+<span class="nc" id="L677">			     elementAt(0)).getName()</span>
+<span class="nc" id="L678">	    : &quot;run :&quot; + m_subExperiments[wexp].getRunLower();</span>
+	  try {
+<span class="nc" id="L680">	    String name = &quot;//&quot;</span>
+<span class="nc" id="L681">	      +((String)m_remoteHosts.elementAt(ah))</span>
+<span class="nc" id="L682">	      +&quot;/RemoteEngine&quot;;</span>
+<span class="nc" id="L683">	    Compute comp = (Compute) Naming.lookup(name);</span>
+	    // assess the status of the sub-exp
+<span class="nc" id="L685">	    notifyListeners(false,true,false,&quot;Starting &quot;</span>
+<span class="nc" id="L686">			    +subTaskType</span>
+<span class="nc" id="L687">			    +&quot; on host &quot;</span>
+<span class="nc" id="L688">			    +((String)m_remoteHosts.elementAt(ah)));</span>
+<span class="nc" id="L689">	    Object subTaskId = comp.executeTask(expSubTsk);</span>
+<span class="nc" id="L690">	    boolean finished = false;</span>
+<span class="nc" id="L691">	    TaskStatusInfo is = null;</span>
+<span class="nc bnc" id="L692" title="All 2 branches missed.">	    while (!finished) {</span>
+	      try {
+<span class="nc" id="L694">		Thread.sleep(2000);</span>
+		
+<span class="nc" id="L696">		TaskStatusInfo cs = (TaskStatusInfo)comp.</span>
+<span class="nc" id="L697">		  checkStatus(subTaskId);</span>
+<span class="nc bnc" id="L698" title="All 2 branches missed.">		if (cs.getExecutionStatus() == TaskStatusInfo.FINISHED) {</span>
+		  // push host back onto queue and try launching any waiting 
+		  // sub-experiments
+<span class="nc" id="L701">		  notifyListeners(false, true, false,  cs.getStatusMessage());</span>
+<span class="nc" id="L702">		  m_remoteHostsStatus[ah] = AVAILABLE;</span>
+<span class="nc" id="L703">		  incrementFinished();</span>
+<span class="nc" id="L704">		  availableHost(ah);</span>
+<span class="nc" id="L705">		  finished = true;</span>
+<span class="nc bnc" id="L706" title="All 2 branches missed.">		} else if (cs.getExecutionStatus() == TaskStatusInfo.FAILED) {</span>
+		  // a non connection related error---possibly host doesn't have
+		  // access to data sets or security policy is not set up
+		  // correctly or classifier(s) failed for some reason
+<span class="nc" id="L710">		  notifyListeners(false, true, false,  cs.getStatusMessage());</span>
+<span class="nc" id="L711">		  m_remoteHostsStatus[ah] = SOME_OTHER_FAILURE;</span>
+<span class="nc" id="L712">		  m_subExpComplete[wexp] = TaskStatusInfo.FAILED;</span>
+<span class="nc" id="L713">		  notifyListeners(false,true,false,subTaskType</span>
+<span class="nc" id="L714">				  +&quot; &quot;+cs.getStatusMessage()</span>
+<span class="nc" id="L715">				  +&quot;. Scheduling for execution on another host.&quot;);</span>
+<span class="nc" id="L716">		  incrementFailed(ah);</span>
+		  // push experiment back onto queue
+<span class="nc" id="L718">		  waitingExperiment(wexp);	</span>
+		  // push host back onto queue and try launching any waiting 
+		  // sub-experiments. Host is pushed back on the queue as the
+		  // failure may be temporary---eg. with InstantDB using the
+		  // RMI bridge, two or more threads may try to create the
+		  // experiment index or results table simultaneously; all but
+		  // one will throw an exception. These hosts are still usable
+		  // however.
+<span class="nc" id="L726">		  availableHost(ah);</span>
+<span class="nc" id="L727">		  finished = true;</span>
+		} else {
+<span class="nc bnc" id="L729" title="All 2 branches missed.">		  if (is == null) {</span>
+<span class="nc" id="L730">		    is = cs;</span>
+<span class="nc" id="L731">		    notifyListeners(false, true, false, cs.getStatusMessage());</span>
+		  } else {
+<span class="nc bnc" id="L733" title="All 2 branches missed.">		    if (cs.getStatusMessage().</span>
+<span class="nc" id="L734">			compareTo(is.getStatusMessage()) != 0) {</span>
+		     
+<span class="nc" id="L736">		      notifyListeners(false, true, false,  </span>
+<span class="nc" id="L737">				      cs.getStatusMessage());</span>
+		    }
+<span class="nc" id="L739">		    is = cs;</span>
+		  }  
+		}
+<span class="nc" id="L742">	      } catch (InterruptedException ie) {</span>
+	      }
+	    }	      
+
+<span class="nc" id="L746">	  } catch (Exception ce) {</span>
+<span class="nc" id="L747">	    m_remoteHostsStatus[ah] = CONNECTION_FAILED;</span>
+<span class="nc" id="L748">	    m_subExpComplete[wexp] = TaskStatusInfo.TO_BE_RUN;</span>
+<span class="nc" id="L749">	    System.err.println(ce);</span>
+<span class="nc" id="L750">	    ce.printStackTrace();</span>
+<span class="nc" id="L751">	    notifyListeners(false,true,false,&quot;Connection to &quot;</span>
+<span class="nc" id="L752">			    +((String)m_remoteHosts.elementAt(ah))</span>
+<span class="nc" id="L753">			    +&quot; failed. Scheduling &quot;</span>
+<span class="nc" id="L754">			    +subTaskType</span>
+<span class="nc" id="L755">			    +&quot; for execution on another host.&quot;);</span>
+<span class="nc" id="L756">	    checkForAllFailedHosts();</span>
+<span class="nc" id="L757">	    waitingExperiment(wexp);</span>
+<span class="nc" id="L758">	  } finally {</span>
+<span class="nc bnc" id="L759" title="All 6 branches missed.">	    if (isInterrupted()) {</span>
+<span class="nc" id="L760">	      System.err.println(&quot;Sub exp Interupted!&quot;);</span>
+	    }
+<span class="nc" id="L762">	  }</span>
+<span class="nc" id="L763">	}	   </span>
+      };
+<span class="nc" id="L765">    subExpThread.setPriority(Thread.MIN_PRIORITY);</span>
+<span class="nc" id="L766">    subExpThread.start();</span>
+<span class="nc" id="L767">  }</span>
+
+  /**
+   * Overides the one in Experiment
+   * @throws Exception never throws an exception
+   */
+  public void nextIteration() throws Exception {
+
+<span class="nc" id="L775">  }</span>
+
+  /** 
+   * overides the one in Experiment
+   */
+  public void advanceCounters() {
+
+<span class="nc" id="L782">  }</span>
+
+  /** 
+   * overides the one in Experiment
+   */
+  public void postProcess() {
+   
+<span class="nc" id="L789">  }</span>
+
+  /**
+   * Add a host name to the list of remote hosts
+   * @param hostname the host name to add to the list
+   */
+  public void addRemoteHost(String hostname) {
+<span class="nc" id="L796">    m_remoteHosts.addElement(hostname);</span>
+<span class="nc" id="L797">  }</span>
+
+  /**
+   * Get the list of remote host names
+   * @return the list of remote host names
+   */
+  public DefaultListModel getRemoteHosts() {
+<span class="nc" id="L804">    return m_remoteHosts;</span>
+  }
+
+  /**
+   * Set the list of remote host names
+   * @param list the list of remote host names
+   */
+  public void setRemoteHosts(DefaultListModel list) {
+<span class="nc" id="L812">    m_remoteHosts = list;</span>
+<span class="nc" id="L813">  }</span>
+
+  /**
+   * Overides toString in Experiment
+   * @return a description of this remote experiment
+   */
+  public String toString() {
+<span class="nc" id="L820">    String result = m_baseExperiment.toString();</span>
+
+<span class="nc" id="L822">    result += &quot;\nRemote Hosts:\n&quot;;</span>
+<span class="nc bnc" id="L823" title="All 2 branches missed.">    for (int i=0;i&lt;m_remoteHosts.size();i++) {</span>
+<span class="nc" id="L824">      result += ((String)m_remoteHosts.elementAt(i)) +'\n';</span>
+    }
+<span class="nc" id="L826">    return result;</span>
+  }
+
+  /**
+   * Overides runExperiment in Experiment
+   */
+  public void runExperiment() {
+<span class="nc" id="L833">    int totalHosts = m_remoteHostsQueue.size();</span>
+    // Try to launch sub experiments on all available hosts
+<span class="nc bnc" id="L835" title="All 2 branches missed.">    for (int i = 0; i &lt; totalHosts; i++) {</span>
+<span class="nc" id="L836">      availableHost(-1);</span>
+    }
+<span class="nc" id="L838">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L846">    return RevisionUtils.extract(&quot;$Revision: 1.16 $&quot;);</span>
+  }
+
+  /**
+   * Configures/Runs the Experiment from the command line.
+   *
+   * @param args command line arguments to the Experiment.
+   */
+  public static void main(String[] args) {
+
+    try {
+<span class="nc" id="L857">      RemoteExperiment exp = null;</span>
+
+      // get options from XML?
+<span class="nc" id="L860">      String xmlOption = Utils.getOption(&quot;xml&quot;, args);</span>
+<span class="nc bnc" id="L861" title="All 2 branches missed.">      if (!xmlOption.equals(&quot;&quot;))</span>
+<span class="nc" id="L862">         args = new XMLOptions(xmlOption).toArray();</span>
+      
+<span class="nc" id="L864">      Experiment base = null;</span>
+<span class="nc" id="L865">      String expFile = Utils.getOption('l', args);</span>
+<span class="nc" id="L866">      String saveFile = Utils.getOption('s', args);</span>
+<span class="nc" id="L867">      boolean runExp = Utils.getFlag('r', args);</span>
+<span class="nc" id="L868">      FastVector remoteHosts = new FastVector();</span>
+<span class="nc" id="L869">      String runHost = &quot; &quot;;</span>
+<span class="nc bnc" id="L870" title="All 2 branches missed.">      while (runHost.length() != 0) {</span>
+<span class="nc" id="L871">	runHost = Utils.getOption('h', args);</span>
+<span class="nc bnc" id="L872" title="All 2 branches missed.">	if (runHost.length() != 0) {</span>
+<span class="nc" id="L873">	  remoteHosts.addElement(runHost);</span>
+	}
+      }
+<span class="nc bnc" id="L876" title="All 2 branches missed.">      if (expFile.length() == 0) {</span>
+<span class="nc" id="L877">	base = new Experiment();</span>
+	try {
+<span class="nc" id="L879">	  base.setOptions(args);</span>
+<span class="nc" id="L880">	  Utils.checkForRemainingOptions(args);</span>
+<span class="nc" id="L881">	} catch (Exception ex) {</span>
+<span class="nc" id="L882">	  ex.printStackTrace();</span>
+<span class="nc" id="L883">	  String result = &quot;Usage:\n\n&quot;</span>
+	    + &quot;-l &lt;exp file&gt;\n&quot;
+	    + &quot;\tLoad experiment from file (default use cli options)\n&quot;
+	    + &quot;-s &lt;exp file&gt;\n&quot;
+	    + &quot;\tSave experiment to file after setting other options\n&quot;
+	    + &quot;\t(default don't save)\n&quot;
+	    + &quot;-h &lt;remote host name&gt;\n&quot;
+	    + &quot;\tHost to run experiment on (may be specified more than once\n&quot;
+	    + &quot;\tfor multiple remote hosts)\n&quot;
+	    + &quot;-r \n&quot;
+	    + &quot;\tRun experiment on (default don't run)\n&quot;
+       + &quot;-xml &lt;filename | xml-string&gt;\n&quot;
+       + &quot;\tget options from XML-Data instead from parameters\n&quot;
+       + &quot;\n&quot;;
+<span class="nc" id="L897">	  Enumeration enm = ((OptionHandler)base).listOptions();</span>
+<span class="nc bnc" id="L898" title="All 2 branches missed.">	  while (enm.hasMoreElements()) {</span>
+<span class="nc" id="L899">	    Option option = (Option) enm.nextElement();</span>
+<span class="nc" id="L900">	    result += option.synopsis() + &quot;\n&quot;;</span>
+<span class="nc" id="L901">	    result += option.description() + &quot;\n&quot;;</span>
+	  }
+<span class="nc" id="L903">	  throw new Exception(result + &quot;\n&quot; + ex.getMessage());</span>
+	}
+      } else {
+         Object tmp;
+         
+         // KOML?
+<span class="nc bnc" id="L909" title="All 4 branches missed.">         if ( (KOML.isPresent()) &amp;&amp; (expFile.toLowerCase().endsWith(KOML.FILE_EXTENSION)) ) {</span>
+<span class="nc" id="L910">            tmp = KOML.read(expFile);</span>
+         }
+         else
+         // XML?
+<span class="nc bnc" id="L914" title="All 2 branches missed.">         if (expFile.toLowerCase().endsWith(&quot;.xml&quot;)) {</span>
+<span class="nc" id="L915">            XMLExperiment xml = new XMLExperiment(); </span>
+<span class="nc" id="L916">            tmp = xml.read(expFile);</span>
+         }
+         // binary
+         else {
+<span class="nc" id="L920">            FileInputStream fi = new FileInputStream(expFile);</span>
+<span class="nc" id="L921">            ObjectInputStream oi = new ObjectInputStream(</span>
+<span class="nc" id="L922">                                   new BufferedInputStream(fi));</span>
+<span class="nc" id="L923">            tmp = oi.readObject();</span>
+<span class="nc" id="L924">            oi.close();</span>
+         }
+<span class="nc bnc" id="L926" title="All 2 branches missed.">	if (tmp instanceof RemoteExperiment) {</span>
+<span class="nc" id="L927">	  exp = (RemoteExperiment)tmp;</span>
+	} else {
+<span class="nc" id="L929">	  base = (Experiment)tmp;</span>
+	}
+      }
+<span class="nc bnc" id="L932" title="All 2 branches missed.">      if (base != null) {</span>
+<span class="nc" id="L933">	exp = new RemoteExperiment(base);</span>
+      }
+<span class="nc bnc" id="L935" title="All 2 branches missed.">      for (int i=0;i&lt;remoteHosts.size();i++) {</span>
+<span class="nc" id="L936">	exp.addRemoteHost((String)remoteHosts.elementAt(i));</span>
+      }
+<span class="nc" id="L938">      System.err.println(&quot;Experiment:\n&quot; + exp.toString());</span>
+
+<span class="nc bnc" id="L940" title="All 2 branches missed.">      if (saveFile.length() != 0) {</span>
+         // KOML?
+<span class="nc bnc" id="L942" title="All 4 branches missed.">         if ( (KOML.isPresent()) &amp;&amp; (saveFile.toLowerCase().endsWith(KOML.FILE_EXTENSION)) ) {</span>
+<span class="nc" id="L943">            KOML.write(saveFile, exp);</span>
+         }
+         else
+         // XML?
+<span class="nc bnc" id="L947" title="All 2 branches missed.">         if (saveFile.toLowerCase().endsWith(&quot;.xml&quot;)) {</span>
+<span class="nc" id="L948">            XMLExperiment xml = new XMLExperiment(); </span>
+<span class="nc" id="L949">            xml.write(saveFile, exp);</span>
+         }
+         // binary
+         else {
+<span class="nc" id="L953">            FileOutputStream fo = new FileOutputStream(saveFile);</span>
+<span class="nc" id="L954">            ObjectOutputStream oo = new ObjectOutputStream(</span>
+<span class="nc" id="L955">                                    new BufferedOutputStream(fo));</span>
+<span class="nc" id="L956">            oo.writeObject(exp);</span>
+<span class="nc" id="L957">            oo.close();</span>
+         }
+      }
+      
+<span class="nc bnc" id="L961" title="All 2 branches missed.">      if (runExp) {</span>
+<span class="nc" id="L962">	System.err.println(&quot;Initializing...&quot;);</span>
+<span class="nc" id="L963">	exp.initialize();</span>
+<span class="nc" id="L964">	System.err.println(&quot;Iterating...&quot;);</span>
+<span class="nc" id="L965">	exp.runExperiment();</span>
+<span class="nc" id="L966">	System.err.println(&quot;Postprocessing...&quot;);</span>
+<span class="nc" id="L967">	exp.postProcess();</span>
+      }      
+<span class="nc" id="L969">    } catch (Exception ex) {</span>
+<span class="nc" id="L970">      ex.printStackTrace();</span>
+<span class="nc" id="L971">      System.err.println(ex.getMessage());</span>
+    }
+<span class="nc" id="L973">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

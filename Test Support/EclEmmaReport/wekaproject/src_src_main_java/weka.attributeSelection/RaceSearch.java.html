@@ -1,0 +1,1780 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RaceSearch.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">RaceSearch.java</span></div><h1>RaceSearch.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RaceSearch.java
+ *    Copyright (C) 2000 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.attributeSelection;
+
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Statistics;
+import weka.core.Tag;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformation.Type;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.experiment.PairedStats;
+import weka.experiment.Stats;
+
+import java.util.BitSet;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * Races the cross validation error of competing attribute subsets. Use in conjuction with a ClassifierSubsetEval. RaceSearch has four modes:&lt;br/&gt;
+ * &lt;br/&gt;
+ * forward selection races all single attribute additions to a base set (initially  no attributes), selects the winner to become the new base set and then iterates until there is no improvement over the base set. &lt;br/&gt;
+ * &lt;br/&gt;
+ * Backward elimination is similar but the initial base set has all attributes included and races all single attribute deletions. &lt;br/&gt;
+ * &lt;br/&gt;
+ * Schemata search is a bit different. Each iteration a series of races are run in parallel. Each race in a set determines whether a particular attribute should be included or not---ie the race is between the attribute being &quot;in&quot; or &quot;out&quot;. The other attributes for this race are included or excluded randomly at each point in the evaluation. As soon as one race has a clear winner (ie it has been decided whether a particular attribute should be inor not) then the next set of races begins, using the result of the winning race from the previous iteration as new base set.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Rank race first ranks the attributes using an attribute evaluator and then races the ranking. The race includes no attributes, the top ranked attribute, the top two attributes, the top three attributes, etc.&lt;br/&gt;
+ * &lt;br/&gt;
+ * It is also possible to generate a raked list of attributes through the forward racing process. If generateRanking is set to true then a complete forward race will be run---that is, racing continues until all attributes have been selected. The order that they are added in determines a complete ranking of all the attributes.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Racing uses paired and unpaired t-tests on cross-validation errors of competing subsets. When there is a significant difference between the means of the errors of two competing subsets then the poorer of the two can be eliminated from the race. Similarly, if there is no significant difference between the mean errors of two competing subsets and they are within some threshold of each other, then one can be eliminated from the race.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Andrew W. Moore, Mary S. Lee: Efficient Algorithms for Minimizing Cross Validation Error. In: Eleventh International Conference on Machine Learning, 190-198, 1994.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Moore1994,
+ *    author = {Andrew W. Moore and Mary S. Lee},
+ *    booktitle = {Eleventh International Conference on Machine Learning},
+ *    pages = {190-198},
+ *    publisher = {Morgan Kaufmann},
+ *    title = {Efficient Algorithms for Minimizing Cross Validation Error},
+ *    year = {1994}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;0 = forward | 1 = backward race | 2 = schemata | 3 = rank&amp;gt;
+ *  Type of race to perform.
+ *  (default = 0).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -L &amp;lt;significance&amp;gt;
+ *  Significance level for comaparisons
+ *  (default = 0.001(forward/backward/rank)/0.01(schemata)).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -T &amp;lt;threshold&amp;gt;
+ *  Threshold for error comparison.
+ *  (default = 0.001).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A &amp;lt;attribute evaluator&amp;gt;
+ *  Attribute ranker to use if doing a 
+ *  rank search. Place any
+ *  evaluator options LAST on 
+ *  the command line following a &quot;--&quot;.
+ *  eg. -A weka.attributeSelection.GainRatioAttributeEval ... -- -M.
+ *  (default = GainRatioAttributeEval)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -F &amp;lt;0 = 10 fold | 1 = leave-one-out&amp;gt;
+ *  Folds for cross validation
+ *  (default = 0 (1 if schemata race)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Q
+ *  Generate a ranked list of attributes.
+ *  Forces the search to be forward
+ *  and races until all attributes have
+ *  selected, thus producing a ranking.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;num to select&amp;gt;
+ *  Specify number of attributes to retain from 
+ *  the ranking. Overides -T. Use in conjunction with -Q&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -J &amp;lt;threshold&amp;gt;
+ *  Specify a theshold by which attributes
+ *  may be discarded from the ranking.
+ *  Use in conjuction with -Q&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Z
+ *  Verbose output for monitoring the search.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to evaluator weka.attributeSelection.GainRatioAttributeEval:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  treat missing values as a seperate value.&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version $Revision: 1.26 $
+ */
+<span class="pc" id="L140">public class RaceSearch </span>
+  extends ASSearch 
+  implements RankedOutputSearch, OptionHandler, TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 4015453851212985720L;
+
+  /** the training instances */
+<span class="nc" id="L148">  private Instances m_Instances = null;</span>
+
+  /** search types */
+  private static final int FORWARD_RACE = 0;
+  private static final int BACKWARD_RACE = 1;
+  private static final int SCHEMATA_RACE = 2;
+  private static final int RANK_RACE = 3;
+<span class="fc" id="L155">  public static final Tag [] TAGS_SELECTION = {</span>
+<span class="fc" id="L156">    new Tag(FORWARD_RACE, &quot;Forward selection race&quot;),</span>
+<span class="fc" id="L157">    new Tag(BACKWARD_RACE, &quot;Backward elimination race&quot;),</span>
+<span class="fc" id="L158">    new Tag(SCHEMATA_RACE, &quot;Schemata race&quot;),</span>
+<span class="fc" id="L159">    new Tag(RANK_RACE, &quot;Rank race&quot;)</span>
+      };
+  
+  /** the selected search type */
+<span class="nc" id="L163">  private int m_raceType = FORWARD_RACE;</span>
+  
+  /** xval types */
+  private static final int TEN_FOLD = 0;
+  private static final int LEAVE_ONE_OUT = 1;
+<span class="fc" id="L168">  public static final Tag [] XVALTAGS_SELECTION = {</span>
+<span class="fc" id="L169">    new Tag(TEN_FOLD, &quot;10 Fold&quot;),</span>
+<span class="fc" id="L170">    new Tag(LEAVE_ONE_OUT, &quot;Leave-one-out&quot;),</span>
+      };
+
+  /** the selected xval type */
+<span class="nc" id="L174">  private int m_xvalType = TEN_FOLD;</span>
+  
+  /** the class index */
+  private int m_classIndex;
+
+  /** the number of attributes in the data */
+  private int m_numAttribs;
+
+  /** the total number of partially/fully evaluated subsets */
+  private int m_totalEvals;
+
+  /** holds the merit of the best subset found */
+<span class="nc" id="L186">  private double m_bestMerit = -Double.MAX_VALUE;</span>
+
+  /** the subset evaluator to use */
+<span class="nc" id="L189">  private HoldOutSubsetEvaluator m_theEvaluator = null;</span>
+
+  /** the significance level for comparisons */
+<span class="nc" id="L192">  private double m_sigLevel = 0.001;</span>
+
+  /** threshold for comparisons */
+<span class="nc" id="L195">  private double m_delta = 0.001;</span>
+
+  /** the number of samples above which to begin testing for similarity
+      between competing subsets */
+<span class="nc" id="L199">  private int m_samples = 20;</span>
+
+  /** number of cross validation folds---equal to the number of instances
+      for leave-one-out cv */
+<span class="nc" id="L203">  private int m_numFolds = 10;</span>
+
+  /** the attribute evaluator to generate the initial ranking when
+      doing a rank race */
+<span class="nc" id="L207">  private ASEvaluation m_ASEval = new GainRatioAttributeEval();</span>
+
+  /** will hold the attribute ranking produced by the above attribute
+      evaluator if doing a rank search */
+  private int [] m_Ranking;
+
+  /** verbose output for monitoring the search and debugging */
+<span class="nc" id="L214">  private boolean m_debug = false;</span>
+
+  /** If true then produce a ranked list of attributes by fully traversing
+      a forward hillclimb race */
+<span class="nc" id="L218">  private boolean m_rankingRequested = false;</span>
+
+  /** The ranked list of attributes produced if m_rankingRequested is true */
+  private double [][] m_rankedAtts;
+
+  /** The number of attributes ranked so far (if ranking is requested) */
+  private int m_rankedSoFar;
+
+  /** The number of attributes to retain if a ranking is requested. -1
+      indicates that all attributes are to be retained. Has precedence over
+      m_threshold */
+<span class="nc" id="L229">  private int m_numToSelect = -1;</span>
+
+<span class="nc" id="L231">  private int m_calculatedNumToSelect = -1;</span>
+
+  /** the threshold for removing attributes if ranking is requested */
+<span class="nc" id="L234">  private double m_threshold = -Double.MAX_VALUE;</span>
+
+  /**
+   * Returns a string describing this search method
+   * @return a description of the search method suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L242">    return &quot;Races the cross validation error of competing &quot;</span>
+      +&quot;attribute subsets. Use in conjuction with a ClassifierSubsetEval. &quot;
+      +&quot;RaceSearch has four modes:\n\nforward selection &quot;
+      +&quot;races all single attribute additions to a base set (initially &quot;
+      +&quot; no attributes), selects the winner to become the new base set &quot;
+      +&quot;and then iterates until there is no improvement over the base set. &quot;
+      +&quot;\n\nBackward elimination is similar but the initial base set has all &quot;
+      +&quot;attributes included and races all single attribute deletions. &quot;
+      +&quot;\n\nSchemata search is a bit different. Each iteration a series of &quot;
+      +&quot;races are run in parallel. Each race in a set determines whether &quot;
+      +&quot;a particular attribute should be included or not---ie the race is &quot;
+      +&quot;between the attribute being \&quot;in\&quot; or \&quot;out\&quot;. The other attributes &quot;
+      +&quot;for this race are included or excluded randomly at each point in the &quot;
+      +&quot;evaluation. As soon as one race &quot;
+      +&quot;has a clear winner (ie it has been decided whether a particular &quot;
+      +&quot;attribute should be inor not) then the next set of races begins, &quot;
+      +&quot;using the result of the winning race from the previous iteration as &quot;
+      +&quot;new base set.\n\nRank race first ranks the attributes using an &quot;
+      +&quot;attribute evaluator and then races the ranking. The race includes &quot;
+      +&quot;no attributes, the top ranked attribute, the top two attributes, the &quot;
+      +&quot;top three attributes, etc.\n\nIt is also possible to generate a &quot;
+      +&quot;raked list of attributes through the forward racing process. &quot;
+      +&quot;If generateRanking is set to true then a complete forward race will &quot;
+      +&quot;be run---that is, racing continues until all attributes have been &quot;
+      +&quot;selected. The order that they are added in determines a complete &quot;
+      +&quot;ranking of all the attributes.\n\nRacing uses paired and unpaired &quot;
+      +&quot;t-tests on cross-validation errors of competing subsets. When there &quot;
+      +&quot;is a significant difference between the means of the errors of two &quot;
+      +&quot;competing subsets then the poorer of the two can be eliminated from &quot;
+      +&quot;the race. Similarly, if there is no significant difference between &quot;
+      +&quot;the mean errors of two competing subsets and they are within some &quot;
+      +&quot;threshold of each other, then one can be eliminated from the race.\n\n&quot;
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L275">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation        result;
+    
+<span class="nc" id="L288">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L289">    result.setValue(Field.AUTHOR, &quot;Andrew W. Moore and Mary S. Lee&quot;);</span>
+<span class="nc" id="L290">    result.setValue(Field.TITLE, &quot;Efficient Algorithms for Minimizing Cross Validation Error&quot;);</span>
+<span class="nc" id="L291">    result.setValue(Field.BOOKTITLE, &quot;Eleventh International Conference on Machine Learning&quot;);</span>
+<span class="nc" id="L292">    result.setValue(Field.YEAR, &quot;1994&quot;);</span>
+<span class="nc" id="L293">    result.setValue(Field.PAGES, &quot;190-198&quot;);</span>
+<span class="nc" id="L294">    result.setValue(Field.PUBLISHER, &quot;Morgan Kaufmann&quot;);</span>
+    
+<span class="nc" id="L296">    return result;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String raceTypeTipText() {
+<span class="nc" id="L305">    return &quot;Set the type of search.&quot;;</span>
+  }
+
+  /**
+   * Set the race type
+   *
+   * @param d the type of race
+   */
+  public void setRaceType (SelectedTag d) {
+    
+<span class="nc bnc" id="L315" title="All 2 branches missed.">    if (d.getTags() == TAGS_SELECTION) {</span>
+<span class="nc" id="L316">      m_raceType = d.getSelectedTag().getID();</span>
+    }
+<span class="nc bnc" id="L318" title="All 4 branches missed.">    if (m_raceType == SCHEMATA_RACE &amp;&amp; !m_rankingRequested) {</span>
+      try {
+<span class="nc" id="L320">        setFoldsType(new SelectedTag(LEAVE_ONE_OUT,</span>
+<span class="nc" id="L321">                                     XVALTAGS_SELECTION));</span>
+<span class="nc" id="L322">        setSignificanceLevel(0.01);</span>
+<span class="nc" id="L323">      } catch (Exception ex) {</span>
+      }
+    } else {
+      try {
+<span class="nc" id="L327">        setFoldsType(new SelectedTag(TEN_FOLD,</span>
+<span class="nc" id="L328">                                     XVALTAGS_SELECTION));</span>
+<span class="nc" id="L329">        setSignificanceLevel(0.001);</span>
+<span class="nc" id="L330">      } catch (Exception ex) {</span>
+      }
+    }
+<span class="nc" id="L333">  }</span>
+
+  /**
+   * Get the race type
+   *
+   * @return the type of race
+   */
+  public SelectedTag getRaceType() {
+<span class="nc" id="L341">    return new SelectedTag(m_raceType, TAGS_SELECTION);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String significanceLevelTipText() {
+<span class="nc" id="L350">    return &quot;Set the significance level to use for t-test comparisons.&quot;;</span>
+  }
+
+  /**
+   * Sets the significance level to use
+   * @param sig the significance level
+   */
+  public void setSignificanceLevel(double sig) {
+<span class="nc" id="L358">    m_sigLevel = sig;</span>
+<span class="nc" id="L359">  }</span>
+
+  /**
+   * Get the significance level
+   * @return the current significance level
+   */
+  public double getSignificanceLevel() {
+<span class="nc" id="L366">    return m_sigLevel;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String thresholdTipText() {
+<span class="nc" id="L375">    return &quot;Set the error threshold by which to consider two subsets &quot;</span>
+      +&quot;equivalent.&quot;;
+  }
+
+  /**
+   * Sets the threshold for comparisons
+   * @param t the threshold to use
+   */
+  public void setThreshold(double t) {
+<span class="nc" id="L384">    m_delta = t;</span>
+<span class="nc" id="L385">  }</span>
+
+  /**
+   * Get the threshold
+   * @return the current threshold
+   */
+  public double getThreshold() {
+<span class="nc" id="L392">    return m_delta;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String foldsTypeTipText() {
+<span class="nc" id="L401">    return &quot;Set the number of folds to use for x-val error estimation; &quot;</span>
+      +&quot;leave-one-out is selected automatically for schemata search.&quot;;
+  }
+
+  /**
+   * Set the xfold type
+   *
+   * @param d the type of xval
+   */
+  public void setFoldsType (SelectedTag d) {
+    
+<span class="nc bnc" id="L412" title="All 2 branches missed.">    if (d.getTags() == XVALTAGS_SELECTION) {</span>
+<span class="nc" id="L413">      m_xvalType = d.getSelectedTag().getID();</span>
+    }
+<span class="nc" id="L415">  }</span>
+
+  /**
+   * Get the xfold type
+   *
+   * @return the type of xval
+   */
+  public SelectedTag getFoldsType () {
+<span class="nc" id="L423">    return new SelectedTag(m_xvalType, XVALTAGS_SELECTION);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String debugTipText() {
+<span class="nc" id="L432">    return &quot;Turn on verbose output for monitoring the search's progress.&quot;;</span>
+  }
+
+  /**
+   * Set whether verbose output should be generated.
+   * @param d true if output is to be verbose.
+   */
+  public void setDebug(boolean d) {
+<span class="nc" id="L440">    m_debug = d;</span>
+<span class="nc" id="L441">  }</span>
+
+  /**
+   * Get whether output is to be verbose
+   * @return true if output will be verbose
+   */
+  public boolean getDebug() {
+<span class="nc" id="L448">    return m_debug;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String attributeEvaluatorTipText() {
+<span class="nc" id="L457">    return &quot;Attribute evaluator to use for generating an initial ranking. &quot;</span>
+      +&quot;Use in conjunction with a rank race&quot;;    
+  }
+
+  /**
+   * Set the attribute evaluator to use for generating the ranking.
+   * @param newEvaluator the attribute evaluator to use.
+   */
+  public void setAttributeEvaluator(ASEvaluation newEvaluator) {
+<span class="nc" id="L466">    m_ASEval = newEvaluator;</span>
+<span class="nc" id="L467">  }</span>
+
+  /**
+   * Get the attribute evaluator used to generate the ranking.
+   * @return the evaluator used to generate the ranking.
+   */
+  public ASEvaluation getAttributeEvaluator() {
+<span class="nc" id="L474">    return m_ASEval;</span>
+  }
+
+    /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String generateRankingTipText() {
+<span class="nc" id="L483">    return &quot;Use the racing process to generate a ranked list of attributes. &quot;</span>
+      +&quot;Using this mode forces the race to be a forward type and then races &quot;
+      +&quot;until all attributes have been added, thus giving a ranked list&quot;;
+  }
+  
+  /**
+   * Records whether the user has requested a ranked list of attributes.
+   * @param doRank true if ranking is requested
+   */
+  public void setGenerateRanking(boolean doRank) {
+<span class="nc" id="L493">    m_rankingRequested = doRank;</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">    if (m_rankingRequested) {</span>
+      try {
+<span class="nc" id="L496">        setRaceType(new SelectedTag(FORWARD_RACE,</span>
+<span class="nc" id="L497">                                    TAGS_SELECTION));</span>
+<span class="nc" id="L498">      } catch (Exception ex) {</span>
+      }
+    }
+<span class="nc" id="L501">  }</span>
+
+  /**
+   * Gets whether ranking has been requested. This is used by the
+   * AttributeSelection module to determine if rankedAttributes()
+   * should be called.
+   * @return true if ranking has been requested.
+   */
+  public boolean getGenerateRanking() {
+<span class="nc" id="L510">    return m_rankingRequested;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numToSelectTipText() {
+<span class="nc" id="L519">    return &quot;Specify the number of attributes to retain. Use in conjunction &quot;</span>
+      +&quot;with generateRanking. The default value &quot;
+      +&quot;(-1) indicates that all attributes are to be retained. Use either &quot;
+      +&quot;this option or a threshold to reduce the attribute set.&quot;;
+  }
+
+  /**
+   * Specify the number of attributes to select from the ranked list
+   * (if generating a ranking). -1
+   * indicates that all attributes are to be retained.
+   * @param n the number of attributes to retain
+   */
+  public void setNumToSelect(int n) {
+<span class="nc" id="L532">    m_numToSelect = n;</span>
+<span class="nc" id="L533">  }</span>
+
+  /**
+   * Gets the number of attributes to be retained.
+   * @return the number of attributes to retain
+   */
+  public int getNumToSelect() {
+<span class="nc" id="L540">    return m_numToSelect;</span>
+  }
+
+  /**
+   * Gets the calculated number of attributes to retain. This is the
+   * actual number of attributes to retain. This is the same as
+   * getNumToSelect if the user specifies a number which is not less
+   * than zero. Otherwise it should be the number of attributes in the
+   * (potentially transformed) data.
+   */
+  public int getCalculatedNumToSelect() {
+<span class="nc bnc" id="L551" title="All 2 branches missed.">    if (m_numToSelect &gt;= 0) {</span>
+<span class="nc" id="L552">      m_calculatedNumToSelect = m_numToSelect;</span>
+    }
+<span class="nc" id="L554">    return m_calculatedNumToSelect;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String selectionThresholdTipText() {
+<span class="nc" id="L563">    return &quot;Set threshold by which attributes can be discarded. Default value &quot;</span>
+      + &quot;results in no attributes being discarded. Use in conjunction with &quot;
+      + &quot;generateRanking&quot;;
+  }
+
+  /**
+   * Set the threshold by which the AttributeSelection module can discard
+   * attributes.
+   * @param threshold the threshold.
+   */
+  public void setSelectionThreshold(double threshold) {
+<span class="nc" id="L574">    m_threshold = threshold;</span>
+<span class="nc" id="L575">  }</span>
+
+  /**
+   * Returns the threshold so that the AttributeSelection module can
+   * discard attributes from the ranking.
+   */
+  public double getSelectionThreshold() {
+<span class="nc" id="L582">    return m_threshold;</span>
+  }
+
+
+  /**
+   * Returns an enumeration describing the available options.
+   * @return an enumeration of all the available options.
+   **/
+  public Enumeration listOptions () {
+<span class="nc" id="L591">    Vector newVector = new Vector();</span>
+    
+<span class="nc" id="L593">     newVector.addElement(new Option(</span>
+<span class="nc" id="L594">	 &quot;\tType of race to perform.\n&quot;</span>
+	 + &quot;\t(default = 0).&quot;,
+<span class="nc" id="L596">	 &quot;R&quot;, 1 ,&quot;-R &lt;0 = forward | 1 = backward race | 2 = schemata | 3 = rank&gt;&quot;));</span>
+     
+<span class="nc" id="L598">     newVector.addElement(new Option(</span>
+<span class="nc" id="L599">	 &quot;\tSignificance level for comaparisons\n&quot;</span>
+	 + &quot;\t(default = 0.001(forward/backward/rank)/0.01(schemata)).&quot;,
+<span class="nc" id="L601">	 &quot;L&quot;,1,&quot;-L &lt;significance&gt;&quot;));</span>
+     
+<span class="nc" id="L603">     newVector.addElement(new Option(</span>
+<span class="nc" id="L604">	 &quot;\tThreshold for error comparison.\n&quot;</span>
+	 + &quot;\t(default = 0.001).&quot;,
+<span class="nc" id="L606">	 &quot;T&quot;,1,&quot;-T &lt;threshold&gt;&quot;));</span>
+     
+<span class="nc" id="L608">     newVector.addElement(new Option(</span>
+<span class="nc" id="L609">	 &quot;\tAttribute ranker to use if doing a \n&quot;</span>
+	 + &quot;\trank search. Place any\n&quot;
+	 + &quot;\tevaluator options LAST on \n&quot;
+	 + &quot;\tthe command line following a \&quot;--\&quot;.\n&quot; 
+	 + &quot;\teg. -A weka.attributeSelection.GainRatioAttributeEval ... -- -M.\n&quot;
+	 + &quot;\t(default = GainRatioAttributeEval)&quot;, 
+<span class="nc" id="L615">	 &quot;A&quot;, 1, &quot;-A &lt;attribute evaluator&gt;&quot;));</span>
+    
+<span class="nc" id="L617">     newVector.addElement(new Option(</span>
+<span class="nc" id="L618">	 &quot;\tFolds for cross validation\n&quot;</span>
+	 + &quot;\t(default = 0 (1 if schemata race)&quot;,
+<span class="nc" id="L620">	 &quot;F&quot;,1,&quot;-F &lt;0 = 10 fold | 1 = leave-one-out&gt;&quot;));</span>
+     
+<span class="nc" id="L622">     newVector.addElement(new Option(</span>
+<span class="nc" id="L623">	 &quot;\tGenerate a ranked list of attributes.\n&quot;</span>
+	 +&quot;\tForces the search to be forward\n&quot;
+	 +&quot;\tand races until all attributes have\n&quot;
+	 +&quot;\tselected, thus producing a ranking.&quot;,
+<span class="nc" id="L627">	 &quot;Q&quot;,0,&quot;-Q&quot;));</span>
+
+<span class="nc" id="L629">    newVector.addElement(new Option(</span>
+<span class="nc" id="L630">	&quot;\tSpecify number of attributes to retain from \n&quot;</span>
+	+ &quot;\tthe ranking. Overides -T. Use in conjunction with -Q&quot;, 
+<span class="nc" id="L632">	&quot;N&quot;, 1, &quot;-N &lt;num to select&gt;&quot;));</span>
+
+<span class="nc" id="L634">    newVector.addElement(new Option(</span>
+<span class="nc" id="L635">	&quot;\tSpecify a theshold by which attributes\n&quot; </span>
+	+ &quot;\tmay be discarded from the ranking.\n&quot;
+	+&quot;\tUse in conjuction with -Q&quot;,
+<span class="nc" id="L638">	&quot;J&quot;,1, &quot;-J &lt;threshold&gt;&quot;));</span>
+
+<span class="nc" id="L640">     newVector.addElement(new Option(</span>
+<span class="nc" id="L641">	 &quot;\tVerbose output for monitoring the search.&quot;,</span>
+<span class="nc" id="L642">	 &quot;Z&quot;,0,&quot;-Z&quot;));</span>
+     
+<span class="nc bnc" id="L644" title="All 2 branches missed.">     if ((m_ASEval != null) &amp;&amp; </span>
+<span class="nc bnc" id="L645" title="All 2 branches missed.">         (m_ASEval instanceof OptionHandler)) {</span>
+<span class="nc" id="L646">       newVector.addElement(new Option(</span>
+<span class="nc" id="L647">	   &quot;&quot;, </span>
+<span class="nc" id="L648">	   &quot;&quot;, 0, &quot;\nOptions specific to evaluator &quot; </span>
+<span class="nc" id="L649">	   + m_ASEval.getClass().getName() + &quot;:&quot;));</span>
+
+<span class="nc" id="L651">       Enumeration enu = ((OptionHandler)m_ASEval).listOptions();</span>
+<span class="nc bnc" id="L652" title="All 2 branches missed.">       while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L653">         newVector.addElement(enu.nextElement());</span>
+       }
+     }
+     
+<span class="nc" id="L657">     return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;0 = forward | 1 = backward race | 2 = schemata | 3 = rank&amp;gt;
+   *  Type of race to perform.
+   *  (default = 0).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -L &amp;lt;significance&amp;gt;
+   *  Significance level for comaparisons
+   *  (default = 0.001(forward/backward/rank)/0.01(schemata)).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -T &amp;lt;threshold&amp;gt;
+   *  Threshold for error comparison.
+   *  (default = 0.001).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -A &amp;lt;attribute evaluator&amp;gt;
+   *  Attribute ranker to use if doing a 
+   *  rank search. Place any
+   *  evaluator options LAST on 
+   *  the command line following a &quot;--&quot;.
+   *  eg. -A weka.attributeSelection.GainRatioAttributeEval ... -- -M.
+   *  (default = GainRatioAttributeEval)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -F &amp;lt;0 = 10 fold | 1 = leave-one-out&amp;gt;
+   *  Folds for cross validation
+   *  (default = 0 (1 if schemata race)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -Q
+   *  Generate a ranked list of attributes.
+   *  Forces the search to be forward
+   *  and races until all attributes have
+   *  selected, thus producing a ranking.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;num to select&amp;gt;
+   *  Specify number of attributes to retain from 
+   *  the ranking. Overides -T. Use in conjunction with -Q&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -J &amp;lt;threshold&amp;gt;
+   *  Specify a theshold by which attributes
+   *  may be discarded from the ranking.
+   *  Use in conjuction with -Q&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -Z
+   *  Verbose output for monitoring the search.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to evaluator weka.attributeSelection.GainRatioAttributeEval:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  treat missing values as a seperate value.&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions (String[] options)
+    throws Exception {
+    String optionString;
+<span class="nc" id="L723">    resetOptions();</span>
+    
+<span class="nc" id="L725">    optionString = Utils.getOption('R', options);</span>
+<span class="nc bnc" id="L726" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L727">      setRaceType(new SelectedTag(Integer.parseInt(optionString),</span>
+<span class="nc" id="L728">                                  TAGS_SELECTION));</span>
+    }
+    
+<span class="nc" id="L731">    optionString = Utils.getOption('F', options);</span>
+<span class="nc bnc" id="L732" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L733">      setFoldsType(new SelectedTag(Integer.parseInt(optionString),</span>
+<span class="nc" id="L734">                                  XVALTAGS_SELECTION));</span>
+    }
+
+<span class="nc" id="L737">    optionString = Utils.getOption('L', options);</span>
+<span class="nc bnc" id="L738" title="All 2 branches missed.">    if (optionString.length() !=0) {</span>
+<span class="nc" id="L739">      setSignificanceLevel(Double.parseDouble(optionString));</span>
+    }
+
+<span class="nc" id="L742">    optionString = Utils.getOption('T', options);</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">    if (optionString.length() !=0) {</span>
+<span class="nc" id="L744">      setThreshold(Double.parseDouble(optionString));</span>
+    }
+
+<span class="nc" id="L747">    optionString = Utils.getOption('A', options);</span>
+<span class="nc bnc" id="L748" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L749">      setAttributeEvaluator(ASEvaluation.forName(optionString, </span>
+<span class="nc" id="L750">                            Utils.partitionOptions(options)));</span>
+    }
+
+<span class="nc" id="L753">    setGenerateRanking(Utils.getFlag('Q', options));</span>
+
+<span class="nc" id="L755">    optionString = Utils.getOption('J', options);</span>
+<span class="nc bnc" id="L756" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L757">      setSelectionThreshold(Double.parseDouble(optionString));</span>
+    }
+    
+<span class="nc" id="L760">    optionString = Utils.getOption('N', options);</span>
+<span class="nc bnc" id="L761" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L762">      setNumToSelect(Integer.parseInt(optionString));</span>
+    }
+
+<span class="nc" id="L765">    setDebug(Utils.getFlag('Z', options));</span>
+<span class="nc" id="L766">  }</span>
+
+  /**
+   * Gets the current settings of BestFirst.
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions () {
+<span class="nc" id="L773">    int current = 0;</span>
+<span class="nc" id="L774">    String[] evaluatorOptions = new String[0];</span>
+
+<span class="nc bnc" id="L776" title="All 2 branches missed.">    if ((m_ASEval != null) &amp;&amp; </span>
+<span class="nc bnc" id="L777" title="All 2 branches missed.">        (m_ASEval instanceof OptionHandler)) {</span>
+<span class="nc" id="L778">      evaluatorOptions = ((OptionHandler)m_ASEval).getOptions();</span>
+    }
+<span class="nc" id="L780">    String[] options = new String[17+evaluatorOptions.length];</span>
+
+<span class="nc" id="L782">    options[current++] = &quot;-R&quot;; options[current++] = &quot;&quot;+m_raceType;</span>
+<span class="nc" id="L783">    options[current++] = &quot;-L&quot;; options[current++] = &quot;&quot;+getSignificanceLevel();</span>
+<span class="nc" id="L784">    options[current++] = &quot;-T&quot;; options[current++] = &quot;&quot;+getThreshold();</span>
+<span class="nc" id="L785">    options[current++] = &quot;-F&quot;; options[current++] = &quot;&quot;+m_xvalType;</span>
+<span class="nc bnc" id="L786" title="All 2 branches missed.">    if (getGenerateRanking()) {</span>
+<span class="nc" id="L787">      options[current++] = &quot;-Q&quot;;</span>
+    }
+<span class="nc" id="L789">    options[current++] = &quot;-N&quot;; options[current++] = &quot;&quot;+getNumToSelect();</span>
+<span class="nc" id="L790">    options[current++] = &quot;-J&quot;; options[current++] = &quot;&quot;+getSelectionThreshold();</span>
+<span class="nc bnc" id="L791" title="All 2 branches missed.">    if (getDebug()) {</span>
+<span class="nc" id="L792">      options[current++] = &quot;-Z&quot;;</span>
+    }
+    
+<span class="nc bnc" id="L795" title="All 2 branches missed.">    if (getAttributeEvaluator() != null) {</span>
+<span class="nc" id="L796">      options[current++] = &quot;-A&quot;;</span>
+<span class="nc" id="L797">      options[current++] = getAttributeEvaluator().getClass().getName();</span>
+<span class="nc" id="L798">      options[current++] = &quot;--&quot;;</span>
+<span class="nc" id="L799">      System.arraycopy(evaluatorOptions, 0, options, current, </span>
+<span class="nc" id="L800">                       evaluatorOptions.length);</span>
+<span class="nc" id="L801">      current += evaluatorOptions.length;</span>
+    }
+
+    
+<span class="nc bnc" id="L805" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L806">      options[current++] = &quot;&quot;;</span>
+    }
+
+<span class="nc" id="L809">    return  options;</span>
+  }
+
+
+
+
+  /**
+   * Searches the attribute subset space by racing cross validation
+   * errors of competing subsets
+   *
+   * @param ASEval the attribute evaluator to guide the search
+   * @param data the training instances.
+   * @return an array (not necessarily ordered) of selected attribute indexes
+   * @throws Exception if the search can't be completed
+   */
+  public int[] search (ASEvaluation ASEval, Instances data)
+    throws Exception {
+<span class="nc bnc" id="L826" title="All 2 branches missed.">    if (!(ASEval instanceof SubsetEvaluator)) {</span>
+<span class="nc" id="L827">      throw  new Exception(ASEval.getClass().getName() </span>
+<span class="nc" id="L828">                           + &quot; is not a &quot; </span>
+<span class="nc" id="L829">                           + &quot;Subset evaluator! (RaceSearch)&quot;);</span>
+    }
+
+<span class="nc bnc" id="L832" title="All 2 branches missed.">    if (ASEval instanceof UnsupervisedSubsetEvaluator) {</span>
+<span class="nc" id="L833">      throw new Exception(&quot;Can't use an unsupervised subset evaluator &quot;</span>
+                          +&quot;(RaceSearch).&quot;);
+    }
+
+<span class="nc bnc" id="L837" title="All 2 branches missed.">    if (!(ASEval instanceof HoldOutSubsetEvaluator)) {</span>
+<span class="nc" id="L838">      throw new Exception(&quot;Must use a HoldOutSubsetEvaluator, eg. &quot;</span>
+                          +&quot;weka.attributeSelection.ClassifierSubsetEval &quot;
+                          +&quot;(RaceSearch)&quot;);
+    }
+
+<span class="nc bnc" id="L843" title="All 2 branches missed.">    if (!(ASEval instanceof ErrorBasedMeritEvaluator)) {</span>
+<span class="nc" id="L844">      throw new Exception(&quot;Only error based subset evaluators can be used, &quot;</span>
+                          +&quot;eg. weka.attributeSelection.ClassifierSubsetEval &quot;
+                          +&quot;(RaceSearch)&quot;);
+    }
+
+<span class="nc" id="L849">    m_Instances = new Instances(data);</span>
+<span class="nc" id="L850">    m_Instances.deleteWithMissingClass();</span>
+<span class="nc bnc" id="L851" title="All 2 branches missed.">    if (m_Instances.numInstances() == 0) {</span>
+<span class="nc" id="L852">      throw new Exception(&quot;All train instances have missing class! (RaceSearch)&quot;);</span>
+    }
+<span class="nc bnc" id="L854" title="All 4 branches missed.">    if (m_rankingRequested &amp;&amp; m_numToSelect &gt; m_Instances.numAttributes()-1) {</span>
+<span class="nc" id="L855">      throw new Exception(&quot;More attributes requested than exist in the data &quot;</span>
+                          +&quot;(RaceSearch).&quot;);
+    }
+<span class="nc" id="L858">    m_theEvaluator = (HoldOutSubsetEvaluator)ASEval;</span>
+<span class="nc" id="L859">    m_numAttribs = m_Instances.numAttributes();</span>
+<span class="nc" id="L860">    m_classIndex = m_Instances.classIndex();</span>
+
+<span class="nc bnc" id="L862" title="All 2 branches missed.">    if (m_rankingRequested) {</span>
+<span class="nc" id="L863">      m_rankedAtts = new double[m_numAttribs-1][2];</span>
+<span class="nc" id="L864">      m_rankedSoFar = 0;</span>
+    }
+
+<span class="nc bnc" id="L867" title="All 2 branches missed.">    if (m_xvalType == LEAVE_ONE_OUT) {</span>
+<span class="nc" id="L868">      m_numFolds = m_Instances.numInstances();</span>
+    } else {
+<span class="nc" id="L870">      m_numFolds = 10;</span>
+    }
+
+<span class="nc" id="L873">    Random random = new Random(1); // I guess this should really be a parameter?</span>
+<span class="nc" id="L874">    m_Instances.randomize(random);</span>
+<span class="nc" id="L875">    int [] bestSubset=null;</span>
+
+<span class="nc bnc" id="L877" title="All 4 branches missed.">    switch (m_raceType) {</span>
+    case FORWARD_RACE:
+    case BACKWARD_RACE: 
+<span class="nc" id="L880">      bestSubset = hillclimbRace(m_Instances, random);</span>
+<span class="nc" id="L881">      break;</span>
+    case SCHEMATA_RACE:
+<span class="nc" id="L883">      bestSubset = schemataRace(m_Instances, random);</span>
+<span class="nc" id="L884">      break;</span>
+    case RANK_RACE:
+<span class="nc" id="L886">      bestSubset = rankRace(m_Instances, random);</span>
+      break;
+    }
+
+<span class="nc" id="L890">    return bestSubset;</span>
+  }
+
+  public double [][] rankedAttributes() throws Exception {
+<span class="nc bnc" id="L894" title="All 2 branches missed.">    if (!m_rankingRequested) {</span>
+<span class="nc" id="L895">      throw new Exception(&quot;Need to request a ranked list of attributes &quot;</span>
+                          +&quot;before attributes can be ranked (RaceSearch).&quot;);
+    }
+<span class="nc bnc" id="L898" title="All 2 branches missed.">    if (m_rankedAtts == null) {</span>
+<span class="nc" id="L899">      throw new Exception(&quot;Search must be performed before attributes &quot;</span>
+                          +&quot;can be ranked (RaceSearch).&quot;);
+    }
+    
+<span class="nc" id="L903">    double [][] final_rank = new double [m_rankedSoFar][2];</span>
+<span class="nc bnc" id="L904" title="All 2 branches missed.">    for (int i=0;i&lt;m_rankedSoFar;i++) {</span>
+<span class="nc" id="L905">      final_rank[i][0] = m_rankedAtts[i][0];</span>
+<span class="nc" id="L906">      final_rank[i][1] = m_rankedAtts[i][1];</span>
+    }
+
+<span class="nc bnc" id="L909" title="All 2 branches missed.">    if (m_numToSelect &lt;= 0) {</span>
+<span class="nc bnc" id="L910" title="All 2 branches missed.">      if (m_threshold == -Double.MAX_VALUE) {</span>
+<span class="nc" id="L911">        m_calculatedNumToSelect = final_rank.length;</span>
+      } else {
+<span class="nc" id="L913">        determineNumToSelectFromThreshold(final_rank);</span>
+      }
+    }
+
+<span class="nc" id="L917">    return final_rank;</span>
+  }
+
+  private void determineNumToSelectFromThreshold(double [][] ranking) {
+<span class="nc" id="L921">    int count = 0;</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">    for (int i = 0; i &lt; ranking.length; i++) {</span>
+<span class="nc bnc" id="L923" title="All 2 branches missed.">      if (ranking[i][1] &gt; m_threshold) {</span>
+<span class="nc" id="L924">        count++;</span>
+      }
+    }
+<span class="nc" id="L927">    m_calculatedNumToSelect = count;</span>
+<span class="nc" id="L928">  }</span>
+
+  /**
+   * Print an attribute set.
+   */
+  private String printSets(char [][]raceSets) {
+<span class="nc" id="L934">    StringBuffer temp = new StringBuffer();</span>
+<span class="nc bnc" id="L935" title="All 2 branches missed.">    for (int i=0;i&lt;raceSets.length;i++) {</span>
+<span class="nc bnc" id="L936" title="All 2 branches missed.">      for (int j=0;j&lt;m_numAttribs;j++) {</span>
+<span class="nc" id="L937">        temp.append(raceSets[i][j]);</span>
+      }
+<span class="nc" id="L939">      temp.append('\n');</span>
+    }
+<span class="nc" id="L941">    return temp.toString();</span>
+  }
+
+  /**
+   * Performs a schemata race---a series of races in parallel.
+   * @param data the instances to estimate accuracy over.
+   * @param random a random number generator
+   * @return an array of selected attribute indices.
+   */
+  private int [] schemataRace(Instances data, Random random) throws Exception {
+    // # races, 2 (competitors in each race), # attributes
+    char [][][] parallelRaces;
+<span class="nc" id="L953">    int numRaces = m_numAttribs-1;</span>
+<span class="nc" id="L954">    Random r = new Random(42);</span>
+<span class="nc" id="L955">    int numInstances = data.numInstances();</span>
+    Instances trainCV; Instances testCV;
+    Instance testInstance;
+
+    // statistics on the racers
+<span class="nc" id="L960">    Stats [][] raceStats = new Stats[numRaces][2];</span>
+    
+<span class="nc" id="L962">    parallelRaces = new char [numRaces][2][m_numAttribs-1];</span>
+<span class="nc" id="L963">    char [] base = new char [m_numAttribs];</span>
+<span class="nc bnc" id="L964" title="All 2 branches missed.">    for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc" id="L965">      base[i] = '*';</span>
+    }
+
+<span class="nc" id="L968">    int count=0;</span>
+    // set up initial races
+<span class="nc bnc" id="L970" title="All 2 branches missed.">    for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L971" title="All 2 branches missed.">      if (i != m_classIndex) {</span>
+<span class="nc" id="L972">        parallelRaces[count][0] = (char [])base.clone();</span>
+<span class="nc" id="L973">        parallelRaces[count][1] = (char [])base.clone();</span>
+<span class="nc" id="L974">        parallelRaces[count][0][i] = '1';</span>
+<span class="nc" id="L975">        parallelRaces[count++][1][i] = '0';</span>
+      }
+    }
+    
+<span class="nc bnc" id="L979" title="All 2 branches missed.">    if (m_debug) {</span>
+<span class="nc" id="L980">      System.err.println(&quot;Initial sets:\n&quot;);</span>
+<span class="nc bnc" id="L981" title="All 2 branches missed.">      for (int i=0;i&lt;numRaces;i++) {</span>
+<span class="nc" id="L982">        System.err.print(printSets(parallelRaces[i])+&quot;--------------\n&quot;);</span>
+      }
+    }
+    
+<span class="nc" id="L986">    BitSet randomB = new BitSet(m_numAttribs);</span>
+<span class="nc" id="L987">    char [] randomBC = new char [m_numAttribs];</span>
+
+    // notes which bit positions have been decided
+<span class="nc" id="L990">    boolean [] attributeConstraints = new boolean[m_numAttribs];</span>
+    double error;
+<span class="nc" id="L992">    int evaluationCount = 0;</span>
+<span class="nc bnc" id="L993" title="All 2 branches missed.">    raceSet: while (numRaces &gt; 0) {</span>
+<span class="nc" id="L994">      boolean won = false;</span>
+<span class="nc bnc" id="L995" title="All 2 branches missed.">      for (int i=0;i&lt;numRaces;i++) {</span>
+<span class="nc" id="L996">        raceStats[i][0] = new Stats();</span>
+<span class="nc" id="L997">        raceStats[i][1] = new Stats();</span>
+      }
+
+      // keep an eye on how many test instances have been randomly sampled
+<span class="nc" id="L1001">      int sampleCount = 0;</span>
+      // run the current set of races
+<span class="nc bnc" id="L1003" title="All 2 branches missed.">      while (!won) {</span>
+        // generate a random binary string
+<span class="nc bnc" id="L1005" title="All 2 branches missed.">        for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L1006" title="All 2 branches missed.">          if (i != m_classIndex) {</span>
+<span class="nc bnc" id="L1007" title="All 2 branches missed.">            if (!attributeConstraints[i]) {</span>
+<span class="nc bnc" id="L1008" title="All 2 branches missed.">              if (r.nextDouble() &lt; 0.5) {</span>
+<span class="nc" id="L1009">                randomB.set(i);</span>
+              } else {
+<span class="nc" id="L1011">                randomB.clear(i);</span>
+              }
+            } else { // this position has been decided from previous races
+<span class="nc bnc" id="L1014" title="All 2 branches missed.">              if (base[i] == '1') { </span>
+<span class="nc" id="L1015">                randomB.set(i);</span>
+              } else {
+<span class="nc" id="L1017">                randomB.clear(i);</span>
+              }
+            }
+          }
+        }
+        
+        // randomly select an instance to test on
+<span class="nc" id="L1024">        int testIndex = Math.abs(r.nextInt() % numInstances);</span>
+
+
+        // We want to randomize the data the same way for every 
+        // learning scheme.
+<span class="nc" id="L1029">        trainCV = data.trainCV(numInstances, testIndex, new Random (1));</span>
+<span class="nc" id="L1030">        testCV = data.testCV(numInstances, testIndex);</span>
+<span class="nc" id="L1031">        testInstance = testCV.instance(0);</span>
+<span class="nc" id="L1032">        sampleCount++;</span>
+        /*      if (sampleCount &gt; numInstances) {
+          throw new Exception(&quot;raceSchemata: No clear winner after sampling &quot;
+                              +sampleCount+&quot; instances.&quot;);
+                              } */
+        
+<span class="nc" id="L1038">        m_theEvaluator.buildEvaluator(trainCV);</span>
+        
+        // the evaluator must retrain for every test point
+<span class="nc" id="L1041">        error = -((HoldOutSubsetEvaluator)m_theEvaluator).</span>
+<span class="nc" id="L1042">          evaluateSubset(randomB, </span>
+<span class="nc" id="L1043">                         testInstance,</span>
+<span class="nc" id="L1044">                         true);</span>
+<span class="nc" id="L1045">        evaluationCount++;</span>
+        
+        // see which racers match this random subset
+<span class="nc bnc" id="L1048" title="All 2 branches missed.">        for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L1049" title="All 2 branches missed.">          if (randomB.get(i)) {</span>
+<span class="nc" id="L1050">            randomBC[i] = '1';</span>
+          } else {
+<span class="nc" id="L1052">            randomBC[i] = '0';</span>
+          }
+        }
+        //      System.err.println(&quot;Random subset: &quot;+(new String(randomBC)));
+
+<span class="nc bnc" id="L1057" title="All 2 branches missed.">        checkRaces: for (int i=0;i&lt;numRaces;i++) {</span>
+          // if a pair of racers has evaluated more than num instances
+          // then bail out---unlikely that having any more atts is any
+          // better than the current base set.
+<span class="nc" id="L1061">          if (((raceStats[i][0].count + raceStats[i][1].count) / 2) &gt; </span>
+<span class="nc bnc" id="L1062" title="All 2 branches missed.">              (numInstances)) {</span>
+<span class="nc" id="L1063">            break raceSet;</span>
+          }
+<span class="nc bnc" id="L1065" title="All 2 branches missed.">          for (int j=0;j&lt;2;j++) {</span>
+<span class="nc" id="L1066">            boolean matched = true;</span>
+<span class="nc bnc" id="L1067" title="All 2 branches missed.">            for (int k =0;k&lt;m_numAttribs;k++) {</span>
+<span class="nc bnc" id="L1068" title="All 2 branches missed.">              if (parallelRaces[i][j][k] != '*') {</span>
+<span class="nc bnc" id="L1069" title="All 2 branches missed.">                if (parallelRaces[i][j][k] != randomBC[k]) {</span>
+<span class="nc" id="L1070">                  matched = false;</span>
+<span class="nc" id="L1071">                  break;</span>
+                }
+              }
+            }
+<span class="nc bnc" id="L1075" title="All 2 branches missed.">            if (matched) { // update the stats for this racer</span>
+              //              System.err.println(&quot;Matched &quot;+i+&quot; &quot;+j);
+<span class="nc" id="L1077">              raceStats[i][j].add(error);</span>
+
+                // does this race have a clear winner, meaning we can
+                // terminate the whole set of parallel races?
+<span class="nc bnc" id="L1081" title="All 2 branches missed.">                if (raceStats[i][0].count &gt; m_samples &amp;&amp;</span>
+<span class="nc bnc" id="L1082" title="All 2 branches missed.">                    raceStats[i][1].count &gt; m_samples) {</span>
+<span class="nc" id="L1083">                  raceStats[i][0].calculateDerived();</span>
+<span class="nc" id="L1084">                  raceStats[i][1].calculateDerived();</span>
+                  //              System.err.println(j+&quot; : &quot;+(new String(parallelRaces[i][j])));
+                  //              System.err.println(raceStats[i][0]);
+                  //              System.err.println(raceStats[i][1]);
+                  // check the ttest
+<span class="nc" id="L1089">                  double prob = ttest(raceStats[i][0], raceStats[i][1]);</span>
+                  //              System.err.println(&quot;Prob :&quot;+prob);
+<span class="nc bnc" id="L1091" title="All 2 branches missed.">                  if (prob &lt; m_sigLevel) { // stop the races we have a winner!</span>
+<span class="nc bnc" id="L1092" title="All 2 branches missed.">                    if (raceStats[i][0].mean &lt; raceStats[i][1].mean) {</span>
+<span class="nc" id="L1093">                      base = (char [])parallelRaces[i][0].clone();</span>
+<span class="nc" id="L1094">                      m_bestMerit = raceStats[i][0].mean;</span>
+<span class="nc bnc" id="L1095" title="All 2 branches missed.">                      if (m_debug) {</span>
+<span class="nc" id="L1096">                        System.err.println(&quot;contender 0 won &quot;);</span>
+                      }
+                    } else {
+<span class="nc" id="L1099">                      base = (char [])parallelRaces[i][1].clone();</span>
+<span class="nc" id="L1100">                      m_bestMerit = raceStats[i][1].mean;</span>
+<span class="nc bnc" id="L1101" title="All 2 branches missed.">                      if (m_debug) {</span>
+<span class="nc" id="L1102">                        System.err.println(&quot;contender 1 won&quot;);</span>
+                      }
+                    }
+<span class="nc bnc" id="L1105" title="All 2 branches missed.">                    if (m_debug) {</span>
+<span class="nc" id="L1106">                      System.err.println((new String(parallelRaces[i][0]))</span>
+<span class="nc" id="L1107">                                 +&quot; &quot;+(new String(parallelRaces[i][1])));</span>
+<span class="nc" id="L1108">                      System.err.println(&quot;Means : &quot;+raceStats[i][0].mean</span>
+<span class="nc" id="L1109">                                         +&quot; vs&quot;+raceStats[i][1].mean);</span>
+<span class="nc" id="L1110">                      System.err.println(&quot;Evaluations so far : &quot;</span>
+<span class="nc" id="L1111">                                         +evaluationCount);</span>
+                    }
+<span class="nc" id="L1113">                    won = true;</span>
+<span class="nc" id="L1114">                    break checkRaces;</span>
+                  }
+                }
+             
+            }
+          }
+        }
+      }
+
+<span class="nc" id="L1123">      numRaces--;</span>
+      // set up the next set of races if necessary
+<span class="nc bnc" id="L1125" title="All 4 branches missed.">      if (numRaces &gt; 0 &amp;&amp; won) {</span>
+<span class="nc" id="L1126">        parallelRaces = new char [numRaces][2][m_numAttribs-1];</span>
+<span class="nc" id="L1127">        raceStats = new Stats[numRaces][2];</span>
+        // update the attribute constraints
+<span class="nc bnc" id="L1129" title="All 2 branches missed.">        for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L1130" title="All 4 branches missed.">          if (i != m_classIndex &amp;&amp; !attributeConstraints[i] &amp;&amp;</span>
+<span class="nc bnc" id="L1131" title="All 2 branches missed.">              base[i] != '*') {</span>
+<span class="nc" id="L1132">            attributeConstraints[i] = true;</span>
+<span class="nc" id="L1133">            break;</span>
+          }
+        }
+<span class="nc" id="L1136">        count=0;</span>
+<span class="nc bnc" id="L1137" title="All 2 branches missed.">        for (int i=0;i&lt;numRaces;i++) {</span>
+<span class="nc" id="L1138">          parallelRaces[i][0] = (char [])base.clone();</span>
+<span class="nc" id="L1139">          parallelRaces[i][1] = (char [])base.clone();</span>
+<span class="nc bnc" id="L1140" title="All 2 branches missed.">          for (int j=count;j&lt;m_numAttribs;j++) {</span>
+<span class="nc bnc" id="L1141" title="All 4 branches missed.">            if (j != m_classIndex &amp;&amp; parallelRaces[i][0][j] == '*') {</span>
+<span class="nc" id="L1142">              parallelRaces[i][0][j] = '1';</span>
+<span class="nc" id="L1143">              parallelRaces[i][1][j] = '0';</span>
+<span class="nc" id="L1144">              count = j+1;</span>
+<span class="nc" id="L1145">              break;</span>
+            }
+          }
+        }
+        
+<span class="nc bnc" id="L1150" title="All 2 branches missed.">        if (m_debug) {</span>
+<span class="nc" id="L1151">          System.err.println(&quot;Next sets:\n&quot;);</span>
+<span class="nc bnc" id="L1152" title="All 2 branches missed.">          for (int i=0;i&lt;numRaces;i++) {</span>
+<span class="nc" id="L1153">            System.err.print(printSets(parallelRaces[i])+&quot;--------------\n&quot;);</span>
+          }
+        }
+      }
+    }
+
+<span class="nc bnc" id="L1159" title="All 2 branches missed.">    if (m_debug) {</span>
+<span class="nc" id="L1160">      System.err.println(&quot;Total evaluations : &quot;</span>
+<span class="nc" id="L1161">                         +evaluationCount);</span>
+    }
+<span class="nc" id="L1163">    return attributeList(base);</span>
+  }
+
+  /** 
+   * t-test for unequal sample sizes and same variance. Returns probability
+   * that observed difference in means is due to chance.
+   */
+  private double ttest(Stats c1, Stats c2) throws Exception {
+<span class="nc" id="L1171">    double n1 = c1.count; double n2 = c2.count;</span>
+<span class="nc" id="L1172">    double v1 = c1.stdDev * c1.stdDev;</span>
+<span class="nc" id="L1173">    double v2 = c2.stdDev * c2.stdDev;</span>
+<span class="nc" id="L1174">    double av1 = c1.mean;</span>
+<span class="nc" id="L1175">    double av2 = c2.mean;</span>
+    
+<span class="nc" id="L1177">    double df = n1 + n2 - 2;</span>
+<span class="nc" id="L1178">    double cv = (((n1 - 1) * v1) + ((n2 - 1) * v2)) /df;</span>
+<span class="nc" id="L1179">    double t = (av1 - av2) / Math.sqrt(cv * ((1.0 / n1) + (1.0 / n2)));</span>
+    
+<span class="nc" id="L1181">    return Statistics.incompleteBeta(df / 2.0, 0.5,</span>
+<span class="nc" id="L1182">                                     df / (df + (t * t)));</span>
+  }
+    
+  /**
+   * Performs a rank race---race consisting of no attributes, the top
+   * ranked attribute, the top two attributes etc. The initial ranking
+   * is determined by an attribute evaluator.
+   * @param data the instances to estimate accuracy over
+   * @param random a random number generator
+   * @return an array of selected attribute indices.
+   */
+  private int [] rankRace(Instances data, Random random) throws Exception {
+<span class="nc" id="L1194">    char [] baseSet = new char [m_numAttribs];</span>
+    char [] bestSet;
+    double bestSetError;
+<span class="nc bnc" id="L1197" title="All 2 branches missed.">    for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L1198" title="All 2 branches missed.">      if (i == m_classIndex) {</span>
+<span class="nc" id="L1199">        baseSet[i] = '-';</span>
+      } else {
+<span class="nc" id="L1201">        baseSet[i] = '0';</span>
+      }
+    }
+
+<span class="nc" id="L1205">    int numCompetitors = m_numAttribs-1;</span>
+<span class="nc" id="L1206">    char [][] raceSets = new char [numCompetitors+1][m_numAttribs];</span>
+    
+<span class="nc bnc" id="L1208" title="All 2 branches missed.">    if (m_ASEval instanceof AttributeEvaluator) {</span>
+      // generate the attribute ranking first
+<span class="nc" id="L1210">      Ranker ranker = new Ranker();</span>
+<span class="nc" id="L1211">      m_ASEval.buildEvaluator(data);</span>
+<span class="nc" id="L1212">      m_Ranking = ranker.search(m_ASEval,data);</span>
+    } else {
+<span class="nc" id="L1214">      GreedyStepwise fs = new GreedyStepwise();</span>
+      double [][]rankres; 
+<span class="nc" id="L1216">      fs.setGenerateRanking(true);</span>
+<span class="nc" id="L1217">      ((ASEvaluation)m_ASEval).buildEvaluator(data);</span>
+<span class="nc" id="L1218">      fs.search(m_ASEval, data);</span>
+<span class="nc" id="L1219">      rankres = fs.rankedAttributes();</span>
+<span class="nc" id="L1220">      m_Ranking = new int[rankres.length];</span>
+<span class="nc bnc" id="L1221" title="All 2 branches missed.">      for (int i=0;i&lt;rankres.length;i++) {</span>
+<span class="nc" id="L1222">        m_Ranking[i] = (int)rankres[i][0];</span>
+      }
+    }
+
+    // set up the race
+<span class="nc" id="L1227">    raceSets[0] = (char [])baseSet.clone();</span>
+<span class="nc bnc" id="L1228" title="All 2 branches missed.">    for (int i=0;i&lt;m_Ranking.length;i++) {</span>
+<span class="nc" id="L1229">      raceSets[i+1] = (char [])raceSets[i].clone();</span>
+<span class="nc" id="L1230">      raceSets[i+1][m_Ranking[i]] = '1';</span>
+    }
+    
+<span class="nc bnc" id="L1233" title="All 2 branches missed.">    if (m_debug) {</span>
+<span class="nc" id="L1234">      System.err.println(&quot;Initial sets:\n&quot;+printSets(raceSets));</span>
+    }
+    
+    // run the race
+<span class="nc" id="L1238">    double [] winnerInfo = raceSubsets(raceSets, data, true, random);</span>
+<span class="nc" id="L1239">    bestSetError = winnerInfo[1];</span>
+<span class="nc" id="L1240">    bestSet = (char [])raceSets[(int)winnerInfo[0]].clone();</span>
+<span class="nc" id="L1241">    m_bestMerit = bestSetError;</span>
+<span class="nc" id="L1242">    return attributeList(bestSet);</span>
+  }
+  
+  /**
+   * Performs a hill climbing race---all single attribute changes to a
+   * base subset are raced in parallel. The winner is chosen and becomes
+   * the new base subset and the process is repeated until there is no
+   * improvement in error over the base subset.
+   * @param data the instances to estimate accuracy over
+   * @param random a random number generator
+   * @return an array of selected attribute indices.
+   * @throws Exception if something goes wrong
+   */
+  private int [] hillclimbRace(Instances data, Random random) throws Exception {
+    double baseSetError;
+<span class="nc" id="L1257">    char [] baseSet = new char [m_numAttribs];</span>
+
+<span class="nc bnc" id="L1259" title="All 2 branches missed.">    for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L1260" title="All 2 branches missed.">      if (i != m_classIndex) {</span>
+<span class="nc bnc" id="L1261" title="All 2 branches missed.">        if (m_raceType == FORWARD_RACE) {</span>
+<span class="nc" id="L1262">          baseSet[i] = '0';</span>
+        } else {
+<span class="nc" id="L1264">          baseSet[i] = '1';</span>
+        } 
+      } else {
+<span class="nc" id="L1267">        baseSet[i] = '-';</span>
+      }
+    }
+
+<span class="nc" id="L1271">    int numCompetitors = m_numAttribs-1;</span>
+<span class="nc" id="L1272">    char [][] raceSets = new char [numCompetitors+1][m_numAttribs];</span>
+
+<span class="nc" id="L1274">    raceSets[0] = (char [])baseSet.clone();</span>
+<span class="nc" id="L1275">    int count = 1;</span>
+    // initialize each race set to 1 attribute
+<span class="nc bnc" id="L1277" title="All 2 branches missed.">    for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L1278" title="All 2 branches missed.">      if (i != m_classIndex) {</span>
+<span class="nc" id="L1279">        raceSets[count] = (char [])baseSet.clone();</span>
+<span class="nc bnc" id="L1280" title="All 2 branches missed.">        if (m_raceType == BACKWARD_RACE) {</span>
+<span class="nc" id="L1281">          raceSets[count++][i] = '0';</span>
+        } else {
+<span class="nc" id="L1283">          raceSets[count++][i] = '1';</span>
+        }
+      }
+    }
+
+<span class="nc bnc" id="L1288" title="All 2 branches missed.">    if (m_debug) {</span>
+<span class="nc" id="L1289">      System.err.println(&quot;Initial sets:\n&quot;+printSets(raceSets));</span>
+    }
+    
+    // race the initial sets (base set either no or all features)
+<span class="nc" id="L1293">    double [] winnerInfo = raceSubsets(raceSets, data, true, random);</span>
+<span class="nc" id="L1294">    baseSetError = winnerInfo[1];</span>
+<span class="nc" id="L1295">    m_bestMerit = baseSetError;</span>
+<span class="nc" id="L1296">    baseSet = (char [])raceSets[(int)winnerInfo[0]].clone();</span>
+<span class="nc bnc" id="L1297" title="All 2 branches missed.">    if (m_rankingRequested) {</span>
+<span class="nc" id="L1298">      m_rankedAtts[m_rankedSoFar][0] = (int)(winnerInfo[0]-1);</span>
+<span class="nc" id="L1299">      m_rankedAtts[m_rankedSoFar][1] = winnerInfo[1];</span>
+<span class="nc" id="L1300">      m_rankedSoFar++;</span>
+    }
+
+<span class="nc" id="L1303">    boolean improved = true;</span>
+    int j;
+    // now race until there is no improvement over the base set or only
+    // one competitor remains
+<span class="nc bnc" id="L1307" title="All 2 branches missed.">    while (improved) {</span>
+      // generate the next set of competitors
+<span class="nc" id="L1309">      numCompetitors--;</span>
+<span class="nc bnc" id="L1310" title="All 2 branches missed.">      if (numCompetitors == 0) { //race finished!</span>
+<span class="nc" id="L1311">        break;</span>
+      }
+<span class="nc" id="L1313">      j=0;</span>
+      // +1. we'll race against the base set---might be able to bail out
+      // of the race if none from the new set are statistically better
+      // than the base set. Base set is stored in loc 0.
+<span class="nc" id="L1317">      raceSets = new char [numCompetitors+1][m_numAttribs];</span>
+<span class="nc bnc" id="L1318" title="All 2 branches missed.">      for (int i=0;i&lt;numCompetitors+1;i++) {</span>
+<span class="nc" id="L1319">        raceSets[i] = (char [])baseSet.clone();</span>
+<span class="nc bnc" id="L1320" title="All 2 branches missed.">        if (i &gt; 0) {</span>
+<span class="nc bnc" id="L1321" title="All 2 branches missed.">          for (int k=j;k&lt;m_numAttribs;k++) {</span>
+<span class="nc bnc" id="L1322" title="All 2 branches missed.">            if (m_raceType == 1) {</span>
+<span class="nc bnc" id="L1323" title="All 4 branches missed.">              if (k != m_classIndex &amp;&amp; raceSets[i][k] != '0') {</span>
+<span class="nc" id="L1324">                raceSets[i][k] = '0';</span>
+<span class="nc" id="L1325">                j = k+1;</span>
+<span class="nc" id="L1326">                break;</span>
+              }
+            } else {
+<span class="nc bnc" id="L1329" title="All 4 branches missed.">              if (k != m_classIndex &amp;&amp; raceSets[i][k] != '1') {</span>
+<span class="nc" id="L1330">                raceSets[i][k] = '1';</span>
+<span class="nc" id="L1331">                j = k+1;</span>
+<span class="nc" id="L1332">                break;</span>
+              }
+            }
+          }
+        }
+      }
+      
+<span class="nc bnc" id="L1339" title="All 2 branches missed.">      if (m_debug) {</span>
+<span class="nc" id="L1340">        System.err.println(&quot;Next set : \n&quot;+printSets(raceSets));</span>
+      }
+<span class="nc" id="L1342">      improved = false;</span>
+<span class="nc" id="L1343">      winnerInfo = raceSubsets(raceSets, data, true, random);</span>
+<span class="nc" id="L1344">      String bs = new String(baseSet); </span>
+<span class="nc" id="L1345">      String win = new String(raceSets[(int)winnerInfo[0]]);</span>
+<span class="nc bnc" id="L1346" title="All 2 branches missed.">      if (bs.compareTo(win) == 0) {</span>
+        // race finished
+      } else {
+<span class="nc bnc" id="L1349" title="All 4 branches missed.">        if (winnerInfo[1] &lt; baseSetError || m_rankingRequested) {</span>
+<span class="nc" id="L1350">          improved = true;</span>
+<span class="nc" id="L1351">          baseSetError = winnerInfo[1];</span>
+<span class="nc" id="L1352">          m_bestMerit = baseSetError;</span>
+          // find which att is different
+<span class="nc bnc" id="L1354" title="All 2 branches missed.">          if (m_rankingRequested) {</span>
+<span class="nc bnc" id="L1355" title="All 2 branches missed.">            for (int i = 0; i &lt; baseSet.length; i++) {</span>
+<span class="nc bnc" id="L1356" title="All 2 branches missed.">              if (win.charAt(i) != bs.charAt(i)) {</span>
+<span class="nc" id="L1357">                m_rankedAtts[m_rankedSoFar][0] = i;</span>
+<span class="nc" id="L1358">                m_rankedAtts[m_rankedSoFar][1] = winnerInfo[1];</span>
+<span class="nc" id="L1359">                m_rankedSoFar++;</span>
+              }
+            }
+          }
+<span class="nc" id="L1363">          baseSet = (char [])raceSets[(int)winnerInfo[0]].clone();</span>
+        } else {
+          // Will get here for a subset whose error is outside the delta
+          // threshold but is not *significantly* worse than the base
+          // subset
+          //throw new Exception(&quot;RaceSearch: problem in hillClimbRace&quot;);
+        }
+      }
+    }
+<span class="nc" id="L1372">    return attributeList(baseSet);</span>
+  }
+
+  /**
+   * Convert an attribute set to an array of indices
+   */
+  private int [] attributeList(char [] list) {
+<span class="nc" id="L1379">    int count = 0;</span>
+
+<span class="nc bnc" id="L1381" title="All 2 branches missed.">    for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L1382" title="All 2 branches missed.">      if (list[i] == '1') {</span>
+<span class="nc" id="L1383">        count++;</span>
+      }
+    }
+
+<span class="nc" id="L1387">    int [] rlist = new int[count];</span>
+<span class="nc" id="L1388">    count = 0;</span>
+<span class="nc bnc" id="L1389" title="All 2 branches missed.">     for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L1390" title="All 2 branches missed.">       if (list[i] == '1') {</span>
+<span class="nc" id="L1391">         rlist[count++] = i;</span>
+       }
+     }
+
+<span class="nc" id="L1395">     return rlist;</span>
+  }
+
+  /**
+   * Races the leave-one-out cross validation errors of a set of
+   * attribute subsets on a set of instances.
+   * @param raceSets a set of attribute subset specifications
+   * @param data the instances to use when cross validating
+   * @param baseSetIncluded true if the first attribute set is a
+   * base set generated from the previous race
+   * @param random a random number generator
+   * @return the index of the winning subset
+   * @throws Exception if an error occurs during cross validation
+   */
+  private double [] raceSubsets(char [][]raceSets, Instances data,
+                                boolean baseSetIncluded, Random random) 
+    throws Exception {
+    // the evaluators --- one for each subset
+<span class="nc" id="L1413">    ASEvaluation [] evaluators = </span>
+<span class="nc" id="L1414">      ASEvaluation.makeCopies(m_theEvaluator, raceSets.length);</span>
+
+    // array of subsets eliminated from the race
+<span class="nc" id="L1417">    boolean [] eliminated = new boolean [raceSets.length];</span>
+
+    // individual statistics
+<span class="nc" id="L1420">    Stats [] individualStats = new Stats [raceSets.length];</span>
+
+    // pairwise statistics
+<span class="nc" id="L1423">    PairedStats [][] testers = </span>
+<span class="nc" id="L1424">      new PairedStats[raceSets.length][raceSets.length];</span>
+
+    /** do we ignore the base set or not? */
+<span class="nc bnc" id="L1427" title="All 2 branches missed.">    int startPt = m_rankingRequested ? 1 : 0;</span>
+
+<span class="nc bnc" id="L1429" title="All 2 branches missed.">    for (int i=0;i&lt;raceSets.length;i++) {</span>
+<span class="nc" id="L1430">      individualStats[i] = new Stats();</span>
+<span class="nc bnc" id="L1431" title="All 2 branches missed.">      for (int j=i+1;j&lt;raceSets.length;j++) {</span>
+<span class="nc" id="L1432">        testers[i][j] = new PairedStats(m_sigLevel);</span>
+      }
+    }
+    
+<span class="nc" id="L1436">    BitSet [] raceBitSets = new BitSet[raceSets.length];</span>
+<span class="nc bnc" id="L1437" title="All 2 branches missed.">    for (int i=0;i&lt;raceSets.length;i++) {</span>
+<span class="nc" id="L1438">      raceBitSets[i] = new BitSet(m_numAttribs);</span>
+<span class="nc bnc" id="L1439" title="All 2 branches missed.">      for (int j=0;j&lt;m_numAttribs;j++) {</span>
+<span class="nc bnc" id="L1440" title="All 2 branches missed.">        if (raceSets[i][j] == '1') {</span>
+<span class="nc" id="L1441">          raceBitSets[i].set(j);</span>
+        }
+      }
+    }
+
+    // now loop over the data points collecting leave-one-out errors for
+    // each attribute set
+    Instances trainCV;
+    Instances testCV;
+    Instance testInst;
+<span class="nc" id="L1451">    double [] errors = new double [raceSets.length];</span>
+<span class="nc" id="L1452">    int eliminatedCount = 0;</span>
+<span class="nc" id="L1453">    int processedCount = 0;</span>
+    // if there is one set left in the race then we need to continue to
+    // evaluate it for the remaining instances in order to get an
+    // accurate error estimate
+<span class="nc" id="L1457">    processedCount = 0;</span>
+<span class="nc bnc" id="L1458" title="All 2 branches missed.">    race: for (int i=0;i&lt;m_numFolds;i++) {</span>
+
+      // We want to randomize the data the same way for every 
+      // learning scheme.
+<span class="nc" id="L1462">      trainCV = data.trainCV(m_numFolds, i, new Random (1));</span>
+<span class="nc" id="L1463">      testCV = data.testCV(m_numFolds, i);</span>
+      
+      // loop over the surviving attribute sets building classifiers for this
+      // training set
+<span class="nc bnc" id="L1467" title="All 2 branches missed.">      for (int j=startPt;j&lt;raceSets.length;j++) {</span>
+<span class="nc bnc" id="L1468" title="All 2 branches missed.">        if (!eliminated[j]) {</span>
+<span class="nc" id="L1469">          evaluators[j].buildEvaluator(trainCV);</span>
+        }
+      }
+
+<span class="nc bnc" id="L1473" title="All 2 branches missed.">      for (int z=0;z&lt;testCV.numInstances();z++) {</span>
+<span class="nc" id="L1474">        testInst = testCV.instance(z);</span>
+<span class="nc" id="L1475">        processedCount++;</span>
+
+        // loop over surviving attribute sets computing errors for this
+        // test point
+<span class="nc bnc" id="L1479" title="All 2 branches missed.">        for (int zz=startPt;zz&lt;raceSets.length;zz++) {</span>
+<span class="nc bnc" id="L1480" title="All 2 branches missed.">          if (!eliminated[zz]) {</span>
+<span class="nc bnc" id="L1481" title="All 2 branches missed.">            if (z == 0) {// first test instance---make sure classifier is built</span>
+<span class="nc" id="L1482">              errors[zz] = -((HoldOutSubsetEvaluator)evaluators[zz]).</span>
+<span class="nc" id="L1483">                evaluateSubset(raceBitSets[zz], </span>
+<span class="nc" id="L1484">                               testInst,</span>
+<span class="nc" id="L1485">                               true);</span>
+            } else { // must be k fold rather than leave one out
+<span class="nc" id="L1487">              errors[zz] = -((HoldOutSubsetEvaluator)evaluators[zz]).</span>
+<span class="nc" id="L1488">                evaluateSubset(raceBitSets[zz], </span>
+<span class="nc" id="L1489">                               testInst,</span>
+<span class="nc" id="L1490">                               false);</span>
+            }
+          }
+        }
+
+        // now update the stats
+<span class="nc bnc" id="L1496" title="All 2 branches missed.">        for (int j=startPt;j&lt;raceSets.length;j++) {</span>
+<span class="nc bnc" id="L1497" title="All 2 branches missed.">          if (!eliminated[j]) {</span>
+<span class="nc" id="L1498">            individualStats[j].add(errors[j]);</span>
+<span class="nc bnc" id="L1499" title="All 2 branches missed.">            for (int k=j+1;k&lt;raceSets.length;k++) {</span>
+<span class="nc bnc" id="L1500" title="All 2 branches missed.">              if (!eliminated[k]) {</span>
+<span class="nc" id="L1501">                testers[j][k].add(errors[j], errors[k]);</span>
+              }
+            }
+          }
+        }
+      
+        // test for near identical models and models that are significantly
+        // worse than some other model
+<span class="nc bnc" id="L1509" title="All 2 branches missed.">        if (processedCount &gt; m_samples-1 &amp;&amp; </span>
+<span class="nc bnc" id="L1510" title="All 2 branches missed.">            (eliminatedCount &lt; raceSets.length-1)) {</span>
+<span class="nc bnc" id="L1511" title="All 2 branches missed.">          for (int j=0;j&lt;raceSets.length;j++) {</span>
+<span class="nc bnc" id="L1512" title="All 2 branches missed.">            if (!eliminated[j]) {</span>
+<span class="nc bnc" id="L1513" title="All 2 branches missed.">              for (int k=j+1;k&lt;raceSets.length;k++) {</span>
+<span class="nc bnc" id="L1514" title="All 2 branches missed.">                if (!eliminated[k]) {</span>
+<span class="nc" id="L1515">                  testers[j][k].calculateDerived();</span>
+                  // near identical ?
+<span class="nc bnc" id="L1517" title="All 2 branches missed.">                  if ((testers[j][k].differencesSignificance == 0) &amp;&amp; </span>
+<span class="nc bnc" id="L1518" title="All 2 branches missed.">                      (Utils.eq(testers[j][k].differencesStats.mean, 0.0) ||</span>
+<span class="nc bnc" id="L1519" title="All 2 branches missed.">                      (Utils.gr(m_delta, Math.abs(testers[j][k].</span>
+<span class="nc" id="L1520">                                                  differencesStats.mean))))) {</span>
+                    // if they're exactly the same and there is a base set
+                    // in this race, make sure that the base set is NOT the
+                    // one eliminated.
+<span class="nc bnc" id="L1524" title="All 2 branches missed.">                    if (Utils.eq(testers[j][k].differencesStats.mean, 0.0)) {</span>
+
+<span class="nc bnc" id="L1526" title="All 2 branches missed.">                      if (baseSetIncluded) { </span>
+<span class="nc bnc" id="L1527" title="All 2 branches missed.">                        if (j != 0) {</span>
+<span class="nc" id="L1528">                          eliminated[j] = true;</span>
+                        } else {
+<span class="nc" id="L1530">                          eliminated[k] = true;</span>
+                        }
+<span class="nc" id="L1532">                        eliminatedCount++;</span>
+                      } else {
+<span class="nc" id="L1534">                        eliminated[j] = true;</span>
+                      }
+<span class="nc bnc" id="L1536" title="All 2 branches missed.">                      if (m_debug) {</span>
+<span class="nc" id="L1537">                        System.err.println(&quot;Eliminating (identical) &quot;</span>
+<span class="nc" id="L1538">                                           +j+&quot; &quot;+raceBitSets[j].toString()</span>
+<span class="nc" id="L1539">                                           +&quot; vs &quot;+k+&quot; &quot;</span>
+<span class="nc" id="L1540">                                           +raceBitSets[k].toString()</span>
+<span class="nc" id="L1541">                                           +&quot; after &quot;</span>
+<span class="nc" id="L1542">                                           +processedCount</span>
+<span class="nc" id="L1543">                                           +&quot; evaluations\n&quot;</span>
+<span class="nc" id="L1544">                                           +&quot;\nerror &quot;+j+&quot; : &quot;</span>
+<span class="nc" id="L1545">                                           +testers[j][k].xStats.mean</span>
+<span class="nc" id="L1546">                                           +&quot; vs &quot;+k+&quot; : &quot;</span>
+<span class="nc" id="L1547">                                           +testers[j][k].yStats.mean</span>
+<span class="nc" id="L1548">                                           +&quot; diff : &quot;</span>
+<span class="nc" id="L1549">                                           +testers[j][k].differencesStats</span>
+<span class="nc" id="L1550">                                           .mean);</span>
+                      }
+                    } else {
+                      // eliminate the one with the higer error
+<span class="nc" id="L1554">                      if (testers[j][k].xStats.mean &gt; </span>
+<span class="nc bnc" id="L1555" title="All 2 branches missed.">                          testers[j][k].yStats.mean) {</span>
+<span class="nc" id="L1556">                        eliminated[j] = true;</span>
+<span class="nc" id="L1557">                        eliminatedCount++;</span>
+<span class="nc bnc" id="L1558" title="All 2 branches missed.">                        if (m_debug) {</span>
+<span class="nc" id="L1559">                          System.err.println(&quot;Eliminating (near identical) &quot;</span>
+<span class="nc" id="L1560">                                           +j+&quot; &quot;+raceBitSets[j].toString()</span>
+<span class="nc" id="L1561">                                           +&quot; vs &quot;+k+&quot; &quot;</span>
+<span class="nc" id="L1562">                                           +raceBitSets[k].toString()</span>
+<span class="nc" id="L1563">                                           +&quot; after &quot;</span>
+<span class="nc" id="L1564">                                           +processedCount</span>
+<span class="nc" id="L1565">                                           +&quot; evaluations\n&quot;</span>
+<span class="nc" id="L1566">                                           +&quot;\nerror &quot;+j+&quot; : &quot;</span>
+<span class="nc" id="L1567">                                           +testers[j][k].xStats.mean</span>
+<span class="nc" id="L1568">                                           +&quot; vs &quot;+k+&quot; : &quot;</span>
+<span class="nc" id="L1569">                                           +testers[j][k].yStats.mean</span>
+<span class="nc" id="L1570">                                           +&quot; diff : &quot;</span>
+<span class="nc" id="L1571">                                           +testers[j][k].differencesStats</span>
+<span class="nc" id="L1572">                                           .mean);</span>
+                        }
+<span class="nc" id="L1574">                        break;</span>
+                      } else {
+<span class="nc" id="L1576">                        eliminated[k] = true;</span>
+<span class="nc" id="L1577">                        eliminatedCount++;</span>
+<span class="nc bnc" id="L1578" title="All 2 branches missed.">                        if (m_debug) {</span>
+<span class="nc" id="L1579">                          System.err.println(&quot;Eliminating (near identical) &quot;</span>
+<span class="nc" id="L1580">                                           +k+&quot; &quot;+raceBitSets[k].toString()</span>
+<span class="nc" id="L1581">                                           +&quot; vs &quot;+j+&quot; &quot;</span>
+<span class="nc" id="L1582">                                           +raceBitSets[j].toString()</span>
+<span class="nc" id="L1583">                                           +&quot; after &quot;</span>
+<span class="nc" id="L1584">                                           +processedCount</span>
+<span class="nc" id="L1585">                                           +&quot; evaluations\n&quot;</span>
+<span class="nc" id="L1586">                                           +&quot;\nerror &quot;+k+&quot; : &quot;</span>
+<span class="nc" id="L1587">                                           +testers[j][k].yStats.mean</span>
+<span class="nc" id="L1588">                                           +&quot; vs &quot;+j+&quot; : &quot;</span>
+<span class="nc" id="L1589">                                           +testers[j][k].xStats.mean</span>
+<span class="nc" id="L1590">                                           +&quot; diff : &quot;</span>
+<span class="nc" id="L1591">                                           +testers[j][k].differencesStats</span>
+<span class="nc" id="L1592">                                             .mean);</span>
+                        }
+                      }
+                    }
+                  } else {
+                    // significantly worse ?
+<span class="nc bnc" id="L1598" title="All 2 branches missed.">                    if (testers[j][k].differencesSignificance != 0) {</span>
+<span class="nc bnc" id="L1599" title="All 2 branches missed.">                      if (testers[j][k].differencesSignificance &gt; 0) {</span>
+<span class="nc" id="L1600">                        eliminated[j] = true;</span>
+<span class="nc" id="L1601">                        eliminatedCount++;</span>
+<span class="nc bnc" id="L1602" title="All 2 branches missed.">                        if (m_debug) {</span>
+<span class="nc" id="L1603">                          System.err.println(&quot;Eliminating (-worse) &quot;</span>
+<span class="nc" id="L1604">                                           +j+&quot; &quot;+raceBitSets[j].toString()</span>
+<span class="nc" id="L1605">                                           +&quot; vs &quot;+k+&quot; &quot;</span>
+<span class="nc" id="L1606">                                           +raceBitSets[k].toString()</span>
+<span class="nc" id="L1607">                                           +&quot; after &quot;</span>
+<span class="nc" id="L1608">                                           +processedCount</span>
+<span class="nc" id="L1609">                                           +&quot; evaluations&quot;</span>
+<span class="nc" id="L1610">                                           +&quot;\nerror &quot;+j+&quot; : &quot;</span>
+<span class="nc" id="L1611">                                           +testers[j][k].xStats.mean</span>
+<span class="nc" id="L1612">                                           +&quot; vs &quot;+k+&quot; : &quot;</span>
+<span class="nc" id="L1613">                                           +testers[j][k].yStats.mean);</span>
+                        }
+<span class="nc" id="L1615">                        break;</span>
+                      } else {
+<span class="nc" id="L1617">                        eliminated[k] = true;</span>
+<span class="nc" id="L1618">                        eliminatedCount++;</span>
+<span class="nc bnc" id="L1619" title="All 2 branches missed.">                        if (m_debug) {</span>
+<span class="nc" id="L1620">                          System.err.println(&quot;Eliminating (worse) &quot;</span>
+<span class="nc" id="L1621">                                           +k+&quot; &quot;+raceBitSets[k].toString()</span>
+<span class="nc" id="L1622">                                           +&quot; vs &quot;+j+&quot; &quot;</span>
+<span class="nc" id="L1623">                                           +raceBitSets[j].toString()</span>
+<span class="nc" id="L1624">                                           +&quot; after &quot;</span>
+<span class="nc" id="L1625">                                           +processedCount</span>
+<span class="nc" id="L1626">                                           +&quot; evaluations&quot;</span>
+<span class="nc" id="L1627">                                           +&quot;\nerror &quot;+k+&quot; : &quot;</span>
+<span class="nc" id="L1628">                                           +testers[j][k].yStats.mean</span>
+<span class="nc" id="L1629">                                           +&quot; vs &quot;+j+&quot; : &quot;</span>
+<span class="nc" id="L1630">                                           +testers[j][k].xStats.mean);</span>
+                        }
+                      }
+                    }
+                  }
+                }    
+              }
+            }
+          }
+        }
+        // if there is a base set from the previous race and it's the
+        // only remaining subset then terminate the race.
+<span class="nc bnc" id="L1642" title="All 4 branches missed.">        if (eliminatedCount == raceSets.length-1 &amp;&amp; baseSetIncluded &amp;&amp;</span>
+<span class="nc bnc" id="L1643" title="All 4 branches missed.">            !eliminated[0] &amp;&amp; !m_rankingRequested) {</span>
+<span class="nc" id="L1644">          break race;</span>
+        }
+      }
+    }
+
+<span class="nc bnc" id="L1649" title="All 2 branches missed.">    if (m_debug) {</span>
+<span class="nc" id="L1650">      System.err.println(&quot;*****eliminated count: &quot;+eliminatedCount);</span>
+    }
+<span class="nc" id="L1652">    double bestError = Double.MAX_VALUE;</span>
+<span class="nc" id="L1653">    int bestIndex=0;</span>
+    // return the index of the winner
+<span class="nc bnc" id="L1655" title="All 2 branches missed.">    for (int i=startPt;i&lt;raceSets.length;i++) {</span>
+<span class="nc bnc" id="L1656" title="All 2 branches missed.">      if (!eliminated[i]) {</span>
+<span class="nc" id="L1657">        individualStats[i].calculateDerived();</span>
+<span class="nc bnc" id="L1658" title="All 2 branches missed.">        if (m_debug) {</span>
+<span class="nc" id="L1659">          System.err.println(&quot;Remaining error: &quot;+raceBitSets[i].toString()</span>
+<span class="nc" id="L1660">                             +&quot; &quot;+individualStats[i].mean);</span>
+        }
+<span class="nc bnc" id="L1662" title="All 2 branches missed.">        if (individualStats[i].mean &lt; bestError) {</span>
+<span class="nc" id="L1663">          bestError = individualStats[i].mean;</span>
+<span class="nc" id="L1664">          bestIndex = i;</span>
+        }
+      }
+    }
+
+<span class="nc" id="L1669">    double [] retInfo = new double[2];</span>
+<span class="nc" id="L1670">    retInfo[0] = bestIndex;</span>
+<span class="nc" id="L1671">    retInfo[1] = bestError;</span>
+    
+<span class="nc bnc" id="L1673" title="All 2 branches missed.">    if (m_debug) {</span>
+<span class="nc" id="L1674">      System.err.print(&quot;Best set from race : &quot;);</span>
+      
+<span class="nc bnc" id="L1676" title="All 2 branches missed.">      for (int i=0;i&lt;m_numAttribs;i++) {</span>
+<span class="nc bnc" id="L1677" title="All 2 branches missed.">        if (raceSets[bestIndex][i] == '1') {</span>
+<span class="nc" id="L1678">          System.err.print('1');</span>
+        } else {
+<span class="nc" id="L1680">          System.err.print('0');</span>
+        }
+      }
+<span class="nc" id="L1683">      System.err.println(&quot; :&quot;+bestError+&quot; Processed : &quot;+(processedCount)</span>
+<span class="nc" id="L1684">                         +&quot;\n&quot;+individualStats[bestIndex].toString());</span>
+    }
+<span class="nc" id="L1686">    return retInfo;</span>
+  }
+
+  /**
+   * Returns a string represenation
+   * 
+   * @return a string representation
+   */
+  public String toString() {
+<span class="nc" id="L1695">    StringBuffer text = new StringBuffer();</span>
+    
+<span class="nc" id="L1697">    text.append(&quot;\tRaceSearch.\n\tRace type : &quot;);</span>
+<span class="nc bnc" id="L1698" title="All 5 branches missed.">    switch (m_raceType) {</span>
+    case FORWARD_RACE: 
+<span class="nc" id="L1700">      text.append(&quot;forward selection race\n\tBase set : no attributes&quot;);</span>
+<span class="nc" id="L1701">      break;</span>
+    case BACKWARD_RACE:
+<span class="nc" id="L1703">      text.append(&quot;backward elimination race\n\tBase set : all attributes&quot;);</span>
+<span class="nc" id="L1704">      break;</span>
+    case SCHEMATA_RACE:
+<span class="nc" id="L1706">      text.append(&quot;schemata race\n\tBase set : no attributes&quot;);</span>
+<span class="nc" id="L1707">      break;</span>
+    case RANK_RACE:
+<span class="nc" id="L1709">      text.append(&quot;rank race\n\tBase set : no attributes\n\t&quot;);</span>
+<span class="nc" id="L1710">      text.append(&quot;Attribute evaluator : &quot;</span>
+<span class="nc" id="L1711">                  + getAttributeEvaluator().getClass().getName() +&quot; &quot;);</span>
+<span class="nc bnc" id="L1712" title="All 2 branches missed.">      if (m_ASEval instanceof OptionHandler) {</span>
+<span class="nc" id="L1713">        String[] evaluatorOptions = new String[0];</span>
+<span class="nc" id="L1714">        evaluatorOptions = ((OptionHandler)m_ASEval).getOptions();</span>
+<span class="nc bnc" id="L1715" title="All 2 branches missed.">        for (int i=0;i&lt;evaluatorOptions.length;i++) {</span>
+<span class="nc" id="L1716">          text.append(evaluatorOptions[i]+' ');</span>
+        }
+      }
+<span class="nc" id="L1719">      text.append(&quot;\n&quot;);</span>
+<span class="nc" id="L1720">      text.append(&quot;\tAttribute ranking : \n&quot;);</span>
+<span class="nc" id="L1721">      int rlength = (int)(Math.log(m_Ranking.length) / Math.log(10) + 1);</span>
+<span class="nc bnc" id="L1722" title="All 2 branches missed.">      for (int i=0;i&lt;m_Ranking.length;i++) {</span>
+<span class="nc" id="L1723">        text.append(&quot;\t &quot;+Utils.doubleToString((double)(m_Ranking[i]+1),</span>
+<span class="nc" id="L1724">                                               rlength,0)</span>
+<span class="nc" id="L1725">                    +&quot; &quot;+m_Instances.attribute(m_Ranking[i]).name()+'\n');</span>
+      }
+      break;
+    }
+<span class="nc" id="L1729">    text.append(&quot;\n\tCross validation mode : &quot;);</span>
+<span class="nc bnc" id="L1730" title="All 2 branches missed.">    if (m_xvalType == TEN_FOLD) {</span>
+<span class="nc" id="L1731">      text.append(&quot;10 fold&quot;);</span>
+    } else {
+<span class="nc" id="L1733">      text.append(&quot;Leave-one-out&quot;);</span>
+    }
+
+<span class="nc" id="L1736">    text.append(&quot;\n\tMerit of best subset found : &quot;);</span>
+<span class="nc" id="L1737">    int fieldwidth = 3;</span>
+<span class="nc" id="L1738">    double precision = (m_bestMerit - (int)m_bestMerit);</span>
+<span class="nc bnc" id="L1739" title="All 2 branches missed.">    if (Math.abs(m_bestMerit) &gt; 0) {</span>
+<span class="nc" id="L1740">      fieldwidth = (int)Math.abs((Math.log(Math.abs(m_bestMerit)) / </span>
+<span class="nc" id="L1741">                                  Math.log(10)))+2;</span>
+    }
+<span class="nc bnc" id="L1743" title="All 2 branches missed.">    if (Math.abs(precision) &gt; 0) {</span>
+<span class="nc" id="L1744">      precision = Math.abs((Math.log(Math.abs(precision)) / Math.log(10)))+3;</span>
+    } else {
+<span class="nc" id="L1746">      precision = 2;</span>
+    }
+
+<span class="nc" id="L1749">    text.append(Utils.doubleToString(Math.abs(m_bestMerit),</span>
+<span class="nc" id="L1750">                                     fieldwidth+(int)precision,</span>
+<span class="nc" id="L1751">                                     (int)precision)+&quot;\n&quot;);</span>
+<span class="nc" id="L1752">    return text.toString();</span>
+    
+  }
+
+  /**
+   * Reset the search method.
+   */
+  protected void resetOptions () {
+<span class="nc" id="L1760">    m_sigLevel = 0.001;</span>
+<span class="nc" id="L1761">    m_delta = 0.001;</span>
+<span class="nc" id="L1762">    m_ASEval = new GainRatioAttributeEval();</span>
+<span class="nc" id="L1763">    m_Ranking = null;</span>
+<span class="nc" id="L1764">    m_raceType = FORWARD_RACE;</span>
+<span class="nc" id="L1765">    m_debug = false;</span>
+<span class="nc" id="L1766">    m_theEvaluator = null;</span>
+<span class="nc" id="L1767">    m_bestMerit = -Double.MAX_VALUE;</span>
+<span class="nc" id="L1768">    m_numFolds = 10;</span>
+<span class="nc" id="L1769">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1777">    return RevisionUtils.extract(&quot;$Revision: 1.26 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

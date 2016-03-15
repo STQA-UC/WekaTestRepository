@@ -1,0 +1,669 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>CostSensitiveClassifier.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.meta</a> &gt; <span class="el_source">CostSensitiveClassifier.java</span></div><h1>CostSensitiveClassifier.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    CostSensitiveClassifier.java
+ *    Copyright (C) 2002 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.meta;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.CostMatrix;
+import weka.classifiers.RandomizableSingleClassifierEnhancer;
+import weka.core.Capabilities;
+import weka.core.Drawable;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.StringReader;
+import java.io.StringWriter;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * A metaclassifier that makes its base classifier cost-sensitive. Two methods can be used to introduce cost-sensitivity: reweighting training instances according to the total cost assigned to each class; or predicting the class with minimum expected misclassification cost (rather than the most likely class). Performance can often be improved by using a Bagged classifier to improve the probability estimates of the base classifier.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Minimize expected misclassification cost. Default is to
+ *  reweight training instances according to costs per class&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;cost file name&amp;gt;
+ *  File name of a cost matrix to use. If this is not supplied,
+ *  a cost matrix will be loaded on demand. The name of the
+ *  on-demand file is the relation name of the training data
+ *  plus &quot;.cost&quot;, and the path to the on-demand file is
+ *  specified with the -N option.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;directory&amp;gt;
+ *  Name of a directory to search for cost files when loading
+ *  costs on demand (default current directory).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -cost-matrix &amp;lt;matrix&amp;gt;
+ *  The cost matrix in Matlab single line format.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W
+ *  Full name of base classifier.
+ *  (default: weka.classifiers.rules.ZeroR)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to classifier weka.classifiers.rules.ZeroR:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * Options after -- are passed to the designated classifier.&lt;p&gt;
+ *
+ * @author Len Trigg (len@reeltwo.com)
+ * @version $Revision: 1.29 $
+ */
+<span class="fc" id="L104">public class CostSensitiveClassifier </span>
+  extends RandomizableSingleClassifierEnhancer
+  implements OptionHandler, Drawable {
+
+  /** for serialization */
+  static final long serialVersionUID = -720658209263002404L;
+  
+  /** load cost matrix on demand */
+  public static final int MATRIX_ON_DEMAND = 1;
+  /** use explicit cost matrix */
+  public static final int MATRIX_SUPPLIED = 2;
+  /** Specify possible sources of the cost matrix */
+<span class="fc" id="L116">  public static final Tag [] TAGS_MATRIX_SOURCE = {</span>
+<span class="fc" id="L117">    new Tag(MATRIX_ON_DEMAND, &quot;Load cost matrix on demand&quot;),</span>
+<span class="fc" id="L118">    new Tag(MATRIX_SUPPLIED, &quot;Use explicit cost matrix&quot;)</span>
+  };
+
+  /** Indicates the current cost matrix source */
+<span class="fc" id="L122">  protected int m_MatrixSource = MATRIX_ON_DEMAND;</span>
+
+  /** 
+   * The directory used when loading cost files on demand, null indicates
+   * current directory 
+   */
+<span class="fc" id="L128">  protected File m_OnDemandDirectory = new File(System.getProperty(&quot;user.dir&quot;));</span>
+
+  /** The name of the cost file, for command line options */
+  protected String m_CostFile;
+
+  /** The cost matrix */
+<span class="fc" id="L134">  protected CostMatrix m_CostMatrix = new CostMatrix(1);</span>
+
+  /** 
+   * True if the costs should be used by selecting the minimum expected
+   * cost (false means weight training data by the costs)
+   */
+  protected boolean m_MinimizeExpectedCost;
+  
+  /**
+   * String describing default classifier.
+   * 
+   * @return the default classifier classname 
+   */
+  protected String defaultClassifierString() {
+    
+<span class="fc" id="L149">    return &quot;weka.classifiers.rules.ZeroR&quot;;</span>
+  }
+
+  /**
+   * Default constructor.
+   */
+<span class="fc" id="L155">  public CostSensitiveClassifier() {</span>
+<span class="fc" id="L156">    m_Classifier = new weka.classifiers.rules.ZeroR();</span>
+<span class="fc" id="L157">  }</span>
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="fc" id="L166">    Vector newVector = new Vector(5);</span>
+
+<span class="fc" id="L168">    newVector.addElement(new Option(</span>
+<span class="fc" id="L169">	      &quot;\tMinimize expected misclassification cost. Default is to\n&quot;</span>
+	      +&quot;\treweight training instances according to costs per class&quot;,
+<span class="fc" id="L171">	      &quot;M&quot;, 0, &quot;-M&quot;));</span>
+<span class="fc" id="L172">    newVector.addElement(new Option(</span>
+<span class="fc" id="L173">	      &quot;\tFile name of a cost matrix to use. If this is not supplied,\n&quot;</span>
+              +&quot;\ta cost matrix will be loaded on demand. The name of the\n&quot;
+              +&quot;\ton-demand file is the relation name of the training data\n&quot;
+              +&quot;\tplus \&quot;.cost\&quot;, and the path to the on-demand file is\n&quot;
+              +&quot;\tspecified with the -N option.&quot;,
+<span class="fc" id="L178">	      &quot;C&quot;, 1, &quot;-C &lt;cost file name&gt;&quot;));</span>
+<span class="fc" id="L179">    newVector.addElement(new Option(</span>
+<span class="fc" id="L180">              &quot;\tName of a directory to search for cost files when loading\n&quot;</span>
+              +&quot;\tcosts on demand (default current directory).&quot;,
+<span class="fc" id="L182">              &quot;N&quot;, 1, &quot;-N &lt;directory&gt;&quot;));</span>
+<span class="fc" id="L183">    newVector.addElement(new Option(</span>
+<span class="fc" id="L184">              &quot;\tThe cost matrix in Matlab single line format.&quot;,</span>
+<span class="fc" id="L185">              &quot;cost-matrix&quot;, 1, &quot;-cost-matrix &lt;matrix&gt;&quot;));</span>
+
+<span class="fc" id="L187">    Enumeration enu = super.listOptions();</span>
+<span class="fc bfc" id="L188" title="All 2 branches covered.">    while (enu.hasMoreElements()) {</span>
+<span class="fc" id="L189">      newVector.addElement(enu.nextElement());</span>
+    }
+
+<span class="fc" id="L192">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  Minimize expected misclassification cost. Default is to
+   *  reweight training instances according to costs per class&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;cost file name&amp;gt;
+   *  File name of a cost matrix to use. If this is not supplied,
+   *  a cost matrix will be loaded on demand. The name of the
+   *  on-demand file is the relation name of the training data
+   *  plus &quot;.cost&quot;, and the path to the on-demand file is
+   *  specified with the -N option.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;directory&amp;gt;
+   *  Name of a directory to search for cost files when loading
+   *  costs on demand (default current directory).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -cost-matrix &amp;lt;matrix&amp;gt;
+   *  The cost matrix in Matlab single line format.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W
+   *  Full name of base classifier.
+   *  (default: weka.classifiers.rules.ZeroR)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to classifier weka.classifiers.rules.ZeroR:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * Options after -- are passed to the designated classifier.&lt;p&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="fc" id="L248">    setMinimizeExpectedCost(Utils.getFlag('M', options));</span>
+
+<span class="fc" id="L250">    String costFile = Utils.getOption('C', options);</span>
+<span class="pc bpc" id="L251" title="1 of 2 branches missed.">    if (costFile.length() != 0) {</span>
+      try {
+<span class="nc" id="L253">	setCostMatrix(new CostMatrix(new BufferedReader(</span>
+<span class="nc" id="L254">				     new FileReader(costFile))));</span>
+<span class="nc" id="L255">      } catch (Exception ex) {</span>
+	// now flag as possible old format cost matrix. Delay cost matrix
+	// loading until buildClassifer is called
+<span class="nc" id="L258">	setCostMatrix(null);</span>
+      }
+<span class="nc" id="L260">      setCostMatrixSource(new SelectedTag(MATRIX_SUPPLIED,</span>
+<span class="nc" id="L261">                                          TAGS_MATRIX_SOURCE));</span>
+<span class="nc" id="L262">      m_CostFile = costFile;</span>
+    } else {
+<span class="fc" id="L264">      setCostMatrixSource(new SelectedTag(MATRIX_ON_DEMAND, </span>
+<span class="fc" id="L265">                                          TAGS_MATRIX_SOURCE));</span>
+    }
+    
+<span class="fc" id="L268">    String demandDir = Utils.getOption('N', options);</span>
+<span class="fc bfc" id="L269" title="All 2 branches covered.">    if (demandDir.length() != 0) {</span>
+<span class="fc" id="L270">      setOnDemandDirectory(new File(demandDir));</span>
+    }
+
+<span class="fc" id="L273">    String cost_matrix = Utils.getOption(&quot;cost-matrix&quot;, options);</span>
+<span class="pc bpc" id="L274" title="1 of 2 branches missed.">    if (cost_matrix.length() != 0) {</span>
+<span class="nc" id="L275">      StringWriter writer = new StringWriter();</span>
+<span class="nc" id="L276">      CostMatrix.parseMatlab(cost_matrix).write(writer);</span>
+<span class="nc" id="L277">      setCostMatrix(new CostMatrix(new StringReader(writer.toString())));</span>
+<span class="nc" id="L278">      setCostMatrixSource(new SelectedTag(MATRIX_SUPPLIED,</span>
+<span class="nc" id="L279">                                          TAGS_MATRIX_SOURCE));</span>
+    }
+    
+<span class="fc" id="L282">    super.setOptions(options);</span>
+<span class="fc" id="L283">  }</span>
+
+
+  /**
+   * Gets the current settings of the Classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+<span class="fc" id="L292">    String [] superOptions = super.getOptions();</span>
+<span class="fc" id="L293">    String [] options = new String [superOptions.length + 7];</span>
+
+<span class="fc" id="L295">    int current = 0;</span>
+
+<span class="pc bpc" id="L297" title="1 of 2 branches missed.">    if (m_MatrixSource == MATRIX_SUPPLIED) {</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">      if (m_CostFile != null) {</span>
+<span class="nc" id="L299">        options[current++] = &quot;-C&quot;;</span>
+<span class="nc" id="L300">        options[current++] = &quot;&quot; + m_CostFile;</span>
+      }
+      else {
+<span class="nc" id="L303">        options[current++] = &quot;-cost-matrix&quot;;</span>
+<span class="nc" id="L304">        options[current++] = getCostMatrix().toMatlab();</span>
+      }
+    } else {
+<span class="fc" id="L307">      options[current++] = &quot;-N&quot;;</span>
+<span class="fc" id="L308">      options[current++] = &quot;&quot; + getOnDemandDirectory();</span>
+    }
+
+<span class="pc bpc" id="L311" title="1 of 2 branches missed.">    if (getMinimizeExpectedCost()) {</span>
+<span class="nc" id="L312">      options[current++] = &quot;-M&quot;;</span>
+    }
+
+<span class="fc" id="L315">    System.arraycopy(superOptions, 0, options, current, </span>
+<span class="fc" id="L316">		     superOptions.length);</span>
+
+<span class="fc bfc" id="L318" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc bfc" id="L319" title="All 2 branches covered.">      if (options[current] == null) {</span>
+<span class="fc" id="L320">        options[current] = &quot;&quot;;</span>
+      }
+<span class="fc" id="L322">      current++;</span>
+    }
+
+<span class="fc" id="L325">    return options;</span>
+  }
+
+  /**
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L334">    return &quot;A metaclassifier that makes its base classifier cost-sensitive. &quot;</span>
+      + &quot;Two methods can be used to introduce cost-sensitivity: reweighting &quot;
+      + &quot;training instances according to the total cost assigned to each &quot;
+      + &quot;class; or predicting the class with minimum expected &quot;
+      + &quot;misclassification cost (rather than the most likely class). &quot;
+      + &quot;Performance can often be &quot;
+      + &quot;improved by using a Bagged classifier to improve the probability &quot;
+      + &quot;estimates of the base classifier.&quot;;
+  }
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String costMatrixSourceTipText() {
+
+<span class="nc" id="L350">    return &quot;Sets where to get the cost matrix. The two options are&quot;</span>
+      + &quot;to use the supplied explicit cost matrix (the setting of the &quot;
+      + &quot;costMatrix property), or to load a cost matrix from a file when &quot;
+      + &quot;required (this file will be loaded from the directory set by the &quot;
+      + &quot;onDemandDirectory property and will be named relation_name&quot; 
+<span class="nc" id="L355">      + CostMatrix.FILE_EXTENSION + &quot;).&quot;;</span>
+  }
+
+  /**
+   * Gets the source location method of the cost matrix. Will be one of
+   * MATRIX_ON_DEMAND or MATRIX_SUPPLIED.
+   *
+   * @return the cost matrix source.
+   */
+  public SelectedTag getCostMatrixSource() {
+
+<span class="nc" id="L366">    return new SelectedTag(m_MatrixSource, TAGS_MATRIX_SOURCE);</span>
+  }
+  
+  /**
+   * Sets the source location of the cost matrix. Values other than
+   * MATRIX_ON_DEMAND or MATRIX_SUPPLIED will be ignored.
+   *
+   * @param newMethod the cost matrix location method.
+   */
+  public void setCostMatrixSource(SelectedTag newMethod) {
+    
+<span class="pc bpc" id="L377" title="1 of 2 branches missed.">    if (newMethod.getTags() == TAGS_MATRIX_SOURCE) {</span>
+<span class="fc" id="L378">      m_MatrixSource = newMethod.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L380">  }</span>
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String onDemandDirectoryTipText() {
+
+<span class="nc" id="L388">    return &quot;Sets the directory where cost files are loaded from. This option &quot;</span>
+      + &quot;is used when the costMatrixSource is set to \&quot;On Demand\&quot;.&quot;;
+  }
+
+  /**
+   * Returns the directory that will be searched for cost files when
+   * loading on demand.
+   *
+   * @return The cost file search directory.
+   */
+  public File getOnDemandDirectory() {
+
+<span class="fc" id="L400">    return m_OnDemandDirectory;</span>
+  }
+
+  /**
+   * Sets the directory that will be searched for cost files when
+   * loading on demand.
+   *
+   * @param newDir The cost file search directory.
+   */
+  public void setOnDemandDirectory(File newDir) {
+
+<span class="pc bpc" id="L411" title="1 of 2 branches missed.">    if (newDir.isDirectory()) {</span>
+<span class="fc" id="L412">      m_OnDemandDirectory = newDir;</span>
+    } else {
+<span class="nc" id="L414">      m_OnDemandDirectory = new File(newDir.getParent());</span>
+    }
+<span class="fc" id="L416">    m_MatrixSource = MATRIX_ON_DEMAND;</span>
+<span class="fc" id="L417">  }</span>
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String minimizeExpectedCostTipText() {
+
+<span class="nc" id="L425">    return &quot;Sets whether the minimum expected cost criteria will be used. If &quot;</span>
+      + &quot;this is false, the training data will be reweighted according to the &quot;
+      + &quot;costs assigned to each class. If true, the minimum expected cost &quot;
+      + &quot;criteria will be used.&quot;;
+  }
+
+  /**
+   * Gets the value of MinimizeExpectedCost.
+   *
+   * @return Value of MinimizeExpectedCost.
+   */
+  public boolean getMinimizeExpectedCost() {
+    
+<span class="fc" id="L438">    return m_MinimizeExpectedCost;</span>
+  }
+  
+  /**
+   * Set the value of MinimizeExpectedCost.
+   *
+   * @param newMinimizeExpectedCost Value to assign to MinimizeExpectedCost.
+   */
+  public void setMinimizeExpectedCost(boolean newMinimizeExpectedCost) {
+    
+<span class="fc" id="L448">    m_MinimizeExpectedCost = newMinimizeExpectedCost;</span>
+<span class="fc" id="L449">  }</span>
+  
+  /**
+   * Gets the classifier specification string, which contains the class name of
+   * the classifier and any options to the classifier
+   *
+   * @return the classifier string.
+   */
+  protected String getClassifierSpec() {
+    
+<span class="fc" id="L459">    Classifier c = getClassifier();</span>
+<span class="pc bpc" id="L460" title="1 of 2 branches missed.">    if (c instanceof OptionHandler) {</span>
+<span class="fc" id="L461">      return c.getClass().getName() + &quot; &quot;</span>
+<span class="fc" id="L462">	+ Utils.joinOptions(((OptionHandler)c).getOptions());</span>
+    }
+<span class="nc" id="L464">    return c.getClass().getName();</span>
+  }
+  
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String costMatrixTipText() {
+<span class="nc" id="L472">    return &quot;Sets the cost matrix explicitly. This matrix is used if the &quot;</span>
+      + &quot;costMatrixSource property is set to \&quot;Supplied\&quot;.&quot;;
+  }
+
+  /**
+   * Gets the misclassification cost matrix.
+   *
+   * @return the cost matrix
+   */
+  public CostMatrix getCostMatrix() {
+    
+<span class="fc" id="L483">    return m_CostMatrix;</span>
+  }
+  
+  /**
+   * Sets the misclassification cost matrix.
+   *
+   * @param newCostMatrix the cost matrix
+   */
+  public void setCostMatrix(CostMatrix newCostMatrix) {
+    
+<span class="fc" id="L493">    m_CostMatrix = newCostMatrix;</span>
+<span class="fc" id="L494">    m_MatrixSource = MATRIX_SUPPLIED;</span>
+<span class="fc" id="L495">  }</span>
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L503">    Capabilities result = super.getCapabilities();</span>
+
+    // class
+<span class="fc" id="L506">    result.disableAllClasses();</span>
+<span class="fc" id="L507">    result.disableAllClassDependencies();</span>
+<span class="fc" id="L508">    result.enable(Capability.NOMINAL_CLASS);</span>
+    
+<span class="fc" id="L510">    return result;</span>
+  }
+
+  /**
+   * Builds the model of the base learner.
+   *
+   * @param data the training data
+   * @throws Exception if the classifier could not be built successfully
+   */
+  public void buildClassifier(Instances data) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L522">    getCapabilities().testWithFail(data);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L525">    data = new Instances(data);</span>
+<span class="fc" id="L526">    data.deleteWithMissingClass();</span>
+    
+<span class="pc bpc" id="L528" title="1 of 2 branches missed.">    if (m_Classifier == null) {</span>
+<span class="nc" id="L529">      throw new Exception(&quot;No base classifier has been set!&quot;);</span>
+    }
+<span class="pc bpc" id="L531" title="1 of 2 branches missed.">    if (m_MatrixSource == MATRIX_ON_DEMAND) {</span>
+<span class="nc" id="L532">      String costName = data.relationName() + CostMatrix.FILE_EXTENSION;</span>
+<span class="nc" id="L533">      File costFile = new File(getOnDemandDirectory(), costName);</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">      if (!costFile.exists()) {</span>
+<span class="nc" id="L535">        throw new Exception(&quot;On-demand cost file doesn't exist: &quot; + costFile);</span>
+      }
+<span class="nc" id="L537">      setCostMatrix(new CostMatrix(new BufferedReader(</span>
+<span class="nc" id="L538">                                   new FileReader(costFile))));</span>
+<span class="pc bpc" id="L539" title="1 of 2 branches missed.">    } else if (m_CostMatrix == null) {</span>
+      // try loading an old format cost file
+<span class="nc" id="L541">      m_CostMatrix = new CostMatrix(data.numClasses());</span>
+<span class="nc" id="L542">      m_CostMatrix.readOldFormat(new BufferedReader(</span>
+<span class="nc" id="L543">			       new FileReader(m_CostFile)));</span>
+    }
+
+<span class="pc bpc" id="L546" title="1 of 2 branches missed.">    if (!m_MinimizeExpectedCost) {</span>
+<span class="fc" id="L547">      Random random = null;</span>
+<span class="pc bpc" id="L548" title="1 of 2 branches missed.">      if (!(m_Classifier instanceof WeightedInstancesHandler)) {</span>
+<span class="nc" id="L549">	random = new Random(m_Seed);</span>
+      }
+<span class="fc" id="L551">      data = m_CostMatrix.applyCostMatrix(data, random);      </span>
+    }
+<span class="fc" id="L553">    m_Classifier.buildClassifier(data);</span>
+<span class="fc" id="L554">  }</span>
+
+  /**
+   * Returns class probabilities. When minimum expected cost approach is chosen,
+   * returns probability one for class with the minimum expected misclassification
+   * cost. Otherwise it returns the probability distribution returned by
+   * the base classifier.
+   *
+   * @param instance the instance to be classified
+   * @return the computed distribution for the given instance
+   * @throws Exception if instance could not be classified
+   * successfully */
+  public double[] distributionForInstance(Instance instance) throws Exception {
+
+<span class="pc bpc" id="L568" title="1 of 2 branches missed.">    if (!m_MinimizeExpectedCost) {</span>
+<span class="fc" id="L569">      return m_Classifier.distributionForInstance(instance);</span>
+    }
+<span class="nc" id="L571">    double [] pred = m_Classifier.distributionForInstance(instance);</span>
+<span class="nc" id="L572">    double [] costs = m_CostMatrix.expectedCosts(pred, instance);</span>
+    /*
+    for (int i = 0; i &lt; pred.length; i++) {
+      System.out.print(pred[i] + &quot; &quot;);
+    }
+    System.out.println();
+    for (int i = 0; i &lt; costs.length; i++) {
+      System.out.print(costs[i] + &quot; &quot;);
+    }
+    System.out.println(&quot;\n&quot;);
+    */
+
+    // This is probably not ideal
+<span class="nc" id="L585">    int classIndex = Utils.minIndex(costs);</span>
+<span class="nc bnc" id="L586" title="All 2 branches missed.">    for (int i = 0; i  &lt; pred.length; i++) {</span>
+<span class="nc bnc" id="L587" title="All 2 branches missed.">      if (i == classIndex) {</span>
+<span class="nc" id="L588">	pred[i] = 1.0;</span>
+      } else {
+<span class="nc" id="L590">	pred[i] = 0.0;</span>
+      }
+    }
+<span class="nc" id="L593">    return pred; </span>
+  }
+
+  /**
+   *  Returns the type of graph this classifier
+   *  represents.
+   *  
+   *  @return the type of graph this classifier represents
+   */   
+  public int graphType() {
+    
+<span class="nc bnc" id="L604" title="All 2 branches missed.">    if (m_Classifier instanceof Drawable)</span>
+<span class="nc" id="L605">      return ((Drawable)m_Classifier).graphType();</span>
+    else 
+<span class="nc" id="L607">      return Drawable.NOT_DRAWABLE;</span>
+  }
+
+  /**
+   * Returns graph describing the classifier (if possible).
+   *
+   * @return the graph of the classifier in dotty format
+   * @throws Exception if the classifier cannot be graphed
+   */
+  public String graph() throws Exception {
+    
+<span class="nc bnc" id="L618" title="All 2 branches missed.">    if (m_Classifier instanceof Drawable)</span>
+<span class="nc" id="L619">      return ((Drawable)m_Classifier).graph();</span>
+<span class="nc" id="L620">    else throw new Exception(&quot;Classifier: &quot; + getClassifierSpec()</span>
+<span class="nc" id="L621">			     + &quot; cannot be graphed&quot;);</span>
+  }
+
+  /**
+   * Output a representation of this classifier
+   * 
+   * @return a string representation of the classifier
+   */
+  public String toString() {
+
+<span class="pc bpc" id="L631" title="1 of 2 branches missed.">    if (m_Classifier == null) {</span>
+<span class="nc" id="L632">      return &quot;CostSensitiveClassifier: No model built yet.&quot;;</span>
+    }
+
+<span class="fc" id="L635">    String result = &quot;CostSensitiveClassifier using &quot;;</span>
+<span class="pc bpc" id="L636" title="1 of 2 branches missed.">      if (m_MinimizeExpectedCost) {</span>
+<span class="nc" id="L637">	result += &quot;minimized expected misclasification cost\n&quot;;</span>
+      } else {
+<span class="fc" id="L639">	result += &quot;reweighted training instances\n&quot;;</span>
+      }
+<span class="fc" id="L641">      result += &quot;\n&quot; + getClassifierSpec()</span>
+<span class="fc" id="L642">	+ &quot;\n\nClassifier Model\n&quot;</span>
+<span class="fc" id="L643">	+ m_Classifier.toString()</span>
+<span class="fc" id="L644">	+ &quot;\n\nCost Matrix\n&quot;</span>
+<span class="fc" id="L645">	+ m_CostMatrix.toString();</span>
+
+<span class="fc" id="L647">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L656">    return RevisionUtils.extract(&quot;$Revision: 1.29 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain the following arguments:
+   * -t training file [-T test file] [-c class index]
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L666">    runClassifier(new CostSensitiveClassifier(), argv);</span>
+<span class="nc" id="L667">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

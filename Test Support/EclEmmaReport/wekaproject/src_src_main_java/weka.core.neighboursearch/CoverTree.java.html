@@ -1,0 +1,1978 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>CoverTree.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core.neighboursearch</a> &gt; <span class="el_source">CoverTree.java</span></div><h1>CoverTree.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * CoverTree.java
+ * Copyright (C) 2006 Alina Beygelzimer and Sham Kakade and John Langford
+ */
+
+package weka.core.neighboursearch;
+
+import weka.core.DistanceFunction;
+import weka.core.EuclideanDistance;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.core.converters.CSVLoader;
+import weka.core.neighboursearch.covertrees.Stack;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.List;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class implementing the CoverTree datastructure.&lt;br/&gt;
+ * The class is very much a translation of the c source code made available by the authors.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information and original source code see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Alina Beygelzimer, Sham Kakade, John Langford: Cover trees for nearest neighbor. In: ICML'06: Proceedings of the 23rd international conference on Machine learning, New York, NY, USA, 97-104, 2006.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Beygelzimer2006,
+ *    address = {New York, NY, USA},
+ *    author = {Alina Beygelzimer and Sham Kakade and John Langford},
+ *    booktitle = {ICML'06: Proceedings of the 23rd international conference on Machine learning},
+ *    pages = {97-104},
+ *    publisher = {ACM Press},
+ *    title = {Cover trees for nearest neighbor},
+ *    year = {2006},
+ *    location = {Pittsburgh, Pennsylvania},
+ *    HTTP = {http://hunch.net/\~jl/projects/cover_tree/cover_tree.html}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;value&amp;gt;
+ *  Set base of the expansion constant
+ *  (default = 1.3).&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ * 
+ * @author Alina Beygelzimer (original C++ code)
+ * @author Sham Kakade (original C++ code)
+ * @author John Langford (original C++ code)
+ * @author Ashraf M. Kibriya (amk14[at-the-rate]cs[dot]waikato[dot]ac[dot]nz) (Java port)
+ * @version $Revision: 1.4 $
+ */
+public class CoverTree
+  extends NearestNeighbourSearch
+  implements TechnicalInformationHandler {
+
+  /** for serialization. */
+  private static final long serialVersionUID = 7617412821497807586L;
+
+  /**
+   * class representing a node of the cover tree.
+   * 
+   * @author Ashraf M. Kibriya (amk14[at-the-rate]cs[dot]waikato[dot]ac[dot]nz)
+   * @version $Revision: 1.4 $
+   */
+  public class CoverTreeNode
+    implements Serializable, RevisionHandler {
+    
+    /** for serialization. */
+    private static final long serialVersionUID = 1808760031169036512L;
+    
+    /** ID for the node. */
+    private int nodeid;
+    
+    /** Index of the instance represented by this node in the index array. */
+    private Integer idx;
+    
+    /** The distance of the furthest descendant of the node. */
+    private double max_dist; // The maximum distance to any grandchild.
+
+    /** The distance to the nodes parent. */ 
+    private double parent_dist; // The distance to the parent.
+
+    /** The children of the node. */
+    private Stack&lt;CoverTreeNode&gt; children;
+
+    /** The number of children node has.  */
+    private int num_children; // The number of children.
+
+    /** The min i that makes base^i &amp;lt;= max_dist. */
+    private int scale; // Essentially, an upper bound on the distance to any child.
+
+    /** Constructor for the class. */
+<span class="nc" id="L132">    public CoverTreeNode() {</span>
+<span class="nc" id="L133">    }</span>
+    
+    /**
+     * Constructor.
+     * @param i The index of the Instance this node is
+     * associated with.
+     * @param md The distance of the furthest descendant.
+     * @param pd The distance of the node to its parent.
+     * @param childs Children of the node in a stack.
+     * @param numchilds The number of children of the 
+     * node.
+     * @param s The scale/level of the node in the tree.
+     */
+<span class="nc" id="L146">    public CoverTreeNode(Integer i, double md, double pd,</span>
+      Stack&lt;CoverTreeNode&gt; childs, int numchilds, int s) {
+<span class="nc" id="L148">      idx = i;</span>
+<span class="nc" id="L149">      max_dist = md;</span>
+<span class="nc" id="L150">      parent_dist = pd;</span>
+<span class="nc" id="L151">      children = childs;</span>
+<span class="nc" id="L152">      num_children = numchilds;</span>
+<span class="nc" id="L153">      scale = s;</span>
+<span class="nc" id="L154">    }</span>
+    
+    /** Returns the instance represented by the node.
+     * @return The instance represented by the node.
+     */
+    public Instance p() {
+<span class="nc" id="L160">      return m_Instances.instance(idx);</span>
+    }
+    
+    /** Returns whether if the node is a leaf or not.
+     * @return true if the node is a leaf node. 
+     */
+    public boolean isALeaf() {
+<span class="nc bnc" id="L167" title="All 2 branches missed.">      return num_children==0;</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L176">      return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+    }
+  }
+
+  /**
+   * Private class holding a point's distance to the current reference
+   * point p.
+   * 
+   * @author Ashraf M. Kibriya (amk14[at-the-rate]cs[dot]waikato[dot]ac[dot]nz)
+   * @version $Revision: 1.4 $
+   */
+<span class="nc" id="L187">  private class DistanceNode</span>
+    implements RevisionHandler {
+    
+    /**
+     * The last distance is to the current reference point
+     * (potential current parent). The previous ones are
+     * to reference points that were previously looked at
+     * (all potential ancestors).      
+     */
+    Stack&lt;Double&gt; dist;
+    
+    /** The index of the instance represented by this node. */
+    Integer idx;
+    
+    /**
+     * Returns the instance represent by this DistanceNode.
+     * @return The instance represented by this node. 
+     */
+    public Instance q() {
+<span class="nc" id="L206">      return m_Instances.instance(idx);</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L215">      return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+    }
+  }
+
+  /** The euclidean distance function to use. */
+  protected EuclideanDistance m_EuclideanDistance;
+  { // to make sure we have only one object of EuclideanDistance
+<span class="nc bnc" id="L222" title="All 2 branches missed.">    if (m_DistanceFunction instanceof EuclideanDistance)</span>
+<span class="nc" id="L223">      m_EuclideanDistance = (EuclideanDistance) m_DistanceFunction;</span>
+    else
+<span class="nc" id="L225">      m_DistanceFunction = m_EuclideanDistance = new EuclideanDistance();</span>
+  }
+
+  /** The root node. */
+  protected CoverTreeNode m_Root;
+
+  /** 
+   * Array holding the distances of the nearest neighbours. It is filled up
+   *  both by nearestNeighbour() and kNearestNeighbours(). 
+   */
+  protected double [] m_DistanceList;
+
+  /** Number of nodes in the tree. */
+  protected int m_NumNodes, m_NumLeaves, m_MaxDepth;
+  
+  /** Tree Stats variables. */
+<span class="nc" id="L241">  protected TreePerformanceStats m_TreeStats = null;</span>
+
+  /**
+   * The base of our expansion constant. In other words the 2 in 2^i used
+   * in covering tree and separation invariants of a cover tree. P.S.: In
+   * paper it's suggested the separation invariant is relaxed in batch
+   * construction.
+   */
+<span class="nc" id="L249">  protected double m_Base = 1.3;</span>
+
+  /**
+   * if we have base 2 then this can be viewed as 1/ln(2), which can be
+   * used later on to do il2*ln(d) instead of ln(d)/ln(2), to get log2(d),
+   * in get_scale method.
+   */
+<span class="nc" id="L256">  protected double il2 = 1.0 / Math.log(m_Base);</span>
+
+  /**
+   * default constructor.
+   */
+  public CoverTree() {
+<span class="nc" id="L262">    super();</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">    if(getMeasurePerformance())</span>
+<span class="nc" id="L264">      m_Stats = m_TreeStats = new TreePerformanceStats();</span>
+<span class="nc" id="L265">  }</span>
+
+  /**
+   * Returns a string describing this nearest neighbour search algorithm.
+   * 
+   * @return 		a description of the algorithm for displaying in the 
+   * 			explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L274">    return </span>
+<span class="nc" id="L275">        &quot;Class implementing the CoverTree datastructure.\n&quot;</span>
+      + &quot;The class is very much a translation of the c source code made &quot;
+      + &quot;available by the authors.\n\n&quot;
+      + &quot;For more information and original source code see:\n\n&quot;
+<span class="nc" id="L279">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing detailed
+   * information about the technical background of this class, e.g., paper
+   * reference or book this class is based on.
+   * 
+   * @return 		the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation result;
+
+<span class="nc" id="L292">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L293">    result.setValue(Field.AUTHOR, &quot;Alina Beygelzimer and Sham Kakade and John Langford&quot;);</span>
+<span class="nc" id="L294">    result.setValue(Field.TITLE, &quot;Cover trees for nearest neighbor&quot;);</span>
+<span class="nc" id="L295">    result.setValue(Field.BOOKTITLE, &quot;ICML'06: Proceedings of the 23rd international conference on Machine learning&quot;);</span>
+<span class="nc" id="L296">    result.setValue(Field.PAGES, &quot;97-104&quot;);</span>
+<span class="nc" id="L297">    result.setValue(Field.YEAR, &quot;2006&quot;);</span>
+<span class="nc" id="L298">    result.setValue(Field.PUBLISHER, &quot;ACM Press&quot;);</span>
+<span class="nc" id="L299">    result.setValue(Field.ADDRESS, &quot;New York, NY, USA&quot;);</span>
+<span class="nc" id="L300">    result.setValue(Field.LOCATION, &quot;Pittsburgh, Pennsylvania&quot;);</span>
+<span class="nc" id="L301">    result.setValue(Field.HTTP, &quot;http://hunch.net/~jl/projects/cover_tree/cover_tree.html&quot;);</span>
+
+<span class="nc" id="L303">    return result;</span>
+  }
+  
+  /**
+   * Returns an enumeration describing the available options.
+   * 
+   * @return 		an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L312">    Vector newVector = new Vector();</span>
+
+<span class="nc" id="L314">    newVector.addElement(new Option(</span>
+<span class="nc" id="L315">	&quot;\tSet base of the expansion constant\n&quot;</span>
+	+ &quot;\t(default = 1.3).&quot;,
+<span class="nc" id="L317">	&quot;B&quot;, 1, &quot;-B &lt;value&gt;&quot;));</span>
+    
+<span class="nc" id="L319">    return newVector.elements();</span>
+  }
+  
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -B &amp;lt;value&amp;gt;
+   *  Set base of the expansion constant
+   *  (default = 1.3).&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   * 
+   * @param options 	the list of options as an array of strings
+   * @throws Exception	if an option is not supported
+   */
+  public void setOptions(String[] options)
+    throws Exception {    
+    
+<span class="nc" id="L340">    super.setOptions(options);</span>
+    
+<span class="nc" id="L342">    String optionString = Utils.getOption('B', options);</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">    if (optionString.length() != 0)</span>
+<span class="nc" id="L344">      setBase(Double.parseDouble(optionString));</span>
+    else
+<span class="nc" id="L346">      setBase(1.3);      </span>
+<span class="nc" id="L347">  }</span>
+
+  /**
+   * Gets the current settings of KDtree.
+   * 
+   * @return 		an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    Vector&lt;String&gt;	result;
+    String[]		options;
+    int			i;
+    
+<span class="nc" id="L359">    result = new Vector&lt;String&gt;();</span>
+    
+<span class="nc" id="L361">    options = super.getOptions();</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L363">      result.add(options[i]);</span>
+    
+<span class="nc" id="L365">    result.add(&quot;-B&quot;);</span>
+<span class="nc" id="L366">    result.add(&quot;&quot; + getBase());</span>
+
+<span class="nc" id="L368">    return result.toArray(new String[result.size()]);</span>
+  }
+
+  /**
+   * Returns the distance/value of a given scale/level. I.e. the value of
+   * base^i (e.g. 2^i).
+   * 
+   * @param s 		the level/scale
+   * @return 		base^s
+   */
+  protected double dist_of_scale(int s) {
+<span class="nc" id="L379">    return Math.pow(m_Base, s);</span>
+  }
+
+  /**
+   * Finds the scale/level of a given value. I.e. the &quot;i&quot; in base^i.
+   * 
+   * @param d 		the value whose scale/level is to be determined.
+   * @return 		the scale/level of the given value.
+   */
+  protected int get_scale(double d) {
+<span class="nc" id="L389">    return (int) Math.ceil(il2 * Math.log(d));</span>
+  }
+
+  /**
+   * Creates a new internal node for a given Instance/point p.
+   * @param idx The index of the instance the node represents.
+   * @return Newly created CoverTreeNode. 
+   */
+  protected CoverTreeNode new_node(Integer idx) { // const point &amp;p)
+<span class="nc" id="L398">    CoverTreeNode new_node = new CoverTreeNode();</span>
+<span class="nc" id="L399">    new_node.idx = idx;</span>
+<span class="nc" id="L400">    return new_node;</span>
+  }
+
+  /**
+   * Creates a new leaf node for a given Instance/point p.
+   * @param idx The index of the instance this leaf node 
+   * represents.
+   * @return Newly created leaf CoverTreeNode.
+   */
+  protected CoverTreeNode new_leaf(Integer idx) { // (const point &amp;p)
+<span class="nc" id="L410">    CoverTreeNode new_leaf = new CoverTreeNode(idx, 0.0, 0.0, null, 0, 100);</span>
+<span class="nc" id="L411">    return new_leaf;</span>
+  }
+
+  /**
+   * Returns the max distance of the reference point p in current node to
+   * it's children nodes.
+   * @param v The stack of DistanceNode objects.
+   * @return Distance of the furthest child.
+   */
+  protected double max_set(Stack&lt;DistanceNode&gt; v) { // rename to
+                                                        // maxChildDist
+<span class="nc" id="L422">    double max = 0.0;</span>
+<span class="nc bnc" id="L423" title="All 2 branches missed.">    for (int i = 0; i &lt; v.length; i++) {</span>
+<span class="nc" id="L424">      DistanceNode n = v.element(i);</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">      if (max &lt; n.dist.element(n.dist.length - 1).floatValue()) { // v[i].dist.last())</span>
+<span class="nc" id="L426">        max = n.dist.element(n.dist.length - 1).floatValue(); // v[i].dist.last();</span>
+      }
+    }
+<span class="nc" id="L429">    return max;</span>
+  }
+
+  /**
+   * Splits a given point_set into near and far based on the given
+   * scale/level. All points with distance &gt; base^max_scale would be moved
+   * to far set. In other words, all those points that are not covered by the 
+   * next child ball of a point p (ball made of the same point p but of 
+   * smaller radius at the next lower level) are removed from the supplied
+   * current point_set and put into far_set.  
+   * 
+   * @param point_set The supplied set from which all far points 
+   * would be removed.
+   * @param far_set The set in which all far points having distance
+   * &gt; base^max_scale would be put into. 
+   * @param max_scale The given scale based on which the distances
+   * of points are judged to be far or near.   
+   */
+  protected void split(Stack&lt;DistanceNode&gt; point_set,
+      Stack&lt;DistanceNode&gt; far_set, int max_scale) {
+<span class="nc" id="L449">    int new_index = 0;</span>
+<span class="nc" id="L450">    double fmax = dist_of_scale(max_scale);</span>
+<span class="nc bnc" id="L451" title="All 2 branches missed.">    for (int i = 0; i &lt; point_set.length; i++) {</span>
+<span class="nc" id="L452">      DistanceNode n = point_set.element(i);</span>
+<span class="nc bnc" id="L453" title="All 2 branches missed.">      if (n.dist.element(n.dist.length - 1).doubleValue() &lt;= fmax) {</span>
+<span class="nc" id="L454">        point_set.set(new_index++, point_set.element(i));</span>
+      } else
+<span class="nc" id="L456">        far_set.push(point_set.element(i)); // point_set[i]);</span>
+    }
+<span class="nc" id="L458">    List l = new java.util.LinkedList();</span>
+<span class="nc bnc" id="L459" title="All 2 branches missed.">    for (int i = 0; i &lt; new_index; i++)</span>
+<span class="nc" id="L460">      l.add(point_set.element(i));</span>
+    //removing all and adding only the near points
+<span class="nc" id="L462">    point_set.clear();</span>
+<span class="nc" id="L463">    point_set.addAll(l); // point_set.index=new_index;</span>
+<span class="nc" id="L464">  }</span>
+
+  /**
+   * Moves all the points in point_set covered by (the ball of) new_point 
+   * into new_point_set, based on the given scale/level.
+   * 
+   * @param point_set The supplied set of instances from which
+   * all points covered by new_point will be removed.
+   * @param new_point_set The set in which all points covered by
+   * new_point will be put into.
+   * @param new_point The given new point.
+   * @param max_scale The scale based on which distances are 
+   * judged (radius of cover ball is calculated).
+   */
+  protected void dist_split(Stack&lt;DistanceNode&gt; point_set,
+      Stack&lt;DistanceNode&gt; new_point_set, 
+      DistanceNode new_point, int max_scale) {
+<span class="nc" id="L481">    int new_index = 0;</span>
+<span class="nc" id="L482">    double fmax = dist_of_scale(max_scale);</span>
+<span class="nc bnc" id="L483" title="All 2 branches missed.">    for (int i = 0; i &lt; point_set.length; i++) {</span>
+<span class="nc" id="L484">      double new_d =  Math.sqrt(m_DistanceFunction.distance(new_point.q(), </span>
+<span class="nc" id="L485">	  	       point_set.element(i).q(), fmax*fmax));</span>
+<span class="nc bnc" id="L486" title="All 2 branches missed.">      if (new_d &lt;= fmax) {</span>
+<span class="nc" id="L487">        point_set.element(i).dist.push(new_d);</span>
+<span class="nc" id="L488">        new_point_set.push(point_set.element(i));</span>
+      } else
+<span class="nc" id="L490">        point_set.set(new_index++, point_set.element(i));</span>
+    }
+<span class="nc" id="L492">    List l = new java.util.LinkedList();</span>
+<span class="nc bnc" id="L493" title="All 2 branches missed.">    for (int i = 0; i &lt; new_index; i++)</span>
+<span class="nc" id="L494">      l.add(point_set.element(i));</span>
+<span class="nc" id="L495">    point_set.clear();</span>
+<span class="nc" id="L496">    point_set.addAll(l);</span>
+<span class="nc" id="L497">  }</span>
+
+  /**
+   * Creates a cover tree recursively using batch insert method. 
+   * 
+   * @param p The index of the instance from which to create the
+   * first node. All other points will be inserted beneath this node
+   * for p.
+   * @param max_scale The current scale/level where the node is to be
+   * created (Also determines the radius of the cover balls created at 
+   * this level).
+   * @param top_scale The max scale in the whole tree.
+   * @param point_set The set of unprocessed points from which child nodes
+   * need to be created.  
+   * @param consumed_set The set of processed points from which child
+   * nodes have already been created. This would be used to find the 
+   * radius of the cover ball of p. 
+   * @return the node of cover tree created with p.
+   */
+  protected CoverTreeNode batch_insert(Integer p, int max_scale, // current
+                                                                 // scale/level
+      int top_scale, // max scale/level for this dataset
+      Stack&lt;DistanceNode&gt; point_set, // set of points that are nearer to p
+                                        // [will also contain returned unused
+                                        // points]
+      Stack&lt;DistanceNode&gt; consumed_set) // to return the set of points that have
+                                        // been used to calc. max_dist to a
+                                        // descendent
+      // Stack&lt;Stack&lt;DistanceNode&gt;&gt; stack) //may not be needed
+      {
+<span class="nc bnc" id="L527" title="All 2 branches missed.">    if (point_set.length == 0) {</span>
+<span class="nc" id="L528">      CoverTreeNode leaf = new_leaf(p);</span>
+<span class="nc" id="L529">      leaf.nodeid = m_NumNodes;</span>
+<span class="nc" id="L530">      m_NumNodes++; // incrementing node count</span>
+<span class="nc" id="L531">      m_NumLeaves++; // incrementing leaves count</span>
+<span class="nc" id="L532">      return leaf;</span>
+    } else {
+<span class="nc" id="L534">      double max_dist = max_set(point_set); // O(|point_set|) the max dist</span>
+      // in point_set to point &quot;p&quot;.
+<span class="nc" id="L536">      int next_scale = Math.min(max_scale - 1, get_scale(max_dist));</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">      if (next_scale == Integer.MIN_VALUE) { // We have points with distance</span>
+        // 0. if max_dist is 0.
+<span class="nc" id="L539">        Stack&lt;CoverTreeNode&gt; children = new Stack&lt;CoverTreeNode&gt;();</span>
+<span class="nc" id="L540">        CoverTreeNode leaf = new_leaf(p);</span>
+<span class="nc" id="L541">        leaf.nodeid = m_NumNodes;</span>
+<span class="nc" id="L542">        children.push(leaf);</span>
+<span class="nc" id="L543">        m_NumLeaves++;</span>
+<span class="nc" id="L544">        m_NumNodes++; // incrementing node and leaf count</span>
+<span class="nc bnc" id="L545" title="All 2 branches missed.">        while (point_set.length &gt; 0) {</span>
+<span class="nc" id="L546">          DistanceNode tmpnode = point_set.pop();</span>
+<span class="nc" id="L547">          leaf = new_leaf(tmpnode.idx);</span>
+<span class="nc" id="L548">          leaf.nodeid = m_NumNodes;</span>
+<span class="nc" id="L549">          children.push(leaf);</span>
+<span class="nc" id="L550">          m_NumLeaves++;</span>
+<span class="nc" id="L551">          m_NumNodes++; // incrementing node and leaf count</span>
+<span class="nc" id="L552">          consumed_set.push(tmpnode);</span>
+        }
+<span class="nc" id="L554">        CoverTreeNode n = new_node(p); // make a new node out of p and assign</span>
+        // it the children.
+<span class="nc" id="L556">        n.nodeid = m_NumNodes;</span>
+<span class="nc" id="L557">        m_NumNodes++; // incrementing node count</span>
+<span class="nc" id="L558">        n.scale = 100; // A magic number meant to be larger than all scales.</span>
+<span class="nc" id="L559">        n.max_dist = 0; // since all points have distance 0 to p</span>
+<span class="nc" id="L560">        n.num_children = children.length;</span>
+<span class="nc" id="L561">        n.children = children;</span>
+<span class="nc" id="L562">        return n;</span>
+      } else {
+<span class="nc" id="L564">        Stack&lt;DistanceNode&gt; far = new Stack&lt;DistanceNode&gt;();</span>
+<span class="nc" id="L565">        split(point_set, far, max_scale); // O(|point_set|)</span>
+
+<span class="nc" id="L567">        CoverTreeNode child = batch_insert(p, next_scale, top_scale, point_set,</span>
+<span class="nc" id="L568">            consumed_set);</span>
+
+<span class="nc bnc" id="L570" title="All 2 branches missed.">        if (point_set.length == 0) { // not creating any node in this</span>
+          // recursive call
+          // push(stack,point_set);
+<span class="nc" id="L573">          point_set.replaceAllBy(far); // point_set=far;</span>
+<span class="nc" id="L574">          return child;</span>
+        } else {
+<span class="nc" id="L576">          CoverTreeNode n = new_node(p);</span>
+<span class="nc" id="L577">          n.nodeid = m_NumNodes;</span>
+<span class="nc" id="L578">          m_NumNodes++; // incrementing node count</span>
+<span class="nc" id="L579">          Stack&lt;CoverTreeNode&gt; children = new Stack&lt;CoverTreeNode&gt;();</span>
+<span class="nc" id="L580">          children.push(child);</span>
+
+<span class="nc bnc" id="L582" title="All 2 branches missed.">          while (point_set.length != 0) { // O(|point_set| * num_children)</span>
+<span class="nc" id="L583">            Stack&lt;DistanceNode&gt; new_point_set = new Stack&lt;DistanceNode&gt;();</span>
+<span class="nc" id="L584">            Stack&lt;DistanceNode&gt; new_consumed_set = new Stack&lt;DistanceNode&gt;();</span>
+<span class="nc" id="L585">            DistanceNode tmpnode = point_set.pop();</span>
+<span class="nc" id="L586">            double new_dist = tmpnode.dist.last();</span>
+<span class="nc" id="L587">            consumed_set.push(tmpnode);</span>
+
+            // putting points closer to new_point into new_point_set (and
+            // removing them from point_set)
+<span class="nc" id="L591">            dist_split(point_set, new_point_set, tmpnode, max_scale); // O(|point_saet|)</span>
+            // putting points closer to new_point into new_point_set (and
+            // removing them from far)
+<span class="nc" id="L594">            dist_split(far, new_point_set, tmpnode, max_scale); // O(|far|)</span>
+
+<span class="nc" id="L596">            CoverTreeNode new_child = batch_insert(tmpnode.idx, next_scale,</span>
+<span class="nc" id="L597">                top_scale, new_point_set, new_consumed_set);</span>
+<span class="nc" id="L598">            new_child.parent_dist = new_dist;</span>
+
+<span class="nc" id="L600">            children.push(new_child);</span>
+
+            // putting the unused points from new_point_set back into
+            // point_set and far
+<span class="nc" id="L604">            double fmax = dist_of_scale(max_scale);</span>
+<span class="nc" id="L605">            tmpnode = null;</span>
+<span class="nc bnc" id="L606" title="All 2 branches missed.">            for (int i = 0; i &lt; new_point_set.length; i++) { // O(|new_point_set|)</span>
+<span class="nc" id="L607">              tmpnode = new_point_set.element(i);</span>
+<span class="nc" id="L608">              tmpnode.dist.pop();</span>
+<span class="nc bnc" id="L609" title="All 2 branches missed.">              if (tmpnode.dist.last() &lt;= fmax)</span>
+<span class="nc" id="L610">                point_set.push(tmpnode);</span>
+              else
+<span class="nc" id="L612">                far.push(tmpnode);</span>
+            }
+            // putting the points consumed while recursing for new_point
+            // into consumed_set
+<span class="nc" id="L616">            tmpnode = null;</span>
+<span class="nc bnc" id="L617" title="All 2 branches missed.">            for (int i = 0; i &lt; new_consumed_set.length; i++) { // O(|new_point_set|)</span>
+<span class="nc" id="L618">              tmpnode = new_consumed_set.element(i);</span>
+<span class="nc" id="L619">              tmpnode.dist.pop();</span>
+<span class="nc" id="L620">              consumed_set.push(tmpnode);</span>
+            }
+          }// end while(point_size.size!=0)
+<span class="nc" id="L623">          point_set.replaceAllBy(far); // point_set=far;</span>
+<span class="nc" id="L624">          n.scale = top_scale - max_scale;</span>
+<span class="nc" id="L625">          n.max_dist = max_set(consumed_set);</span>
+<span class="nc" id="L626">          n.num_children = children.length;</span>
+<span class="nc" id="L627">          n.children = children;</span>
+<span class="nc" id="L628">          return n;</span>
+        }// end else if(pointset!=0)
+      }// end else if(next_scale != -214....
+    }// end else if(pointset!=0)
+  }
+
+  /** 
+   * Builds the tree on the given set of instances.
+   * P.S.: For internal use only. Outside classes 
+   * should call setInstances(). 
+   * @param insts The instances on which to build 
+   * the cover tree.
+   * @throws Exception If the supplied set of 
+   * Instances is empty, or if there are missing
+   * values. 
+   */
+  protected void buildCoverTree(Instances insts) throws Exception {
+<span class="nc bnc" id="L645" title="All 2 branches missed.">    if (insts.numInstances() == 0)</span>
+<span class="nc" id="L646">      throw new Exception(</span>
+<span class="nc" id="L647">	  &quot;CoverTree: Empty set of instances. Cannot build tree.&quot;);</span>
+<span class="nc" id="L648">    checkMissing(insts);</span>
+<span class="nc bnc" id="L649" title="All 2 branches missed.">    if (m_EuclideanDistance == null)</span>
+<span class="nc" id="L650">      m_DistanceFunction = m_EuclideanDistance = new EuclideanDistance(insts);</span>
+    else
+<span class="nc" id="L652">      m_EuclideanDistance.setInstances(insts);</span>
+    
+<span class="nc" id="L654">    Stack&lt;DistanceNode&gt; point_set = new Stack&lt;DistanceNode&gt;();</span>
+<span class="nc" id="L655">    Stack&lt;DistanceNode&gt; consumed_set = new Stack&lt;DistanceNode&gt;();</span>
+
+<span class="nc" id="L657">    Instance point_p = insts.instance(0); int p_idx = 0;</span>
+<span class="nc" id="L658">    double max_dist=-1, dist=0.0; Instance max_q=point_p;</span>
+    
+<span class="nc bnc" id="L660" title="All 2 branches missed.">    for (int i = 1; i &lt; insts.numInstances(); i++) {</span>
+<span class="nc" id="L661">      DistanceNode temp = new DistanceNode();</span>
+<span class="nc" id="L662">      temp.dist = new Stack&lt;Double&gt;();</span>
+<span class="nc" id="L663">      dist = Math.sqrt(m_DistanceFunction.distance(point_p, insts.instance(i), Double.POSITIVE_INFINITY));</span>
+<span class="nc bnc" id="L664" title="All 2 branches missed.">      if(dist &gt; max_dist) {</span>
+<span class="nc" id="L665">        max_dist = dist; max_q = insts.instance(i);</span>
+      }
+<span class="nc" id="L667">      temp.dist.push(dist);</span>
+<span class="nc" id="L668">      temp.idx = i;</span>
+<span class="nc" id="L669">      point_set.push(temp);</span>
+    }
+    
+<span class="nc" id="L672">      max_dist = max_set(point_set);</span>
+<span class="nc" id="L673">      m_Root = batch_insert(p_idx, get_scale(max_dist), get_scale(max_dist),</span>
+<span class="nc" id="L674">                            point_set, consumed_set);</span>
+<span class="nc" id="L675">  }</span>
+
+/*********************************NNSearch related stuff********************/
+
+  /**
+   * A class for a heap to store the nearest k neighbours to an instance. 
+   * The heap also takes care of cases where multiple neighbours are the same 
+   * distance away.
+   * i.e. the minimum size of the heap is k.
+   * 
+   * @author Ashraf M. Kibriya (amk14[at-the-rate]cs[dot]waikato[dot]ac[dot]nz)
+   * @version $Revision: 1.4 $
+   */
+  protected class MyHeap
+    implements RevisionHandler {
+    
+    /** the heap. */
+<span class="nc" id="L692">    MyHeapElement m_heap[] = null;</span>
+    
+    /**
+     * constructor.
+     * @param maxSize   the maximum size of the heap
+     */
+<span class="nc" id="L698">    public MyHeap(int maxSize) {</span>
+<span class="nc bnc" id="L699" title="All 2 branches missed.">      if((maxSize%2)==0)</span>
+<span class="nc" id="L700">        maxSize++;</span>
+      
+<span class="nc" id="L702">      m_heap = new MyHeapElement[maxSize+1];</span>
+<span class="nc" id="L703">      m_heap[0] = new MyHeapElement(-1);</span>
+<span class="nc" id="L704">    }</span>
+    
+    /**
+     * returns the size of the heap.
+     * @return the size
+     */
+    public int size() {
+<span class="nc" id="L711">      return m_heap[0].index;</span>
+    }
+    
+    /**
+     * peeks at the first element.
+     * @return the first element
+     */
+    public MyHeapElement peek() {
+<span class="nc" id="L719">      return m_heap[1];</span>
+    }
+    
+    /**
+     * returns the first element and removes it from the heap.
+     * @return the first element
+     * @throws Exception  if no elements in heap
+     */
+    public MyHeapElement get() throws Exception  {
+<span class="nc bnc" id="L728" title="All 2 branches missed.">      if(m_heap[0].index==0)</span>
+<span class="nc" id="L729">        throw new Exception(&quot;No elements present in the heap&quot;);</span>
+<span class="nc" id="L730">      MyHeapElement r = m_heap[1];</span>
+<span class="nc" id="L731">      m_heap[1] = m_heap[m_heap[0].index];</span>
+<span class="nc" id="L732">      m_heap[0].index--;</span>
+<span class="nc" id="L733">      downheap();</span>
+<span class="nc" id="L734">      return r;</span>
+    }
+    
+    /**
+     * adds the distance value to the heap.
+     * 
+     * @param d the distance value 
+     * @throws Exception  if the heap gets too large
+     */
+    public void put(double d) throws Exception {
+<span class="nc bnc" id="L744" title="All 2 branches missed.">      if((m_heap[0].index+1)&gt;(m_heap.length-1))</span>
+<span class="nc" id="L745">        throw new Exception(&quot;the number of elements cannot exceed the &quot;+</span>
+        &quot;initially set maximum limit&quot;);
+<span class="nc" id="L747">      m_heap[0].index++;</span>
+<span class="nc" id="L748">      m_heap[m_heap[0].index] = new MyHeapElement(d);</span>
+<span class="nc" id="L749">      upheap();</span>
+<span class="nc" id="L750">    }</span>
+    
+    /**
+     * Puts an element by substituting it in place of 
+     * the top most element.
+     * 
+     * @param d The distance value.
+     * @throws Exception If distance is smaller than that of the head
+     *         element.
+     */
+    public void putBySubstitute(double d) throws Exception {
+<span class="nc" id="L761">      MyHeapElement head = get();</span>
+<span class="nc" id="L762">      put(d);</span>
+<span class="nc bnc" id="L763" title="All 2 branches missed.">      if(head.distance == m_heap[1].distance) {</span>
+<span class="nc" id="L764">        putKthNearest(head.distance);</span>
+      }
+<span class="nc bnc" id="L766" title="All 2 branches missed.">      else if(head.distance &gt; m_heap[1].distance) {</span>
+<span class="nc" id="L767">        m_KthNearest = null;</span>
+<span class="nc" id="L768">        m_KthNearestSize = 0;</span>
+<span class="nc" id="L769">        initSize = 10;</span>
+      }
+<span class="nc bnc" id="L771" title="All 2 branches missed.">      else if(head.distance &lt; m_heap[1].distance) {</span>
+<span class="nc" id="L772">        throw new Exception(&quot;The substituted element is greater than the &quot;+</span>
+        &quot;head element. put() should have been called &quot;+
+        &quot;in place of putBySubstitute()&quot;);
+      }
+<span class="nc" id="L776">    }</span>
+    
+    /** the kth nearest ones. */
+<span class="nc" id="L779">    MyHeapElement m_KthNearest[] = null;</span>
+    
+    /** The number of kth nearest elements. */
+<span class="nc" id="L782">    int m_KthNearestSize = 0;</span>
+    
+    /** the initial size of the heap. */
+<span class="nc" id="L785">    int initSize=10;</span>
+    
+    /**
+     * returns the number of k nearest.
+     * 
+     * @return the number of k nearest
+     * @see     #m_KthNearestSize
+     */
+    public int noOfKthNearest() {
+<span class="nc" id="L794">      return m_KthNearestSize;</span>
+    }
+    
+    /**
+     * Stores kth nearest elements (if there are 
+     * more than one).
+     * @param d the distance 
+     */
+    public void putKthNearest(double d) {
+<span class="nc bnc" id="L803" title="All 2 branches missed.">      if(m_KthNearest==null) {</span>
+<span class="nc" id="L804">        m_KthNearest = new MyHeapElement[initSize];</span>
+      }
+<span class="nc bnc" id="L806" title="All 2 branches missed.">      if(m_KthNearestSize&gt;=m_KthNearest.length) {</span>
+<span class="nc" id="L807">        initSize += initSize;</span>
+<span class="nc" id="L808">        MyHeapElement temp[] = new MyHeapElement[initSize];</span>
+<span class="nc" id="L809">        System.arraycopy(m_KthNearest, 0, temp, 0, m_KthNearest.length);</span>
+<span class="nc" id="L810">        m_KthNearest = temp;</span>
+      }
+<span class="nc" id="L812">      m_KthNearest[m_KthNearestSize++] = new MyHeapElement(d);</span>
+<span class="nc" id="L813">    }</span>
+    
+    /**
+     * returns the kth nearest element or null if none there.
+     * 
+     * @return      the kth nearest element
+     */
+    public MyHeapElement getKthNearest() {
+<span class="nc bnc" id="L821" title="All 2 branches missed.">      if(m_KthNearestSize==0)</span>
+<span class="nc" id="L822">        return null;</span>
+<span class="nc" id="L823">      m_KthNearestSize--;</span>
+<span class="nc" id="L824">      return m_KthNearest[m_KthNearestSize];</span>
+    }
+    
+    /** 
+     * performs upheap operation for the heap 
+     * to maintian its properties. 
+     */
+    protected void upheap() {
+<span class="nc" id="L832">      int i = m_heap[0].index;</span>
+      MyHeapElement temp;
+<span class="nc bnc" id="L834" title="All 4 branches missed.">      while( i &gt; 1  &amp;&amp; m_heap[i].distance&gt;m_heap[i/2].distance) {</span>
+<span class="nc" id="L835">        temp = m_heap[i];</span>
+<span class="nc" id="L836">        m_heap[i] = m_heap[i/2];</span>
+<span class="nc" id="L837">        i = i/2;</span>
+<span class="nc" id="L838">        m_heap[i] = temp; //this is i/2 done here to avoid another division.</span>
+      }
+<span class="nc" id="L840">    }</span>
+    
+    /** 
+     * performs downheap operation for the heap 
+     * to maintian its properties. 
+     */
+    protected void downheap() {
+<span class="nc" id="L847">      int i = 1;</span>
+      MyHeapElement temp;
+<span class="nc bnc" id="L849" title="All 2 branches missed.">      while( ( (2*i) &lt;= m_heap[0].index &amp;&amp;</span>
+<span class="nc bnc" id="L850" title="All 2 branches missed.">      m_heap[i].distance &lt; m_heap[2*i].distance )</span>
+      ||
+<span class="nc bnc" id="L852" title="All 2 branches missed.">      ( (2*i+1) &lt;= m_heap[0].index &amp;&amp;</span>
+<span class="nc bnc" id="L853" title="All 2 branches missed.">      m_heap[i].distance &lt; m_heap[2*i+1].distance) ) {</span>
+<span class="nc bnc" id="L854" title="All 2 branches missed.">        if((2*i+1)&lt;=m_heap[0].index) {</span>
+<span class="nc bnc" id="L855" title="All 2 branches missed.">          if(m_heap[2*i].distance&gt;m_heap[2*i+1].distance) {</span>
+<span class="nc" id="L856">            temp = m_heap[i];</span>
+<span class="nc" id="L857">            m_heap[i] = m_heap[2*i];</span>
+<span class="nc" id="L858">            i = 2*i;</span>
+<span class="nc" id="L859">            m_heap[i] = temp;</span>
+          }
+          else {
+<span class="nc" id="L862">            temp = m_heap[i];</span>
+<span class="nc" id="L863">            m_heap[i] = m_heap[2*i+1];</span>
+<span class="nc" id="L864">            i = 2*i+1;</span>
+<span class="nc" id="L865">            m_heap[i] = temp;</span>
+          }
+        }
+        else {
+<span class="nc" id="L869">          temp = m_heap[i];</span>
+<span class="nc" id="L870">          m_heap[i] = m_heap[2*i];</span>
+<span class="nc" id="L871">          i = 2*i;</span>
+<span class="nc" id="L872">          m_heap[i] = temp;</span>
+        }
+      }
+<span class="nc" id="L875">    }</span>
+    
+    /**
+     * returns the total size.
+     * 
+     * @return      the total size
+     */
+    public int totalSize() {
+<span class="nc" id="L883">      return size()+noOfKthNearest();</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L892">      return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+    }
+  }
+  
+  /**
+   * A class for storing data about a neighboring instance.
+   * 
+   * @author Ashraf M. Kibriya (amk14[at-the-rate]cs[dot]waikato[dot]ac[dot]nz)
+   * @version $Revision: 1.4 $
+   */
+  protected class MyHeapElement
+    implements RevisionHandler {
+    
+    /** the distance. */
+    public double distance;
+    
+    /** 
+     * The index of this element. Also used as 
+     * the size of the heap in the first element.
+     */
+<span class="nc" id="L912">    int index = 0;</span>
+    
+    /**
+     * constructor.
+     * 
+     * @param d   the distance
+     */
+<span class="nc" id="L919">    public MyHeapElement(double d) {</span>
+<span class="nc" id="L920">      distance = d;</span>
+<span class="nc" id="L921">    }</span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L929">      return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+    }
+  }
+  
+  /**
+   * stores a CoverTreeNode and its distance to the current query node.
+   * 
+   * @author Ashraf M. Kibriya (amk14[at-the-rate]cs[dot]waikato[dot]ac[dot]nz)
+   * @version $Revision: 1.4 $
+   */
+  private class d_node
+    implements RevisionHandler {
+    
+    /** The distance of the node's point to the query point. */
+    double dist;
+    
+    /** The node. */
+    CoverTreeNode n;
+    
+    /** 
+     * Constructor.
+     * @param d The distance of the node to the query.
+     * @param node The node. 
+     */
+<span class="nc" id="L953">    public d_node(double d, CoverTreeNode node) {</span>
+<span class="nc" id="L954">      dist = d;</span>
+<span class="nc" id="L955">      n = node;</span>
+<span class="nc" id="L956">    }</span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L964">      return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+    }
+  };
+
+  /** 
+   * Initializes a heap with k values of the the given upper_bound.
+   * 
+   * @param heap The heap to put values into.
+   * @param upper_bound The value to put into heap (the value with 
+   * which it should be initialized).
+   * @param k The number of times upper_bound should be put into
+   * heap for initialization.
+   * @throws Exception If there is some problem in initializing 
+   * the heap (if k &amp;gt; size of the heap).
+   */
+  protected void setter(MyHeap heap, double upper_bound, final int k) throws Exception {
+<span class="nc bnc" id="L980" title="All 2 branches missed.">    if(heap.size()&gt;0)</span>
+<span class="nc" id="L981">      heap.m_heap[0].index=0;</span>
+
+<span class="nc bnc" id="L983" title="All 2 branches missed.">    while(heap.size() &lt; k) {</span>
+<span class="nc" id="L984">      heap.put(upper_bound);</span>
+    }
+<span class="nc" id="L986">  }</span>
+
+  /** 
+   * Replaces the current top/max value in the heap with the new one.
+   * The new max value should be &amp;lt;= the old one.
+   * 
+   * @param upper_bound The heap.
+   * @param new_bound The new value that should replace the old top one.
+   * @throws Exception if the new value is greater than the old value.
+   */
+  protected void update(MyHeap upper_bound, double new_bound) throws Exception {
+<span class="nc" id="L997">    upper_bound.putBySubstitute(new_bound);</span>
+<span class="nc" id="L998">  }</span>
+  
+  /**
+   * Returns a cover set for a given level/scale.
+   * A cover set for a level consists of nodes whose 
+   * Instances/centres are which are inside the query
+   * ball at that level. If no cover set exists for the
+   * given level (if it is the first time it is going 
+   * to be used), than a new one is created.  
+   * 
+   * @param idx The level/scale for which the cover set 
+   * is required.
+   * @param cover_sets The covers sets. Consists of stack 
+   * of a stack of d_node objects. 
+   * @return The cover set for the given level/scale.
+   */
+  protected Stack&lt;d_node&gt; getCoverSet(int idx, Stack&lt;Stack&lt;d_node&gt;&gt; cover_sets) {
+<span class="nc bnc" id="L1015" title="All 2 branches missed.">    if (cover_sets.length &lt;= idx) {</span>
+<span class="nc" id="L1016">      int i = cover_sets.length - 1;</span>
+<span class="nc bnc" id="L1017" title="All 2 branches missed.">      while (i &lt; idx) {</span>
+<span class="nc" id="L1018">        i++;</span>
+<span class="nc" id="L1019">        Stack&lt;d_node&gt; new_cover_set = new Stack&lt;d_node&gt;();</span>
+<span class="nc" id="L1020">        cover_sets.push(new_cover_set);</span>
+      }
+    }
+<span class="nc" id="L1023">    return cover_sets.element(idx);</span>
+  }
+  
+  /**
+   * Copies the contents of one zero set to the other. This
+   * is required if we are going to inspect child of some query node 
+   * (if the queries are given in batch in the form of a cover tree).
+   * Only those nodes are copied to the new zero set that are inside
+   * the query ball of query_chi.
+   * P.S.: A zero set is a set of all leaf nodes that are found
+   * to be inside the query ball.  
+   *   
+   * @param query_chi The child node of our query node that we are 
+   * going to inspect. 
+   * @param new_upper_k New heap that will store the distances of the
+   * k NNs for query_chi.
+   * @param zero_set The zero set of query_chi's parent that needs
+   * to be copied.
+   * @param new_zero_set The new zero set of query_chi where old zero
+   * sets need to be copied into.
+   * @throws Exception If there is some problem.
+   */
+  protected void copy_zero_set(CoverTreeNode query_chi, MyHeap new_upper_k, 
+      			Stack&lt;d_node&gt; zero_set, Stack&lt;d_node&gt; new_zero_set) throws Exception {
+<span class="nc" id="L1047">    new_zero_set.clear();</span>
+    d_node ele;
+<span class="nc bnc" id="L1049" title="All 2 branches missed.">    for (int i = 0; i &lt; zero_set.length; i++) {</span>
+<span class="nc" id="L1050">      ele = zero_set.element(i);</span>
+<span class="nc" id="L1051">      double upper_dist = new_upper_k.peek().distance + query_chi.max_dist;</span>
+<span class="nc bnc" id="L1052" title="All 2 branches missed.">      if (shell(ele.dist, query_chi.parent_dist, upper_dist)) {</span>
+<span class="nc" id="L1053">        double d = Math.sqrt(m_DistanceFunction.distance(query_chi.p(), ele.n</span>
+<span class="nc" id="L1054">            .p(), upper_dist * upper_dist));</span>
+<span class="nc bnc" id="L1055" title="All 2 branches missed.">        if (m_TreeStats != null)</span>
+<span class="nc" id="L1056">          m_TreeStats.incrPointCount();</span>
+<span class="nc bnc" id="L1057" title="All 2 branches missed.">        if (d &lt;= upper_dist) {</span>
+<span class="nc bnc" id="L1058" title="All 2 branches missed.">          if (d &lt; new_upper_k.peek().distance)</span>
+<span class="nc" id="L1059">            update(new_upper_k, d);</span>
+<span class="nc" id="L1060">          d_node temp = new d_node(d, ele.n);</span>
+<span class="nc" id="L1061">          new_zero_set.push(temp);</span>
+<span class="nc bnc" id="L1062" title="All 2 branches missed.">          if (m_TreeStats != null)</span>
+<span class="nc" id="L1063">            m_TreeStats.incrLeafCount();</span>
+        }//end if(d&lt;newupperbound)
+      }//end if(shell(...
+    }//end for
+<span class="nc" id="L1067">  }</span>
+  
+
+  /**
+   * Copies the contents of one set of cover sets to the other. It
+   * is required if we are going to inspect child of some query node 
+   * (if the queries are given in batch in the form of a cover tree).
+   * For each level, only those nodes are copied to the new set 
+   * which are inside the query ball of query_chi at that level.
+   * 
+   * @param query_chi The child node of our query node that we are 
+   * going to inspect. 
+   * @param new_upper_k New heap that will store the distances of the
+   * k NNs for query_chi.
+   * @param cover_sets The cover_sets of query_chi's parent, which
+   * need to be copied to new_cover_sets.
+   * @param new_cover_sets The new set of cover_sets that need to
+   * contain contents of cover_sets. 
+   * @param current_scale The scale/level we are inspecting in our 
+   * cover tree.
+   * @param max_scale The maximum level so far possible in our 
+   * search (this is only updated as we descend and a deeper
+   * child is found inside the query ball).   
+   * @throws Exception If there is problem.
+   */
+  protected void copy_cover_sets(CoverTreeNode query_chi, MyHeap new_upper_k,
+      		Stack&lt;Stack&lt;d_node&gt;&gt; cover_sets,
+      		Stack&lt;Stack&lt;d_node&gt;&gt; new_cover_sets,
+      		int current_scale, int max_scale) throws Exception {
+<span class="nc" id="L1096">    new_cover_sets.clear();</span>
+<span class="nc bnc" id="L1097" title="All 2 branches missed.">    for (; current_scale &lt;= max_scale; current_scale++) {</span>
+      d_node ele;
+<span class="nc" id="L1099">      Stack&lt;d_node&gt; cover_set_currentscale = getCoverSet(current_scale,</span>
+<span class="nc" id="L1100">          cover_sets);</span>
+<span class="nc bnc" id="L1101" title="All 2 branches missed.">      for (int i = 0; i &lt; cover_set_currentscale.length; i++) { // ; ele != end;</span>
+                                                                // ele++) {
+<span class="nc" id="L1103">        ele = cover_set_currentscale.element(i);</span>
+<span class="nc" id="L1104">        double upper_dist = new_upper_k.peek().distance + query_chi.max_dist</span>
+<span class="nc" id="L1105">            + ele.n.max_dist;</span>
+<span class="nc bnc" id="L1106" title="All 2 branches missed.">        if (shell(ele.dist, query_chi.parent_dist, upper_dist)) {</span>
+<span class="nc" id="L1107">          double d = Math.sqrt(m_DistanceFunction.distance(query_chi.p(), ele.n</span>
+<span class="nc" id="L1108">              .p(), upper_dist * upper_dist));</span>
+<span class="nc bnc" id="L1109" title="All 2 branches missed.">          if (m_TreeStats != null)</span>
+<span class="nc" id="L1110">            m_TreeStats.incrPointCount();</span>
+<span class="nc bnc" id="L1111" title="All 2 branches missed.">          if (d &lt;= upper_dist) {</span>
+<span class="nc bnc" id="L1112" title="All 2 branches missed.">            if (d &lt; new_upper_k.peek().distance)</span>
+<span class="nc" id="L1113">              update(new_upper_k, d);</span>
+<span class="nc" id="L1114">            d_node temp = new d_node(d, ele.n);</span>
+<span class="nc" id="L1115">            new_cover_sets.element(current_scale).push(temp);</span>
+<span class="nc bnc" id="L1116" title="All 2 branches missed.">            if (m_TreeStats != null)</span>
+<span class="nc" id="L1117">              m_TreeStats.incrIntNodeCount();</span>
+          }// end if(d&lt;=..
+        }// end if(shell(...
+      }// end for(coverset_i)
+    }// end for(scales)
+<span class="nc" id="L1122">  }</span>
+  
+
+  /**
+   * Prints the given cover sets and zero set.
+   * 
+   * @param cover_sets The cover sets to print.
+   * @param zero_set The zero set to print.  
+   * @param current_scale The scale/level to start printing
+   * the cover sets from. 
+   * @param max_scale The max scale/level to print the cover
+   * sets upto. 
+   */
+  void print_cover_sets(Stack&lt;Stack&lt;d_node&gt;&gt; cover_sets,
+      Stack&lt;d_node&gt; zero_set, int current_scale, int max_scale) {
+    d_node ele;
+<span class="nc" id="L1138">    println(&quot;cover set = &quot;);</span>
+<span class="nc bnc" id="L1139" title="All 2 branches missed.">    for (; current_scale &lt;= max_scale; current_scale++) {</span>
+<span class="nc" id="L1140">      println(&quot;&quot; + current_scale);</span>
+<span class="nc bnc" id="L1141" title="All 2 branches missed.">      for (int i = 0; i &lt; cover_sets.element(current_scale).length; i++) {</span>
+<span class="nc" id="L1142">        ele = cover_sets.element(current_scale).element(i);</span>
+<span class="nc" id="L1143">        CoverTreeNode n = ele.n;</span>
+<span class="nc" id="L1144">        println(n.p());</span>
+      }
+    }
+<span class="nc" id="L1147">    println(&quot;infinity&quot;);</span>
+<span class="nc bnc" id="L1148" title="All 2 branches missed.">    for (int i = 0; i &lt; zero_set.length; i++) {</span>
+<span class="nc" id="L1149">      ele = zero_set.element(i);</span>
+<span class="nc" id="L1150">      CoverTreeNode n = ele.n;</span>
+<span class="nc" id="L1151">      println(n.p());</span>
+    }
+<span class="nc" id="L1153">  }</span>
+  
+  
+  /**
+   * Swap two nodes in a cover set.
+   * 
+   * @param a The index first node.
+   * @param b The index of second node.
+   * @param cover_set The cover set in which the two nodes are.
+   */
+
+  protected void SWAP(int a, int b, Stack&lt;d_node&gt;cover_set) {				
+<span class="nc" id="L1165">    d_node tmp = cover_set.element(a);</span>
+<span class="nc" id="L1166">    cover_set.set(a, cover_set.element(b));</span>
+<span class="nc" id="L1167">    cover_set.set(b, tmp);</span>
+<span class="nc" id="L1168">  }</span>
+  
+  
+  
+  /**
+   * Returns the difference of two given nodes distance to 
+   * the query. It is used in half-sorting a cover set. 
+   *   
+   * @param p1 The index of first node.
+   * @param p2 The index of second node.
+   * @param cover_set The cover set containing the two given
+   * nodes.
+   * @return dist_to_query_of_p1 - dist_to_query_of_p2
+   */
+  
+  protected double compare(final int p1, final int p2, Stack&lt;d_node&gt; cover_set) {
+<span class="nc" id="L1184">    return cover_set.element(p1).dist - cover_set.element(p2).dist;</span>
+  }
+  
+  /**
+   * Half-sorts a cover set, so that nodes nearer to the query
+   * are at the front. 
+   * @param cover_set The cover set to sort.
+   */
+
+  protected void halfsort(Stack&lt;d_node&gt; cover_set) {
+<span class="nc bnc" id="L1194" title="All 2 branches missed.">    if(cover_set.length &lt;= 1)</span>
+<span class="nc" id="L1195">      return;</span>
+<span class="nc" id="L1196">    int start=0;</span>
+<span class="nc" id="L1197">    int hi = cover_set.length-1;</span>
+<span class="nc" id="L1198">    int right = hi;</span>
+    int left;
+    
+<span class="nc bnc" id="L1201" title="All 2 branches missed.">    while (right &gt; start) {</span>
+<span class="nc" id="L1202">      int mid = start + ((hi - start) &gt;&gt; 1);</span>
+
+<span class="nc" id="L1204">      boolean jumpover = false;</span>
+<span class="nc bnc" id="L1205" title="All 2 branches missed.">      if (compare(mid, start, cover_set) &lt; 0.0)</span>
+<span class="nc" id="L1206">        SWAP(mid, start, cover_set);</span>
+<span class="nc bnc" id="L1207" title="All 2 branches missed.">      if (compare(hi, mid, cover_set) &lt; 0.0)</span>
+<span class="nc" id="L1208">        SWAP(mid, hi, cover_set);</span>
+      else
+<span class="nc" id="L1210">        jumpover = true;</span>
+<span class="nc bnc" id="L1211" title="All 4 branches missed.">      if (!jumpover &amp;&amp; compare(mid, start, cover_set) &lt; 0.0)</span>
+<span class="nc" id="L1212">        SWAP(mid, start, cover_set);</span>
+      jump_over:
+      ;
+
+<span class="nc" id="L1216">      left = start + 1;</span>
+<span class="nc" id="L1217">      right = hi - 1;</span>
+
+      do {
+<span class="nc bnc" id="L1220" title="All 2 branches missed.">        while (compare(left, mid, cover_set) &lt; 0.0)</span>
+<span class="nc" id="L1221">          left++;</span>
+
+<span class="nc bnc" id="L1223" title="All 2 branches missed.">        while (compare(mid, right, cover_set) &lt; 0.0)</span>
+<span class="nc" id="L1224">          right--;</span>
+
+<span class="nc bnc" id="L1226" title="All 2 branches missed.">        if (left &lt; right) {</span>
+<span class="nc" id="L1227">          SWAP(left, right, cover_set);</span>
+<span class="nc bnc" id="L1228" title="All 2 branches missed.">          if (mid == left)</span>
+<span class="nc" id="L1229">            mid = right;</span>
+<span class="nc bnc" id="L1230" title="All 2 branches missed.">          else if (mid == right)</span>
+<span class="nc" id="L1231">            mid = left;</span>
+<span class="nc" id="L1232">          left++;</span>
+<span class="nc" id="L1233">          right--;</span>
+<span class="nc bnc" id="L1234" title="All 2 branches missed.">        } else if (left == right) {</span>
+<span class="nc" id="L1235">          left++;</span>
+<span class="nc" id="L1236">          right--;</span>
+<span class="nc" id="L1237">          break;</span>
+        }
+<span class="nc bnc" id="L1239" title="All 2 branches missed.">      } while (left &lt;= right);</span>
+<span class="nc" id="L1240">      hi = right;</span>
+    }
+<span class="nc" id="L1242">  }</span>
+
+  /**
+   * Function to check if a child node can be inside a query ball, 
+   * without calculating the child node's distance to the query.
+   * This further avoids unnecessary distance calculation. 
+   *  
+   * @param parent_query_dist The distance of parent to the query
+   * @param child_parent_dist The distance of child to the parent.
+   * @param upper_bound The distance to the query of the best kth 
+   * NN found so far.
+   * @return true If child can be inside the query ball.
+   */
+  protected boolean shell(double parent_query_dist, double child_parent_dist, double upper_bound) {
+<span class="nc bnc" id="L1256" title="All 2 branches missed.">    return parent_query_dist - child_parent_dist &lt;= upper_bound;</span>
+  }
+  
+  /**
+   * This functions adds nodes for inspection at the next level during NN 
+   * search. The internal nodes are added to one of the cover sets (at 
+   * the level of the child node which is added) and leaf nodes are
+   * added to the zero set.  
+   *  
+   * An optimization to consider:
+   * Make all distance evaluations occur in descend.
+   * 
+   * Instead of passing a cover_set, pass a stack of cover sets.  The
+   * last element holds d_nodes with your distance.  The next lower
+   * element holds a d_node with the distance to your query parent,
+   * next = query grand parent, etc..
+   * 
+   * Compute distances in the presence of the tighter upper bound.
+   * @param query The query (in shape of a cover tree node, as we 
+   * are doing batch searching).
+   * @param upper_k Heap containing distances of best k-NNs found so 
+   * far.
+   * @param current_scale The current scale/level being looked at in 
+   * the tree.
+   * @param max_scale The max scale/level that has so far been looked
+   * at.
+   * @param cover_sets The cover sets of tree nodes for each level of 
+   * our trees for.
+   * @param zero_set The set containing leaf nodes.
+   * @return A new max_scale, if we descend to a deeper level.
+   * @throws Exception If there is some problem (in updating the 
+   * heap upper_k).
+   */
+  protected int descend(final CoverTreeNode query, MyHeap upper_k,
+      int current_scale, int max_scale, // amk14comment: make sure this gets
+                                        // passed by reference in Java
+      Stack&lt;Stack&lt;d_node&gt;&gt; cover_sets, // amk14comment: contains children in
+                                        // set Q in paper
+      Stack&lt;d_node&gt; zero_set) // amk14comment: zeroset contains the children at
+                              // the lowest level i.e. -infinity
+      throws Exception {
+    d_node parent;
+<span class="nc" id="L1298">    Stack&lt;d_node&gt; cover_set_currentscale = getCoverSet(current_scale,</span>
+<span class="nc" id="L1299">        cover_sets);</span>
+<span class="nc bnc" id="L1300" title="All 2 branches missed.">    for (int i = 0; i &lt; cover_set_currentscale.length; i++) {</span>
+<span class="nc" id="L1301">      parent = cover_set_currentscale.element(i);</span>
+<span class="nc" id="L1302">      CoverTreeNode par = parent.n;</span>
+<span class="nc" id="L1303">      double upper_dist = upper_k.peek().distance + query.max_dist</span>
+<span class="nc" id="L1304">          + query.max_dist; // *upper_bound + query-&gt;max_dist + query-&gt;max_dist;</span>
+<span class="nc bnc" id="L1305" title="All 2 branches missed.">      if (parent.dist &lt;= upper_dist + par.max_dist) {</span>
+        CoverTreeNode chi;
+<span class="nc bnc" id="L1307" title="All 4 branches missed.">        if (par == m_Root &amp;&amp; par.num_children == 0) // if our tree consists of</span>
+                                                    // only one root(which is
+                                                    // also leaf) node
+<span class="nc" id="L1310">          chi = par;</span>
+        else
+<span class="nc" id="L1312">          chi = par.children.element(0);</span>
+<span class="nc bnc" id="L1313" title="All 2 branches missed.">        if (parent.dist &lt;= upper_dist + chi.max_dist) { // amk14comment: looking</span>
+                                                        // at child_0 (which is
+                                                        // the parent itself)
+<span class="nc bnc" id="L1316" title="All 2 branches missed.">          if (chi.num_children &gt; 0) {</span>
+<span class="nc bnc" id="L1317" title="All 2 branches missed.">            if (max_scale &lt; chi.scale) {</span>
+<span class="nc" id="L1318">              max_scale = chi.scale;</span>
+            }
+<span class="nc" id="L1320">            d_node temp = new d_node(parent.dist, chi);</span>
+<span class="nc" id="L1321">            getCoverSet(chi.scale, cover_sets).push(temp);</span>
+<span class="nc bnc" id="L1322" title="All 2 branches missed.">            if (m_TreeStats != null)</span>
+<span class="nc" id="L1323">              m_TreeStats.incrIntNodeCount();</span>
+<span class="nc bnc" id="L1324" title="All 2 branches missed.">          } else if (parent.dist &lt;= upper_dist) {</span>
+<span class="nc" id="L1325">            d_node temp = new d_node(parent.dist, chi);</span>
+<span class="nc" id="L1326">            zero_set.push(temp);</span>
+<span class="nc bnc" id="L1327" title="All 2 branches missed.">            if (m_TreeStats != null)</span>
+<span class="nc" id="L1328">              m_TreeStats.incrLeafCount();</span>
+          }
+        }
+<span class="nc bnc" id="L1331" title="All 2 branches missed.">        for (int c = 1; c &lt; par.num_children; c++) {</span>
+<span class="nc" id="L1332">          chi = par.children.element(c);</span>
+<span class="nc" id="L1333">          double upper_chi = upper_k.peek().distance + chi.max_dist</span>
+<span class="nc" id="L1334">              + query.max_dist + query.max_dist; // *upper_bound + chi.max_dist</span>
+                                                  // + query.max_dist +
+                                                  // query.max_dist;
+<span class="nc bnc" id="L1337" title="All 2 branches missed.">          if (shell(parent.dist, chi.parent_dist, upper_chi)) { // amk14comment:parent_query_dist</span>
+                                                                // -
+                                                                // child_parent_dist
+                                                                // &lt;= upper_chi - if child can be 
+                                                                // inside the shrunk query ball 
+            // NOT the same as above parent-&gt;dist &lt;= upper_dist + chi-&gt;max_dist
+<span class="nc" id="L1343">            double d = Math.sqrt(m_DistanceFunction.distance(query.p(),</span>
+<span class="nc" id="L1344">                chi.p(), upper_chi * upper_chi, m_TreeStats));</span>
+<span class="nc bnc" id="L1345" title="All 2 branches missed.">            if (m_TreeStats != null)</span>
+<span class="nc" id="L1346">              m_TreeStats.incrPointCount();</span>
+<span class="nc bnc" id="L1347" title="All 2 branches missed.">            if (d &lt;= upper_chi) { //if child is inside the shrunk query ball</span>
+<span class="nc bnc" id="L1348" title="All 2 branches missed.">              if (d &lt; upper_k.peek().distance) // *upper_bound)</span>
+<span class="nc" id="L1349">                update(upper_k, d);</span>
+<span class="nc bnc" id="L1350" title="All 2 branches missed.">              if (chi.num_children &gt; 0) {</span>
+<span class="nc bnc" id="L1351" title="All 2 branches missed.">                if (max_scale &lt; chi.scale) {</span>
+<span class="nc" id="L1352">                  max_scale = chi.scale;</span>
+                }
+<span class="nc" id="L1354">                d_node temp = new d_node(d, chi);</span>
+<span class="nc" id="L1355">                getCoverSet(chi.scale, cover_sets).push(temp);</span>
+<span class="nc bnc" id="L1356" title="All 2 branches missed.">                if (m_TreeStats != null)</span>
+<span class="nc" id="L1357">                  m_TreeStats.incrIntNodeCount();</span>
+<span class="nc bnc" id="L1358" title="All 2 branches missed.">              } else if (d &lt;= upper_chi - chi.max_dist) {</span>
+<span class="nc" id="L1359">                d_node temp = new d_node(d, chi);</span>
+<span class="nc" id="L1360">                zero_set.push(temp);</span>
+<span class="nc bnc" id="L1361" title="All 2 branches missed.">                if (m_TreeStats != null)</span>
+<span class="nc" id="L1362">                  m_TreeStats.incrLeafCount();</span>
+              }
+            }//end if(d&lt;=upper_chi)
+          }//end if(shell(parent.dist,...
+        }//end for(child_1 to n)
+      }//end if(parent.dist&lt;=upper_dist..
+    }//end for(covers_sets[current_scale][i])
+<span class="nc" id="L1369">    return max_scale;</span>
+  }
+  
+  /**
+   * Does a brute force NN search on the nodes in the given zero set.
+   * A zero set might have some nodes added to it that were not k-NNs,
+   * so need to do a brute-force to pick only the k-NNs (without 
+   * calculating distances, as each node in the zero set already had 
+   * its distance calculated to the query, which is stored with the
+   * node).
+   *  
+   * @param k The k in kNN.
+   * @param query The query. 
+   * @param zero_set The zero set on which the brute force NN search
+   * is performed.
+   * @param upper_k The heap storing distances of k-NNs found during
+   * the search.
+   * @param results The returned k-NNs.
+   * @throws Exception If there is somem problem.
+   */
+  protected void brute_nearest(final int k, final CoverTreeNode query,
+      Stack&lt;d_node&gt; zero_set, MyHeap upper_k, Stack&lt;NeighborList&gt; results)
+      throws Exception {
+<span class="nc bnc" id="L1392" title="All 2 branches missed.">    if (query.num_children &gt; 0) {</span>
+<span class="nc" id="L1393">      Stack&lt;d_node&gt; new_zero_set = new Stack&lt;d_node&gt;();</span>
+<span class="nc" id="L1394">      CoverTreeNode query_chi = query.children.element(0);</span>
+<span class="nc" id="L1395">      brute_nearest(k, query_chi, zero_set, upper_k, results);</span>
+<span class="nc" id="L1396">      MyHeap new_upper_k = new MyHeap(k);</span>
+
+<span class="nc bnc" id="L1398" title="All 2 branches missed.">      for (int i = 1; i &lt; query.children.length; i++) {</span>
+<span class="nc" id="L1399">        query_chi = query.children.element(i);</span>
+<span class="nc" id="L1400">        setter(new_upper_k, upper_k.peek().distance + query_chi.parent_dist, k);</span>
+<span class="nc" id="L1401">        copy_zero_set(query_chi, new_upper_k, zero_set, new_zero_set);</span>
+<span class="nc" id="L1402">        brute_nearest(k, query_chi, new_zero_set, new_upper_k, results);</span>
+      }
+    } else {
+<span class="nc" id="L1405">      NeighborList temp = new NeighborList(k);</span>
+      d_node ele;
+<span class="nc bnc" id="L1407" title="All 2 branches missed.">      for (int i = 0; i &lt; zero_set.length; i++) {</span>
+<span class="nc" id="L1408">        ele = zero_set.element(i);</span>
+<span class="nc bnc" id="L1409" title="All 2 branches missed.">        if (ele.dist &lt;= upper_k.peek().distance) {</span>
+<span class="nc" id="L1410">          temp.insertSorted(ele.dist, ele.n.p()); // temp.push(ele.n.p());</span>
+        }
+      }
+<span class="nc" id="L1413">      results.push(temp);</span>
+    }
+<span class="nc" id="L1415">  }</span>
+  
+  /**
+   * Performs a recursive k-NN search for a given batch of queries provided in the
+   * form of a cover tree. P.S.: This function should not be called from outside. 
+   * Outside classes should use kNearestNeighbours() instead.
+   *  
+   * @param k The number of NNs to find.
+   * @param query_node The node of the query tree to start the search from.
+   * @param cover_sets The set of sets that contains internal
+   * nodes that were found to be inside the query ball at previous scales/levels
+   * (intially there would be just the root node at root level).
+   * @param zero_set The set that'll contain the leaf nodes that are found to
+   * be inside the query ball.
+   * @param current_scale The level/scale to do the search from (this value
+   * would be used to inspect the cover set in the provided set of cover sets).
+   * @param max_scale The max scale/level that has so far been inspected.
+   * @param upper_k The heap containing distances of the best k-NNs found so
+   * far (initialized to Double.POSITIVE_INFINITY).
+   * @param results The list of returned k-NNs.
+   * @throws Exception If there is some problem during the search.
+   */
+  protected void internal_batch_nearest_neighbor(final int k, 
+      					final CoverTreeNode query_node,
+      					Stack&lt;Stack&lt;d_node&gt;&gt; cover_sets,
+      					Stack&lt;d_node&gt; zero_set,
+      					int current_scale,
+      					int max_scale,
+      					MyHeap upper_k,
+      					Stack&lt;NeighborList&gt; results) throws Exception {
+<span class="nc bnc" id="L1445" title="All 2 branches missed.">    if (current_scale &gt; max_scale) { // All remaining points are in the zero set.</span>
+<span class="nc" id="L1446">      brute_nearest(k, query_node, zero_set, upper_k, results);</span>
+    } else {
+      // Our query_node has too much scale. Reduce.
+<span class="nc bnc" id="L1449" title="All 4 branches missed.">      if (query_node.scale &lt;= current_scale &amp;&amp; query_node.scale != 100) { // amk14comment:if j&gt;=i in paper</span>
+        CoverTreeNode query_chi;
+<span class="nc" id="L1451">        Stack&lt;d_node&gt; new_zero_set = new Stack&lt;d_node&gt;();</span>
+<span class="nc" id="L1452">        Stack&lt;Stack&lt;d_node&gt;&gt; new_cover_sets = new Stack&lt;Stack&lt;d_node&gt;&gt;();</span>
+<span class="nc" id="L1453">        MyHeap new_upper_k = new MyHeap(k);</span>
+
+<span class="nc bnc" id="L1455" title="All 2 branches missed.">        for (int i = 1; i &lt; query_node.num_children; i++) { //processing child_1 and onwards</span>
+<span class="nc" id="L1456">          query_chi = query_node.children.element(i);</span>
+<span class="nc" id="L1457">          setter(new_upper_k, upper_k.peek().distance + query_chi.parent_dist, k);</span>
+          //copy the zero set that satisfy a certain bound to the new zero set
+<span class="nc" id="L1459">          copy_zero_set(query_chi, new_upper_k, zero_set, new_zero_set);</span>
+          //copy the coversets[current_scale] nodes that satisfy a certain
+          //bound to the new_cover_sets[current_scale]
+<span class="nc" id="L1462">          copy_cover_sets(query_chi, new_upper_k, cover_sets, new_cover_sets,</span>
+<span class="nc" id="L1463">              current_scale, max_scale);</span>
+          //search for the query_node child in the nodes nearer to it.
+<span class="nc" id="L1465">          internal_batch_nearest_neighbor(k, query_chi, new_cover_sets,</span>
+<span class="nc" id="L1466">              new_zero_set, current_scale, max_scale, new_upper_k, results);</span>
+        }
+<span class="nc" id="L1468">        new_cover_sets = null;</span>
+<span class="nc" id="L1469">        new_zero_set = null;</span>
+<span class="nc" id="L1470">        new_upper_k = null;</span>
+        // now doing child_0 //which is the parent itself, that's why we don't
+        // need new_zero_set or new_cover_sets
+<span class="nc" id="L1473">        internal_batch_nearest_neighbor(k, query_node.children.element(0),</span>
+<span class="nc" id="L1474">            cover_sets, zero_set, current_scale, max_scale, upper_k, results);</span>
+      } else { // reduce cover set scale -- amk14comment: if j&lt;i in paper
+<span class="nc" id="L1476">        Stack&lt;d_node&gt; cover_set_i = getCoverSet(current_scale, cover_sets);</span>
+        // println(&quot;sorting&quot;);
+<span class="nc" id="L1478">        halfsort(cover_set_i);</span>
+<span class="nc" id="L1479">        max_scale = descend(query_node, upper_k, current_scale, max_scale,</span>
+<span class="nc" id="L1480">            cover_sets, zero_set);</span>
+<span class="nc" id="L1481">        cover_set_i.clear();</span>
+<span class="nc" id="L1482">        current_scale++;</span>
+<span class="nc" id="L1483">        internal_batch_nearest_neighbor(k, query_node, cover_sets, zero_set,</span>
+<span class="nc" id="L1484">            current_scale, max_scale, upper_k, results);</span>
+      }
+    }
+<span class="nc" id="L1487">  }</span>
+  
+  /**
+   * Performs k-NN search for a batch of queries provided in the form
+   * of a cover tree. P.S.: Outside classes should call 
+   * kNearestNeighbours().
+   * 
+   * @param k The number of k-NNs to find.
+   * @param tree_root The root of the cover tree on which k-NN search
+   * is to be performed.
+   * @param query_root The root of the cover tree consisting of queries. 
+   * @param results The list of returned k-NNs.
+   * @throws Exception If there is some problem during the search.
+   */
+  protected void batch_nearest_neighbor(final int k, CoverTreeNode tree_root, CoverTreeNode query_root, 
+      			      Stack&lt;NeighborList&gt; results) throws Exception {
+    //amk14comment: These contain the covering nodes at each level    
+<span class="nc" id="L1504">    Stack&lt;Stack&lt;d_node&gt;&gt; cover_sets = new Stack&lt;Stack&lt;d_node&gt;&gt;(100);  </span>
+    //amk14comment: These contain the nodes thought to be nearest at the leaf level
+<span class="nc" id="L1506">    Stack&lt;d_node&gt; zero_set = new Stack&lt;d_node&gt;(); </span>
+<span class="nc" id="L1507">    MyHeap upper_k = new MyHeap(k);</span>
+    //probably not needed //amk14comment:initializes the array to MAXFLOAT
+<span class="nc" id="L1509">    setter(upper_k, Double.POSITIVE_INFINITY, k); </span>
+
+    // amk14comment:distance from top query point to top node point
+<span class="nc" id="L1512">    double treeroot_to_query_dist = Math.sqrt(m_DistanceFunction.distance(</span>
+<span class="nc" id="L1513">        query_root.p(), tree_root.p(), Double.POSITIVE_INFINITY));</span>
+    // amk14comment:probably stores the kth smallest distances encountered so
+    // far
+<span class="nc" id="L1516">    update(upper_k, treeroot_to_query_dist);</span>
+
+<span class="nc" id="L1518">    d_node temp = new d_node(treeroot_to_query_dist, tree_root);</span>
+<span class="nc" id="L1519">    getCoverSet(0, cover_sets).push(temp);</span>
+
+    // incrementing counts for the root node
+<span class="nc bnc" id="L1522" title="All 2 branches missed.">    if (m_TreeStats != null) {</span>
+<span class="nc" id="L1523">      m_TreeStats.incrPointCount();</span>
+<span class="nc bnc" id="L1524" title="All 2 branches missed.">      if (tree_root.num_children &gt; 0)</span>
+<span class="nc" id="L1525">        m_TreeStats.incrIntNodeCount();</span>
+      else
+<span class="nc" id="L1527">        m_TreeStats.incrLeafCount();</span>
+    }
+
+<span class="nc" id="L1530">    internal_batch_nearest_neighbor(k, query_root, cover_sets, zero_set, 0, 0,</span>
+<span class="nc" id="L1531">        upper_k, results);</span>
+<span class="nc" id="L1532">  }</span>
+  
+  /**
+   * Performs k-NN serach for a single given query/test Instance.
+   * 
+   * @param target The query/test instance.
+   * @param k Number of k-NNs to find.
+   * @return List of k-NNs.
+   * @throws Exception If there is some problem during the search
+   * for k-NNs.
+   */
+  protected NeighborList findKNearest(final Instance target, final int k) throws Exception {
+<span class="nc" id="L1544">    Stack&lt;d_node&gt; cover_set_current = new Stack&lt;d_node&gt;(),</span>
+    	           cover_set_next,
+<span class="nc" id="L1546">    	           zero_set = new Stack&lt;d_node&gt;();</span>
+    CoverTreeNode parent, child; d_node par;
+<span class="nc" id="L1548">    MyHeap upper_k = new MyHeap(k);    </span>
+<span class="nc" id="L1549">    double d = Math.sqrt(m_DistanceFunction.distance(m_Root.p(), target, Double.POSITIVE_INFINITY, m_TreeStats)),</span>
+           upper_bound;
+<span class="nc" id="L1551">    cover_set_current.push(new d_node(d, m_Root));    </span>
+<span class="nc" id="L1552">    setter(upper_k, Double.POSITIVE_INFINITY, k);</span>
+<span class="nc" id="L1553">    this.update(upper_k, d);</span>
+    //updating stats for the root node
+<span class="nc bnc" id="L1555" title="All 2 branches missed.">    if(m_TreeStats!=null) {</span>
+<span class="nc bnc" id="L1556" title="All 2 branches missed.">      	if(m_Root.num_children &gt; 0)</span>
+<span class="nc" id="L1557">      	  m_TreeStats.incrIntNodeCount();</span>
+      	else
+<span class="nc" id="L1559">      	  m_TreeStats.incrLeafCount();</span>
+<span class="nc" id="L1560">      	m_TreeStats.incrPointCount();</span>
+    }
+    
+    //if root is the only node
+<span class="nc bnc" id="L1564" title="All 2 branches missed.">    if(m_Root.num_children==0) {</span>
+<span class="nc" id="L1565">      NeighborList list = new NeighborList(k);</span>
+<span class="nc" id="L1566">      list.insertSorted(d, m_Root.p());</span>
+<span class="nc" id="L1567">      return list;</span>
+    }
+    //else
+<span class="nc bnc" id="L1570" title="All 2 branches missed.">    while(cover_set_current.length&gt;0) {</span>
+<span class="nc" id="L1571">      cover_set_next = new Stack&lt;d_node&gt;();</span>
+<span class="nc bnc" id="L1572" title="All 2 branches missed.">      for(int i=0; i&lt;cover_set_current.length; i++) {</span>
+<span class="nc" id="L1573">	par = cover_set_current.element(i);</span>
+<span class="nc" id="L1574">	parent = par.n;</span>
+<span class="nc bnc" id="L1575" title="All 2 branches missed.">	for(int c=0; c&lt;parent.num_children; c++) {</span>
+<span class="nc" id="L1576">	  child = parent.children.element(c);</span>
+<span class="nc" id="L1577">	  upper_bound = upper_k.peek().distance;</span>
+<span class="nc bnc" id="L1578" title="All 2 branches missed.">	  if(c==0)</span>
+<span class="nc" id="L1579">	    d = par.dist;</span>
+	  else {
+<span class="nc" id="L1581">	    d = upper_bound + child.max_dist;</span>
+<span class="nc" id="L1582">	    d = Math.sqrt(m_DistanceFunction.distance(child.p(), target, d*d, m_TreeStats));</span>
+<span class="nc bnc" id="L1583" title="All 2 branches missed.">	      if(m_TreeStats!=null)</span>
+<span class="nc" id="L1584">		m_TreeStats.incrPointCount();</span>
+	  }
+<span class="nc bnc" id="L1586" title="All 2 branches missed.">	  if(d &lt;= (upper_bound + child.max_dist)) {</span>
+<span class="nc bnc" id="L1587" title="All 4 branches missed.">	    if(c&gt;0 &amp;&amp; d &lt; upper_bound) {</span>
+<span class="nc" id="L1588">	      update(upper_k, d);</span>
+	    }
+<span class="nc bnc" id="L1590" title="All 2 branches missed.">	    if(child.num_children &gt; 0) {</span>
+<span class="nc" id="L1591">	      cover_set_next.push(new d_node(d, child));</span>
+<span class="nc bnc" id="L1592" title="All 2 branches missed.">	      if(m_TreeStats!=null)</span>
+<span class="nc" id="L1593">		m_TreeStats.incrIntNodeCount();</span>
+	    }
+<span class="nc bnc" id="L1595" title="All 2 branches missed.">	    else if (d &lt;= upper_bound){</span>
+<span class="nc" id="L1596">	      zero_set.push(new d_node(d, child));</span>
+<span class="nc bnc" id="L1597" title="All 2 branches missed.">	      if(m_TreeStats!=null)</span>
+<span class="nc" id="L1598">		m_TreeStats.incrLeafCount();</span>
+	    }
+	  }
+	} //end for current_set children
+      } //end for current_set elements
+<span class="nc" id="L1603">      cover_set_current = cover_set_next;</span>
+    } //end while(curret_set not empty)
+    
+<span class="nc" id="L1606">    NeighborList list = new NeighborList(k);</span>
+    d_node tmpnode;
+<span class="nc" id="L1608">    upper_bound = upper_k.peek().distance;      </span>
+<span class="nc bnc" id="L1609" title="All 2 branches missed.">    for(int i=0; i&lt;zero_set.length; i++) {</span>
+<span class="nc" id="L1610">      tmpnode = zero_set.element(i);</span>
+<span class="nc bnc" id="L1611" title="All 2 branches missed.">      if(tmpnode.dist &lt;= upper_bound)</span>
+<span class="nc" id="L1612">	list.insertSorted(tmpnode.dist, tmpnode.n.p());</span>
+    }
+    
+<span class="nc bnc" id="L1615" title="All 2 branches missed.">    if(list.currentLength()&lt;=0)</span>
+<span class="nc" id="L1616">      throw new Exception(&quot;Error: No neighbour found. This cannot happen&quot;);</span>
+    
+<span class="nc" id="L1618">    return list;</span>
+  }
+  
+/*********************************NNSearch related stuff above.********************/  
+
+  /**
+   * Returns k-NNs of a given target instance, from among the previously
+   * supplied training instances (supplied through setInstances method)
+   * P.S.: May return more than k-NNs if more one instances have
+   * the same distance to the target as the kth NN.
+   * 
+   * @param target The instance for which k-NNs are required.
+   * @param k The number of k-NNs to find.
+   * @return The k-NN instances of the given target instance. 
+   * @throws Exception If there is some problem find the k-NNs.
+   */
+  public Instances kNearestNeighbours(Instance target, int k) throws Exception {
+<span class="nc bnc" id="L1635" title="All 2 branches missed.">    if(m_Stats!=null)</span>
+<span class="nc" id="L1636">      m_Stats.searchStart();</span>
+<span class="nc" id="L1637">    CoverTree querytree = new CoverTree();</span>
+<span class="nc" id="L1638">    Instances insts = new Instances(m_Instances, 0);</span>
+<span class="nc" id="L1639">    insts.add(target);</span>
+<span class="nc" id="L1640">    querytree.setInstances(insts);</span>
+<span class="nc" id="L1641">    Stack&lt;NeighborList&gt; result = new Stack&lt;NeighborList&gt;();</span>
+<span class="nc" id="L1642">    batch_nearest_neighbor(k, this.m_Root, querytree.m_Root, result);</span>
+<span class="nc bnc" id="L1643" title="All 2 branches missed.">    if(m_Stats!=null)</span>
+<span class="nc" id="L1644">      m_Stats.searchFinish();</span>
+
+<span class="nc" id="L1646">    insts = new Instances(m_Instances, 0);</span>
+<span class="nc" id="L1647">    NeighborNode node = result.element(0).getFirst();</span>
+<span class="nc" id="L1648">    m_DistanceList = new double[result.element(0).currentLength()];</span>
+<span class="nc" id="L1649">    int i=0;</span>
+<span class="nc bnc" id="L1650" title="All 2 branches missed.">    while(node != null) {</span>
+<span class="nc" id="L1651">      insts.add(node.m_Instance);</span>
+<span class="nc" id="L1652">      m_DistanceList[i] = node.m_Distance;</span>
+<span class="nc" id="L1653">      i++; node = node.m_Next;</span>
+    }
+<span class="nc" id="L1655">    return insts;</span>
+  }
+  
+  /**
+   * Returns the NN instance of a given target instance, from among
+   * the previously supplied training instances.
+   * 
+   * @param target The instance for which NN is required.
+   * @throws Exception If there is some problem finding the nearest
+   * neighbour.
+   * @return The NN instance of the target instance.
+   */
+  public Instance nearestNeighbour(Instance target) throws Exception {
+<span class="nc" id="L1668">    return kNearestNeighbours(target, 1).instance(0);</span>
+  }
+
+  /**
+   * Returns the distances of the (k)-NN(s) found earlier
+   * by kNearestNeighbours()/nearestNeighbour().
+   * 
+   * @throws Exception If the tree hasn't been built (by calling 
+   * setInstances()), or none of kNearestNeighbours() or 
+   * nearestNeighbour() has been called before. 
+   * @return The distances (in the same order) of the k-NNs. 
+   */
+  public double[] getDistances() throws Exception {
+<span class="nc bnc" id="L1681" title="All 4 branches missed.">    if(m_Instances==null || m_DistanceList==null)</span>
+<span class="nc" id="L1682">      throw new Exception(&quot;The tree has not been supplied with a set of &quot; +</span>
+	  		  &quot;instances or getDistances() has been called &quot; +
+      			  &quot;before calling kNearestNeighbours().&quot;);
+<span class="nc" id="L1685">    return m_DistanceList;</span>
+  }
+  
+  /**
+   * Checks if there is any instance with missing values. Throws an
+   * exception if there is, as KDTree does not handle missing values.
+   * 
+   * @param instances 	the instances to check
+   * @throws Exception 	if missing values are encountered
+   */
+  protected void checkMissing(Instances instances) throws Exception {
+<span class="nc bnc" id="L1696" title="All 2 branches missed.">    for (int i = 0; i &lt; instances.numInstances(); i++) {</span>
+<span class="nc" id="L1697">      Instance ins = instances.instance(i);</span>
+<span class="nc bnc" id="L1698" title="All 2 branches missed.">      for (int j = 0; j &lt; ins.numValues(); j++) {</span>
+<span class="nc bnc" id="L1699" title="All 2 branches missed.">	if (ins.index(j) != ins.classIndex())</span>
+<span class="nc bnc" id="L1700" title="All 2 branches missed.">	  if (ins.isMissingSparse(j)) {</span>
+<span class="nc" id="L1701">	    throw new Exception(&quot;ERROR: KDTree can not deal with missing &quot;</span>
+		+ &quot;values. Please run ReplaceMissingValues filter &quot;
+		+ &quot;on the dataset before passing it on to the KDTree.&quot;);
+	  }
+      }
+    }
+<span class="nc" id="L1707">  }</span>
+
+  /**
+   * Builds the Cover Tree on the given set of instances.
+   * 
+   * @param instances The insts on which the Cover Tree is to be 
+   * built. 
+   * @throws Exception If some error occurs while 
+   * building the Cover Tree
+   */
+  public void setInstances(Instances instances) throws Exception {
+<span class="nc" id="L1718">    super.setInstances(instances);</span>
+<span class="nc" id="L1719">    buildCoverTree(instances);</span>
+<span class="nc" id="L1720">  }</span>
+
+  /** 
+   * Adds an instance to the cover tree. 
+   * P.S.: The current version doesn't allow
+   * addition of instances after batch construction.
+   * 
+   * @param ins The instance to add.
+   * @throws Exception Alway throws this, as current 
+   * implementation doesn't allow addition of instances 
+   * after building.
+   */
+  public void update(Instance ins) throws Exception {
+<span class="nc" id="L1733">    throw new Exception(&quot;BottomUpConstruction method does not allow addition &quot; +</span>
+    &quot;of new Instances.&quot;);
+  }
+
+  /** 
+   * Adds the given instance info. This implementation updates only the 
+   * range datastructures of the EuclideanDistance. Nothing is 
+   * required to be updated in the built Cover Tree.
+   * 
+   * @param ins 	The instance to add the information of. Usually this is
+   * 			the test instance supplied to update the range of 
+   * 			attributes in the distance function.
+   */
+  public void addInstanceInfo(Instance ins) {
+<span class="nc bnc" id="L1747" title="All 2 branches missed.">    if(m_Instances!=null) {</span>
+      try {
+<span class="nc" id="L1749">      m_DistanceFunction.update(ins);</span>
+<span class="nc" id="L1750">      } catch(Exception ex) { ex.printStackTrace(); }</span>
+    }
+    else 
+<span class="nc bnc" id="L1753" title="All 2 branches missed.">      if(m_Instances==null)</span>
+<span class="nc" id="L1754">	      throw new IllegalStateException(&quot;No instances supplied yet. Cannot update without&quot;+</span>
+	                          &quot;supplying a set of instances first.&quot;);
+<span class="nc" id="L1756">  }</span>
+  
+  /**
+   * Sets the distance function to use for nearest neighbour search.
+   * Currently only EuclideanDistance is supported.
+   * 
+   * @param df 		the distance function to use 
+   * @throws Exception 	if not EuclideanDistance
+   */
+  public void setDistanceFunction(DistanceFunction df) throws Exception {
+<span class="nc bnc" id="L1766" title="All 2 branches missed.">    if (!(df instanceof EuclideanDistance))</span>
+<span class="nc" id="L1767">      throw new Exception(&quot;CoverTree currently only works with &quot;</span>
+	  + &quot;EuclideanDistanceFunction.&quot;);
+<span class="nc" id="L1769">    m_DistanceFunction = m_EuclideanDistance = (EuclideanDistance) df;</span>
+<span class="nc" id="L1770">  }</span>
+  
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String baseTipText() {
+<span class="nc" id="L1779">    return &quot;The base for the expansion constant.&quot;;</span>
+  }
+
+  /**
+   * Returns the base in use for expansion constant.
+   * 
+   * @return base 	currently in use.
+   */
+  public double getBase() {
+<span class="nc" id="L1788">    return m_Base;</span>
+  }
+  
+  /**
+   * Sets the base to use for expansion constant.
+   * The 2 in 2^i in the paper.
+   * 
+   * @param b 		the new base;
+   */
+  public void setBase(double b) {
+<span class="nc" id="L1798">    m_Base = b;</span>
+<span class="nc" id="L1799">  }</span>
+  
+  /**
+   * Returns the size of the tree. 
+   * (number of internal nodes + number of leaves)
+   * 
+   * @return 		the size of the tree
+   */
+  public double measureTreeSize() {
+<span class="nc" id="L1808">    return m_NumNodes;</span>
+  }
+  
+  /**
+   * Returns the number of leaves.
+   * 
+   * @return 		the number of leaves
+   */
+  public double measureNumLeaves() {
+<span class="nc" id="L1817">    return m_NumLeaves;</span>
+  }
+  
+  /**
+   * Returns the depth of the tree.
+   * 
+   * @return 		the number of rules
+   */
+  public double measureMaxDepth() {
+<span class="nc" id="L1826">    return m_MaxDepth;</span>
+  }
+    
+  /**
+   * Returns an enumeration of the additional measure names.
+   * 
+   * @return 		an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+<span class="nc" id="L1835">    Vector newVector = new Vector();</span>
+<span class="nc" id="L1836">    newVector.addElement(&quot;measureTreeSize&quot;);</span>
+<span class="nc" id="L1837">    newVector.addElement(&quot;measureNumLeaves&quot;);</span>
+<span class="nc" id="L1838">    newVector.addElement(&quot;measureMaxDepth&quot;);</span>
+<span class="nc bnc" id="L1839" title="All 2 branches missed.">    if(m_Stats!=null) {</span>
+<span class="nc bnc" id="L1840" title="All 2 branches missed.">      for(Enumeration e = m_Stats.enumerateMeasures(); e.hasMoreElements();) {</span>
+<span class="nc" id="L1841">        newVector.addElement(e.nextElement());</span>
+      }
+    }
+<span class="nc" id="L1844">    return newVector.elements();</span>
+  }
+  
+  /**
+   * Returns the value of the named measure.
+   * 
+   * @param additionalMeasureName 	the name of the measure to query for 
+   * 					its value
+   * @return 				the value of the named measure
+   * @throws IllegalArgumentException 	if the named measure is not supported
+   */
+  public double getMeasure(String additionalMeasureName) {
+<span class="nc bnc" id="L1856" title="All 2 branches missed.">    if (additionalMeasureName.compareToIgnoreCase(&quot;measureMaxDepth&quot;) == 0) {</span>
+<span class="nc" id="L1857">      return measureMaxDepth();</span>
+<span class="nc bnc" id="L1858" title="All 2 branches missed.">    } else if (additionalMeasureName.compareToIgnoreCase(&quot;measureTreeSize&quot;) == 0) {</span>
+<span class="nc" id="L1859">      return measureTreeSize();</span>
+<span class="nc bnc" id="L1860" title="All 2 branches missed.">    } else if (additionalMeasureName.compareToIgnoreCase(&quot;measureNumLeaves&quot;) == 0) {</span>
+<span class="nc" id="L1861">      return measureNumLeaves();</span>
+<span class="nc bnc" id="L1862" title="All 2 branches missed.">    } else if(m_Stats!=null) {</span>
+<span class="nc" id="L1863">      return m_Stats.getMeasure(additionalMeasureName);</span>
+    } else {
+<span class="nc" id="L1865">      throw new IllegalArgumentException(additionalMeasureName </span>
+<span class="nc" id="L1866">			  + &quot; not supported (KDTree)&quot;);</span>
+    }
+  }
+  
+  /********Utility print functions.****** */
+  /**
+   * Prints a string to stdout. 
+   * 
+   * @param s The string to print.
+   */
+  protected static void print(String s) {
+<span class="nc" id="L1877">    System.out.print(s);</span>
+<span class="nc" id="L1878">  }</span>
+
+  /** 
+   * Prints a string to stdout followed by 
+   * newline.
+   * 
+   * @param s The string to print. 
+   */
+  protected static void println(String s) {
+<span class="nc" id="L1887">    System.out.println(s);</span>
+<span class="nc" id="L1888">  }</span>
+
+  /** 
+   * Prints an object to stdout.
+   * 
+   * @param o The object to print. 
+   */
+  protected static void print(Object o) {
+<span class="nc" id="L1896">    System.out.print(o);</span>
+<span class="nc" id="L1897">  }</span>
+
+  /** 
+   * Prints an object to stdout followed by 
+   * newline.
+   * 
+   * @param o The object to print.  
+   */
+  protected static void println(Object o) {
+<span class="nc" id="L1906">    System.out.println(o);</span>
+<span class="nc" id="L1907">  }</span>
+
+  /** 
+   * Prints the specified number of spaces.
+   * 
+   * @param s The number of space characters to print.  
+   */
+  protected static void print_space(int s) {
+<span class="nc bnc" id="L1915" title="All 2 branches missed.">    for (int i = 0; i &lt; s; i++)</span>
+<span class="nc" id="L1916">      System.out.print(&quot; &quot;);</span>
+<span class="nc" id="L1917">  }</span>
+
+  /**
+   * Prints a cover tree starting from the given node.
+   * 
+   * @param depth The depth of top_node.
+   * @param top_node The node to start printing from. 
+   */
+  protected static void print(int depth, CoverTreeNode top_node) {
+<span class="nc" id="L1926">    print_space(depth);</span>
+<span class="nc" id="L1927">    println(top_node.p());</span>
+<span class="nc bnc" id="L1928" title="All 2 branches missed.">    if (top_node.num_children &gt; 0) {</span>
+<span class="nc" id="L1929">      print_space(depth);</span>
+<span class="nc" id="L1930">      print(&quot;scale = &quot; + top_node.scale + &quot;\n&quot;);</span>
+<span class="nc" id="L1931">      print_space(depth);</span>
+<span class="nc" id="L1932">      print(&quot;num children = &quot; + top_node.num_children + &quot;\n&quot;);</span>
+<span class="nc" id="L1933">      System.out.flush();</span>
+<span class="nc bnc" id="L1934" title="All 2 branches missed.">      for (int i = 0; i &lt; top_node.num_children; i++)</span>
+<span class="nc" id="L1935">        print(depth + 1, top_node.children.element(i)); // top_node.children[i]);</span>
+    }
+<span class="nc" id="L1937">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1945">    return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+  }
+
+  /** 
+   * Method for testing the class from command line. 
+   * 
+   * @param args The supplied command line arguments.
+   */
+  public static void main(String[] args) {
+<span class="nc bnc" id="L1954" title="All 2 branches missed.">    if (args.length != 1) {</span>
+<span class="nc" id="L1955">      System.err.println(&quot;Usage: CoverTree &lt;ARFF file&gt;&quot;);</span>
+<span class="nc" id="L1956">      System.exit(-1);</span>
+    }
+    try {
+<span class="nc" id="L1959">      Instances insts = null;</span>
+<span class="nc bnc" id="L1960" title="All 2 branches missed.">      if (args[0].endsWith(&quot;.csv&quot;)) {</span>
+<span class="nc" id="L1961">        CSVLoader csv = new CSVLoader();</span>
+<span class="nc" id="L1962">        csv.setFile(new File(args[0]));</span>
+<span class="nc" id="L1963">        insts = csv.getDataSet();</span>
+      } else {
+<span class="nc" id="L1965">        insts = new Instances(new BufferedReader(new FileReader(args[0])));</span>
+      }
+
+<span class="nc" id="L1968">      CoverTree tree = new CoverTree();</span>
+<span class="nc" id="L1969">      tree.setInstances(insts);</span>
+<span class="nc" id="L1970">      print(&quot;Created data tree:\n&quot;);</span>
+<span class="nc" id="L1971">      print(0, tree.m_Root);</span>
+<span class="nc" id="L1972">      println(&quot;&quot;);</span>
+<span class="nc" id="L1973">    } catch (Exception ex) {</span>
+<span class="nc" id="L1974">      ex.printStackTrace();</span>
+    }
+<span class="nc" id="L1976">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

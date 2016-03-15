@@ -1,0 +1,913 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>OPTICS.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.clusterers</a> &gt; <span class="el_source">OPTICS.java</span></div><h1>OPTICS.java</h1><pre class="source lang-java linenums">/*
+ *   This program is free software: you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation, either version 3 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+
+/*
+ *    Copyright (C) 2004
+ *    &amp; Matthias Schubert (schubert@dbs.ifi.lmu.de)
+ *    &amp; Zhanna Melnikova-Albrecht (melnikov@cip.ifi.lmu.de)
+ *    &amp; Rainer Holzmann (holzmann@cip.ifi.lmu.de) 
+ */
+
+package weka.clusterers;
+
+import weka.clusterers.forOPTICSAndDBScan.DataObjects.DataObject;
+import weka.clusterers.forOPTICSAndDBScan.Databases.Database;
+import weka.clusterers.forOPTICSAndDBScan.OPTICS_GUI.OPTICS_Visualizer;
+import weka.clusterers.forOPTICSAndDBScan.OPTICS_GUI.SERObject;
+import weka.clusterers.forOPTICSAndDBScan.Utils.EpsilonRange_ListElement;
+import weka.clusterers.forOPTICSAndDBScan.Utils.UpdateQueue;
+import weka.clusterers.forOPTICSAndDBScan.Utils.UpdateQueueElement;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.ObjectOutputStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.text.DecimalFormat;
+import java.util.Calendar;
+import java.util.Enumeration;
+import java.util.GregorianCalendar;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Basic implementation of OPTICS clustering algorithm that should *not* be used as a reference for runtime benchmarks: more sophisticated implementations exist! Clustering of new instances is not supported. More info:&lt;br/&gt;
+ * &lt;br/&gt;
+ *  Mihael Ankerst, Markus M. Breunig, Hans-Peter Kriegel, Joerg Sander: OPTICS: Ordering Points To Identify the Clustering Structure. In: ACM SIGMOD International Conference on Management of Data, 49-60, 1999.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Ankerst1999,
+ *    author = {Mihael Ankerst and Markus M. Breunig and Hans-Peter Kriegel and Joerg Sander},
+ *    booktitle = {ACM SIGMOD International Conference on Management of Data},
+ *    pages = {49-60},
+ *    publisher = {ACM Press},
+ *    title = {OPTICS: Ordering Points To Identify the Clustering Structure},
+ *    year = {1999}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -E &amp;lt;double&amp;gt;
+ *  epsilon (default = 0.9)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;int&amp;gt;
+ *  minPoints (default = 6)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;String&amp;gt;
+ *  index (database) used for OPTICS (default = weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D &amp;lt;String&amp;gt;
+ *  distance-type (default = weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -F
+ *  write results to OPTICS_#TimeStamp#.TXT - File&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -no-gui
+ *  suppress the display of the GUI after building the clusterer&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -db-output &amp;lt;file&amp;gt;
+ *  The file to save the generated database to. If a directory
+ *  is provided, the database doesn't get saved.
+ *  The generated file can be viewed with the OPTICS Visualizer:
+ *    java weka.clusterers.forOPTICSAndDBScan.OPTICS_GUI.OPTICS_Visualizer [file.ser]
+ *  (default: .)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Matthias Schubert (schubert@dbs.ifi.lmu.de)
+ * @author Zhanna Melnikova-Albrecht (melnikov@cip.ifi.lmu.de)
+ * @author Rainer Holzmann (holzmann@cip.ifi.lmu.de)
+ * @version $Revision: 9434 $
+ */
+<span class="nc" id="L121">public class OPTICS </span>
+    extends AbstractClusterer 
+    implements OptionHandler, TechnicalInformationHandler {
+
+    /** for serialization */
+    static final long serialVersionUID = 274552680222105221L;
+  
+    /**
+     * Specifies the radius for a range-query
+     */
+<span class="nc" id="L131">    private double epsilon = 0.9;</span>
+
+    /**
+     * Specifies the density (the range-query must contain at least minPoints DataObjects)
+     */
+<span class="nc" id="L136">    private int minPoints = 6;</span>
+
+    /**
+     * Replace missing values in training instances
+     */
+    private ReplaceMissingValues replaceMissingValues_Filter;
+
+    /**
+     * Holds the number of clusters generated
+     */
+    private int numberOfGeneratedClusters;
+
+    /**
+     * Holds the distance-type that is used
+     * (default = weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject)
+     */
+<span class="nc" id="L152">    private String database_distanceType = &quot;weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject&quot;;</span>
+
+    /**
+     * Holds the type of the used database
+     * (default = weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase)
+     */
+<span class="nc" id="L158">    private String database_Type = &quot;weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase&quot;;</span>
+
+    /**
+     * The database that is used for OPTICS
+     */
+    private Database database;
+
+    /**
+     * Holds the time-value (seconds) for the duration of the clustering-process
+     */
+    private double elapsedTime;
+
+    /**
+     * Flag that indicates if the results are written to a file or not
+     */
+<span class="nc" id="L173">    private boolean writeOPTICSresults = false;</span>
+
+    /**
+     * Holds the ClusterOrder (dataObjects with their r_dist and c_dist) for the GUI
+     */
+    private FastVector resultVector;
+
+    /** whether to display the GUI after building the clusterer or not. */
+<span class="nc" id="L181">    private boolean showGUI = true;</span>
+    
+    /** the file to save the generated database object to. */
+<span class="nc" id="L184">    private File databaseOutput = new File(&quot;.&quot;);</span>
+    
+    // *****************************************************************************************************************
+    // constructors
+    // *****************************************************************************************************************
+
+    // *****************************************************************************************************************
+    // methods
+    // *****************************************************************************************************************
+
+    /**
+     * Returns default capabilities of the clusterer.
+     *
+     * @return      the capabilities of this clusterer
+     */
+    public Capabilities getCapabilities() {
+<span class="nc" id="L200">      Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L201">      result.disableAll();</span>
+<span class="nc" id="L202">      result.enable(Capability.NO_CLASS);</span>
+
+      // attributes
+<span class="nc" id="L205">      result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L206">      result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L207">      result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="nc" id="L208">      result.enable(Capability.MISSING_VALUES);</span>
+
+<span class="nc" id="L210">      return result;</span>
+    }
+
+    /**
+     * Generate Clustering via OPTICS
+     * @param instances The instances that need to be clustered
+     * @throws java.lang.Exception If clustering was not successful
+     */
+    public void buildClusterer(Instances instances) throws Exception {
+        // can clusterer handle the data?
+<span class="nc" id="L220">        getCapabilities().testWithFail(instances);</span>
+
+<span class="nc" id="L222">        resultVector = new FastVector();</span>
+<span class="nc" id="L223">        long time_1 = System.currentTimeMillis();</span>
+
+<span class="nc" id="L225">        numberOfGeneratedClusters = 0;</span>
+
+<span class="nc" id="L227">        replaceMissingValues_Filter = new ReplaceMissingValues();</span>
+<span class="nc" id="L228">        replaceMissingValues_Filter.setInputFormat(instances);</span>
+<span class="nc" id="L229">        Instances filteredInstances = Filter.useFilter(instances, replaceMissingValues_Filter);</span>
+
+<span class="nc" id="L231">        database = databaseForName(getDatabase_Type(), filteredInstances);</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        for (int i = 0; i &lt; database.getInstances().numInstances(); i++) {</span>
+<span class="nc" id="L233">            DataObject dataObject = dataObjectForName(getDatabase_distanceType(),</span>
+<span class="nc" id="L234">                    database.getInstances().instance(i),</span>
+<span class="nc" id="L235">                    Integer.toString(i),</span>
+<span class="nc" id="L236">                    database);</span>
+<span class="nc" id="L237">            database.insert(dataObject);</span>
+        }
+<span class="nc" id="L239">        database.setMinMaxValues();</span>
+
+<span class="nc" id="L241">        UpdateQueue seeds = new UpdateQueue();</span>
+
+        /** OPTICS-Begin */
+<span class="nc" id="L244">        Iterator iterator = database.dataObjectIterator();</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        while (iterator.hasNext()) {</span>
+<span class="nc" id="L246">            DataObject dataObject = (DataObject) iterator.next();</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            if (!dataObject.isProcessed()) {</span>
+<span class="nc" id="L248">                expandClusterOrder(dataObject, seeds);</span>
+            }
+        }
+
+<span class="nc" id="L252">        long time_2 = System.currentTimeMillis();</span>
+<span class="nc" id="L253">        elapsedTime = (double) (time_2 - time_1) / 1000.0;</span>
+
+<span class="nc bnc" id="L255" title="All 2 branches missed.">        if (writeOPTICSresults) {</span>
+<span class="nc" id="L256">            String fileName = &quot;&quot;;</span>
+<span class="nc" id="L257">            GregorianCalendar gregorianCalendar = new GregorianCalendar();</span>
+<span class="nc" id="L258">            String timeStamp = gregorianCalendar.get(Calendar.DAY_OF_MONTH) + &quot;-&quot; +</span>
+<span class="nc" id="L259">                    (gregorianCalendar.get(Calendar.MONTH) + 1) +</span>
+<span class="nc" id="L260">                    &quot;-&quot; + gregorianCalendar.get(Calendar.YEAR) +</span>
+<span class="nc" id="L261">                    &quot;--&quot; + gregorianCalendar.get(Calendar.HOUR_OF_DAY) +</span>
+<span class="nc" id="L262">                    &quot;-&quot; + gregorianCalendar.get(Calendar.MINUTE) +</span>
+<span class="nc" id="L263">                    &quot;-&quot; + gregorianCalendar.get(Calendar.SECOND);</span>
+<span class="nc" id="L264">            fileName = &quot;OPTICS_&quot; + timeStamp + &quot;.TXT&quot;;</span>
+
+<span class="nc" id="L266">            FileWriter fileWriter = new FileWriter(fileName);</span>
+<span class="nc" id="L267">            BufferedWriter bufferedOPTICSWriter = new BufferedWriter(fileWriter);</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">            for (int i = 0; i &lt; resultVector.size(); i++) {</span>
+<span class="nc" id="L269">                bufferedOPTICSWriter.write(format_dataObject((DataObject) resultVector.elementAt(i)));</span>
+            }
+<span class="nc" id="L271">            bufferedOPTICSWriter.flush();</span>
+<span class="nc" id="L272">            bufferedOPTICSWriter.close();</span>
+        }
+
+        // explicit file provided to write the generated database to?
+<span class="nc bnc" id="L276" title="All 2 branches missed.">        if (!databaseOutput.isDirectory()) {</span>
+          try {
+<span class="nc" id="L278">            FileOutputStream fos = new FileOutputStream(databaseOutput);</span>
+<span class="nc" id="L279">            ObjectOutputStream oos = new ObjectOutputStream(fos);</span>
+<span class="nc" id="L280">            oos.writeObject(getSERObject());</span>
+<span class="nc" id="L281">            oos.flush();</span>
+<span class="nc" id="L282">            oos.close();</span>
+<span class="nc" id="L283">            fos.close();</span>
+          }
+<span class="nc" id="L285">          catch (Exception e) {</span>
+<span class="nc" id="L286">            System.err.println(</span>
+<span class="nc" id="L287">        	&quot;Error writing generated database to file '&quot; + getDatabaseOutput() + &quot;': &quot; </span>
+<span class="nc" id="L288">        	+ e);</span>
+<span class="nc" id="L289">            e.printStackTrace();</span>
+          }
+        }
+        
+<span class="nc bnc" id="L293" title="All 2 branches missed.">        if (showGUI)</span>
+<span class="nc" id="L294">          new OPTICS_Visualizer(getSERObject(), &quot;OPTICS Visualizer - Main Window&quot;);</span>
+<span class="nc" id="L295">    }</span>
+
+    /**
+     * Expands the ClusterOrder for this dataObject
+     * @param dataObject Start-DataObject
+     * @param seeds SeedList that stores dataObjects with reachability-distances
+     */
+    private void expandClusterOrder(DataObject dataObject, UpdateQueue seeds) {
+<span class="nc" id="L303">        List list = database.coreDistance(getMinPoints(), getEpsilon(), dataObject);</span>
+<span class="nc" id="L304">        List epsilonRange_List = (List) list.get(1);</span>
+<span class="nc" id="L305">        dataObject.setReachabilityDistance(DataObject.UNDEFINED);</span>
+<span class="nc" id="L306">        dataObject.setCoreDistance(((Double) list.get(2)).doubleValue());</span>
+<span class="nc" id="L307">        dataObject.setProcessed(true);</span>
+
+<span class="nc" id="L309">        resultVector.addElement(dataObject);</span>
+
+<span class="nc bnc" id="L311" title="All 2 branches missed.">        if (dataObject.getCoreDistance() != DataObject.UNDEFINED) {</span>
+<span class="nc" id="L312">            update(seeds, epsilonRange_List, dataObject);</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            while (seeds.hasNext()) {</span>
+<span class="nc" id="L314">                UpdateQueueElement updateQueueElement = seeds.next();</span>
+<span class="nc" id="L315">                DataObject currentDataObject = (DataObject) updateQueueElement.getObject();</span>
+<span class="nc" id="L316">                currentDataObject.setReachabilityDistance(updateQueueElement.getPriority());</span>
+<span class="nc" id="L317">                List list_1 = database.coreDistance(getMinPoints(), getEpsilon(), currentDataObject);</span>
+<span class="nc" id="L318">                List epsilonRange_List_1 = (List) list_1.get(1);</span>
+<span class="nc" id="L319">                currentDataObject.setCoreDistance(((Double) list_1.get(2)).doubleValue());</span>
+<span class="nc" id="L320">                currentDataObject.setProcessed(true);</span>
+
+<span class="nc" id="L322">                resultVector.addElement(currentDataObject);</span>
+
+<span class="nc bnc" id="L324" title="All 2 branches missed.">                if (currentDataObject.getCoreDistance() != DataObject.UNDEFINED) {</span>
+<span class="nc" id="L325">                    update(seeds, epsilonRange_List_1, currentDataObject);</span>
+                }
+            }
+        }
+<span class="nc" id="L329">    }</span>
+
+    /**
+     * Wraps the dataObject into a String, that contains the dataObject's key, the dataObject itself,
+     * the coreDistance and its reachabilityDistance in a formatted manner.
+     * @param dataObject The dataObject that is wrapped into a formatted string.
+     * @return String Formatted string
+     */
+    private String format_dataObject(DataObject dataObject) {
+<span class="nc" id="L338">        StringBuffer stringBuffer = new StringBuffer();</span>
+
+<span class="nc" id="L340">        stringBuffer.append(&quot;(&quot; + Utils.doubleToString(Double.parseDouble(dataObject.getKey()),</span>
+<span class="nc" id="L341">                (Integer.toString(database.size()).length()), 0) + &quot;.) &quot;</span>
+<span class="nc" id="L342">                + Utils.padRight(dataObject.toString(), 40) + &quot;  --&gt;  c_dist: &quot; +</span>
+
+<span class="nc bnc" id="L344" title="All 2 branches missed.">                ((dataObject.getCoreDistance() == DataObject.UNDEFINED) ?</span>
+<span class="nc" id="L345">                Utils.padRight(&quot;UNDEFINED&quot;, 12) :</span>
+<span class="nc" id="L346">                Utils.padRight(Utils.doubleToString(dataObject.getCoreDistance(), 2, 3), 12)) +</span>
+
+<span class="nc" id="L348">                &quot; r_dist: &quot; +</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">                ((dataObject.getReachabilityDistance() == DataObject.UNDEFINED) ?</span>
+<span class="nc" id="L350">                Utils.padRight(&quot;UNDEFINED&quot;, 12) :</span>
+<span class="nc" id="L351">                Utils.doubleToString(dataObject.getReachabilityDistance(), 2, 3)) + &quot;\n&quot;);</span>
+
+<span class="nc" id="L353">        return stringBuffer.toString();</span>
+    }
+
+    /**
+     * Updates reachability-distances in the Seeds-List
+     * @param seeds UpdateQueue that holds DataObjects with their corresponding reachability-distances
+     * @param epsilonRange_list List of DataObjects that were found in epsilon-range of centralObject
+     * @param centralObject
+     */
+    private void update(UpdateQueue seeds, List epsilonRange_list, DataObject centralObject) {
+<span class="nc" id="L363">        double coreDistance = centralObject.getCoreDistance();</span>
+<span class="nc" id="L364">        double new_r_dist = DataObject.UNDEFINED;</span>
+
+<span class="nc bnc" id="L366" title="All 2 branches missed.">        for (int i = 0; i &lt; epsilonRange_list.size(); i++) {</span>
+<span class="nc" id="L367">            EpsilonRange_ListElement listElement = (EpsilonRange_ListElement) epsilonRange_list.get(i);</span>
+<span class="nc" id="L368">            DataObject neighbourhood_object = listElement.getDataObject();</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">            if (!neighbourhood_object.isProcessed()) {</span>
+<span class="nc" id="L370">                new_r_dist = Math.max(coreDistance, listElement.getDistance());</span>
+<span class="nc" id="L371">                seeds.add(new_r_dist, neighbourhood_object, neighbourhood_object.getKey());</span>
+            }
+        }
+<span class="nc" id="L374">    }</span>
+
+    /**
+     * Classifies a given instance.
+     *
+     * @param instance The instance to be assigned to a cluster
+     * @return int The number of the assigned cluster as an integer
+     * @throws java.lang.Exception If instance could not be clustered
+     * successfully
+     */
+    public int clusterInstance(Instance instance) throws Exception {
+<span class="nc" id="L385">        throw new Exception();</span>
+    }
+
+    /**
+     * Returns the number of clusters.
+     *
+     * @return int The number of clusters generated for a training dataset.
+     * @throws java.lang.Exception If number of clusters could not be returned
+     * successfully
+     */
+    public int numberOfClusters() throws Exception {
+<span class="nc" id="L396">        return numberOfGeneratedClusters;</span>
+    }
+
+    /**
+     * Returns an enumeration of all the available options.
+     *
+     * @return Enumeration An enumeration of all available options.
+     */
+    public Enumeration listOptions() {
+<span class="nc" id="L405">        Vector vector = new Vector();</span>
+
+<span class="nc" id="L407">        vector.addElement(</span>
+<span class="nc" id="L408">            new Option(</span>
+<span class="nc" id="L409">        	&quot;\tepsilon (default = 0.9)&quot;,</span>
+<span class="nc" id="L410">        	&quot;E&quot;, 1, &quot;-E &lt;double&gt;&quot;));</span>
+        
+<span class="nc" id="L412">        vector.addElement(</span>
+<span class="nc" id="L413">            new Option(&quot;\tminPoints (default = 6)&quot;,</span>
+<span class="nc" id="L414">        	&quot;M&quot;, 1, &quot;-M &lt;int&gt;&quot;));</span>
+        
+<span class="nc" id="L416">        vector.addElement(</span>
+<span class="nc" id="L417">            new Option(</span>
+<span class="nc" id="L418">        	&quot;\tindex (database) used for OPTICS (default = weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase)&quot;,</span>
+<span class="nc" id="L419">        	&quot;I&quot;, 1, &quot;-I &lt;String&gt;&quot;));</span>
+        
+<span class="nc" id="L421">        vector.addElement(</span>
+<span class="nc" id="L422">            new Option(</span>
+<span class="nc" id="L423">        	&quot;\tdistance-type (default = weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject)&quot;,</span>
+<span class="nc" id="L424">        	&quot;D&quot;, 1, &quot;-D &lt;String&gt;&quot;));</span>
+        
+<span class="nc" id="L426">        vector.addElement(</span>
+<span class="nc" id="L427">            new Option(</span>
+<span class="nc" id="L428">        	&quot;\twrite results to OPTICS_#TimeStamp#.TXT - File&quot;,</span>
+<span class="nc" id="L429">        	&quot;F&quot;, 0, &quot;-F&quot;));</span>
+        
+<span class="nc" id="L431">        vector.addElement(</span>
+<span class="nc" id="L432">            new Option(</span>
+<span class="nc" id="L433">        	&quot;\tsuppress the display of the GUI after building the clusterer&quot;,</span>
+<span class="nc" id="L434">        	&quot;no-gui&quot;, 0, &quot;-no-gui&quot;));</span>
+        
+<span class="nc" id="L436">        vector.addElement(</span>
+<span class="nc" id="L437">            new Option(</span>
+<span class="nc" id="L438">        	&quot;\tThe file to save the generated database to. If a directory\n&quot;</span>
+        	+ &quot;\tis provided, the database doesn't get saved.\n&quot;
+        	+ &quot;\tThe generated file can be viewed with the OPTICS Visualizer:\n&quot;
+<span class="nc" id="L441">        	+ &quot;\t  java &quot; + OPTICS_Visualizer.class.getName() + &quot; [file.ser]\n&quot;</span>
+<span class="nc" id="L442">        	+ &quot;\t(default: .)&quot;,</span>
+<span class="nc" id="L443">        	&quot;db-output&quot;, 1, &quot;-db-output &lt;file&gt;&quot;));</span>
+        
+<span class="nc" id="L445">        return vector.elements();</span>
+    }
+
+    /**
+     * Sets the OptionHandler's options using the given list. All options
+     * will be set (or reset) during this call (i.e. incremental setting
+     * of options is not possible). &lt;p/&gt;
+     * 
+     &lt;!-- options-start --&gt;
+     * Valid options are: &lt;p/&gt;
+     * 
+     * &lt;pre&gt; -E &amp;lt;double&amp;gt;
+     *  epsilon (default = 0.9)&lt;/pre&gt;
+     * 
+     * &lt;pre&gt; -M &amp;lt;int&amp;gt;
+     *  minPoints (default = 6)&lt;/pre&gt;
+     * 
+     * &lt;pre&gt; -I &amp;lt;String&amp;gt;
+     *  index (database) used for OPTICS (default = weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase)&lt;/pre&gt;
+     * 
+     * &lt;pre&gt; -D &amp;lt;String&amp;gt;
+     *  distance-type (default = weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject)&lt;/pre&gt;
+     * 
+     * &lt;pre&gt; -F
+     *  write results to OPTICS_#TimeStamp#.TXT - File&lt;/pre&gt;
+     * 
+     * &lt;pre&gt; -no-gui
+     *  suppress the display of the GUI after building the clusterer&lt;/pre&gt;
+     * 
+     * &lt;pre&gt; -db-output &amp;lt;file&amp;gt;
+     *  The file to save the generated database to. If a directory
+     *  is provided, the database doesn't get saved.
+     *  The generated file can be viewed with the OPTICS Visualizer:
+     *    java weka.clusterers.forOPTICSAndDBScan.OPTICS_GUI.OPTICS_Visualizer [file.ser]
+     *  (default: .)&lt;/pre&gt;
+     * 
+     &lt;!-- options-end --&gt;
+     *
+     * @param options The list of options as an array of strings
+     * @throws java.lang.Exception If an option is not supported
+     */
+    public void setOptions(String[] options) throws Exception {
+<span class="nc" id="L487">        String optionString = Utils.getOption('E', options);</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">        if (optionString.length() != 0)</span>
+<span class="nc" id="L489">            setEpsilon(Double.parseDouble(optionString));</span>
+        else
+<span class="nc" id="L491">            setEpsilon(0.9);</span>
+
+<span class="nc" id="L493">        optionString = Utils.getOption('M', options);</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">        if (optionString.length() != 0)</span>
+<span class="nc" id="L495">            setMinPoints(Integer.parseInt(optionString));</span>
+        else
+<span class="nc" id="L497">            setMinPoints(6);</span>
+
+<span class="nc" id="L499">        optionString = Utils.getOption('I', options);</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">        if (optionString.length() != 0)</span>
+<span class="nc" id="L501">            setDatabase_Type(optionString);</span>
+        else
+<span class="nc" id="L503">            setDatabase_Type(weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase.class.getName());</span>
+
+<span class="nc" id="L505">        optionString = Utils.getOption('D', options);</span>
+<span class="nc bnc" id="L506" title="All 2 branches missed.">        if (optionString.length() != 0)</span>
+<span class="nc" id="L507">            setDatabase_distanceType(optionString);</span>
+        else
+<span class="nc" id="L509">            setDatabase_distanceType(weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject.class.getName());</span>
+
+<span class="nc" id="L511">        setWriteOPTICSresults(Utils.getFlag('F', options));</span>
+
+<span class="nc bnc" id="L513" title="All 2 branches missed.">        setShowGUI(!Utils.getFlag(&quot;no-gui&quot;, options));</span>
+
+<span class="nc" id="L515">        optionString = Utils.getOption(&quot;db-output&quot;, options);</span>
+<span class="nc bnc" id="L516" title="All 2 branches missed.">        if (optionString.length() != 0)</span>
+<span class="nc" id="L517">            setDatabaseOutput(new File(optionString));</span>
+        else
+<span class="nc" id="L519">            setDatabaseOutput(new File(&quot;.&quot;));</span>
+<span class="nc" id="L520">    }</span>
+
+    /**
+     * Gets the current option settings for the OptionHandler.
+     *
+     * @return String[] The list of current option settings as an array of strings
+     */
+    public String[] getOptions() {
+        Vector&lt;String&gt;	result;
+        
+<span class="nc" id="L530">        result = new Vector&lt;String&gt;();</span>
+        
+<span class="nc" id="L532">        result.add(&quot;-E&quot;);</span>
+<span class="nc" id="L533">        result.add(&quot;&quot; + getEpsilon());</span>
+        
+<span class="nc" id="L535">        result.add(&quot;-M&quot;);</span>
+<span class="nc" id="L536">        result.add(&quot;&quot; + getMinPoints());</span>
+        
+<span class="nc" id="L538">        result.add(&quot;-I&quot;);</span>
+<span class="nc" id="L539">        result.add(&quot;&quot; + getDatabase_Type());</span>
+        
+<span class="nc" id="L541">        result.add(&quot;-D&quot;);</span>
+<span class="nc" id="L542">        result.add(&quot;&quot; + getDatabase_distanceType());</span>
+
+<span class="nc bnc" id="L544" title="All 2 branches missed.">        if (getWriteOPTICSresults())</span>
+<span class="nc" id="L545">          result.add(&quot;-F&quot;);</span>
+
+<span class="nc bnc" id="L547" title="All 2 branches missed.">        if (!getShowGUI())</span>
+<span class="nc" id="L548">          result.add(&quot;-no-gui&quot;);</span>
+        
+<span class="nc" id="L550">        result.add(&quot;-db-output&quot;);</span>
+<span class="nc" id="L551">        result.add(&quot;&quot; + getDatabaseOutput());</span>
+        
+<span class="nc" id="L553">        return result.toArray(new String[result.size()]);</span>
+    }
+
+    /**
+     * Returns a new Class-Instance of the specified database
+     * @param database_Type String of the specified database
+     * @param instances Instances that were delivered from WEKA
+     * @return Database New constructed Database
+     */
+    public Database databaseForName(String database_Type, Instances instances) {
+<span class="nc" id="L563">        Object o = null;</span>
+
+<span class="nc" id="L565">        Constructor co = null;</span>
+        try {
+<span class="nc" id="L567">            co = (Class.forName(database_Type)).getConstructor(new Class[]{Instances.class});</span>
+<span class="nc" id="L568">            o = co.newInstance(new Object[]{instances});</span>
+<span class="nc" id="L569">        } catch (NoSuchMethodException e) {</span>
+<span class="nc" id="L570">            e.printStackTrace();</span>
+<span class="nc" id="L571">        } catch (SecurityException e) {</span>
+<span class="nc" id="L572">            e.printStackTrace();</span>
+<span class="nc" id="L573">        } catch (ClassNotFoundException e) {</span>
+<span class="nc" id="L574">            e.printStackTrace();</span>
+<span class="nc" id="L575">        } catch (InstantiationException e) {</span>
+<span class="nc" id="L576">            e.printStackTrace();</span>
+<span class="nc" id="L577">        } catch (IllegalAccessException e) {</span>
+<span class="nc" id="L578">            e.printStackTrace();</span>
+<span class="nc" id="L579">        } catch (InvocationTargetException e) {</span>
+<span class="nc" id="L580">            e.printStackTrace();</span>
+        }
+
+<span class="nc" id="L583">        return (Database) o;</span>
+    }
+
+    /**
+     * Returns a new Class-Instance of the specified database
+     * @param database_distanceType String of the specified distance-type
+     * @param instance The original instance that needs to hold by this DataObject
+     * @param key Key for this DataObject
+     * @param database Link to the database
+     * @return DataObject New constructed DataObject
+     */
+    public DataObject dataObjectForName(String database_distanceType, Instance instance, String key, Database database) {
+<span class="nc" id="L595">        Object o = null;</span>
+
+<span class="nc" id="L597">        Constructor co = null;</span>
+        try {
+<span class="nc" id="L599">            co = (Class.forName(database_distanceType)).</span>
+<span class="nc" id="L600">                    getConstructor(new Class[]{Instance.class, String.class, Database.class});</span>
+<span class="nc" id="L601">            o = co.newInstance(new Object[]{instance, key, database});</span>
+<span class="nc" id="L602">        } catch (NoSuchMethodException e) {</span>
+<span class="nc" id="L603">            e.printStackTrace();</span>
+<span class="nc" id="L604">        } catch (SecurityException e) {</span>
+<span class="nc" id="L605">            e.printStackTrace();</span>
+<span class="nc" id="L606">        } catch (ClassNotFoundException e) {</span>
+<span class="nc" id="L607">            e.printStackTrace();</span>
+<span class="nc" id="L608">        } catch (InstantiationException e) {</span>
+<span class="nc" id="L609">            e.printStackTrace();</span>
+<span class="nc" id="L610">        } catch (IllegalAccessException e) {</span>
+<span class="nc" id="L611">            e.printStackTrace();</span>
+<span class="nc" id="L612">        } catch (InvocationTargetException e) {</span>
+<span class="nc" id="L613">            e.printStackTrace();</span>
+        }
+
+<span class="nc" id="L616">        return (DataObject) o;</span>
+    }
+
+    /**
+     * Sets a new value for minPoints
+     * @param minPoints MinPoints
+     */
+    public void setMinPoints(int minPoints) {
+<span class="nc" id="L624">        this.minPoints = minPoints;</span>
+<span class="nc" id="L625">    }</span>
+
+    /**
+     * Sets a new value for epsilon
+     * @param epsilon Epsilon
+     */
+    public void setEpsilon(double epsilon) {
+<span class="nc" id="L632">        this.epsilon = epsilon;</span>
+<span class="nc" id="L633">    }</span>
+
+    /**
+     * Returns the value of epsilon
+     * @return double Epsilon
+     */
+    public double getEpsilon() {
+<span class="nc" id="L640">        return epsilon;</span>
+    }
+
+    /**
+     * Returns the value of minPoints
+     * @return int MinPoints
+     */
+    public int getMinPoints() {
+<span class="nc" id="L648">        return minPoints;</span>
+    }
+
+    /**
+     * Returns the distance-type
+     * @return String Distance-type
+     */
+    public String getDatabase_distanceType() {
+<span class="nc" id="L656">        return database_distanceType;</span>
+    }
+
+    /**
+     * Returns the type of the used index (database)
+     * @return String Index-type
+     */
+    public String getDatabase_Type() {
+<span class="nc" id="L664">        return database_Type;</span>
+    }
+
+    /**
+     * Sets a new distance-type
+     * @param database_distanceType The new distance-type
+     */
+    public void setDatabase_distanceType(String database_distanceType) {
+<span class="nc" id="L672">        this.database_distanceType = database_distanceType;</span>
+<span class="nc" id="L673">    }</span>
+
+    /**
+     * Sets a new database-type
+     * @param database_Type The new database-type
+     */
+    public void setDatabase_Type(String database_Type) {
+<span class="nc" id="L680">        this.database_Type = database_Type;</span>
+<span class="nc" id="L681">    }</span>
+
+    /**
+     * Returns the flag for writing actions
+     * @return writeOPTICSresults (flag)
+     */
+    public boolean getWriteOPTICSresults() {
+<span class="nc" id="L688">        return writeOPTICSresults;</span>
+    }
+
+    /**
+     * Sets the flag for writing actions
+     * @param writeOPTICSresults Results are written to a file if the flag is set
+     */
+    public void setWriteOPTICSresults(boolean writeOPTICSresults) {
+<span class="nc" id="L696">        this.writeOPTICSresults = writeOPTICSresults;</span>
+<span class="nc" id="L697">    }</span>
+
+    /**
+     * Returns the flag for showing the OPTICS visualizer GUI.
+     * 
+     * @return 		true if the GUI is displayed
+     */
+    public boolean getShowGUI() {
+<span class="nc" id="L705">        return showGUI;</span>
+    }
+
+    /**
+     * Sets the flag for displaying the GUI.
+     * 
+     * @param value 	if true, then the OPTICS visualizer GUI will be 
+     * 			displayed after building the clusterer
+     */
+    public void setShowGUI(boolean value) {
+<span class="nc" id="L715">        showGUI = value;</span>
+<span class="nc" id="L716">    }</span>
+
+    /**
+     * Returns the file to save the database to - if directory, database is not
+     * saved.
+     * 
+     * @return 		the file to save the database to a directory if saving
+     * 			is ignored
+     */
+    public File getDatabaseOutput() {
+<span class="nc" id="L726">        return databaseOutput;</span>
+    }
+
+    /**
+     * Sets the the file to save the generated database to. If a directory
+     * is provided, the datbase doesn't get saved.
+     * 
+     * @param value 	the file to save the database to or a directory if
+     * 			saving is to be ignored
+     */
+    public void setDatabaseOutput(File value) {
+<span class="nc" id="L737">        databaseOutput = value;</span>
+<span class="nc" id="L738">    }</span>
+
+    /**
+     * Returns the resultVector
+     * @return resultVector
+     */
+    public FastVector getResultVector() {
+<span class="nc" id="L745">        return resultVector;</span>
+    }
+
+    /**
+     * Returns the tip text for this property
+     * @return tip text for this property suitable for
+     * displaying in the explorer/experimenter gui
+     */
+    public String epsilonTipText() {
+<span class="nc" id="L754">        return &quot;radius of the epsilon-range-queries&quot;;</span>
+    }
+
+    /**
+     * Returns the tip text for this property
+     * @return tip text for this property suitable for
+     * displaying in the explorer/experimenter gui
+     */
+    public String minPointsTipText() {
+<span class="nc" id="L763">        return &quot;minimun number of DataObjects required in an epsilon-range-query&quot;;</span>
+    }
+
+    /**
+     * Returns the tip text for this property
+     * @return tip text for this property suitable for
+     * displaying in the explorer/experimenter gui
+     */
+    public String database_TypeTipText() {
+<span class="nc" id="L772">        return &quot;used database&quot;;</span>
+    }
+
+    /**
+     * Returns the tip text for this property
+     * @return tip text for this property suitable for
+     * displaying in the explorer/experimenter gui
+     */
+    public String database_distanceTypeTipText() {
+<span class="nc" id="L781">        return &quot;used distance-type&quot;;</span>
+    }
+
+    /**
+     * Returns the tip text for this property
+     * @return tip text for this property suitable for
+     * displaying in the explorer/experimenter gui
+     */
+    public String writeOPTICSresultsTipText() {
+<span class="nc" id="L790">        return &quot;if the -F option is set, the results are written to OPTICS_#TimeStamp#.TXT&quot;;</span>
+    }
+
+    /**
+     * Returns the tip text for this property.
+     * 
+     * @return 		tip text for this property suitable for
+     * 			displaying in the explorer/experimenter gui
+     */
+    public String showGUITipText() {
+<span class="nc" id="L800">        return &quot;Defines whether the OPTICS Visualizer is displayed after the clusterer has been built or not.&quot;;</span>
+    }
+
+    /**
+     * Returns the tip text for this property.
+     * 
+     * @return 		tip text for this property suitable for
+     * 			displaying in the explorer/experimenter gui
+     */
+    public String databaseOutputTipText() {
+<span class="nc" id="L810">        return </span>
+<span class="nc" id="L811">            &quot;The optional output file for the generated database object - can &quot;</span>
+          + &quot;be viewed with the OPTICS Visualizer.\n&quot;
+<span class="nc" id="L813">          + &quot;java &quot; + OPTICS_Visualizer.class.getName() + &quot; [file.ser]&quot;;</span>
+    }
+
+    /**
+     * Returns a string describing this DataMining-Algorithm
+     * @return String Information for the gui-explorer
+     */
+    public String globalInfo() {
+<span class="nc" id="L821">        return &quot;Basic implementation of OPTICS clustering algorithm that should &quot;</span>
+          + &quot;*not* be used as a reference for runtime benchmarks: more sophisticated &quot;
+          + &quot;implementations exist! Clustering of new instances is not supported. More info:\n\n &quot;
+<span class="nc" id="L824">          + getTechnicalInformation().toString();</span>
+    }
+
+    /**
+     * Returns an instance of a TechnicalInformation object, containing 
+     * detailed information about the technical background of this class,
+     * e.g., paper reference or book this class is based on.
+     * 
+     * @return the technical information about this class
+     */
+    public TechnicalInformation getTechnicalInformation() {
+      TechnicalInformation 	result;
+      
+<span class="nc" id="L837">      result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L838">      result.setValue(Field.AUTHOR, &quot;Mihael Ankerst and Markus M. Breunig and Hans-Peter Kriegel and Joerg Sander&quot;);</span>
+<span class="nc" id="L839">      result.setValue(Field.TITLE, &quot;OPTICS: Ordering Points To Identify the Clustering Structure&quot;);</span>
+<span class="nc" id="L840">      result.setValue(Field.BOOKTITLE, &quot;ACM SIGMOD International Conference on Management of Data&quot;);</span>
+<span class="nc" id="L841">      result.setValue(Field.YEAR, &quot;1999&quot;);</span>
+<span class="nc" id="L842">      result.setValue(Field.PAGES, &quot;49-60&quot;);</span>
+<span class="nc" id="L843">      result.setValue(Field.PUBLISHER, &quot;ACM Press&quot;);</span>
+      
+<span class="nc" id="L845">      return result;</span>
+    }
+
+    /**
+     * Returns the internal database
+     * 
+     * @return the internal database
+     */
+    public SERObject getSERObject() {
+<span class="nc" id="L854">        SERObject serObject = new SERObject(resultVector,</span>
+<span class="nc" id="L855">                database.size(),</span>
+<span class="nc" id="L856">                database.getInstances().numAttributes(),</span>
+<span class="nc" id="L857">                getEpsilon(),</span>
+<span class="nc" id="L858">                getMinPoints(),</span>
+<span class="nc" id="L859">                writeOPTICSresults,</span>
+<span class="nc" id="L860">                getDatabase_Type(),</span>
+<span class="nc" id="L861">                getDatabase_distanceType(),</span>
+<span class="nc" id="L862">                numberOfGeneratedClusters,</span>
+<span class="nc" id="L863">                Utils.doubleToString(elapsedTime, 3, 3));</span>
+<span class="nc" id="L864">        return serObject;</span>
+    }
+
+    /**
+     * Returns a description of the clusterer
+     * 
+     * @return the clusterer as string
+     */
+    public String toString() {
+<span class="nc" id="L873">        StringBuffer stringBuffer = new StringBuffer();</span>
+<span class="nc" id="L874">        stringBuffer.append(&quot;OPTICS clustering results\n&quot; +</span>
+                &quot;============================================================================================\n\n&quot;);
+<span class="nc" id="L876">        stringBuffer.append(&quot;Clustered DataObjects: &quot; + database.size() + &quot;\n&quot;);</span>
+<span class="nc" id="L877">        stringBuffer.append(&quot;Number of attributes: &quot; + database.getInstances().numAttributes() + &quot;\n&quot;);</span>
+<span class="nc" id="L878">        stringBuffer.append(&quot;Epsilon: &quot; + getEpsilon() + &quot;; minPoints: &quot; + getMinPoints() + &quot;\n&quot;);</span>
+<span class="nc bnc" id="L879" title="All 2 branches missed.">        stringBuffer.append(&quot;Write results to file: &quot; + (writeOPTICSresults ? &quot;yes&quot; : &quot;no&quot;) + &quot;\n&quot;);</span>
+<span class="nc" id="L880">        stringBuffer.append(&quot;Index: &quot; + getDatabase_Type() + &quot;\n&quot;);</span>
+<span class="nc" id="L881">        stringBuffer.append(&quot;Distance-type: &quot; + getDatabase_distanceType() + &quot;\n&quot;);</span>
+<span class="nc" id="L882">        stringBuffer.append(&quot;Number of generated clusters: &quot; + numberOfGeneratedClusters + &quot;\n&quot;);</span>
+<span class="nc" id="L883">        DecimalFormat decimalFormat = new DecimalFormat(&quot;.##&quot;);</span>
+<span class="nc" id="L884">        stringBuffer.append(&quot;Elapsed time: &quot; + decimalFormat.format(elapsedTime) + &quot;\n\n&quot;);</span>
+
+<span class="nc bnc" id="L886" title="All 2 branches missed.">        for (int i = 0; i &lt; resultVector.size(); i++) {</span>
+<span class="nc" id="L887">            stringBuffer.append(format_dataObject((DataObject) resultVector.elementAt(i)));</span>
+        }
+<span class="nc" id="L889">        return stringBuffer.toString() + &quot;\n&quot;;</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L898">      return RevisionUtils.extract(&quot;$Revision: 9434 $&quot;);</span>
+    }
+
+    /**
+     * Main Method for testing OPTICS
+     * @param args Valid parameters are: 'E' epsilon (default = 0.9); 'M' minPoints (default = 6);
+     *                                   'I' index-type (default = weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase);
+     *                                   'D' distance-type (default = weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject);
+     *                                   'F' write results to OPTICS_#TimeStamp#.TXT - File
+     */
+    public static void main(String[] args) {
+<span class="nc" id="L909">        runClusterer(new OPTICS(), args);</span>
+<span class="nc" id="L910">    }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

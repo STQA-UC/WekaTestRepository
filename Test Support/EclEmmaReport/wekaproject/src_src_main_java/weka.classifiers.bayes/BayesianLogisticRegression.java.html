@@ -1,0 +1,1326 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>BayesianLogisticRegression.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.bayes</a> &gt; <span class="el_source">BayesianLogisticRegression.java</span></div><h1>BayesianLogisticRegression.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    BayesianLogisticRegression.java
+ *    Copyright (C) 2008 Illinois Institute of Technology
+ *
+ */
+
+package weka.classifiers.bayes;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.bayes.blr.GaussianPriorImpl;
+import weka.classifiers.bayes.blr.LaplacePriorImpl;
+import weka.classifiers.bayes.blr.Prior;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.SerializedObject;
+import weka.core.Tag;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Normalize;
+
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.StringTokenizer;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Implements Bayesian Logistic Regression for both Gaussian and Laplace Priors.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see&lt;br/&gt;
+ * &lt;br/&gt;
+ * Alexander Genkin, David D. Lewis, David Madigan (2004). Large-scale bayesian logistic regression for text categorization. URL http://www.stat.rutgers.edu/~madigan/PAPERS/shortFat-v3a.pdf.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;techreport{Genkin2004,
+ *    author = {Alexander Genkin and David D. Lewis and David Madigan},
+ *    institution = {DIMACS},
+ *    title = {Large-scale bayesian logistic regression for text categorization},
+ *    year = {2004},
+ *    URL = {http://www.stat.rutgers.edu/\~madigan/PAPERS/shortFat-v3a.pdf}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ *
+ *  @author Navendu Garg (gargnav at iit dot edu)
+ *  @version $Revision: 7984 $
+ */
+<span class="fc" id="L81">public class BayesianLogisticRegression extends Classifier</span>
+  implements OptionHandler, TechnicalInformationHandler {
+  
+  static final long serialVersionUID = -8013478897911757631L;
+
+  /** Log-likelihood values to be used to choose the best hyperparameter. */
+  public static double[] LogLikelihood;
+
+  /** Set of values to be used as hyperparameter values during Cross-Validation. */
+  public static double[] InputHyperparameterValues;
+
+  /** DEBUG Mode*/
+<span class="fc" id="L93">  boolean debug = false;</span>
+
+  /** Choose whether to normalize data or not */
+<span class="fc" id="L96">  public boolean NormalizeData = false;</span>
+
+  /** Tolerance criteria for the stopping criterion. */
+<span class="fc" id="L99">  public double Tolerance = 0.0005;</span>
+
+  /** Threshold for binary classification of probabilisitic estimate*/
+<span class="fc" id="L102">  public double Threshold = 0.5;</span>
+
+  /** Distributions available */
+  public static final int GAUSSIAN = 1;
+  public static final int LAPLACIAN = 2;
+  
+<span class="fc" id="L108">  public static final Tag[] TAGS_PRIOR = {</span>
+<span class="fc" id="L109">    new Tag(GAUSSIAN, &quot;Gaussian&quot;),</span>
+<span class="fc" id="L110">    new Tag(LAPLACIAN, &quot;Laplacian&quot;)</span>
+  };
+
+  /** Distribution Prior class */
+<span class="fc" id="L114">  public int PriorClass = GAUSSIAN;</span>
+
+  /** NumFolds for CV based Hyperparameters selection*/
+<span class="fc" id="L117">  public int NumFolds = 2;</span>
+  
+  /** seed for randomizing the instances before CV */
+<span class="fc" id="L120">  public int m_seed = 1;</span>
+
+  /** Methods for selecting the hyperparameter value */
+  public static final int NORM_BASED = 1;
+  public static final int CV_BASED = 2;
+  public static final int SPECIFIC_VALUE = 3;
+
+<span class="fc" id="L127">  public static final Tag[] TAGS_HYPER_METHOD = {</span>
+<span class="fc" id="L128">    new Tag(NORM_BASED, &quot;Norm-based&quot;),</span>
+<span class="fc" id="L129">    new Tag(CV_BASED, &quot;CV-based&quot;),</span>
+<span class="fc" id="L130">    new Tag(SPECIFIC_VALUE, &quot;Specific value&quot;)</span>
+  };
+
+  /** Hyperparameter selection method */
+<span class="fc" id="L134">  public int HyperparameterSelection = NORM_BASED;</span>
+
+  /** The class index from the training data */
+<span class="fc" id="L137">  public int ClassIndex = -1;</span>
+
+  /** Best hyperparameter for test phase */
+<span class="fc" id="L140">  public double HyperparameterValue = 0.27;</span>
+
+  /** CV Hyperparameter Range */
+<span class="fc" id="L143">  public String HyperparameterRange = &quot;R:0.01-316,3.16&quot;;</span>
+
+  /** Maximum number of iterations */
+<span class="fc" id="L146">  public int maxIterations = 100;</span>
+
+  /**Iteration counter */
+<span class="fc" id="L149">  public int iterationCounter = 0;</span>
+
+  /** Array for storing coefficients of Bayesian regression model. */
+  public double[] BetaVector;
+
+  /** Array to store Regression Coefficient updates. */
+  public double[] DeltaBeta;
+
+  /**        Trust Region Radius Update*/
+  public double[] DeltaUpdate;
+
+  /** Trust Region Radius*/
+  public double[] Delta;
+
+  /**  Array to store Hyperparameter values for each feature. */
+  public double[] Hyperparameters;
+
+  /** R(i)= BetaVector X x(i) X y(i).
+   * This an intermediate value with respect to vector BETA, input values and corresponding class labels*/
+  public double[] R;
+
+  /** This vector is used to store the increments on the R(i). It is also used to determining the stopping criterion.*/
+  public double[] DeltaR;
+
+  /**
+   * This variable is used to keep track of change in
+   * the value of delta summation of r(i).
+   */
+  public double Change;
+
+  /**
+   * Bayesian Logistic Regression returns the probability of a given instance will belong to a certain
+   * class (p(y=+1|Beta,X). To obtain a binary value the Threshold value is used.
+   * &lt;pre&gt;
+   * p(y=+1|Beta,X)&gt;Threshold ? 1 : -1
+   * &lt;/pre&gt;
+   */
+
+  /** Filter interface used to point to weka.filters.unsupervised.attribute.Normalize object
+   *
+   */
+  public Filter m_Filter;
+
+  /** Dataset provided to do Training/Test set.*/
+  protected Instances m_Instances;
+
+  /**        Prior class object interface*/
+  protected Prior m_PriorUpdate;
+
+  public String globalInfo() {
+<span class="nc" id="L199">    return &quot;Implements Bayesian Logistic Regression &quot;</span>
+      + &quot;for both Gaussian and Laplace Priors.\n\n&quot;
+      + &quot;For more information, see\n\n&quot;
+<span class="nc" id="L202">      + getTechnicalInformation();</span>
+  }
+
+  /**
+   * &lt;pre&gt;
+   * (1)Initialize m_Beta[j] to 0.
+   * (2)Initialize m_DeltaUpdate[j].
+   * &lt;/pre&gt;
+   *
+   * */
+  public void initialize() throws Exception {
+    int numOfAttributes;
+    int numOfInstances;
+    int i;
+    int j;
+
+<span class="fc" id="L218">    Change = 0.0;</span>
+
+    //Manipulate Data
+<span class="pc bpc" id="L221" title="1 of 2 branches missed.">    if (NormalizeData) {</span>
+<span class="nc" id="L222">      m_Filter = new Normalize();</span>
+<span class="nc" id="L223">      m_Filter.setInputFormat(m_Instances);</span>
+<span class="nc" id="L224">      m_Instances = Filter.useFilter(m_Instances, m_Filter);</span>
+    }
+
+    //Set the intercept coefficient.
+<span class="fc" id="L228">    String attName = &quot;(intercept)&quot;;</span>
+<span class="fc" id="L229">    String attAtZero = m_Instances.attribute(0).name();</span>
+<span class="fc" id="L230">    int attNameIncr = 0;</span>
+<span class="pc bpc" id="L231" title="1 of 2 branches missed.">    if (attAtZero.startsWith(attName)) {</span>
+<span class="nc" id="L232">      if (attAtZero.indexOf(')') &lt; </span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">          attAtZero.length() - 1) {</span>
+<span class="nc" id="L234">        String tempNum = attAtZero.substring(attAtZero.indexOf(')') + 1,</span>
+<span class="nc" id="L235">            attAtZero.length());</span>
+<span class="nc" id="L236">        attNameIncr = Integer.parseInt(tempNum);</span>
+<span class="nc" id="L237">        attNameIncr++;</span>
+      }
+<span class="nc" id="L239">      attName += &quot;&quot; + attNameIncr;</span>
+    }
+
+<span class="fc" id="L242">    Attribute att = new Attribute(attName);</span>
+    Instance instance;
+
+<span class="fc" id="L245">    m_Instances.insertAttributeAt(att, 0);</span>
+
+<span class="fc bfc" id="L247" title="All 2 branches covered.">    for (i = 0; i &lt; m_Instances.numInstances(); i++) {</span>
+<span class="fc" id="L248">      instance = m_Instances.instance(i);</span>
+<span class="fc" id="L249">      instance.setValue(0, 1.0);</span>
+    }
+
+    //Get the number of attributes
+<span class="fc" id="L253">    numOfAttributes = m_Instances.numAttributes();</span>
+<span class="fc" id="L254">    numOfInstances = m_Instances.numInstances();</span>
+<span class="fc" id="L255">    ClassIndex = m_Instances.classIndex();</span>
+<span class="fc" id="L256">    iterationCounter = 0;</span>
+
+    //Initialize Arrays.
+<span class="pc bpc" id="L259" title="2 of 3 branches missed.">    switch (HyperparameterSelection) {</span>
+    case 1:
+<span class="fc" id="L261">      HyperparameterValue = normBasedHyperParameter();</span>
+
+<span class="pc bpc" id="L263" title="1 of 2 branches missed.">      if (debug) {</span>
+<span class="nc" id="L264">        System.out.println(&quot;Norm-based Hyperparameter: &quot; + HyperparameterValue);</span>
+      }
+
+<span class="nc" id="L267">      break;</span>
+
+    case 2:
+<span class="nc" id="L270">      HyperparameterValue = CVBasedHyperparameter();</span>
+
+<span class="nc bnc" id="L272" title="All 2 branches missed.">      if (debug) {</span>
+<span class="nc" id="L273">        System.out.println(&quot;CV-based Hyperparameter: &quot; + HyperparameterValue);</span>
+      }
+
+      break;
+    }
+
+<span class="fc" id="L279">    BetaVector = new double[numOfAttributes];</span>
+<span class="fc" id="L280">    Delta = new double[numOfAttributes];</span>
+<span class="fc" id="L281">    DeltaBeta = new double[numOfAttributes];</span>
+<span class="fc" id="L282">    Hyperparameters = new double[numOfAttributes];</span>
+<span class="fc" id="L283">    DeltaUpdate = new double[numOfAttributes];</span>
+
+<span class="fc bfc" id="L285" title="All 2 branches covered.">    for (j = 0; j &lt; numOfAttributes; j++) {</span>
+<span class="fc" id="L286">      BetaVector[j] = 0.0;</span>
+<span class="fc" id="L287">      Delta[j] = 1.0;</span>
+<span class="fc" id="L288">      DeltaBeta[j] = 0.0;</span>
+<span class="fc" id="L289">      DeltaUpdate[j] = 0.0;</span>
+
+      //TODO: Change the way it takes values.
+<span class="fc" id="L292">      Hyperparameters[j] = HyperparameterValue;</span>
+    }
+
+<span class="fc" id="L295">    DeltaR = new double[numOfInstances];</span>
+<span class="fc" id="L296">    R = new double[numOfInstances];</span>
+
+<span class="fc bfc" id="L298" title="All 2 branches covered.">    for (i = 0; i &lt; numOfInstances; i++) {</span>
+<span class="fc" id="L299">      DeltaR[i] = 0.0;</span>
+<span class="fc" id="L300">      R[i] = 0.0;</span>
+    }
+
+    //Set the Prior interface to the appropriate prior implementation.
+<span class="pc bpc" id="L304" title="1 of 2 branches missed.">    if (PriorClass == GAUSSIAN) {</span>
+<span class="fc" id="L305">      m_PriorUpdate = new GaussianPriorImpl();</span>
+    } else {
+<span class="nc" id="L307">      m_PriorUpdate = new LaplacePriorImpl();</span>
+    }
+<span class="fc" id="L309">  }</span>
+
+  /**
+   * This method tests what kind of data this classifier can handle.
+   * return Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L316">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L317">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L320">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+
+<span class="fc" id="L322">    result.enable(Capability.BINARY_ATTRIBUTES);</span>
+
+    // class
+<span class="fc" id="L325">    result.enable(Capability.BINARY_CLASS);</span>
+
+    // instances
+<span class="fc" id="L328">    result.setMinimumNumberInstances(0);</span>
+
+<span class="fc" id="L330">    return result;</span>
+  }
+
+  /**
+   * &lt;ul&gt;
+   *         &lt;li&gt;(1) Set the data to the class attribute m_Instances.&lt;/li&gt;
+   *  &lt;li&gt;(2)Call the method initialize() to initialize the values.&lt;/li&gt;
+   * &lt;/ul&gt;
+   *        @param data training data
+   *        @exception Exception if classifier can't be built successfully.
+   */
+  public void buildClassifier(Instances data) throws Exception {
+    Instance instance;
+    int i;
+    int j;
+
+    // can classifier handle the data?
+<span class="fc" id="L347">    getCapabilities().testWithFail(data);</span>
+
+    //(1) Set the data to the class attribute m_Instances.
+<span class="fc" id="L350">    m_Instances = new Instances(data);</span>
+
+    //(2)Call the method initialize() to initialize the values.
+<span class="fc" id="L353">    initialize();</span>
+
+<span class="fc bfc" id="L355" title="All 2 branches covered.">    do {</span>
+      //Compute the prior Trust Region Radius Update;
+<span class="fc bfc" id="L357" title="All 2 branches covered.">      for (j = 0; j &lt; m_Instances.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L358" title="All 2 branches covered.">        if (j != ClassIndex) {</span>
+<span class="fc" id="L359">          DeltaUpdate[j] = m_PriorUpdate.update(j, m_Instances, BetaVector[j],</span>
+<span class="fc" id="L360">              Hyperparameters[j], R, Delta[j]);</span>
+          //limit step to trust region.
+<span class="fc" id="L362">          DeltaBeta[j] = Math.min(Math.max(DeltaUpdate[j], 0 - Delta[j]),</span>
+<span class="fc" id="L363">              Delta[j]);</span>
+
+          //Update the 
+<span class="fc bfc" id="L366" title="All 2 branches covered.">          for (i = 0; i &lt; m_Instances.numInstances(); i++) {</span>
+<span class="fc" id="L367">            instance = m_Instances.instance(i);</span>
+
+<span class="fc bfc" id="L369" title="All 2 branches covered.">            if (instance.value(j) != 0) {</span>
+<span class="fc" id="L370">              DeltaR[i] = DeltaBeta[j] * instance.value(j) * classSgn(instance.classValue());</span>
+<span class="fc" id="L371">              R[i] += DeltaR[i];</span>
+            }
+          }
+
+          //Updated Beta values.
+<span class="fc" id="L376">          BetaVector[j] += DeltaBeta[j];</span>
+
+          //Update size of trust region.
+<span class="fc" id="L379">          Delta[j] = Math.max(2 * Math.abs(DeltaBeta[j]), Delta[j] / 2.0);</span>
+        }
+      }
+<span class="fc" id="L382">    } while (!stoppingCriterion());</span>
+
+<span class="fc" id="L384">    m_PriorUpdate.computelogLikelihood(BetaVector, m_Instances);</span>
+<span class="fc" id="L385">    m_PriorUpdate.computePenalty(BetaVector, Hyperparameters);</span>
+<span class="fc" id="L386">  }</span>
+
+  /**
+   * This class is used to mask the internal class labels.
+   *
+   * @param value internal class label
+   * @return
+   * &lt;pre&gt;
+   * &lt;ul&gt;&lt;li&gt;
+   *  -1 for internal class label 0
+   *  &lt;/li&gt;
+   *  &lt;li&gt;
+   *  +1 for internal class label 1
+   *  &lt;/li&gt;
+   *  &lt;/ul&gt;
+   *  &lt;/pre&gt;
+   */
+  public static double classSgn(double value) {
+<span class="fc bfc" id="L404" title="All 2 branches covered.">    if (value == 0.0) {</span>
+<span class="fc" id="L405">      return -1.0;</span>
+    } else {
+<span class="fc" id="L407">      return 1.0;</span>
+    }
+  }
+
+  /**
+    * Returns an instance of a TechnicalInformation object, containing
+    * detailed information about the technical background of this class,
+    * e.g., paper reference or book this class is based on.
+    *
+    * @return the technical information about this class
+    */
+  public TechnicalInformation getTechnicalInformation() {
+<span class="nc" id="L419">    TechnicalInformation result = null;</span>
+
+<span class="nc" id="L421">    result = new TechnicalInformation(Type.TECHREPORT);</span>
+<span class="nc" id="L422">    result.setValue(Field.AUTHOR, &quot;Alexander Genkin and David D. Lewis and David Madigan&quot;);</span>
+<span class="nc" id="L423">    result.setValue(Field.YEAR, &quot;2004&quot;);</span>
+<span class="nc" id="L424">    result.setValue(Field.TITLE, &quot;Large-scale bayesian logistic regression for text categorization&quot;);</span>
+<span class="nc" id="L425">    result.setValue(Field.INSTITUTION, &quot;DIMACS&quot;);</span>
+<span class="nc" id="L426">    result.setValue(Field.URL, &quot;http://www.stat.rutgers.edu/~madigan/PAPERS/shortFat-v3a.pdf&quot;);</span>
+<span class="nc" id="L427">    return result;</span>
+  }
+
+  /**
+   * This is a convient function that defines and upper bound
+   * (Delta&gt;0) for values of r(i) reachable by updates in the
+   * trust region.
+   *
+   * r BetaVector X x(i)y(i).
+   * delta A parameter where sigma &gt; 0
+   * @return double function value
+   */
+  public static double bigF(double r, double sigma) {
+<span class="fc" id="L440">    double funcValue = 0.25;</span>
+<span class="fc" id="L441">    double absR = Math.abs(r);</span>
+
+<span class="fc bfc" id="L443" title="All 2 branches covered.">    if (absR &gt; sigma) {</span>
+<span class="fc" id="L444">      funcValue = 1.0 / (2.0 + Math.exp(absR - sigma) + Math.exp(sigma - absR));</span>
+    }
+
+<span class="fc" id="L447">    return funcValue;</span>
+  }
+
+  /**
+   * This method implements the stopping criterion
+   * function.
+   *
+   * @return boolean whether to stop or not.
+   */
+  public boolean stoppingCriterion() {
+    int i;
+<span class="fc" id="L458">    double sum_deltaR = 0.0;</span>
+<span class="fc" id="L459">    double sum_R = 1.0;</span>
+    boolean shouldStop;
+<span class="fc" id="L461">    double value = 0.0;</span>
+    double delta;
+
+    //Summation of changes in R(i) vector.
+<span class="fc bfc" id="L465" title="All 2 branches covered.">    for (i = 0; i &lt; m_Instances.numInstances(); i++) {</span>
+<span class="fc" id="L466">      sum_deltaR += Math.abs(DeltaR[i]); //Numerator (deltaR(i))</span>
+<span class="fc" id="L467">      sum_R += Math.abs(R[i]); // Denominator (1+sum(R(i))</span>
+    }
+
+<span class="fc" id="L470">    delta = Math.abs(sum_deltaR - Change);</span>
+<span class="fc" id="L471">    Change = delta / sum_R;</span>
+
+<span class="pc bpc" id="L473" title="1 of 2 branches missed.">    if (debug) {</span>
+<span class="nc" id="L474">      System.out.println(Change + &quot; &lt;= &quot; + Tolerance);</span>
+    }
+
+<span class="pc bpc" id="L477" title="1 of 4 branches missed.">    shouldStop = ((Change &lt;= Tolerance) || (iterationCounter &gt;= maxIterations))</span>
+<span class="fc" id="L478">      ? true : false;</span>
+<span class="fc" id="L479">    iterationCounter++;</span>
+<span class="fc" id="L480">    Change = sum_deltaR;</span>
+
+<span class="fc" id="L482">    return shouldStop;</span>
+  }
+
+  /**
+   *  This method computes the values for the logistic link function.
+   *  &lt;pre&gt;f(r)=exp(r)/(1+exp(r))&lt;/pre&gt;
+   *
+   * @return output value
+   */
+  public static double logisticLinkFunction(double r) {
+<span class="fc" id="L492">    return Math.exp(r) / (1.0 + Math.exp(r));</span>
+  }
+
+  /**
+   * Sign for a given value.
+   * @param r
+   * @return double +1 if r&gt;0, -1 if r&lt;0
+   */
+  public static double sgn(double r) {
+<span class="nc" id="L501">    double sgn = 0.0;</span>
+
+<span class="nc bnc" id="L503" title="All 2 branches missed.">    if (r &gt; 0) {</span>
+<span class="nc" id="L504">      sgn = 1.0;</span>
+<span class="nc bnc" id="L505" title="All 2 branches missed.">    } else if (r &lt; 0) {</span>
+<span class="nc" id="L506">      sgn = -1.0;</span>
+    }
+
+<span class="nc" id="L509">    return sgn;</span>
+  }
+
+  /**
+   *        This function computes the norm-based hyperparameters
+   *        and stores them in the m_Hyperparameters.
+   */
+  public double normBasedHyperParameter() {
+    //TODO: Implement this method.
+    Instance instance;
+
+<span class="fc" id="L520">    double mean = 0.0;</span>
+
+<span class="fc bfc" id="L522" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.numInstances(); i++) {</span>
+<span class="fc" id="L523">      instance = m_Instances.instance(i);</span>
+
+<span class="fc" id="L525">      double sqr_sum = 0.0;</span>
+
+<span class="fc bfc" id="L527" title="All 2 branches covered.">      for (int j = 0; j &lt; m_Instances.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L528" title="All 2 branches covered.">        if (j != ClassIndex) {</span>
+<span class="fc" id="L529">          sqr_sum += (instance.value(j) * instance.value(j));</span>
+        }
+      }
+
+      //sqr_sum=Math.sqrt(sqr_sum);
+<span class="fc" id="L534">      mean += sqr_sum;</span>
+    }
+
+<span class="fc" id="L537">    mean = mean / (double) m_Instances.numInstances();</span>
+
+<span class="fc" id="L539">    return ((double) m_Instances.numAttributes()) / mean;</span>
+  }
+
+  /**
+   * Classifies the given instance using the Bayesian Logistic Regression function.
+   *
+   * @param instance the test instance
+   * @return the classification
+   * @throws Exception if classification can't be done successfully
+   */
+  public double classifyInstance(Instance instance) throws Exception {
+    //TODO: Implement
+<span class="fc" id="L551">    double sum_R = 0.0;</span>
+<span class="fc" id="L552">    double classification = 0.0;</span>
+
+<span class="fc" id="L554">    sum_R = BetaVector[0];</span>
+
+<span class="fc bfc" id="L556" title="All 2 branches covered.">    for (int j = 0; j &lt; instance.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L557" title="All 2 branches covered.">      if (j != (ClassIndex - 1)) {</span>
+<span class="fc" id="L558">        sum_R += (BetaVector[j + 1] * instance.value(j));</span>
+      }
+    }
+
+<span class="fc" id="L562">    sum_R = logisticLinkFunction(sum_R);</span>
+
+<span class="fc bfc" id="L564" title="All 2 branches covered.">    if (sum_R &gt; Threshold) {</span>
+<span class="fc" id="L565">      classification = 1.0;</span>
+    } else {
+<span class="fc" id="L567">      classification = 0.0;</span>
+    }
+
+<span class="fc" id="L570">    return classification;</span>
+  }
+
+  /**
+   * Outputs the linear regression model as a string.
+   *
+   * @return the model as string
+   */
+  public String toString() {
+
+<span class="pc bpc" id="L580" title="1 of 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="fc" id="L581">      return &quot;Bayesian logistic regression: No model built yet.&quot;;</span>
+    }
+
+<span class="nc" id="L584">    StringBuffer buf = new StringBuffer();</span>
+<span class="nc" id="L585">    String text = &quot;&quot;;</span>
+
+<span class="nc bnc" id="L587" title="All 4 branches missed.">    switch (HyperparameterSelection) {</span>
+    case 1:
+<span class="nc" id="L589">      text = &quot;Norm-Based Hyperparameter Selection: &quot;;</span>
+
+<span class="nc" id="L591">      break;</span>
+
+    case 2:
+<span class="nc" id="L594">      text = &quot;Cross-Validation Based Hyperparameter Selection: &quot;;</span>
+
+<span class="nc" id="L596">      break;</span>
+
+    case 3:
+<span class="nc" id="L599">      text = &quot;Specified Hyperparameter: &quot;;</span>
+
+      break;
+    }
+
+<span class="nc" id="L604">    buf.append(text).append(HyperparameterValue).append(&quot;\n\n&quot;);</span>
+
+<span class="nc" id="L606">    buf.append(&quot;Regression Coefficients\n&quot;);</span>
+<span class="nc" id="L607">    buf.append(&quot;=========================\n\n&quot;);</span>
+
+<span class="nc bnc" id="L609" title="All 2 branches missed.">    for (int j = 0; j &lt; m_Instances.numAttributes(); j++) {</span>
+<span class="nc bnc" id="L610" title="All 2 branches missed.">      if (j != ClassIndex) {</span>
+<span class="nc bnc" id="L611" title="All 2 branches missed.">        if (BetaVector[j] != 0.0) {</span>
+<span class="nc" id="L612">          buf.append(m_Instances.attribute(j).name()).append(&quot; : &quot;)</span>
+<span class="nc" id="L613">             .append(BetaVector[j]).append(&quot;\n&quot;);</span>
+        }
+      }
+    }
+
+<span class="nc" id="L618">    buf.append(&quot;===========================\n\n&quot;);</span>
+<span class="nc" id="L619">    buf.append(&quot;Likelihood: &quot; + m_PriorUpdate.getLoglikelihood() + &quot;\n\n&quot;);</span>
+<span class="nc" id="L620">    buf.append(&quot;Penalty: &quot; + m_PriorUpdate.getPenalty() + &quot;\n\n&quot;);</span>
+<span class="nc" id="L621">    buf.append(&quot;Regularized Log Posterior: &quot; + m_PriorUpdate.getLogPosterior() +</span>
+<span class="nc" id="L622">      &quot;\n&quot;);</span>
+<span class="nc" id="L623">    buf.append(&quot;===========================\n\n&quot;);</span>
+
+<span class="nc" id="L625">    return buf.toString();</span>
+  }
+
+  /**
+   * Method computes the best hyperparameter value by doing cross
+   * -validation on the training data and compute the likelihood.
+   * The method can parse a range of values or a list of values.
+   * @return Best hyperparameter value with the max likelihood value on the training data.
+   * @throws Exception
+   */
+  public double CVBasedHyperparameter() throws Exception {
+    //TODO: Method incomplete.
+    double start;
+
+    //TODO: Method incomplete.
+    double end;
+
+    //TODO: Method incomplete.
+    double multiplier;
+<span class="nc" id="L644">    int size = 0;</span>
+<span class="nc" id="L645">    double[] list = null;</span>
+<span class="nc" id="L646">    double MaxHypeValue = 0.0;</span>
+<span class="nc" id="L647">    double MaxLikelihood = 0.0;</span>
+<span class="nc" id="L648">    StringTokenizer tokenizer = new StringTokenizer(HyperparameterRange);</span>
+<span class="nc" id="L649">    String rangeType = tokenizer.nextToken(&quot;:&quot;);</span>
+
+<span class="nc bnc" id="L651" title="All 2 branches missed.">    if (rangeType.equals(&quot;R&quot;)) {</span>
+<span class="nc" id="L652">      String temp = tokenizer.nextToken();</span>
+<span class="nc" id="L653">      tokenizer = new StringTokenizer(temp);</span>
+<span class="nc" id="L654">      start = Double.parseDouble(tokenizer.nextToken(&quot;-&quot;));</span>
+<span class="nc" id="L655">      tokenizer = new StringTokenizer(tokenizer.nextToken());</span>
+<span class="nc" id="L656">      end = Double.parseDouble(tokenizer.nextToken(&quot;,&quot;));</span>
+<span class="nc" id="L657">      multiplier = Double.parseDouble(tokenizer.nextToken());</span>
+
+<span class="nc" id="L659">      int steps = (int) (((Math.log10(end) - Math.log10(start)) / Math.log10(multiplier)) +</span>
+<span class="nc" id="L660">        1);</span>
+<span class="nc" id="L661">      list = new double[steps];</span>
+
+<span class="nc" id="L663">      int count = 0;</span>
+
+<span class="nc bnc" id="L665" title="All 2 branches missed.">      for (double i = start; i &lt;= end; i *= multiplier) {</span>
+<span class="nc" id="L666">        list[count++] = i;</span>
+      }
+<span class="nc bnc" id="L668" title="All 2 branches missed.">    } else if (rangeType.equals(&quot;L&quot;)) {</span>
+<span class="nc" id="L669">      Vector vec = new Vector();</span>
+
+<span class="nc bnc" id="L671" title="All 2 branches missed.">      while (tokenizer.hasMoreTokens()) {</span>
+<span class="nc" id="L672">        vec.add(tokenizer.nextToken(&quot;,&quot;));</span>
+      }
+
+<span class="nc" id="L675">      list = new double[vec.size()];</span>
+
+<span class="nc bnc" id="L677" title="All 2 branches missed.">      for (int i = 0; i &lt; vec.size(); i++) {</span>
+<span class="nc" id="L678">        list[i] = Double.parseDouble((String) vec.get(i));</span>
+      }
+    } else {
+      //throw exception.  
+    }
+
+    // Perform two-fold cross-validation to collect
+    // unbiased predictions
+<span class="nc bnc" id="L686" title="All 2 branches missed.">    if (list != null) {</span>
+<span class="nc" id="L687">      int numFolds = (int) NumFolds;</span>
+<span class="nc" id="L688">      Random random = new Random(m_seed);</span>
+<span class="nc" id="L689">      m_Instances.randomize(random);</span>
+<span class="nc" id="L690">      m_Instances.stratify(numFolds);</span>
+
+<span class="nc bnc" id="L692" title="All 2 branches missed.">      for (int k = 0; k &lt; list.length; k++) {</span>
+<span class="nc bnc" id="L693" title="All 2 branches missed.">        for (int i = 0; i &lt; numFolds; i++) {</span>
+<span class="nc" id="L694">          Instances train = m_Instances.trainCV(numFolds, i, random);</span>
+<span class="nc" id="L695">          SerializedObject so = new SerializedObject(this);</span>
+<span class="nc" id="L696">          BayesianLogisticRegression blr = (BayesianLogisticRegression) so.getObject();</span>
+          //          blr.setHyperparameterSelection(3);
+<span class="nc" id="L698">          blr.setHyperparameterSelection(new SelectedTag(SPECIFIC_VALUE, </span>
+<span class="nc" id="L699">                                                         TAGS_HYPER_METHOD));</span>
+<span class="nc" id="L700">          blr.setHyperparameterValue(list[k]);</span>
+          //          blr.setPriorClass(PriorClass);
+<span class="nc" id="L702">          blr.setPriorClass(new SelectedTag(PriorClass,</span>
+<span class="nc" id="L703">                                            TAGS_PRIOR));</span>
+<span class="nc" id="L704">          blr.setThreshold(Threshold);</span>
+<span class="nc" id="L705">          blr.setTolerance(Tolerance);</span>
+<span class="nc" id="L706">          blr.buildClassifier(train);</span>
+
+<span class="nc" id="L708">          Instances test = m_Instances.testCV(numFolds, i);</span>
+<span class="nc" id="L709">          double val = blr.getLoglikeliHood(blr.BetaVector, test);</span>
+
+<span class="nc bnc" id="L711" title="All 2 branches missed.">          if (debug) {</span>
+<span class="nc" id="L712">            System.out.println(&quot;Fold &quot; + i + &quot;Hyperparameter: &quot; + list[k]);</span>
+<span class="nc" id="L713">            System.out.println(&quot;===================================&quot;);</span>
+<span class="nc" id="L714">            System.out.println(&quot; Likelihood: &quot; + val);</span>
+          }
+
+<span class="nc bnc" id="L717" title="All 6 branches missed.">          if ((k == 0) | (val &gt; MaxLikelihood)) {</span>
+<span class="nc" id="L718">            MaxLikelihood = val;</span>
+<span class="nc" id="L719">            MaxHypeValue = list[k];</span>
+          }
+        }
+      }
+    } else {
+<span class="nc" id="L724">      return HyperparameterValue;</span>
+    }
+
+<span class="nc" id="L727">    return MaxHypeValue;</span>
+  }
+
+  /**
+   *
+   * @return likelihood for a given set of betas and instances
+   */
+  public double getLoglikeliHood(double[] betas, Instances instances) {
+<span class="nc" id="L735">    m_PriorUpdate.computelogLikelihood(betas, instances);</span>
+
+<span class="nc" id="L737">    return m_PriorUpdate.getLoglikelihood();</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="fc" id="L746">    Vector newVector = new Vector();</span>
+
+<span class="fc" id="L748">    newVector.addElement(new Option(&quot;\tShow Debugging Output\n&quot;, &quot;D&quot;, 0, &quot;-D&quot;));</span>
+<span class="fc" id="L749">    newVector.addElement(new Option(&quot;\tDistribution of the Prior &quot;</span>
+                                    +&quot;(1=Gaussian, 2=Laplacian)&quot;
+                                    +&quot;\n\t(default: 1=Gaussian)&quot;
+<span class="fc" id="L752">                                    , &quot;P&quot;, 1,</span>
+<span class="fc" id="L753">                                    &quot;-P &lt;integer&gt;&quot;));</span>
+<span class="fc" id="L754">    newVector.addElement(new Option(&quot;\tHyperparameter Selection Method &quot;</span>
+                                    +&quot;(1=Norm-based, 2=CV-based, 3=specific value)\n&quot;
+                                    +&quot;\t(default: 1=Norm-based)&quot;, 
+<span class="fc" id="L757">                                    &quot;H&quot;,</span>
+<span class="fc" id="L758">                                    1, </span>
+<span class="fc" id="L759">                                    &quot;-H &lt;integer&gt;&quot;));</span>
+<span class="fc" id="L760">    newVector.addElement(new Option(&quot;\tSpecified Hyperparameter Value (use in conjunction with -H 3)\n&quot;</span>
+                                    +&quot;\t(default: 0.27)&quot;, 
+<span class="fc" id="L762">                                    &quot;V&quot;, </span>
+<span class="fc" id="L763">                                    1,</span>
+<span class="fc" id="L764">                                    &quot;-V &lt;double&gt;&quot;));</span>
+<span class="fc" id="L765">    newVector.addElement(new Option(</span>
+<span class="fc" id="L766">        &quot;\tHyperparameter Range (use in conjunction with -H 2)\n&quot;</span>
+        +&quot;\t(format: R:start-end,multiplier OR L:val(1), val(2), ..., val(n))\n&quot;
+        +&quot;\t(default: R:0.01-316,3.16)&quot;, 
+<span class="fc" id="L769">        &quot;R&quot;, </span>
+<span class="fc" id="L770">        1,</span>
+<span class="fc" id="L771">        &quot;-R &lt;string&gt;&quot;));</span>
+<span class="fc" id="L772">    newVector.addElement(new Option(&quot;\tTolerance Value\n\t(default: 0.0005)&quot;, </span>
+<span class="fc" id="L773">                                    &quot;Tl&quot;, </span>
+<span class="fc" id="L774">                                    1,</span>
+<span class="fc" id="L775">                                    &quot;-Tl &lt;double&gt;&quot;));</span>
+<span class="fc" id="L776">    newVector.addElement(new Option(&quot;\tThreshold Value\n\t(default: 0.5)&quot;, </span>
+<span class="fc" id="L777">                                    &quot;S&quot;, </span>
+<span class="fc" id="L778">                                    1, </span>
+<span class="fc" id="L779">                                    &quot;-S &lt;double&gt;&quot;));</span>
+<span class="fc" id="L780">    newVector.addElement(new Option(&quot;\tNumber Of Folds (use in conjuction with -H 2)\n&quot;</span>
+                                    +&quot;\t(default: 2)&quot;, 
+<span class="fc" id="L782">                                    &quot;F&quot;, </span>
+<span class="fc" id="L783">                                    1,</span>
+<span class="fc" id="L784">                                    &quot;-F &lt;integer&gt;&quot;));</span>
+<span class="fc" id="L785">    newVector.addElement(new Option(&quot;\tMax Number of Iterations\n\t(default: 100)&quot;, </span>
+<span class="fc" id="L786">                                    &quot;I&quot;, </span>
+<span class="fc" id="L787">                                    1,</span>
+<span class="fc" id="L788">                                    &quot;-I &lt;integer&gt;&quot;));</span>
+<span class="fc" id="L789">    newVector.addElement(new Option(&quot;\tNormalize the data&quot;,</span>
+<span class="fc" id="L790">                                    &quot;N&quot;, 0, &quot;-N&quot;));</span>
+    
+<span class="fc" id="L792">    newVector.addElement(new Option(&quot;\tSeed for randomizing instances order&quot; +</span>
+    		&quot;\n\tin CV-based hyperparameter selection\n\t(default: 1)&quot;,
+<span class="fc" id="L794">    		&quot;seed&quot;, 1, </span>
+<span class="fc" id="L795">    		&quot;-seed &lt;number&gt;&quot;));</span>
+
+<span class="fc" id="L797">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Show Debugging Output
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;integer&amp;gt;
+   *  Distribution of the Prior (1=Gaussian, 2=Laplacian)
+   *  (default: 1=Gaussian)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -H &amp;lt;integer&amp;gt;
+   *  Hyperparameter Selection Method (1=Norm-based, 2=CV-based, 3=specific value)
+   *  (default: 1=Norm-based)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V &amp;lt;double&amp;gt;
+   *  Specified Hyperparameter Value (use in conjunction with -H 3)
+   *  (default: 0.27)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;string&amp;gt;
+   *  Hyperparameter Range (use in conjunction with -H 2)
+   *  (format: R:start-end,multiplier OR L:val(1), val(2), ..., val(n))
+   *  (default: R:0.01-316,3.16)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -Tl &amp;lt;double&amp;gt;
+   *  Tolerance Value
+   *  (default: 0.0005)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;double&amp;gt;
+   *  Threshold Value
+   *  (default: 0.5)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -F &amp;lt;integer&amp;gt;
+   *  Number Of Folds (use in conjuction with -H 2)
+   *  (default: 2)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -I &amp;lt;integer&amp;gt;
+   *  Max Number of Iterations
+   *  (default: 100)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N
+   *  Normalize the data&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -seed &amp;lt;number&amp;gt;
+   *  Seed for randomizing instances order
+   *  in CV-based hyperparameter selection
+   *  (default: 1)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    //Debug Option
+<span class="fc" id="L858">    debug = Utils.getFlag('D', options);</span>
+
+    // Set Tolerance.
+<span class="fc" id="L861">    String Tol = Utils.getOption(&quot;Tl&quot;, options);</span>
+
+<span class="fc bfc" id="L863" title="All 2 branches covered.">    if (Tol.length() != 0) {</span>
+<span class="fc" id="L864">      Tolerance = Double.parseDouble(Tol);</span>
+    }
+
+    //Set Threshold
+<span class="fc" id="L868">    String Thres = Utils.getOption('S', options);</span>
+
+<span class="fc bfc" id="L870" title="All 2 branches covered.">    if (Thres.length() != 0) {</span>
+<span class="fc" id="L871">      Threshold = Double.parseDouble(Thres);</span>
+    }
+
+    //Set Hyperparameter Type 
+<span class="fc" id="L875">    String Hype = Utils.getOption('H', options);</span>
+
+<span class="fc bfc" id="L877" title="All 2 branches covered.">    if (Hype.length() != 0) {</span>
+<span class="fc" id="L878">      HyperparameterSelection = Integer.parseInt(Hype);</span>
+    }
+
+    //Set Hyperparameter Value 
+<span class="fc" id="L882">    String HyperValue = Utils.getOption('V', options);</span>
+
+<span class="fc bfc" id="L884" title="All 2 branches covered.">    if (HyperValue.length() != 0) {</span>
+<span class="fc" id="L885">      HyperparameterValue = Double.parseDouble(HyperValue);</span>
+    }
+
+    // Set hyper parameter range or list.
+<span class="fc" id="L889">    String HyperparameterRange = Utils.getOption(&quot;R&quot;, options);</span>
+
+    //Set Prior class.
+<span class="fc" id="L892">    String strPrior = Utils.getOption('P', options);</span>
+
+<span class="fc bfc" id="L894" title="All 2 branches covered.">    if (strPrior.length() != 0) {</span>
+<span class="fc" id="L895">      PriorClass = Integer.parseInt(strPrior);</span>
+    }
+
+<span class="fc" id="L898">    String folds = Utils.getOption('F', options);</span>
+
+<span class="fc bfc" id="L900" title="All 2 branches covered.">    if (folds.length() != 0) {</span>
+<span class="fc" id="L901">      NumFolds = Integer.parseInt(folds);</span>
+    }
+    
+<span class="fc" id="L904">    String seed = Utils.getOption(&quot;seed&quot;, options);</span>
+<span class="fc bfc" id="L905" title="All 2 branches covered.">    if (seed.length() &gt; 0) {</span>
+<span class="fc" id="L906">      setSeed(Integer.parseInt(seed));</span>
+    }
+
+<span class="fc" id="L909">    String iterations = Utils.getOption('I', options);</span>
+
+<span class="fc bfc" id="L911" title="All 2 branches covered.">    if (iterations.length() != 0) {</span>
+<span class="fc" id="L912">      maxIterations = Integer.parseInt(iterations);</span>
+    }
+
+<span class="fc" id="L915">    NormalizeData = Utils.getFlag('N', options);</span>
+
+    //TODO: Implement this method for other options.
+<span class="fc" id="L918">    Utils.checkForRemainingOptions(options);</span>
+<span class="fc" id="L919">  }</span>
+
+  /**
+   *
+   */
+  public String[] getOptions() {
+<span class="fc" id="L925">    Vector result = new Vector();</span>
+
+    //Add Debug Mode to options.
+<span class="fc" id="L928">    result.add(&quot;-D&quot;);</span>
+
+    //Add Tolerance value to options
+<span class="fc" id="L931">    result.add(&quot;-Tl&quot;);</span>
+<span class="fc" id="L932">    result.add(&quot;&quot; + Tolerance);</span>
+
+    //Add Threshold value to options
+<span class="fc" id="L935">    result.add(&quot;-S&quot;);</span>
+<span class="fc" id="L936">    result.add(&quot;&quot; + Threshold);</span>
+
+    //Add Hyperparameter value to options
+<span class="fc" id="L939">    result.add(&quot;-H&quot;);</span>
+<span class="fc" id="L940">    result.add(&quot;&quot; + HyperparameterSelection);</span>
+
+<span class="fc" id="L942">    result.add(&quot;-V&quot;);</span>
+<span class="fc" id="L943">    result.add(&quot;&quot; + HyperparameterValue);</span>
+
+<span class="fc" id="L945">    result.add(&quot;-R&quot;);</span>
+<span class="fc" id="L946">    result.add(&quot;&quot; + HyperparameterRange);</span>
+
+    //Add Prior Class to options
+<span class="fc" id="L949">    result.add(&quot;-P&quot;);</span>
+<span class="fc" id="L950">    result.add(&quot;&quot; + PriorClass);</span>
+
+<span class="fc" id="L952">    result.add(&quot;-F&quot;);</span>
+<span class="fc" id="L953">    result.add(&quot;&quot; + NumFolds);</span>
+    
+<span class="fc" id="L955">    result.add(&quot;-seed&quot;);</span>
+<span class="fc" id="L956">    result.add(&quot;&quot; + getSeed());</span>
+
+<span class="fc" id="L958">    result.add(&quot;-I&quot;);</span>
+<span class="fc" id="L959">    result.add(&quot;&quot; + maxIterations);</span>
+
+<span class="fc" id="L961">    result.add(&quot;-N&quot;);</span>
+
+<span class="fc" id="L963">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String[] argv) {
+<span class="nc" id="L972">    runClassifier(new BayesianLogisticRegression(), argv);</span>
+<span class="nc" id="L973">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String debugTipText() {
+<span class="nc" id="L982">    return &quot;Turns on debugging mode.&quot;;</span>
+  }
+
+  /**
+   *
+   */
+  public void setDebug(boolean debugMode) {
+<span class="nc" id="L989">    debug = debugMode;</span>
+<span class="nc" id="L990">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String hyperparameterSelectionTipText() {
+<span class="nc" id="L999">    return &quot;Select the type of Hyperparameter to be used.&quot;;</span>
+  }
+
+  /**
+   * Get the method used to select the hyperparameter
+   *
+   * @return the method used to select the hyperparameter
+   */
+  public SelectedTag getHyperparameterSelection() {
+<span class="nc" id="L1008">    return new SelectedTag(HyperparameterSelection, </span>
+<span class="nc" id="L1009">                           TAGS_HYPER_METHOD);</span>
+  }
+
+  /**
+   * Set the method used to select the hyperparameter
+   *
+   * @param newMethod the method used to set the hyperparameter
+   */
+  public void setHyperparameterSelection(SelectedTag newMethod) {
+<span class="nc bnc" id="L1018" title="All 2 branches missed.">    if (newMethod.getTags() == TAGS_HYPER_METHOD) {</span>
+<span class="nc" id="L1019">      int c = newMethod.getSelectedTag().getID();</span>
+<span class="nc bnc" id="L1020" title="All 4 branches missed.">      if (c &gt;= 1 &amp;&amp; c &lt;= 3) {</span>
+<span class="nc" id="L1021">        HyperparameterSelection = c;</span>
+      } else {
+<span class="nc" id="L1023">        throw new IllegalArgumentException(&quot;Wrong selection type, -H value should be: &quot;</span>
+                                           + &quot;1 for norm-based, 2 for CV-based and &quot;
+                                         + &quot;3 for specific value&quot;);
+      }
+    }
+<span class="nc" id="L1028">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String priorClassTipText() {
+<span class="nc" id="L1037">    return &quot;The type of prior to be used.&quot;;</span>
+  }
+
+  /**
+   * Set the type of prior to use.
+   *
+   * @param newMethod the type of prior to use.
+   */
+  public void setPriorClass(SelectedTag newMethod) {
+<span class="nc bnc" id="L1046" title="All 2 branches missed.">    if (newMethod.getTags() == TAGS_PRIOR) {</span>
+<span class="nc" id="L1047">      int c = newMethod.getSelectedTag().getID();</span>
+<span class="nc bnc" id="L1048" title="All 4 branches missed.">      if (c == GAUSSIAN || c == LAPLACIAN) {</span>
+<span class="nc" id="L1049">        PriorClass = c;</span>
+      } else {
+<span class="nc" id="L1051">        throw new IllegalArgumentException(&quot;Wrong selection type, -P value should be: &quot;</span>
+                                           + &quot;1 for Gaussian or 2 for Laplacian&quot;);
+      }
+    }
+<span class="nc" id="L1055">  }</span>
+
+  /**
+   * Get the type of prior to use.
+   *
+   * @return the type of prior to use
+   */
+  public SelectedTag getPriorClass() {
+<span class="nc" id="L1063">    return new SelectedTag(PriorClass,</span>
+<span class="nc" id="L1064">                           TAGS_PRIOR);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String thresholdTipText() {
+<span class="nc" id="L1074">    return &quot;Set the threshold for classifiction. The logistic function doesn't &quot;</span>
+      + &quot;return a class label but an estimate of p(y=+1|B,x(i)). &quot;
+      + &quot;These estimates need to be converted to binary class label predictions. &quot;
+      + &quot;values above the threshold are assigned class +1.&quot;;
+  }
+
+  /**
+   * Return the threshold being used.
+   *
+   * @return the threshold
+   */
+  public double getThreshold() {
+<span class="nc" id="L1086">    return Threshold;</span>
+  }
+
+  /**
+   * Set the threshold to use.
+   *
+   * @param threshold the threshold to use
+   */
+  public void setThreshold(double threshold) {
+<span class="nc" id="L1095">    Threshold = threshold;</span>
+<span class="nc" id="L1096">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String toleranceTipText() {
+<span class="nc" id="L1105">    return &quot;This value decides the stopping criterion.&quot;;</span>
+  }
+
+  /**
+   * Get the tolerance value
+   *
+   * @return the tolerance value
+   */
+  public double getTolerance() {
+<span class="nc" id="L1114">    return Tolerance;</span>
+  }
+
+  /**
+   * Set the tolerance value
+   *
+   * @param tolerance the tolerance value to use
+   */
+  public void setTolerance(double tolerance) {
+<span class="nc" id="L1123">    Tolerance = tolerance;</span>
+<span class="nc" id="L1124">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String hyperparameterValueTipText() {
+<span class="nc" id="L1133">    return &quot;Specific hyperparameter value. Used when the hyperparameter &quot;</span>
+      + &quot;selection method is set to specific value&quot;;
+  }
+
+  /**
+   * Get the hyperparameter value. Used when the hyperparameter
+   * selection method is set to specific value
+   *
+   * @return the hyperparameter value
+   */
+  public double getHyperparameterValue() {
+<span class="nc" id="L1144">    return HyperparameterValue;</span>
+  }
+
+  /**
+   * Set the hyperparameter value. Used when the hyperparameter
+   * selection method is set to specific value
+   *
+   * @param hyperparameterValue the value of the hyperparameter
+   */
+  public void setHyperparameterValue(double hyperparameterValue) {
+<span class="nc" id="L1154">    HyperparameterValue = hyperparameterValue;</span>
+<span class="nc" id="L1155">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numFoldsTipText() {
+<span class="nc" id="L1164">    return &quot;The number of folds to use for CV-based hyperparameter selection.&quot;;</span>
+  }
+
+  /**
+   * Return the number of folds for CV-based hyperparameter selection
+   *
+   * @return the number of CV folds
+   */
+  public int getNumFolds() {
+<span class="nc" id="L1173">    return NumFolds;</span>
+  }
+
+  /**
+   * Set the number of folds to use for CV-based hyperparameter
+   * selection
+   *
+   * @param numFolds number of folds to select
+   */
+  public void setNumFolds(int numFolds) {
+<span class="nc" id="L1183">    NumFolds = numFolds;</span>
+<span class="nc" id="L1184">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String seedTipText() {
+<span class="nc" id="L1193">    return &quot;Seed for randomizing instances order prior to CV-based &quot; +</span>
+    		&quot;hyperparameter selection&quot;;
+  }
+  
+  /**
+   * Set the seed for randomizing the instances for CV-based
+   * hyperparameter selection
+   * 
+   * @param seed the seed to use
+   */
+  public void setSeed(int seed) {
+<span class="fc" id="L1204">    m_seed = seed;</span>
+<span class="fc" id="L1205">  }</span>
+  
+  /**
+   * Get the seed for randomizing the instances for CV-based
+   * hyperparameter selection
+   * 
+   * @return the seed to use
+   */
+  public int getSeed() {
+<span class="fc" id="L1214">    return m_seed;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String maxIterationsTipText() {
+<span class="nc" id="L1224">    return &quot;The maximum number of iterations to perform.&quot;;</span>
+  }
+
+  /**
+   * Get the maximum number of iterations to perform
+   *
+   * @return the maximum number of iterations
+   */
+  public int getMaxIterations() {
+<span class="nc" id="L1233">    return maxIterations;</span>
+  }
+
+  /**
+   * Set the maximum number of iterations to perform
+   *
+   * @param maxIterations maximum number of iterations
+   */
+  public void setMaxIterations(int maxIterations) {
+<span class="nc" id="L1242">    this.maxIterations = maxIterations;</span>
+<span class="nc" id="L1243">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String normalizeDataTipText() {
+<span class="nc" id="L1252">    return &quot;Normalize the data.&quot;;</span>
+  }
+
+  /**
+   * Returns true if the data is to be normalized first
+   *
+   * @return true if the data is to be normalized
+   */
+  public boolean isNormalizeData() {
+<span class="nc" id="L1261">    return NormalizeData;</span>
+  }
+
+  /**
+   * Set whether to normalize the data or not
+   *
+   * @param normalizeData true if data is to be normalized
+   */
+  public void setNormalizeData(boolean normalizeData) {
+<span class="nc" id="L1270">    NormalizeData = normalizeData;</span>
+<span class="nc" id="L1271">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String hyperparameterRangeTipText() {
+<span class="nc" id="L1280">    return &quot;Hyperparameter value range. In case of CV-based Hyperparameters, &quot;</span>
+      + &quot;you can specify the range in two ways: \n&quot;
+      + &quot;Comma-Separated: L: 3,5,6 (This will be a list of possible values.)\n&quot;
+      + &quot;Range: R:0.01-316,3.16 (This will take values from 0.01-316 (inclusive) &quot;
+      + &quot;in multiplications of 3.16&quot;;
+  }
+
+  /**
+   * Get the range of hyperparameter values to consider
+   * during CV-based selection.
+   *
+   * @return the range of hyperparameters as a Stringe
+   */
+  public String getHyperparameterRange() {
+<span class="nc" id="L1294">    return HyperparameterRange;</span>
+  }
+
+  /**
+   * Set the range of hyperparameter values to consider
+   * during CV-based selection
+   *
+   * @param hyperparameterRange the range of hyperparameter values
+   */
+  public void setHyperparameterRange(String hyperparameterRange) {
+<span class="nc" id="L1304">    HyperparameterRange = hyperparameterRange;</span>
+<span class="nc" id="L1305">  }</span>
+
+  /**
+   * Returns true if debug is turned on.
+   *
+   * @return true if debug is turned on
+   */
+  public boolean isDebug() {
+<span class="nc" id="L1313">    return debug;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1322">    return RevisionUtils.extract(&quot;$Revision: 7984 $&quot;);</span>
+  }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

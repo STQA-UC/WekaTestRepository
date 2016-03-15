@@ -1,0 +1,782 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>AdaBoostM1.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.meta</a> &gt; <span class="el_source">AdaBoostM1.java</span></div><h1>AdaBoostM1.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    AdaBoostM1.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.meta;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.Evaluation;
+import weka.classifiers.RandomizableIteratedSingleClassifierEnhancer;
+import weka.classifiers.Sourcable;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.Randomizable;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class for boosting a nominal class classifier using the Adaboost M1 method. Only nominal class problems can be tackled. Often dramatically improves performance, but sometimes overfits.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see&lt;br/&gt;
+ * &lt;br/&gt;
+ * Yoav Freund, Robert E. Schapire: Experiments with a new boosting algorithm. In: Thirteenth International Conference on Machine Learning, San Francisco, 148-156, 1996.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Freund1996,
+ *    address = {San Francisco},
+ *    author = {Yoav Freund and Robert E. Schapire},
+ *    booktitle = {Thirteenth International Conference on Machine Learning},
+ *    pages = {148-156},
+ *    publisher = {Morgan Kaufmann},
+ *    title = {Experiments with a new boosting algorithm},
+ *    year = {1996}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;num&amp;gt;
+ *  Percentage of weight mass to base training on.
+ *  (default 100, reduce to around 90 speed up)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Q
+ *  Use resampling for boosting.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;num&amp;gt;
+ *  Number of iterations.
+ *  (default 10)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W
+ *  Full name of base classifier.
+ *  (default: weka.classifiers.trees.DecisionStump)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to classifier weka.classifiers.trees.DecisionStump:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * Options after -- are passed to the designated classifier.&lt;p&gt;
+ *
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 1.40 $ 
+ */
+<span class="fc" id="L115">public class AdaBoostM1 </span>
+  extends RandomizableIteratedSingleClassifierEnhancer 
+  implements WeightedInstancesHandler, Sourcable, TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -7378107808933117974L;
+  
+  /** Max num iterations tried to find classifier with non-zero error. */ 
+<span class="fc" id="L123">  private static int MAX_NUM_RESAMPLING_ITERATIONS = 10;</span>
+  
+  /** Array for storing the weights for the votes. */
+  protected double [] m_Betas;
+
+  /** The number of successfully generated base classifiers. */
+  protected int m_NumIterationsPerformed;
+
+  /** Weight Threshold. The percentage of weight mass used in training */
+<span class="fc" id="L132">  protected int m_WeightThreshold = 100;</span>
+
+  /** Use boosting with reweighting? */
+  protected boolean m_UseResampling;
+
+  /** The number of classes */
+  protected int m_NumClasses;
+  
+  /** a ZeroR model in case no model can be built from the data */
+  protected Classifier m_ZeroR;
+    
+  /**
+   * Constructor.
+   */
+<span class="fc" id="L146">  public AdaBoostM1() {</span>
+    
+<span class="fc" id="L148">    m_Classifier = new weka.classifiers.trees.DecisionStump();</span>
+<span class="fc" id="L149">  }</span>
+    
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+ 
+<span class="nc" id="L158">    return &quot;Class for boosting a nominal class classifier using the Adaboost &quot;</span>
+      + &quot;M1 method. Only nominal class problems can be tackled. Often &quot;
+      + &quot;dramatically improves performance, but sometimes overfits.\n\n&quot;
+      + &quot;For more information, see\n\n&quot;
+<span class="nc" id="L162">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L175">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L176">    result.setValue(Field.AUTHOR, &quot;Yoav Freund and Robert E. Schapire&quot;);</span>
+<span class="nc" id="L177">    result.setValue(Field.TITLE, &quot;Experiments with a new boosting algorithm&quot;);</span>
+<span class="nc" id="L178">    result.setValue(Field.BOOKTITLE, &quot;Thirteenth International Conference on Machine Learning&quot;);</span>
+<span class="nc" id="L179">    result.setValue(Field.YEAR, &quot;1996&quot;);</span>
+<span class="nc" id="L180">    result.setValue(Field.PAGES, &quot;148-156&quot;);</span>
+<span class="nc" id="L181">    result.setValue(Field.PUBLISHER, &quot;Morgan Kaufmann&quot;);</span>
+<span class="nc" id="L182">    result.setValue(Field.ADDRESS, &quot;San Francisco&quot;);</span>
+    
+<span class="nc" id="L184">    return result;</span>
+  }
+
+  /**
+   * String describing default classifier.
+   * 
+   * @return the default classifier classname
+   */
+  protected String defaultClassifierString() {
+    
+<span class="fc" id="L194">    return &quot;weka.classifiers.trees.DecisionStump&quot;;</span>
+  }
+
+  /**
+   * Select only instances with weights that contribute to 
+   * the specified quantile of the weight distribution
+   *
+   * @param data the input instances
+   * @param quantile the specified quantile eg 0.9 to select 
+   * 90% of the weight mass
+   * @return the selected instances
+   */
+  protected Instances selectWeightQuantile(Instances data, double quantile) { 
+
+<span class="nc" id="L208">    int numInstances = data.numInstances();</span>
+<span class="nc" id="L209">    Instances trainData = new Instances(data, numInstances);</span>
+<span class="nc" id="L210">    double [] weights = new double [numInstances];</span>
+
+<span class="nc" id="L212">    double sumOfWeights = 0;</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">    for(int i = 0; i &lt; numInstances; i++) {</span>
+<span class="nc" id="L214">      weights[i] = data.instance(i).weight();</span>
+<span class="nc" id="L215">      sumOfWeights += weights[i];</span>
+    }
+<span class="nc" id="L217">    double weightMassToSelect = sumOfWeights * quantile;</span>
+<span class="nc" id="L218">    int [] sortedIndices = Utils.sort(weights);</span>
+
+    // Select the instances
+<span class="nc" id="L221">    sumOfWeights = 0;</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">    for(int i = numInstances - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L223">      Instance instance = (Instance)data.instance(sortedIndices[i]).copy();</span>
+<span class="nc" id="L224">      trainData.add(instance);</span>
+<span class="nc" id="L225">      sumOfWeights += weights[sortedIndices[i]];</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">      if ((sumOfWeights &gt; weightMassToSelect) &amp;&amp; </span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">	  (i &gt; 0) &amp;&amp; </span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">	  (weights[sortedIndices[i]] != weights[sortedIndices[i - 1]])) {</span>
+<span class="nc" id="L229">	break;</span>
+      }
+    }
+<span class="nc bnc" id="L232" title="All 2 branches missed.">    if (m_Debug) {</span>
+<span class="nc" id="L233">      System.err.println(&quot;Selected &quot; + trainData.numInstances()</span>
+<span class="nc" id="L234">			 + &quot; out of &quot; + numInstances);</span>
+    }
+<span class="nc" id="L236">    return trainData;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="fc" id="L246">    Vector newVector = new Vector();</span>
+
+<span class="fc" id="L248">    newVector.addElement(new Option(</span>
+<span class="fc" id="L249">	&quot;\tPercentage of weight mass to base training on.\n&quot;</span>
+	+&quot;\t(default 100, reduce to around 90 speed up)&quot;,
+<span class="fc" id="L251">	&quot;P&quot;, 1, &quot;-P &lt;num&gt;&quot;));</span>
+    
+<span class="fc" id="L253">    newVector.addElement(new Option(</span>
+<span class="fc" id="L254">	&quot;\tUse resampling for boosting.&quot;,</span>
+<span class="fc" id="L255">	&quot;Q&quot;, 0, &quot;-Q&quot;));</span>
+
+<span class="fc" id="L257">    Enumeration enu = super.listOptions();</span>
+<span class="fc bfc" id="L258" title="All 2 branches covered.">    while (enu.hasMoreElements()) {</span>
+<span class="fc" id="L259">      newVector.addElement(enu.nextElement());</span>
+    }
+    
+<span class="fc" id="L262">    return newVector.elements();</span>
+  }
+
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;num&amp;gt;
+   *  Percentage of weight mass to base training on.
+   *  (default 100, reduce to around 90 speed up)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -Q
+   *  Use resampling for boosting.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -I &amp;lt;num&amp;gt;
+   *  Number of iterations.
+   *  (default 10)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W
+   *  Full name of base classifier.
+   *  (default: weka.classifiers.trees.DecisionStump)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to classifier weka.classifiers.trees.DecisionStump:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * Options after -- are passed to the designated classifier.&lt;p&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="fc" id="L312">    String thresholdString = Utils.getOption('P', options);</span>
+<span class="fc bfc" id="L313" title="All 2 branches covered.">    if (thresholdString.length() != 0) {</span>
+<span class="fc" id="L314">      setWeightThreshold(Integer.parseInt(thresholdString));</span>
+    } else {
+<span class="fc" id="L316">      setWeightThreshold(100);</span>
+    }
+      
+<span class="fc" id="L319">    setUseResampling(Utils.getFlag('Q', options));</span>
+
+<span class="fc" id="L321">    super.setOptions(options);</span>
+<span class="fc" id="L322">  }</span>
+
+  /**
+   * Gets the current settings of the Classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    Vector        result;
+    String[]      options;
+    int           i;
+    
+<span class="fc" id="L334">    result = new Vector();</span>
+
+<span class="pc bpc" id="L336" title="1 of 2 branches missed.">    if (getUseResampling())</span>
+<span class="nc" id="L337">      result.add(&quot;-Q&quot;);</span>
+
+<span class="fc" id="L339">    result.add(&quot;-P&quot;);</span>
+<span class="fc" id="L340">    result.add(&quot;&quot; + getWeightThreshold());</span>
+    
+<span class="fc" id="L342">    options = super.getOptions();</span>
+<span class="fc bfc" id="L343" title="All 2 branches covered.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="fc" id="L344">      result.add(options[i]);</span>
+
+<span class="fc" id="L346">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String weightThresholdTipText() {
+<span class="nc" id="L355">    return &quot;Weight threshold for weight pruning.&quot;;</span>
+  }
+
+  /**
+   * Set weight threshold
+   *
+   * @param threshold the percentage of weight mass used for training
+   */
+  public void setWeightThreshold(int threshold) {
+
+<span class="fc" id="L365">    m_WeightThreshold = threshold;</span>
+<span class="fc" id="L366">  }</span>
+
+  /**
+   * Get the degree of weight thresholding
+   *
+   * @return the percentage of weight mass used for training
+   */
+  public int getWeightThreshold() {
+
+<span class="fc" id="L375">    return m_WeightThreshold;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String useResamplingTipText() {
+<span class="nc" id="L384">    return &quot;Whether resampling is used instead of reweighting.&quot;;</span>
+  }
+
+  /**
+   * Set resampling mode
+   *
+   * @param r true if resampling should be done
+   */
+  public void setUseResampling(boolean r) {
+
+<span class="fc" id="L394">    m_UseResampling = r;</span>
+<span class="fc" id="L395">  }</span>
+
+  /**
+   * Get whether resampling is turned on
+   *
+   * @return true if resampling output is on
+   */
+  public boolean getUseResampling() {
+
+<span class="fc" id="L404">    return m_UseResampling;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L413">    Capabilities result = super.getCapabilities();</span>
+
+    // class
+<span class="fc" id="L416">    result.disableAllClasses();</span>
+<span class="fc" id="L417">    result.disableAllClassDependencies();</span>
+<span class="pc bpc" id="L418" title="1 of 2 branches missed.">    if (super.getCapabilities().handles(Capability.NOMINAL_CLASS))</span>
+<span class="fc" id="L419">      result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="pc bpc" id="L420" title="1 of 2 branches missed.">    if (super.getCapabilities().handles(Capability.BINARY_CLASS))</span>
+<span class="fc" id="L421">      result.enable(Capability.BINARY_CLASS);</span>
+    
+<span class="fc" id="L423">    return result;</span>
+  }
+
+  /**
+   * Boosting method.
+   *
+   * @param data the training data to be used for generating the
+   * boosted classifier.
+   * @throws Exception if the classifier could not be built successfully
+   */
+
+  public void buildClassifier(Instances data) throws Exception {
+
+<span class="fc" id="L436">    super.buildClassifier(data);</span>
+
+    // can classifier handle the data?
+<span class="fc" id="L439">    getCapabilities().testWithFail(data);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L442">    data = new Instances(data);</span>
+<span class="fc" id="L443">    data.deleteWithMissingClass();</span>
+    
+    // only class? -&gt; build ZeroR model
+<span class="fc bfc" id="L446" title="All 2 branches covered.">    if (data.numAttributes() == 1) {</span>
+<span class="fc" id="L447">      System.err.println(</span>
+<span class="fc" id="L448">	  &quot;Cannot build model (only class attribute present in data!), &quot;</span>
+	  + &quot;using ZeroR model instead!&quot;);
+<span class="fc" id="L450">      m_ZeroR = new weka.classifiers.rules.ZeroR();</span>
+<span class="fc" id="L451">      m_ZeroR.buildClassifier(data);</span>
+<span class="fc" id="L452">      return;</span>
+    }
+    else {
+<span class="fc" id="L455">      m_ZeroR = null;</span>
+    }
+    
+<span class="fc" id="L458">    m_NumClasses = data.numClasses();</span>
+<span class="pc bpc" id="L459" title="1 of 2 branches missed.">    if ((!m_UseResampling) &amp;&amp; </span>
+<span class="pc bpc" id="L460" title="1 of 2 branches missed.">	(m_Classifier instanceof WeightedInstancesHandler)) {</span>
+<span class="fc" id="L461">      buildClassifierWithWeights(data);</span>
+    } else {
+<span class="nc" id="L463">      buildClassifierUsingResampling(data);</span>
+    }
+<span class="fc" id="L465">  }</span>
+
+  /**
+   * Boosting method. Boosts using resampling
+   *
+   * @param data the training data to be used for generating the
+   * boosted classifier.
+   * @throws Exception if the classifier could not be built successfully
+   */
+  protected void buildClassifierUsingResampling(Instances data) 
+    throws Exception {
+
+    Instances trainData, sample, training;
+    double epsilon, reweight, sumProbs;
+    Evaluation evaluation;
+<span class="nc" id="L480">    int numInstances = data.numInstances();</span>
+<span class="nc" id="L481">    Random randomInstance = new Random(m_Seed);</span>
+<span class="nc" id="L482">    int resamplingIterations = 0;</span>
+
+    // Initialize data
+<span class="nc" id="L485">    m_Betas = new double [m_Classifiers.length];</span>
+<span class="nc" id="L486">    m_NumIterationsPerformed = 0;</span>
+    // Create a copy of the data so that when the weights are diddled
+    // with it doesn't mess up the weights for anyone else
+<span class="nc" id="L489">    training = new Instances(data, 0, numInstances);</span>
+<span class="nc" id="L490">    sumProbs = training.sumOfWeights();</span>
+<span class="nc bnc" id="L491" title="All 2 branches missed.">    for (int i = 0; i &lt; training.numInstances(); i++) {</span>
+<span class="nc" id="L492">      training.instance(i).setWeight(training.instance(i).</span>
+<span class="nc" id="L493">				      weight() / sumProbs);</span>
+    }
+    
+    // Do boostrap iterations
+<span class="nc bnc" id="L497" title="All 2 branches missed.">    for (m_NumIterationsPerformed = 0; m_NumIterationsPerformed &lt; m_Classifiers.length; </span>
+<span class="nc" id="L498">	 m_NumIterationsPerformed++) {</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">      if (m_Debug) {</span>
+<span class="nc" id="L500">	System.err.println(&quot;Training classifier &quot; + (m_NumIterationsPerformed + 1));</span>
+      }
+
+      // Select instances to train the classifier on
+<span class="nc bnc" id="L504" title="All 2 branches missed.">      if (m_WeightThreshold &lt; 100) {</span>
+<span class="nc" id="L505">	trainData = selectWeightQuantile(training, </span>
+<span class="nc" id="L506">					 (double)m_WeightThreshold / 100);</span>
+      } else {
+<span class="nc" id="L508">	trainData = new Instances(training);</span>
+      }
+      
+      // Resample
+<span class="nc" id="L512">      resamplingIterations = 0;</span>
+<span class="nc" id="L513">      double[] weights = new double[trainData.numInstances()];</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">      for (int i = 0; i &lt; weights.length; i++) {</span>
+<span class="nc" id="L515">	weights[i] = trainData.instance(i).weight();</span>
+      }
+      do {
+<span class="nc" id="L518">	sample = trainData.resampleWithWeights(randomInstance, weights);</span>
+
+	// Build and evaluate classifier
+<span class="nc" id="L521">	m_Classifiers[m_NumIterationsPerformed].buildClassifier(sample);</span>
+<span class="nc" id="L522">	evaluation = new Evaluation(data);</span>
+<span class="nc" id="L523">	evaluation.evaluateModel(m_Classifiers[m_NumIterationsPerformed], </span>
+<span class="nc" id="L524">				 training);</span>
+<span class="nc" id="L525">	epsilon = evaluation.errorRate();</span>
+<span class="nc" id="L526">	resamplingIterations++;</span>
+<span class="nc bnc" id="L527" title="All 2 branches missed.">      } while (Utils.eq(epsilon, 0) &amp;&amp; </span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">	      (resamplingIterations &lt; MAX_NUM_RESAMPLING_ITERATIONS));</span>
+      	
+      // Stop if error too big or 0
+<span class="nc bnc" id="L531" title="All 4 branches missed.">      if (Utils.grOrEq(epsilon, 0.5) || Utils.eq(epsilon, 0)) {</span>
+<span class="nc bnc" id="L532" title="All 2 branches missed.">	if (m_NumIterationsPerformed == 0) {</span>
+<span class="nc" id="L533">	  m_NumIterationsPerformed = 1; // If we're the first we have to to use it</span>
+	}
+<span class="nc" id="L535">	break;</span>
+      }
+      
+      // Determine the weight to assign to this model
+<span class="nc" id="L539">      m_Betas[m_NumIterationsPerformed] = Math.log((1 - epsilon) / epsilon);</span>
+<span class="nc" id="L540">      reweight = (1 - epsilon) / epsilon;</span>
+<span class="nc bnc" id="L541" title="All 2 branches missed.">      if (m_Debug) {</span>
+<span class="nc" id="L542">	System.err.println(&quot;\terror rate = &quot; + epsilon</span>
+<span class="nc" id="L543">			   +&quot;  beta = &quot; + m_Betas[m_NumIterationsPerformed]);</span>
+      }
+ 
+      // Update instance weights
+<span class="nc" id="L547">      setWeights(training, reweight);</span>
+    }
+<span class="nc" id="L549">  }</span>
+
+  /**
+   * Sets the weights for the next iteration.
+   * 
+   * @param training the training instances
+   * @param reweight the reweighting factor
+   * @throws Exception if something goes wrong
+   */
+  protected void setWeights(Instances training, double reweight) 
+    throws Exception {
+
+    double oldSumOfWeights, newSumOfWeights;
+
+<span class="fc" id="L563">    oldSumOfWeights = training.sumOfWeights();</span>
+<span class="fc" id="L564">    Enumeration enu = training.enumerateInstances();</span>
+<span class="fc bfc" id="L565" title="All 2 branches covered.">    while (enu.hasMoreElements()) {</span>
+<span class="fc" id="L566">      Instance instance = (Instance) enu.nextElement();</span>
+<span class="fc bfc" id="L567" title="All 2 branches covered.">      if (!Utils.eq(m_Classifiers[m_NumIterationsPerformed].classifyInstance(instance), </span>
+<span class="fc" id="L568">		    instance.classValue()))</span>
+<span class="fc" id="L569">	instance.setWeight(instance.weight() * reweight);</span>
+    }
+    
+    // Renormalize weights
+<span class="fc" id="L573">    newSumOfWeights = training.sumOfWeights();</span>
+<span class="fc" id="L574">    enu = training.enumerateInstances();</span>
+<span class="fc bfc" id="L575" title="All 2 branches covered.">    while (enu.hasMoreElements()) {</span>
+<span class="fc" id="L576">      Instance instance = (Instance) enu.nextElement();</span>
+<span class="fc" id="L577">      instance.setWeight(instance.weight() * oldSumOfWeights </span>
+<span class="fc" id="L578">			 / newSumOfWeights);</span>
+    }
+<span class="fc" id="L580">  }</span>
+
+  /**
+   * Boosting method. Boosts any classifier that can handle weighted
+   * instances.
+   *
+   * @param data the training data to be used for generating the
+   * boosted classifier.
+   * @throws Exception if the classifier could not be built successfully
+   */
+  protected void buildClassifierWithWeights(Instances data) 
+    throws Exception {
+
+    Instances trainData, training;
+    double epsilon, reweight;
+    Evaluation evaluation;
+<span class="fc" id="L596">    int numInstances = data.numInstances();</span>
+<span class="fc" id="L597">    Random randomInstance = new Random(m_Seed);</span>
+
+    // Initialize data
+<span class="fc" id="L600">    m_Betas = new double [m_Classifiers.length];</span>
+<span class="fc" id="L601">    m_NumIterationsPerformed = 0;</span>
+
+    // Create a copy of the data so that when the weights are diddled
+    // with it doesn't mess up the weights for anyone else
+<span class="fc" id="L605">    training = new Instances(data, 0, numInstances);</span>
+    
+    // Do boostrap iterations
+<span class="fc bfc" id="L608" title="All 2 branches covered.">    for (m_NumIterationsPerformed = 0; m_NumIterationsPerformed &lt; m_Classifiers.length; </span>
+<span class="fc" id="L609">	 m_NumIterationsPerformed++) {</span>
+<span class="pc bpc" id="L610" title="1 of 2 branches missed.">      if (m_Debug) {</span>
+<span class="nc" id="L611">	System.err.println(&quot;Training classifier &quot; + (m_NumIterationsPerformed + 1));</span>
+      }
+      // Select instances to train the classifier on
+<span class="pc bpc" id="L614" title="1 of 2 branches missed.">      if (m_WeightThreshold &lt; 100) {</span>
+<span class="nc" id="L615">	trainData = selectWeightQuantile(training, </span>
+<span class="nc" id="L616">					 (double)m_WeightThreshold / 100);</span>
+      } else {
+<span class="fc" id="L618">	trainData = new Instances(training, 0, numInstances);</span>
+      }
+
+      // Build the classifier
+<span class="pc bpc" id="L622" title="1 of 2 branches missed.">      if (m_Classifiers[m_NumIterationsPerformed] instanceof Randomizable)</span>
+<span class="nc" id="L623">	((Randomizable) m_Classifiers[m_NumIterationsPerformed]).setSeed(randomInstance.nextInt());</span>
+<span class="fc" id="L624">      m_Classifiers[m_NumIterationsPerformed].buildClassifier(trainData);</span>
+
+      // Evaluate the classifier
+<span class="fc" id="L627">      evaluation = new Evaluation(data);</span>
+<span class="fc" id="L628">      evaluation.evaluateModel(m_Classifiers[m_NumIterationsPerformed], training);</span>
+<span class="fc" id="L629">      epsilon = evaluation.errorRate();</span>
+
+      // Stop if error too small or error too big and ignore this model
+<span class="fc bfc" id="L632" title="All 4 branches covered.">      if (Utils.grOrEq(epsilon, 0.5) || Utils.eq(epsilon, 0)) {</span>
+<span class="fc bfc" id="L633" title="All 2 branches covered.">	if (m_NumIterationsPerformed == 0) {</span>
+<span class="fc" id="L634">	  m_NumIterationsPerformed = 1; // If we're the first we have to to use it</span>
+	}
+<span class="fc" id="L636">	break;</span>
+      }
+      // Determine the weight to assign to this model
+<span class="fc" id="L639">      m_Betas[m_NumIterationsPerformed] = Math.log((1 - epsilon) / epsilon);</span>
+<span class="fc" id="L640">      reweight = (1 - epsilon) / epsilon;</span>
+<span class="pc bpc" id="L641" title="1 of 2 branches missed.">      if (m_Debug) {</span>
+<span class="nc" id="L642">	System.err.println(&quot;\terror rate = &quot; + epsilon</span>
+<span class="nc" id="L643">			   +&quot;  beta = &quot; + m_Betas[m_NumIterationsPerformed]);</span>
+      }
+ 
+      // Update instance weights
+<span class="fc" id="L647">      setWeights(training, reweight);</span>
+    }
+<span class="fc" id="L649">  }</span>
+  
+  /**
+   * Calculates the class membership probabilities for the given test instance.
+   *
+   * @param instance the instance to be classified
+   * @return predicted class probability distribution
+   * @throws Exception if instance could not be classified
+   * successfully
+   */
+  public double [] distributionForInstance(Instance instance) 
+    throws Exception {
+      
+    // default model?
+<span class="fc bfc" id="L663" title="All 2 branches covered.">    if (m_ZeroR != null) {</span>
+<span class="fc" id="L664">      return m_ZeroR.distributionForInstance(instance);</span>
+    }
+    
+<span class="pc bpc" id="L667" title="1 of 2 branches missed.">    if (m_NumIterationsPerformed == 0) {</span>
+<span class="nc" id="L668">      throw new Exception(&quot;No model built&quot;);</span>
+    }
+<span class="fc" id="L670">    double [] sums = new double [instance.numClasses()]; </span>
+    
+<span class="fc bfc" id="L672" title="All 2 branches covered.">    if (m_NumIterationsPerformed == 1) {</span>
+<span class="fc" id="L673">      return m_Classifiers[0].distributionForInstance(instance);</span>
+    } else {
+<span class="fc bfc" id="L675" title="All 2 branches covered.">      for (int i = 0; i &lt; m_NumIterationsPerformed; i++) {</span>
+<span class="fc" id="L676">	sums[(int)m_Classifiers[i].classifyInstance(instance)] += m_Betas[i];</span>
+      }
+<span class="fc" id="L678">      return Utils.logs2probs(sums);</span>
+    }
+  }
+
+  /**
+   * Returns the boosted model as Java source code.
+   *
+   * @param className the classname of the generated class
+   * @return the tree as Java source code
+   * @throws Exception if something goes wrong
+   */
+  public String toSource(String className) throws Exception {
+
+<span class="nc bnc" id="L691" title="All 2 branches missed.">    if (m_NumIterationsPerformed == 0) {</span>
+<span class="nc" id="L692">      throw new Exception(&quot;No model built yet&quot;);</span>
+    }
+<span class="nc bnc" id="L694" title="All 2 branches missed.">    if (!(m_Classifiers[0] instanceof Sourcable)) {</span>
+<span class="nc" id="L695">      throw new Exception(&quot;Base learner &quot; + m_Classifier.getClass().getName()</span>
+<span class="nc" id="L696">			  + &quot; is not Sourcable&quot;);</span>
+    }
+
+<span class="nc" id="L699">    StringBuffer text = new StringBuffer(&quot;class &quot;);</span>
+<span class="nc" id="L700">    text.append(className).append(&quot; {\n\n&quot;);</span>
+
+<span class="nc" id="L702">    text.append(&quot;  public static double classify(Object[] i) {\n&quot;);</span>
+
+<span class="nc bnc" id="L704" title="All 2 branches missed.">    if (m_NumIterationsPerformed == 1) {</span>
+<span class="nc" id="L705">      text.append(&quot;    return &quot; + className + &quot;_0.classify(i);\n&quot;);</span>
+    } else {
+<span class="nc" id="L707">      text.append(&quot;    double [] sums = new double [&quot; + m_NumClasses + &quot;];\n&quot;);</span>
+<span class="nc bnc" id="L708" title="All 2 branches missed.">      for (int i = 0; i &lt; m_NumIterationsPerformed; i++) {</span>
+<span class="nc" id="L709">	text.append(&quot;    sums[(int) &quot; + className + '_' + i </span>
+<span class="nc" id="L710">		    + &quot;.classify(i)] += &quot; + m_Betas[i] + &quot;;\n&quot;);</span>
+      }
+<span class="nc" id="L712">      text.append(&quot;    double maxV = sums[0];\n&quot; +</span>
+		  &quot;    int maxI = 0;\n&quot;+
+<span class="nc" id="L714">		  &quot;    for (int j = 1; j &lt; &quot; + m_NumClasses + &quot;; j++) {\n&quot;+</span>
+<span class="nc" id="L715">		  &quot;      if (sums[j] &gt; maxV) { maxV = sums[j]; maxI = j; }\n&quot;+</span>
+<span class="nc" id="L716">		  &quot;    }\n    return (double) maxI;\n&quot;);</span>
+    }
+<span class="nc" id="L718">    text.append(&quot;  }\n}\n&quot;);</span>
+
+<span class="nc bnc" id="L720" title="All 2 branches missed.">    for (int i = 0; i &lt; m_Classifiers.length; i++) {</span>
+<span class="nc" id="L721">	text.append(((Sourcable)m_Classifiers[i])</span>
+<span class="nc" id="L722">		    .toSource(className + '_' + i));</span>
+    }
+<span class="nc" id="L724">    return text.toString();</span>
+  }
+
+  /**
+   * Returns description of the boosted classifier.
+   *
+   * @return description of the boosted classifier as a string
+   */
+  public String toString() {
+    
+    // only ZeroR model?
+<span class="pc bpc" id="L735" title="1 of 2 branches missed.">    if (m_ZeroR != null) {</span>
+<span class="nc" id="L736">      StringBuffer buf = new StringBuffer();</span>
+<span class="nc" id="L737">      buf.append(this.getClass().getName().replaceAll(&quot;.*\\.&quot;, &quot;&quot;) + &quot;\n&quot;);</span>
+<span class="nc" id="L738">      buf.append(this.getClass().getName().replaceAll(&quot;.*\\.&quot;, &quot;&quot;).replaceAll(&quot;.&quot;, &quot;=&quot;) + &quot;\n\n&quot;);</span>
+<span class="nc" id="L739">      buf.append(&quot;Warning: No model could be built, hence ZeroR model is used:\n\n&quot;);</span>
+<span class="nc" id="L740">      buf.append(m_ZeroR.toString());</span>
+<span class="nc" id="L741">      return buf.toString();</span>
+    }
+    
+<span class="fc" id="L744">    StringBuffer text = new StringBuffer();</span>
+    
+<span class="pc bpc" id="L746" title="1 of 2 branches missed.">    if (m_NumIterationsPerformed == 0) {</span>
+<span class="fc" id="L747">      text.append(&quot;AdaBoostM1: No model built yet.\n&quot;);</span>
+<span class="nc bnc" id="L748" title="All 2 branches missed.">    } else if (m_NumIterationsPerformed == 1) {</span>
+<span class="nc" id="L749">      text.append(&quot;AdaBoostM1: No boosting possible, one classifier used!\n&quot;);</span>
+<span class="nc" id="L750">      text.append(m_Classifiers[0].toString() + &quot;\n&quot;);</span>
+    } else {
+<span class="nc" id="L752">      text.append(&quot;AdaBoostM1: Base classifiers and their weights: \n\n&quot;);</span>
+<span class="nc bnc" id="L753" title="All 2 branches missed.">      for (int i = 0; i &lt; m_NumIterationsPerformed ; i++) {</span>
+<span class="nc" id="L754">	text.append(m_Classifiers[i].toString() + &quot;\n\n&quot;);</span>
+<span class="nc" id="L755">	text.append(&quot;Weight: &quot; + Utils.roundDouble(m_Betas[i], 2) + &quot;\n\n&quot;);</span>
+      }
+<span class="nc" id="L757">      text.append(&quot;Number of performed Iterations: &quot; </span>
+<span class="nc" id="L758">		  + m_NumIterationsPerformed + &quot;\n&quot;);</span>
+    }
+    
+<span class="fc" id="L761">    return text.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L770">    return RevisionUtils.extract(&quot;$Revision: 1.40 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L779">    runClassifier(new AdaBoostM1(), argv);</span>
+<span class="nc" id="L780">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

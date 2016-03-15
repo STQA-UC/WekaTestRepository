@@ -1,0 +1,577 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RandomForest.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees</a> &gt; <span class="el_source">RandomForest.java</span></div><h1>RandomForest.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RandomForest.java
+ *    Copyright (C) 2001 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.trees;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.meta.Bagging;
+import weka.core.AdditionalMeasureProducer;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.Randomizable;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+
+/**
+ &lt;!-- globalinfo-start --&gt; 
+ * Class for constructing a forest of random trees.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see: &lt;br/&gt;
+ * &lt;br/&gt;
+ * Leo Breiman (2001). Random Forests. Machine Learning. 45(1):5-32.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- technical-bibtex-start --&gt; 
+ * BibTeX:
+ * 
+ * &lt;pre&gt;
+ * &amp;#64;article{Breiman2001,
+ *    author = {Leo Breiman},
+ *    journal = {Machine Learning},
+ *    number = {1},
+ *    pages = {5-32},
+ *    title = {Random Forests},
+ *    volume = {45},
+ *    year = {2001}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ * 
+ &lt;!-- options-start --&gt; 
+ * Valid options are:
+ * &lt;p/&gt;
+ * 
+ * &lt;pre&gt;
+ * -I &amp;lt;number of trees&amp;gt;
+ *  Number of trees to build.
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -K &amp;lt;number of features&amp;gt;
+ *  Number of features to consider (&amp;lt;1=int(logM+1)).
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -S
+ *  Seed for random number generator.
+ *  (default 1)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -depth &amp;lt;num&amp;gt;
+ *  The maximum depth of the trees, 0 for unlimited.
+ *  (default 0)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console
+ * &lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ * 
+ * @author Richard Kirkby (rkirkby@cs.waikato.ac.nz)
+ * @version $Revision: 1.13 $
+ */
+<span class="fc" id="L109">public class RandomForest extends Classifier implements OptionHandler,</span>
+    Randomizable, WeightedInstancesHandler, AdditionalMeasureProducer,
+    TechnicalInformationHandler {
+
+  /** for serialization */
+  private static final long serialVersionUID = -2260823972777004705L;
+
+  /** Number of trees in forest. */
+<span class="fc" id="L117">  protected int m_numTrees = 10;</span>
+
+  /**
+   * Number of features to consider in random feature selection. If less than 1
+   * will use int(logM+1) )
+   */
+<span class="fc" id="L123">  protected int m_numFeatures = 0;</span>
+
+  /** The random seed. */
+<span class="fc" id="L126">  protected int m_randomSeed = 1;</span>
+
+  /** Final number of features that were considered in last build. */
+<span class="fc" id="L129">  protected int m_KValue = 0;</span>
+
+  /** The bagger. */
+<span class="fc" id="L132">  protected Bagging m_bagger = null;</span>
+
+  /** The maximum depth of the trees (0 = unlimited) */
+<span class="fc" id="L135">  protected int m_MaxDepth = 0;</span>
+
+  /**
+   * Returns a string describing classifier
+   * 
+   * @return a description suitable for displaying in the explorer/experimenter
+   *         gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L145">    return &quot;Class for constructing a forest of random trees.\n\n&quot;</span>
+        + &quot;For more information see: \n\n&quot;
+<span class="nc" id="L147">        + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing detailed
+   * information about the technical background of this class, e.g., paper
+   * reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation result;
+
+<span class="nc" id="L160">    result = new TechnicalInformation(Type.ARTICLE);</span>
+<span class="nc" id="L161">    result.setValue(Field.AUTHOR, &quot;Leo Breiman&quot;);</span>
+<span class="nc" id="L162">    result.setValue(Field.YEAR, &quot;2001&quot;);</span>
+<span class="nc" id="L163">    result.setValue(Field.TITLE, &quot;Random Forests&quot;);</span>
+<span class="nc" id="L164">    result.setValue(Field.JOURNAL, &quot;Machine Learning&quot;);</span>
+<span class="nc" id="L165">    result.setValue(Field.VOLUME, &quot;45&quot;);</span>
+<span class="nc" id="L166">    result.setValue(Field.NUMBER, &quot;1&quot;);</span>
+<span class="nc" id="L167">    result.setValue(Field.PAGES, &quot;5-32&quot;);</span>
+
+<span class="nc" id="L169">    return result;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String numTreesTipText() {
+<span class="nc" id="L179">    return &quot;The number of trees to be generated.&quot;;</span>
+  }
+
+  /**
+   * Get the value of numTrees.
+   * 
+   * @return Value of numTrees.
+   */
+  public int getNumTrees() {
+
+<span class="fc" id="L189">    return m_numTrees;</span>
+  }
+
+  /**
+   * Set the value of numTrees.
+   * 
+   * @param newNumTrees Value to assign to numTrees.
+   */
+  public void setNumTrees(int newNumTrees) {
+
+<span class="nc" id="L199">    m_numTrees = newNumTrees;</span>
+<span class="nc" id="L200">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String numFeaturesTipText() {
+<span class="nc" id="L209">    return &quot;The number of attributes to be used in random selection (see RandomTree).&quot;;</span>
+  }
+
+  /**
+   * Get the number of features used in random selection.
+   * 
+   * @return Value of numFeatures.
+   */
+  public int getNumFeatures() {
+
+<span class="fc" id="L219">    return m_numFeatures;</span>
+  }
+
+  /**
+   * Set the number of features to use in random selection.
+   * 
+   * @param newNumFeatures Value to assign to numFeatures.
+   */
+  public void setNumFeatures(int newNumFeatures) {
+
+<span class="nc" id="L229">    m_numFeatures = newNumFeatures;</span>
+<span class="nc" id="L230">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String seedTipText() {
+<span class="nc" id="L239">    return &quot;The random number seed to be used.&quot;;</span>
+  }
+
+  /**
+   * Set the seed for random number generation.
+   * 
+   * @param seed the seed
+   */
+  public void setSeed(int seed) {
+
+<span class="fc" id="L249">    m_randomSeed = seed;</span>
+<span class="fc" id="L250">  }</span>
+
+  /**
+   * Gets the seed for the random number generations
+   * 
+   * @return the seed for the random number generation
+   */
+  public int getSeed() {
+
+<span class="fc" id="L259">    return m_randomSeed;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String maxDepthTipText() {
+<span class="nc" id="L269">    return &quot;The maximum depth of the trees, 0 for unlimited.&quot;;</span>
+  }
+
+  /**
+   * Get the maximum depth of trh tree, 0 for unlimited.
+   * 
+   * @return the maximum depth.
+   */
+  public int getMaxDepth() {
+<span class="fc" id="L278">    return m_MaxDepth;</span>
+  }
+
+  /**
+   * Set the maximum depth of the tree, 0 for unlimited.
+   * 
+   * @param value the maximum depth.
+   */
+  public void setMaxDepth(int value) {
+<span class="fc" id="L287">    m_MaxDepth = value;</span>
+<span class="fc" id="L288">  }</span>
+
+  /**
+   * Gets the out of bag error that was calculated as the classifier was built.
+   * 
+   * @return the out of bag error
+   */
+  public double measureOutOfBagError() {
+
+<span class="nc bnc" id="L297" title="All 2 branches missed.">    if (m_bagger != null) {</span>
+<span class="nc" id="L298">      return m_bagger.measureOutOfBagError();</span>
+    } else
+<span class="nc" id="L300">      return Double.NaN;</span>
+  }
+
+  /**
+   * Returns an enumeration of the additional measure names.
+   * 
+   * @return an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+
+<span class="nc" id="L310">    Vector newVector = new Vector(1);</span>
+<span class="nc" id="L311">    newVector.addElement(&quot;measureOutOfBagError&quot;);</span>
+<span class="nc" id="L312">    return newVector.elements();</span>
+  }
+
+  /**
+   * Returns the value of the named measure.
+   * 
+   * @param additionalMeasureName the name of the measure to query for its value
+   * @return the value of the named measure
+   * @throws IllegalArgumentException if the named measure is not supported
+   */
+  public double getMeasure(String additionalMeasureName) {
+
+<span class="nc bnc" id="L324" title="All 2 branches missed.">    if (additionalMeasureName.equalsIgnoreCase(&quot;measureOutOfBagError&quot;)) {</span>
+<span class="nc" id="L325">      return measureOutOfBagError();</span>
+    } else {
+<span class="nc" id="L327">      throw new IllegalArgumentException(additionalMeasureName</span>
+<span class="nc" id="L328">          + &quot; not supported (RandomForest)&quot;);</span>
+    }
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   * 
+   * @return an enumeration of all the available options
+   */
+  @Override
+  public Enumeration listOptions() {
+
+<span class="fc" id="L340">    Vector newVector = new Vector();</span>
+
+<span class="fc" id="L342">    newVector.addElement(new Option(&quot;\tNumber of trees to build.&quot;, &quot;I&quot;, 1,</span>
+<span class="fc" id="L343">        &quot;-I &lt;number of trees&gt;&quot;));</span>
+
+<span class="fc" id="L345">    newVector.addElement(new Option(</span>
+<span class="fc" id="L346">        &quot;\tNumber of features to consider (&lt;1=int(logM+1)).&quot;, &quot;K&quot;, 1,</span>
+<span class="fc" id="L347">        &quot;-K &lt;number of features&gt;&quot;));</span>
+
+<span class="fc" id="L349">    newVector.addElement(new Option(&quot;\tSeed for random number generator.\n&quot;</span>
+<span class="fc" id="L350">        + &quot;\t(default 1)&quot;, &quot;S&quot;, 1, &quot;-S&quot;));</span>
+
+<span class="fc" id="L352">    newVector.addElement(new Option(</span>
+<span class="fc" id="L353">        &quot;\tThe maximum depth of the trees, 0 for unlimited.\n&quot;</span>
+<span class="fc" id="L354">            + &quot;\t(default 0)&quot;, &quot;depth&quot;, 1, &quot;-depth &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L356">    Enumeration enu = super.listOptions();</span>
+<span class="fc bfc" id="L357" title="All 2 branches covered.">    while (enu.hasMoreElements()) {</span>
+<span class="fc" id="L358">      newVector.addElement(enu.nextElement());</span>
+    }
+
+<span class="fc" id="L361">    return newVector.elements();</span>
+  }
+
+  /**
+   * Gets the current settings of the forest.
+   * 
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  @Override
+  public String[] getOptions() {
+    Vector result;
+    String[] options;
+    int i;
+
+<span class="fc" id="L375">    result = new Vector();</span>
+
+<span class="fc" id="L377">    result.add(&quot;-I&quot;);</span>
+<span class="fc" id="L378">    result.add(&quot;&quot; + getNumTrees());</span>
+
+<span class="fc" id="L380">    result.add(&quot;-K&quot;);</span>
+<span class="fc" id="L381">    result.add(&quot;&quot; + getNumFeatures());</span>
+
+<span class="fc" id="L383">    result.add(&quot;-S&quot;);</span>
+<span class="fc" id="L384">    result.add(&quot;&quot; + getSeed());</span>
+
+<span class="pc bpc" id="L386" title="1 of 2 branches missed.">    if (getMaxDepth() &gt; 0) {</span>
+<span class="nc" id="L387">      result.add(&quot;-depth&quot;);</span>
+<span class="nc" id="L388">      result.add(&quot;&quot; + getMaxDepth());</span>
+    }
+
+<span class="fc" id="L391">    options = super.getOptions();</span>
+<span class="pc bpc" id="L392" title="1 of 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L393">      result.add(options[i]);</span>
+
+<span class="fc" id="L395">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+
+  /**
+   * Parses a given list of options.
+   * &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt; 
+   * Valid options are:
+   * &lt;p/&gt;
+   * 
+   * &lt;pre&gt;
+   * -I &amp;lt;number of trees&amp;gt;
+   *  Number of trees to build.
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -K &amp;lt;number of features&amp;gt;
+   *  Number of features to consider (&amp;lt;1=int(logM+1)).
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -S
+   *  Seed for random number generator.
+   *  (default 1)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -depth &amp;lt;num&amp;gt;
+   *  The maximum depth of the trees, 0 for unlimited.
+   *  (default 0)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console
+   * &lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   * 
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  @Override
+  public void setOptions(String[] options) throws Exception {
+    String tmpStr;
+
+<span class="fc" id="L443">    tmpStr = Utils.getOption('I', options);</span>
+<span class="fc bfc" id="L444" title="All 2 branches covered.">    if (tmpStr.length() != 0) {</span>
+<span class="fc" id="L445">      m_numTrees = Integer.parseInt(tmpStr);</span>
+    } else {
+<span class="fc" id="L447">      m_numTrees = 10;</span>
+    }
+
+<span class="fc" id="L450">    tmpStr = Utils.getOption('K', options);</span>
+<span class="fc bfc" id="L451" title="All 2 branches covered.">    if (tmpStr.length() != 0) {</span>
+<span class="fc" id="L452">      m_numFeatures = Integer.parseInt(tmpStr);</span>
+    } else {
+<span class="fc" id="L454">      m_numFeatures = 0;</span>
+    }
+
+<span class="fc" id="L457">    tmpStr = Utils.getOption('S', options);</span>
+<span class="fc bfc" id="L458" title="All 2 branches covered.">    if (tmpStr.length() != 0) {</span>
+<span class="fc" id="L459">      setSeed(Integer.parseInt(tmpStr));</span>
+    } else {
+<span class="fc" id="L461">      setSeed(1);</span>
+    }
+
+<span class="fc" id="L464">    tmpStr = Utils.getOption(&quot;depth&quot;, options);</span>
+<span class="pc bpc" id="L465" title="1 of 2 branches missed.">    if (tmpStr.length() != 0) {</span>
+<span class="nc" id="L466">      setMaxDepth(Integer.parseInt(tmpStr));</span>
+    } else {
+<span class="fc" id="L468">      setMaxDepth(0);</span>
+    }
+
+<span class="fc" id="L471">    super.setOptions(options);</span>
+
+<span class="fc" id="L473">    Utils.checkForRemainingOptions(options);</span>
+<span class="fc" id="L474">  }</span>
+
+  /**
+   * Returns default capabilities of the classifier.
+   * 
+   * @return the capabilities of this classifier
+   */
+  @Override
+  public Capabilities getCapabilities() {
+<span class="fc" id="L483">    return new RandomTree().getCapabilities();</span>
+  }
+
+  /**
+   * Builds a classifier for a set of instances.
+   * 
+   * @param data the instances to train the classifier with
+   * @throws Exception if something goes wrong
+   */
+  @Override
+  public void buildClassifier(Instances data) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L496">    getCapabilities().testWithFail(data);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L499">    data = new Instances(data);</span>
+<span class="fc" id="L500">    data.deleteWithMissingClass();</span>
+
+<span class="fc" id="L502">    m_bagger = new Bagging();</span>
+<span class="fc" id="L503">    RandomTree rTree = new RandomTree();</span>
+
+    // set up the random tree options
+<span class="fc" id="L506">    m_KValue = m_numFeatures;</span>
+<span class="pc bpc" id="L507" title="1 of 2 branches missed.">    if (m_KValue &lt; 1)</span>
+<span class="fc" id="L508">      m_KValue = (int) Utils.log2(data.numAttributes()) + 1;</span>
+<span class="fc" id="L509">    rTree.setKValue(m_KValue);</span>
+<span class="fc" id="L510">    rTree.setMaxDepth(getMaxDepth());</span>
+
+    // set up the bagger and build the forest
+<span class="fc" id="L513">    m_bagger.setClassifier(rTree);</span>
+<span class="fc" id="L514">    m_bagger.setSeed(m_randomSeed);</span>
+<span class="fc" id="L515">    m_bagger.setNumIterations(m_numTrees);</span>
+<span class="fc" id="L516">    m_bagger.setCalcOutOfBag(true);</span>
+<span class="fc" id="L517">    m_bagger.buildClassifier(data);</span>
+<span class="fc" id="L518">  }</span>
+
+  /**
+   * Returns the class probability distribution for an instance.
+   * 
+   * @param instance the instance to be classified
+   * @return the distribution the forest generates for the instance
+   * @throws Exception if computation fails
+   */
+  @Override
+  public double[] distributionForInstance(Instance instance) throws Exception {
+
+<span class="fc" id="L530">    return m_bagger.distributionForInstance(instance);</span>
+  }
+
+  /**
+   * Outputs a description of this classifier.
+   * 
+   * @return a string containing a description of the classifier
+   */
+  @Override
+  public String toString() {
+
+<span class="pc bpc" id="L541" title="1 of 2 branches missed.">    if (m_bagger == null)</span>
+<span class="fc" id="L542">      return &quot;Random forest not built yet&quot;;</span>
+    else
+<span class="nc" id="L544">      return &quot;Random forest of &quot;</span>
+<span class="nc" id="L545">          + m_numTrees</span>
+<span class="nc" id="L546">          + &quot; trees, each constructed while considering &quot;</span>
+<span class="nc" id="L547">          + m_KValue</span>
+<span class="nc" id="L548">          + &quot; random feature&quot;</span>
+<span class="nc bnc" id="L549" title="All 2 branches missed.">          + (m_KValue == 1 ? &quot;&quot; : &quot;s&quot;)</span>
+<span class="nc" id="L550">          + &quot;.\n&quot;</span>
+<span class="nc" id="L551">          + &quot;Out of bag error: &quot;</span>
+<span class="nc" id="L552">          + Utils.doubleToString(m_bagger.measureOutOfBagError(), 4)</span>
+<span class="nc" id="L553">          + &quot;\n&quot;</span>
+<span class="nc bnc" id="L554" title="All 2 branches missed.">          + (getMaxDepth() &gt; 0 ? (&quot;Max. depth of trees: &quot; + getMaxDepth() + &quot;\n&quot;)</span>
+<span class="nc" id="L555">              : (&quot;&quot;)) + &quot;\n&quot;;</span>
+  }
+
+  /**
+   * Returns the revision string.
+   * 
+   * @return the revision
+   */
+  @Override
+  public String getRevision() {
+<span class="nc" id="L565">    return RevisionUtils.extract(&quot;$Revision: 1.13 $&quot;);</span>
+  }
+
+  /**
+   * Main method for this class.
+   * 
+   * @param argv the options
+   */
+  public static void main(String[] argv) {
+<span class="nc" id="L574">    runClassifier(new RandomForest(), argv);</span>
+<span class="nc" id="L575">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

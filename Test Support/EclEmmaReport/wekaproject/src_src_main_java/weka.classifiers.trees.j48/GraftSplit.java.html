@@ -1,0 +1,555 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>GraftSplit.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees.j48</a> &gt; <span class="el_source">GraftSplit.java</span></div><h1>GraftSplit.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *  GraftSplit.java
+ *  Copyright (C) 2007 Geoff Webb &amp; Janice Boughton
+ *  a split object for nodes added to a tree during grafting.
+ *  (used in classifier J48g).
+ */
+
+package weka.classifiers.trees.j48;
+
+import weka.core.*;
+
+/**
+ * Class implementing a split for nodes added to a tree during grafting.
+ *
+ * @author Janice Boughton (jrbought@infotech.monash.edu.au)
+ * @version $Revision 1.0 $
+ */
+public class GraftSplit
+  extends ClassifierSplitModel
+  implements Comparable {
+
+  /** for serialzation. */
+  private static final long serialVersionUID = 722773260393182051L;
+
+  /** the distribution for graft values, from cases in atbop */
+  private Distribution m_graftdistro;
+	
+  /** the attribute we are splitting on */
+  private int m_attIndex;
+
+  /** value of split point (if numeric attribute) */
+  private double m_splitPoint;
+
+  /** dominant class of the subset specified by m_testType */
+  private int m_maxClass;
+
+  /** dominant class of the subset not specified by m_testType */
+  private int m_otherLeafMaxClass;
+
+  /** laplace value of the subset specified by m_testType for m_maxClass */
+  private double m_laplace;
+
+  /** leaf for the subset specified by m_testType */
+  private Distribution m_leafdistro;
+
+  /** 
+   * type of test:
+   * 0: &lt;= test
+   * 1: &gt; test
+   * 2: = test
+   * 3: != test
+   */
+  private int m_testType;
+
+
+  /**
+   * constructor
+   *
+   * @param a the attribute to split on
+   * @param v the value of a where split occurs
+   * @param t the test type (0 is &lt;=, 1 is &gt;, 2 is =, 3 is !)
+   * @param c the class to label the leaf node pointed to by test as.
+   * @param l the laplace value (needed when sorting GraftSplits)
+   */
+<span class="nc" id="L81">  public GraftSplit(int a, double v, int t, double c, double l) {</span>
+
+<span class="nc" id="L83">    m_attIndex = a;</span>
+<span class="nc" id="L84">    m_splitPoint = v;</span>
+<span class="nc" id="L85">    m_testType = t;</span>
+<span class="nc" id="L86">    m_maxClass = (int)c;</span>
+<span class="nc" id="L87">    m_laplace = l;</span>
+<span class="nc" id="L88">  }</span>
+
+
+  /**
+   * constructor
+   *
+   * @param a the attribute to split on
+   * @param v the value of a where split occurs
+   * @param t the test type (0 is &lt;=, 1 is &gt;, 2 is =, 3 is !=)
+   * @param oC the class to label the leaf node not pointed to by test as.
+   * @param counts the distribution for this split
+   */
+<span class="nc" id="L100">  public GraftSplit(int a, double v, int t, double oC, double [][] counts)</span>
+                                                           throws Exception {
+<span class="nc" id="L102">    m_attIndex = a;</span>
+<span class="nc" id="L103">    m_splitPoint = v;</span>
+<span class="nc" id="L104">    m_testType = t;</span>
+<span class="nc" id="L105">    m_otherLeafMaxClass = (int)oC;</span>
+
+    // only deal with binary cuts (&lt;= and &gt;; = and !=)
+<span class="nc" id="L108">    m_numSubsets = 2;</span>
+
+    // which subset are we looking at for the graft?
+<span class="nc" id="L111">    int subset = subsetOfInterest();  // this is the subset for m_leaf</span>
+
+    // create graft distribution, based on counts
+<span class="nc" id="L114">    m_distribution = new Distribution(counts);</span>
+
+    // create a distribution object for m_leaf
+<span class="nc" id="L117">    double [][] lcounts = new double[1][m_distribution.numClasses()];</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">    for(int c = 0; c &lt; lcounts[0].length; c++) {</span>
+<span class="nc" id="L119">       lcounts[0][c] = counts[subset][c];</span>
+    }
+<span class="nc" id="L121">    m_leafdistro = new Distribution(lcounts);</span>
+
+    // set the max class
+<span class="nc" id="L124">    m_maxClass = m_distribution.maxClass(subset);</span>
+ 
+    // set the laplace value (assumes binary class) for subset of interest
+<span class="nc" id="L127">    m_laplace = (m_distribution.perClassPerBag(subset, m_maxClass) + 1.0) </span>
+<span class="nc" id="L128">               / (m_distribution.perBag(subset) + 2.0);</span>
+<span class="nc" id="L129">  }</span>
+
+
+  /**
+   * deletes the cases in data that belong to leaf pointed to by
+   * the test (i.e. the subset of interest).  this is useful so
+   * the instances belonging to that leaf aren't passed down the
+   * other branch.
+   *
+   * @param data the instances to delete from
+   */
+  public void deleteGraftedCases(Instances data) {
+
+<span class="nc" id="L142">    int subOfInterest = subsetOfInterest();</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">    for(int x = 0; x &lt; data.numInstances(); x++) {</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">       if(whichSubset(data.instance(x)) == subOfInterest) {</span>
+<span class="nc" id="L145">          data.delete(x--);</span>
+       }
+    }
+<span class="nc" id="L148">  }</span>
+
+
+  /**
+   * builds m_graftdistro using the passed data
+   *
+   * @param data the instances to use when creating the distribution
+   */
+  public void buildClassifier(Instances data) throws Exception {
+
+    // distribution for the graft, not counting cases in atbop, only orig leaf
+<span class="nc" id="L159">    m_graftdistro = new Distribution(2, data.numClasses());</span>
+ 
+    // which subset are we looking at for the graft?
+<span class="nc" id="L162">    int subset = subsetOfInterest();  // this is the subset for m_leaf</span>
+
+<span class="nc" id="L164">    double thisNodeCount = 0;</span>
+<span class="nc" id="L165">    double knownCases = 0;</span>
+<span class="nc" id="L166">    boolean allKnown = true;</span>
+    // populate distribution
+<span class="nc bnc" id="L168" title="All 2 branches missed.">    for(int x = 0; x &lt; data.numInstances(); x++) {</span>
+<span class="nc" id="L169">       Instance instance = data.instance(x);</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">       if(instance.isMissing(m_attIndex)) {</span>
+<span class="nc" id="L171">          allKnown = false;</span>
+<span class="nc" id="L172">          continue;</span>
+       }
+<span class="nc" id="L174">       knownCases += instance.weight();</span>
+<span class="nc" id="L175">       int subst = whichSubset(instance);</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">       if(subst == -1)</span>
+<span class="nc" id="L177">          continue;</span>
+<span class="nc" id="L178">       m_graftdistro.add(subst, instance);</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">       if(subst == subset) {  // instance belongs at m_leaf</span>
+<span class="nc" id="L180">          thisNodeCount += instance.weight();</span>
+       }
+    }
+<span class="nc bnc" id="L183" title="All 2 branches missed.">    double factor = (knownCases == 0) ? (1.0 / (double)2.0)</span>
+<span class="nc" id="L184">                                      : (thisNodeCount / knownCases);</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">    if(!allKnown) {</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">       for(int x = 0; x &lt; data.numInstances(); x++) {</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">          if(data.instance(x).isMissing(m_attIndex)) {</span>
+<span class="nc" id="L188">             Instance instance = data.instance(x);</span>
+<span class="nc" id="L189">             int subst = whichSubset(instance);</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">             if(subst == -1)</span>
+<span class="nc" id="L191">                continue;</span>
+<span class="nc" id="L192">             instance.setWeight(instance.weight() * factor);</span>
+<span class="nc" id="L193">             m_graftdistro.add(subst, instance);</span>
+          }
+       }
+    }
+
+    // if there are no cases at the leaf, make sure the desired
+    // class is chosen, by setting counts to 0.01
+<span class="nc bnc" id="L200" title="All 2 branches missed.">    if(m_graftdistro.perBag(subset) == 0) {</span>
+<span class="nc" id="L201">       double [] counts = new double[data.numClasses()];</span>
+<span class="nc" id="L202">       counts[m_maxClass] = 0.01;</span>
+<span class="nc" id="L203">       m_graftdistro.add(subset, counts);</span>
+    }
+<span class="nc bnc" id="L205" title="All 4 branches missed.">    if(m_graftdistro.perBag((subset == 0) ? 1 : 0) == 0) {</span>
+<span class="nc" id="L206">       double [] counts = new double[data.numClasses()];</span>
+<span class="nc" id="L207">       counts[(int)m_otherLeafMaxClass] = 0.01;</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">       m_graftdistro.add((subset == 0) ? 1 : 0, counts);</span>
+    }
+<span class="nc" id="L210">  }</span>
+
+
+  /**
+   * @return the NoSplit object for the leaf pointed to by m_testType branch
+   */
+  public NoSplit getLeaf() {
+<span class="nc" id="L217">    return new NoSplit(m_leafdistro);</span>
+  }
+
+
+  /**
+   * @return the NoSplit object for the leaf not pointed to by m_testType branch
+   */
+  public NoSplit getOtherLeaf() {
+
+    // the bag (subset) that isn't pointed to by m_testType branch
+<span class="nc bnc" id="L227" title="All 2 branches missed.">    int bag = (subsetOfInterest() == 0) ? 1 : 0;</span>
+
+<span class="nc" id="L229">    double [][] counts = new double[1][m_graftdistro.numClasses()];</span>
+<span class="nc" id="L230">    double totals = 0;</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">    for(int c = 0; c &lt; counts[0].length; c++) {</span>
+<span class="nc" id="L232">       counts[0][c] = m_graftdistro.perClassPerBag(bag, c);</span>
+<span class="nc" id="L233">       totals += counts[0][c];</span>
+    }
+    // if empty, make sure proper class gets chosen
+<span class="nc bnc" id="L236" title="All 2 branches missed.">    if(totals == 0) {</span>
+<span class="nc" id="L237">       counts[0][m_otherLeafMaxClass] += 0.01;</span>
+    }
+<span class="nc" id="L239">    return new NoSplit(new Distribution(counts));</span>
+  }
+
+
+  /**
+   * Prints label for subset index of instances (eg class).
+   *
+   * @param index the bag to dump label for
+   * @param data to get attribute names and such
+   * @return the label as a string
+   * @exception Exception if something goes wrong
+   */
+  public final String dumpLabelG(int index, Instances data) throws Exception {
+
+    StringBuffer text;
+
+<span class="nc" id="L255">    text = new StringBuffer();</span>
+<span class="nc" id="L256">    text.append(((Instances)data).classAttribute().</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">       value((index==subsetOfInterest()) ? m_maxClass : m_otherLeafMaxClass));</span>
+<span class="nc" id="L258">    text.append(&quot; (&quot;+Utils.roundDouble(m_graftdistro.perBag(index),1));</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">    if(Utils.gr(m_graftdistro.numIncorrect(index),0))</span>
+<span class="nc" id="L260">       text.append(&quot;/&quot;</span>
+<span class="nc" id="L261">        +Utils.roundDouble(m_graftdistro.numIncorrect(index),2));</span>
+
+    // show the graft values, only if this is subsetOfInterest()
+<span class="nc bnc" id="L264" title="All 2 branches missed.">    if(index == subsetOfInterest()) {</span>
+<span class="nc" id="L265">       text.append(&quot;|&quot;+Utils.roundDouble(m_distribution.perBag(index),2));</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">       if(Utils.gr(m_distribution.numIncorrect(index),0))</span>
+<span class="nc" id="L267">          text.append(&quot;/&quot;</span>
+<span class="nc" id="L268">             +Utils.roundDouble(m_distribution.numIncorrect(index),2));</span>
+    }
+<span class="nc" id="L270">    text.append(&quot;)&quot;);</span>
+<span class="nc" id="L271">    return text.toString();</span>
+  }
+
+
+  /**
+   * @return the subset that is specified by the test type
+   */
+  public int subsetOfInterest() {
+<span class="nc bnc" id="L279" title="All 2 branches missed.">    if(m_testType == 2)</span>
+<span class="nc" id="L280">       return 0;</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">    if(m_testType == 3)</span>
+<span class="nc" id="L282">       return 1;</span>
+<span class="nc" id="L283">    return m_testType;</span>
+  }
+
+
+  /**
+   * @return the number of positive cases in the subset of interest
+   */
+  public double positivesForSubsetOfInterest() {
+<span class="nc" id="L291">    return (m_distribution.perClassPerBag(subsetOfInterest(), m_maxClass));</span>
+  }
+
+
+  /**
+   * @param subset the subset to get the positives for
+   * @return the number of positive cases in the specified subset
+   */
+  public double positives(int subset) {
+<span class="nc" id="L300">    return (m_distribution.perClassPerBag(subset, </span>
+<span class="nc" id="L301">                                    m_distribution.maxClass(subset)));</span>
+  }
+
+
+  /**
+   * @return the number of instances in the subset of interest
+   */
+  public double totalForSubsetOfInterest() {
+<span class="nc" id="L309">    return (m_distribution.perBag(subsetOfInterest()));</span>
+  }
+
+  
+  /**
+   * @param subset the index of the bag to get the total for
+   * @return the number of instances in the subset
+   */
+  public double totalForSubset(int subset) {
+<span class="nc" id="L318">    return (m_distribution.perBag(subset));</span>
+  }
+
+
+  /**
+   * Prints left side of condition satisfied by instances.
+   *
+   * @param data the data.
+   */
+  public String leftSide(Instances data) {
+<span class="nc" id="L328">    return data.attribute(m_attIndex).name();</span>
+  }
+
+
+  /**
+   * @return the index of the attribute to split on
+   */ 
+  public int attribute() {
+<span class="nc" id="L336">    return m_attIndex;</span>
+  }
+
+
+  /**
+   * Prints condition satisfied by instances in subset index.
+   */
+  public final String rightSide(int index, Instances data) {
+
+    StringBuffer text;
+
+<span class="nc" id="L347">    text = new StringBuffer();</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">    if(data.attribute(m_attIndex).isNominal())</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">       if(index == 0)</span>
+<span class="nc" id="L350">          text.append(&quot; = &quot;+</span>
+<span class="nc" id="L351">                      data.attribute(m_attIndex).value((int)m_splitPoint));</span>
+       else
+<span class="nc" id="L353">          text.append(&quot; != &quot;+</span>
+<span class="nc" id="L354">                      data.attribute(m_attIndex).value((int)m_splitPoint));</span>
+    else
+<span class="nc bnc" id="L356" title="All 2 branches missed.">       if(index == 0)</span>
+<span class="nc" id="L357">          text.append(&quot; &lt;= &quot;+</span>
+<span class="nc" id="L358">                      Utils.doubleToString(m_splitPoint,6));</span>
+       else
+<span class="nc" id="L360">          text.append(&quot; &gt; &quot;+</span>
+<span class="nc" id="L361">                      Utils.doubleToString(m_splitPoint,6));</span>
+<span class="nc" id="L362">    return text.toString();</span>
+  }
+
+
+  /**
+   * Returns a string containing java source code equivalent to the test
+   * made at this node. The instance being tested is called &quot;i&quot;.
+   *
+   * @param index index of the nominal value tested
+   * @param data the data containing instance structure info
+   * @return a value of type 'String'
+   */
+  public final String sourceExpression(int index, Instances data) {
+
+<span class="nc" id="L376">    StringBuffer expr = null;</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">    if(index &lt; 0) {</span>
+<span class="nc" id="L378">       return &quot;i[&quot; + m_attIndex + &quot;] == null&quot;;</span>
+    }
+<span class="nc bnc" id="L380" title="All 2 branches missed.">    if(data.attribute(m_attIndex).isNominal()) {</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">       if(index == 0)</span>
+<span class="nc" id="L382">          expr = new StringBuffer(&quot;i[&quot;);</span>
+       else
+<span class="nc" id="L384">          expr = new StringBuffer(&quot;!i[&quot;);</span>
+<span class="nc" id="L385">       expr.append(m_attIndex).append(&quot;]&quot;);</span>
+<span class="nc" id="L386">       expr.append(&quot;.equals(\&quot;&quot;).append(data.attribute(m_attIndex)</span>
+<span class="nc" id="L387">                                      .value((int)m_splitPoint)).append(&quot;\&quot;)&quot;);</span>
+    } else {
+<span class="nc" id="L389">       expr = new StringBuffer(&quot;((Double) i[&quot;);</span>
+<span class="nc" id="L390">       expr.append(m_attIndex).append(&quot;])&quot;);</span>
+<span class="nc bnc" id="L391" title="All 2 branches missed.">       if(index == 0) {</span>
+<span class="nc" id="L392">          expr.append(&quot;.doubleValue() &lt;= &quot;).append(m_splitPoint);</span>
+       } else {
+<span class="nc" id="L394">          expr.append(&quot;.doubleValue() &gt; &quot;).append(m_splitPoint);</span>
+       }
+    }
+<span class="nc" id="L397">    return expr.toString();</span>
+  }
+
+
+  /**
+   * @param instance the instance to produce the weights for
+   * @return a double array of weights, null if only belongs to one subset
+   */
+  public double [] weights(Instance instance) {
+
+    double [] weights;
+    int i;
+
+<span class="nc bnc" id="L410" title="All 2 branches missed.">    if(instance.isMissing(m_attIndex)) {</span>
+<span class="nc" id="L411">       weights = new double [m_numSubsets];</span>
+<span class="nc bnc" id="L412" title="All 2 branches missed.">       for(i=0;i&lt;m_numSubsets;i++) {</span>
+<span class="nc" id="L413">          weights [i] = m_graftdistro.perBag(i)/m_graftdistro.total();</span>
+       }
+<span class="nc" id="L415">       return weights;</span>
+    } else {
+<span class="nc" id="L417">       return null;</span>
+    }
+  }
+
+
+  /**
+   * @param instance the instance for which to determine the subset
+   * @return an int indicating the subset this instance belongs to
+   */
+  public int whichSubset(Instance instance) {
+
+<span class="nc bnc" id="L428" title="All 2 branches missed.">    if(instance.isMissing(m_attIndex))</span>
+<span class="nc" id="L429">       return -1;</span>
+
+<span class="nc bnc" id="L431" title="All 2 branches missed.">    if(instance.attribute(m_attIndex).isNominal()) {</span>
+       // in the case of nominal, m_splitPoint is the = value, all else is !=
+<span class="nc bnc" id="L433" title="All 2 branches missed.">       if(instance.value(m_attIndex) == m_splitPoint)</span>
+<span class="nc" id="L434">          return 0;</span>
+       else
+<span class="nc" id="L436">          return 1;</span>
+    } else {
+<span class="nc bnc" id="L438" title="All 2 branches missed.">       if(Utils.smOrEq(instance.value(m_attIndex), m_splitPoint))</span>
+<span class="nc" id="L439">          return 0;</span>
+       else
+<span class="nc" id="L441">          return 1;</span>
+    }
+  }
+
+
+  /**
+   * @return the value of the split point
+   */
+  public double splitPoint() {
+<span class="nc" id="L450">    return m_splitPoint;</span>
+  }
+
+  /**
+   * @return the dominate class for the subset of interest
+   */
+  public int maxClassForSubsetOfInterest() {
+<span class="nc" id="L457">    return m_maxClass;</span>
+  }
+
+  /**
+   * @return the laplace value for maxClass of subset of interest
+   */
+  public double laplaceForSubsetOfInterest() {
+<span class="nc" id="L464">    return m_laplace;</span>
+  }
+
+  /**
+   * returns the test type
+   * @return value of testtype
+   */
+  public int testType() {
+<span class="nc" id="L472">    return m_testType;</span>
+  }
+
+  /**
+   * method needed for sorting a collection of GraftSplits by laplace value
+   * @param g the graft split to compare to this one
+   * @return -1, 0, or 1 if this GraftSplit laplace is &lt;, = or &gt; than that of g
+   */
+  public int compareTo(Object g) {
+
+<span class="nc bnc" id="L482" title="All 2 branches missed.">    if(m_laplace &gt; ((GraftSplit)g).laplaceForSubsetOfInterest())</span>
+<span class="nc" id="L483">       return 1;</span>
+<span class="nc bnc" id="L484" title="All 2 branches missed.">    if(m_laplace &lt; ((GraftSplit)g).laplaceForSubsetOfInterest())</span>
+<span class="nc" id="L485">       return -1;</span>
+<span class="nc" id="L486">    return 0;</span>
+  }
+
+  /**
+   * returns the probability for instance for the specified class
+   * @param classIndex the index of the class
+   * @param instance the instance to get the probability for
+   * @param theSubset the subset
+   */
+  public final double classProb(int classIndex, Instance instance, 
+		            int theSubset) throws Exception {
+
+<span class="nc bnc" id="L498" title="All 2 branches missed.">    if (theSubset &lt;= -1) {</span>
+<span class="nc" id="L499">       double [] weights = weights(instance);</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">       if (weights == null) {</span>
+<span class="nc" id="L501">          return m_distribution.prob(classIndex);</span>
+       } else {
+<span class="nc" id="L503">          double prob = 0;</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">          for (int i = 0; i &lt; weights.length; i++) {</span>
+<span class="nc" id="L505">             prob += weights[i] * m_distribution.prob(classIndex, i);</span>
+          }
+<span class="nc" id="L507">          return prob;</span>
+       }
+    } else {
+<span class="nc bnc" id="L510" title="All 2 branches missed.">       if (Utils.gr(m_distribution.perBag(theSubset), 0)) {</span>
+<span class="nc" id="L511">          return m_distribution.prob(classIndex, theSubset);</span>
+       } else {
+<span class="nc" id="L513">          return m_distribution.prob(classIndex);</span>
+       }
+    }
+  }
+
+
+  /**
+   * method for returning information about this GraftSplit
+   * @param data instances for determining names of attributes and values
+   * @return a string showing this GraftSplit's information
+   */
+  public String toString(Instances data) {
+
+    String theTest;
+<span class="nc bnc" id="L527" title="All 2 branches missed.">    if(m_testType == 0)</span>
+<span class="nc" id="L528">       theTest = &quot; &lt;= &quot;;</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">    else if(m_testType == 1)</span>
+<span class="nc" id="L530">       theTest = &quot; &gt; &quot;;</span>
+<span class="nc bnc" id="L531" title="All 2 branches missed.">    else if(m_testType == 2)</span>
+<span class="nc" id="L532">       theTest = &quot; = &quot;;</span>
+    else
+<span class="nc" id="L534">       theTest = &quot; != &quot;;</span>
+
+<span class="nc bnc" id="L536" title="All 2 branches missed.">    if(data.attribute(m_attIndex).isNominal())</span>
+<span class="nc" id="L537">       theTest += data.attribute(m_attIndex).value((int)m_splitPoint);</span>
+    else
+<span class="nc" id="L539">       theTest += Double.toString(m_splitPoint);</span>
+
+<span class="nc" id="L541">    return data.attribute(m_attIndex).name() + theTest</span>
+<span class="nc" id="L542">           + &quot; (&quot; + Double.toString(m_laplace) + &quot;) --&gt; &quot; </span>
+<span class="nc" id="L543">           + data.attribute(data.classIndex()).value(m_maxClass);</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L552">    return RevisionUtils.extract(&quot;$Revision: 1.2 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

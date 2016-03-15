@@ -1,0 +1,890 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>KernelFilter.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.filters.unsupervised.attribute</a> &gt; <span class="el_source">KernelFilter.java</span></div><h1>KernelFilter.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * KernelFilter.java
+ * Copyright (C) 2005 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.filters.unsupervised.attribute;
+
+import weka.classifiers.functions.supportVector.Kernel;
+import weka.classifiers.functions.supportVector.PolyKernel;
+import weka.classifiers.functions.supportVector.RBFKernel;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.MathematicalExpression;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SingleIndex;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.core.converters.ConverterUtils.DataSource;
+import weka.filters.AllFilter;
+import weka.filters.Filter;
+import weka.filters.SimpleBatchFilter;
+import weka.filters.UnsupervisedFilter;
+
+import java.io.File;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Converts the given set of predictor variables into a kernel matrix. The class value remains unchangedm, as long as the preprocessing filter doesn't change it.&lt;br/&gt;
+ * By default, the data is preprocessed with the Center filter, but the user can choose any filter (NB: one must be careful that the filter does not alter the class attribute unintentionally). With weka.filters.AllFilter the preprocessing gets disabled.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information regarding preprocessing the data, see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * K.P. Bennett, M.J. Embrechts: An Optimization Perspective on Kernel Partial Least Squares Regression. In: Advances in Learning Theory: Methods, Models and Applications, 227-249, 2003.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Bennett2003,
+ *    author = {K.P. Bennett and M.J. Embrechts},
+ *    booktitle = {Advances in Learning Theory: Methods, Models and Applications},
+ *    editor = {J. Suykens et al.},
+ *    pages = {227-249},
+ *    publisher = {IOS Press, Amsterdam, The Netherlands},
+ *    series = {NATO Science Series, Series III: Computer and System Sciences},
+ *    title = {An Optimization Perspective on Kernel Partial Least Squares Regression},
+ *    volume = {190},
+ *    year = {2003}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Turns on output of debugging information.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -no-checks
+ *  Turns off all checks - use with caution!
+ *  Turning them off assumes that data is purely numeric, doesn't
+ *  contain any missing values, and has a nominal class. Turning them
+ *  off also means that no header information will be stored if the
+ *  machine is linear. Finally, it also assumes that no instance has
+ *  a weight equal to 0.
+ *  (default: checks on)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -F &amp;lt;filename&amp;gt;
+ *  The file to initialize the filter with (optional).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+ *  The class index for the file to initialize with,
+ *  First and last are valid (optional, default: last).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -K &amp;lt;classname and parameters&amp;gt;
+ *  The Kernel to use.
+ *  (default: weka.classifiers.functions.supportVector.PolyKernel)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -kernel-factor
+ *  Defines a factor for the kernel.
+ *   - RBFKernel: a factor for gamma
+ *    Standardize: 1/(2*N)
+ *    Normalize..: 6/N
+ *  Available parameters are:
+ *   N for # of instances, A for # of attributes
+ *  (default: 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;classname and parameters&amp;gt;
+ *  The Filter used for preprocessing (use weka.filters.AllFilter
+ *  to disable preprocessing).
+ *  (default: weka.filters.unsupervised.attribute.Center)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to kernel weka.classifiers.functions.supportVector.PolyKernel:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Enables debugging output (if available) to be printed.
+ *  (default: off)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -no-checks
+ *  Turns off all checks - use with caution!
+ *  (default: checks on)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+ *  The size of the cache (a prime number), 0 for full cache and 
+ *  -1 to turn it off.
+ *  (default: 250007)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -E &amp;lt;num&amp;gt;
+ *  The Exponent to use.
+ *  (default: 1.0)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -L
+ *  Use lower-order terms.
+ *  (default: no)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to preprocessing filter weka.filters.unsupervised.attribute.Center:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -unset-class-temporarily
+ *  Unsets the class index temporarily before the filter is
+ *  applied to the data.
+ *  (default: no)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Jonathan Miles (jdm18@cs.waikato.ac.nz) 
+ * @author FracPete (fracpete at waikato dot ac dot nz) 
+ * @version $Revision: 9570 $
+ */
+<span class="nc" id="L164">public class KernelFilter</span>
+  extends SimpleBatchFilter 
+  implements UnsupervisedFilter, TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 213800899640387499L;
+
+  /** The number of instances in the training data. */
+  protected int m_NumTrainInstances;
+
+  /** Kernel to use **/
+<span class="nc" id="L175">  protected Kernel m_Kernel = new PolyKernel();</span>
+
+  /** the Kernel which is actually used for computation */
+<span class="nc" id="L178">  protected Kernel m_ActualKernel = null;</span>
+
+  /** Turn off all checks and conversions? Turning them off assumes
+      that data is purely numeric, doesn't contain any missing values,
+      and has a nominal class. Turning them off also means that
+      no header information will be stored if the machine is linear. 
+      Finally, it also assumes that no instance has a weight equal to 0.*/
+  protected boolean m_checksTurnedOff;
+
+  /** The filter used to make attributes numeric. */
+  protected NominalToBinary m_NominalToBinary;
+
+  /** The filter used to get rid of missing values. */
+  protected ReplaceMissingValues m_Missing;
+
+  /** The dataset to initialize the filter with */
+<span class="nc" id="L194">  protected File m_InitFile = new File(System.getProperty(&quot;user.dir&quot;));</span>
+
+  /** the class index for the file to initialized with 
+   * @see #m_InitFile */
+<span class="nc" id="L198">  protected SingleIndex m_InitFileClassIndex = new SingleIndex(&quot;last&quot;);</span>
+  
+  /** whether the filter was initialized */
+<span class="nc" id="L201">  protected boolean m_Initialized = false;</span>
+
+  /** optimizes the kernel with this formula 
+   * (A = # of attributes, N = # of instances)*/
+<span class="nc" id="L205">  protected String m_KernelFactorExpression = &quot;1&quot;;</span>
+
+  /** the calculated kernel factor
+   * @see #m_KernelFactorExpression */
+<span class="nc" id="L209">  protected double m_KernelFactor = 1.0;</span>
+  
+  /** for centering/standardizing the data */
+<span class="nc" id="L212">  protected Filter m_Filter = new Center();</span>
+  
+  /** for centering/standardizing the data (the actual filter to use) */
+<span class="nc" id="L215">  protected Filter m_ActualFilter = null;</span>
+  
+  /**
+   * Returns a string describing this filter.
+   *
+   * @return      a description of the filter suitable for
+   *              displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L224">    return </span>
+<span class="nc" id="L225">        &quot;Converts the given set of predictor variables into a kernel matrix. &quot;</span>
+      + &quot;The class value remains unchangedm, as long as the preprocessing &quot;
+      + &quot;filter doesn't change it.\n&quot;
+      + &quot;By default, the data is preprocessed with the Center filter, but the &quot;
+      + &quot;user can choose any filter (NB: one must be careful that the filter &quot;
+      + &quot;does not alter the class attribute unintentionally). With &quot;
+      + &quot;weka.filters.AllFilter the preprocessing gets disabled.\n\n&quot;
+      + &quot;For more information regarding preprocessing the data, see:\n\n&quot;
+<span class="nc" id="L233">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation	result;
+    
+<span class="nc" id="L246">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L247">    result.setValue(Field.AUTHOR, &quot;K.P. Bennett and M.J. Embrechts&quot;);</span>
+<span class="nc" id="L248">    result.setValue(Field.TITLE, &quot;An Optimization Perspective on Kernel Partial Least Squares Regression&quot;);</span>
+<span class="nc" id="L249">    result.setValue(Field.YEAR, &quot;2003&quot;);</span>
+<span class="nc" id="L250">    result.setValue(Field.EDITOR, &quot;J. Suykens et al.&quot;);</span>
+<span class="nc" id="L251">    result.setValue(Field.BOOKTITLE, &quot;Advances in Learning Theory: Methods, Models and Applications&quot;);</span>
+<span class="nc" id="L252">    result.setValue(Field.PAGES, &quot;227-249&quot;);</span>
+<span class="nc" id="L253">    result.setValue(Field.PUBLISHER, &quot;IOS Press, Amsterdam, The Netherlands&quot;);</span>
+<span class="nc" id="L254">    result.setValue(Field.SERIES, &quot;NATO Science Series, Series III: Computer and System Sciences&quot;);</span>
+<span class="nc" id="L255">    result.setValue(Field.VOLUME, &quot;190&quot;);</span>
+    
+<span class="nc" id="L257">    return result;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+    Vector        result;
+    Enumeration   enm;
+
+<span class="nc" id="L269">    result = new Vector();</span>
+
+<span class="nc" id="L271">    enm = super.listOptions();</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">    while (enm.hasMoreElements())</span>
+<span class="nc" id="L273">      result.addElement(enm.nextElement());</span>
+    
+<span class="nc" id="L275">    result.addElement(new Option(</span>
+<span class="nc" id="L276">	&quot;\tTurns off all checks - use with caution!\n&quot;</span>
+	+ &quot;\tTurning them off assumes that data is purely numeric, doesn't\n&quot;
+	+ &quot;\tcontain any missing values, and has a nominal class. Turning them\n&quot;
+	+ &quot;\toff also means that no header information will be stored if the\n&quot;
+	+ &quot;\tmachine is linear. Finally, it also assumes that no instance has\n&quot;
+	+ &quot;\ta weight equal to 0.\n&quot;
+	+ &quot;\t(default: checks on)&quot;,
+<span class="nc" id="L283">	&quot;no-checks&quot;, 0, &quot;-no-checks&quot;));</span>
+
+<span class="nc" id="L285">    result.addElement(new Option(</span>
+<span class="nc" id="L286">	&quot;\tThe file to initialize the filter with (optional).&quot;,</span>
+<span class="nc" id="L287">	&quot;F&quot;, 1, &quot;-F &lt;filename&gt;&quot;));</span>
+
+<span class="nc" id="L289">    result.addElement(new Option(</span>
+<span class="nc" id="L290">	&quot;\tThe class index for the file to initialize with,\n&quot;</span>
+	+ &quot;\tFirst and last are valid (optional, default: last).&quot;,
+<span class="nc" id="L292">	&quot;C&quot;, 1, &quot;-C &lt;num&gt;&quot;));</span>
+
+<span class="nc" id="L294">    result.addElement(new Option(</span>
+<span class="nc" id="L295">	&quot;\tThe Kernel to use.\n&quot;</span>
+	+ &quot;\t(default: weka.classifiers.functions.supportVector.PolyKernel)&quot;,
+<span class="nc" id="L297">	&quot;K&quot;, 1, &quot;-K &lt;classname and parameters&gt;&quot;));</span>
+
+<span class="nc" id="L299">    result.addElement(new Option(</span>
+<span class="nc" id="L300">	&quot;\tDefines a factor for the kernel.\n&quot;</span>
+	+ &quot;\t\t- RBFKernel: a factor for gamma\n&quot;
+	+ &quot;\t\t\tStandardize: 1/(2*N)\n&quot;
+	+ &quot;\t\t\tNormalize..: 6/N\n&quot;
+	+ &quot;\tAvailable parameters are:\n&quot;
+	+ &quot;\t\tN for # of instances, A for # of attributes\n&quot;
+	+ &quot;\t(default: 1)&quot;,
+<span class="nc" id="L307">	&quot;kernel-factor&quot;, 0, &quot;-kernel-factor&quot;));</span>
+
+<span class="nc" id="L309">    result.addElement(new Option(</span>
+<span class="nc" id="L310">	&quot;\tThe Filter used for preprocessing (use weka.filters.AllFilter\n&quot;</span>
+	+ &quot;\tto disable preprocessing).\n&quot;
+<span class="nc" id="L312">	+ &quot;\t(default: &quot; + Center.class.getName() + &quot;)&quot;,</span>
+<span class="nc" id="L313">	&quot;P&quot;, 1, &quot;-P &lt;classname and parameters&gt;&quot;));</span>
+
+    // kernel options
+<span class="nc" id="L316">    result.addElement(new Option(</span>
+<span class="nc" id="L317">	&quot;&quot;,</span>
+<span class="nc" id="L318">	&quot;&quot;, 0, &quot;\nOptions specific to kernel &quot;</span>
+<span class="nc" id="L319">	+ getKernel().getClass().getName() + &quot;:&quot;));</span>
+    
+<span class="nc" id="L321">    enm = ((OptionHandler) getKernel()).listOptions();</span>
+<span class="nc bnc" id="L322" title="All 2 branches missed.">    while (enm.hasMoreElements())</span>
+<span class="nc" id="L323">      result.addElement(enm.nextElement());</span>
+
+    // filter options
+<span class="nc bnc" id="L326" title="All 2 branches missed.">    if (getPreprocessing() instanceof OptionHandler) {</span>
+<span class="nc" id="L327">      result.addElement(new Option(</span>
+<span class="nc" id="L328">	  &quot;&quot;,</span>
+<span class="nc" id="L329">	  &quot;&quot;, 0, &quot;\nOptions specific to preprocessing filter &quot;</span>
+<span class="nc" id="L330">	  + getPreprocessing().getClass().getName() + &quot;:&quot;));</span>
+
+<span class="nc" id="L332">      enm = ((OptionHandler) getPreprocessing()).listOptions();</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">      while (enm.hasMoreElements())</span>
+<span class="nc" id="L334">	result.addElement(enm.nextElement());</span>
+    }
+    
+<span class="nc" id="L337">    return result.elements();</span>
+  }	  
+
+  /**
+   * Gets the current settings of the filter.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    int		i;
+    Vector	result;
+    String[]	options;
+    String	tmpStr;
+
+<span class="nc" id="L351">    result = new Vector();</span>
+<span class="nc" id="L352">    options = super.getOptions();</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L354">      result.add(options[i]);</span>
+    
+<span class="nc bnc" id="L356" title="All 2 branches missed.">    if (getChecksTurnedOff())</span>
+<span class="nc" id="L357">      result.add(&quot;-no-checks&quot;);</span>
+
+<span class="nc bnc" id="L359" title="All 4 branches missed.">    if ((getInitFile() != null) &amp;&amp; getInitFile().isFile()) {</span>
+<span class="nc" id="L360">      result.add(&quot;-F&quot;);</span>
+<span class="nc" id="L361">      result.add(&quot;&quot; + getInitFile().getAbsolutePath());</span>
+
+<span class="nc" id="L363">      result.add(&quot;-C&quot;);</span>
+<span class="nc" id="L364">      result.add(&quot;&quot; + getInitFileClassIndex());</span>
+    }
+
+<span class="nc" id="L367">    result.add(&quot;-K&quot;);</span>
+<span class="nc" id="L368">    result.add(&quot;&quot; + getKernel().getClass().getName() + &quot; &quot; + Utils.joinOptions(getKernel().getOptions()));</span>
+
+<span class="nc" id="L370">    result.add(&quot;-kernel-factor&quot;);</span>
+<span class="nc" id="L371">    result.add(&quot;&quot; + getKernelFactorExpression());</span>
+
+<span class="nc" id="L373">    result.add(&quot;-P&quot;);</span>
+<span class="nc" id="L374">    tmpStr = getPreprocessing().getClass().getName();</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">    if (getPreprocessing() instanceof OptionHandler)</span>
+<span class="nc" id="L376">      tmpStr += &quot; &quot; + Utils.joinOptions(((OptionHandler) getPreprocessing()).getOptions());</span>
+<span class="nc" id="L377">    result.add(&quot;&quot; + tmpStr);</span>
+
+<span class="nc" id="L379">    return (String[]) result.toArray(new String[result.size()]);	  </span>
+  }	  
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Turns on output of debugging information.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -no-checks
+   *  Turns off all checks - use with caution!
+   *  Turning them off assumes that data is purely numeric, doesn't
+   *  contain any missing values, and has a nominal class. Turning them
+   *  off also means that no header information will be stored if the
+   *  machine is linear. Finally, it also assumes that no instance has
+   *  a weight equal to 0.
+   *  (default: checks on)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -F &amp;lt;filename&amp;gt;
+   *  The file to initialize the filter with (optional).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+   *  The class index for the file to initialize with,
+   *  First and last are valid (optional, default: last).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -K &amp;lt;classname and parameters&amp;gt;
+   *  The Kernel to use.
+   *  (default: weka.classifiers.functions.supportVector.PolyKernel)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -kernel-factor
+   *  Defines a factor for the kernel.
+   *   - RBFKernel: a factor for gamma
+   *    Standardize: 1/(2*N)
+   *    Normalize..: 6/N
+   *  Available parameters are:
+   *   N for # of instances, A for # of attributes
+   *  (default: 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;classname and parameters&amp;gt;
+   *  The Filter used for preprocessing (use weka.filters.AllFilter
+   *  to disable preprocessing).
+   *  (default: weka.filters.unsupervised.attribute.Center)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to kernel weka.classifiers.functions.supportVector.PolyKernel:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Enables debugging output (if available) to be printed.
+   *  (default: off)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -no-checks
+   *  Turns off all checks - use with caution!
+   *  (default: checks on)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+   *  The size of the cache (a prime number), 0 for full cache and 
+   *  -1 to turn it off.
+   *  (default: 250007)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -E &amp;lt;num&amp;gt;
+   *  The Exponent to use.
+   *  (default: 1.0)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -L
+   *  Use lower-order terms.
+   *  (default: no)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to preprocessing filter weka.filters.unsupervised.attribute.Center:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -unset-class-temporarily
+   *  Unsets the class index temporarily before the filter is
+   *  applied to the data.
+   *  (default: no)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   * 
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported 
+   */
+  public void setOptions(String[] options) throws Exception {
+    String	tmpStr;
+    String[]	tmpOptions;
+    
+<span class="nc" id="L468">    setChecksTurnedOff(Utils.getFlag(&quot;no-checks&quot;, options));</span>
+
+<span class="nc" id="L470">    tmpStr = Utils.getOption('F', options);</span>
+<span class="nc bnc" id="L471" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L472">      setInitFile(new File(tmpStr));</span>
+    else 
+<span class="nc" id="L474">      setInitFile(null);</span>
+
+<span class="nc" id="L476">    tmpStr = Utils.getOption('C', options);</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L478">      setInitFileClassIndex(tmpStr);</span>
+    else 
+<span class="nc" id="L480">      setInitFileClassIndex(&quot;last&quot;);</span>
+
+<span class="nc" id="L482">    tmpStr     = Utils.getOption('K', options);</span>
+<span class="nc" id="L483">    tmpOptions = Utils.splitOptions(tmpStr);</span>
+<span class="nc bnc" id="L484" title="All 2 branches missed.">    if (tmpOptions.length != 0) {</span>
+<span class="nc" id="L485">      tmpStr        = tmpOptions[0];</span>
+<span class="nc" id="L486">      tmpOptions[0] = &quot;&quot;;</span>
+<span class="nc" id="L487">      setKernel(Kernel.forName(tmpStr, tmpOptions));</span>
+    }
+    
+<span class="nc" id="L490">    tmpStr = Utils.getOption(&quot;kernel-factor&quot;, options);</span>
+<span class="nc bnc" id="L491" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L492">      setKernelFactorExpression(tmpStr);</span>
+    else 
+<span class="nc" id="L494">      setKernelFactorExpression(&quot;1&quot;);</span>
+    
+<span class="nc" id="L496">    tmpStr = Utils.getOption(&quot;P&quot;, options);</span>
+<span class="nc" id="L497">    tmpOptions = Utils.splitOptions(tmpStr);</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">    if (tmpOptions.length != 0) {</span>
+<span class="nc" id="L499">      tmpStr        = tmpOptions[0];</span>
+<span class="nc" id="L500">      tmpOptions[0] = &quot;&quot;;</span>
+<span class="nc" id="L501">      setPreprocessing((Filter) Utils.forName(Filter.class, tmpStr, tmpOptions));</span>
+    }
+    else {
+<span class="nc" id="L504">      setPreprocessing(new Center());</span>
+    }
+
+<span class="nc" id="L507">    super.setOptions(options);</span>
+<span class="nc" id="L508">  }	  </span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String initFileTipText() {
+<span class="nc" id="L517">    return &quot;The dataset to initialize the filter with.&quot;;</span>
+  }
+
+  /**
+   * Gets the file to initialize the filter with, can be null.
+   *
+   * @return 		the file
+   */
+  public File getInitFile() {
+<span class="nc" id="L526">    return m_InitFile;</span>
+  }
+    
+  /**
+   * Sets the file to initialize the filter with, can be null.
+   *
+   * @param value	the file
+   */
+  public void setInitFile(File value) {
+<span class="nc" id="L535">    m_InitFile = value;</span>
+<span class="nc" id="L536">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String initFileClassIndexTipText() {
+<span class="nc" id="L545">    return &quot;The class index of the dataset to initialize the filter with (first and last are valid).&quot;;</span>
+  }
+
+  /**
+   * Gets the class index of the file to initialize the filter with.
+   *
+   * @return 		the class index
+   */
+  public String getInitFileClassIndex() {
+<span class="nc" id="L554">    return m_InitFileClassIndex.getSingleIndex();</span>
+  }
+    
+  /**
+   * Sets class index of the file to initialize the filter with.
+   *
+   * @param value	the class index
+   */
+  public void setInitFileClassIndex(String value) {
+<span class="nc" id="L563">    m_InitFileClassIndex.setSingleIndex(value);</span>
+<span class="nc" id="L564">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String kernelTipText() {
+<span class="nc" id="L573">    return &quot;The kernel to use.&quot;;</span>
+  }
+
+  /**
+   * Gets the kernel to use.
+   *
+   * @return 		the kernel
+   */
+  public Kernel getKernel() {
+<span class="nc" id="L582">    return m_Kernel;</span>
+  }
+    
+  /**
+   * Sets the kernel to use.
+   *
+   * @param value	the kernel
+   */
+  public void setKernel(Kernel value) {
+<span class="nc" id="L591">    m_Kernel = value;</span>
+<span class="nc" id="L592">  }</span>
+
+  /**
+   * Disables or enables the checks (which could be time-consuming). Use with
+   * caution!
+   * 
+   * @param value	if true turns off all checks
+   */
+  public void setChecksTurnedOff(boolean value) {
+<span class="nc" id="L601">    m_checksTurnedOff = value;</span>
+<span class="nc" id="L602">  }</span>
+  
+  /**
+   * Returns whether the checks are turned off or not.
+   * 
+   * @return		true if the checks are turned off
+   */
+  public boolean getChecksTurnedOff() {
+<span class="nc" id="L610">    return m_checksTurnedOff;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String checksTurnedOffTipText() {
+<span class="nc" id="L620">    return &quot;Turns time-consuming checks off - use with caution.&quot;;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String kernelFactorExpressionTipText() {
+<span class="nc" id="L630">    return &quot;The factor for the kernel, with A = # of attributes and N = # of instances.&quot;;</span>
+  }
+
+  /**
+   * Gets the expression for the kernel.
+   *
+   * @return 		the expression
+   */
+  public String getKernelFactorExpression() {
+<span class="nc" id="L639">    return m_KernelFactorExpression;</span>
+  }
+    
+  /**
+   * Sets the expression for the kernel.
+   *
+   * @param value	the file
+   */
+  public void setKernelFactorExpression(String value) {
+<span class="nc" id="L648">    m_KernelFactorExpression = value;</span>
+<span class="nc" id="L649">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String preprocessingTipText() {
+<span class="nc" id="L658">    return &quot;Sets the filter to use for preprocessing (use the AllFilter for no preprocessing).&quot;;</span>
+  }
+
+  /**
+   * Sets the filter to use for preprocessing (use the AllFilter for no 
+   * preprocessing)
+   *
+   * @param value 	the preprocessing filter
+   */
+  public void setPreprocessing(Filter value) {
+<span class="nc" id="L668">    m_Filter       = value;</span>
+<span class="nc" id="L669">    m_ActualFilter = null;</span>
+<span class="nc" id="L670">  }</span>
+
+  /**
+   * Gets the filter used for preprocessing
+   *
+   * @return 		the current preprocessing filter.
+   */
+  public Filter getPreprocessing() {
+<span class="nc" id="L678">    return m_Filter;</span>
+  }
+
+  /**
+   * resets the filter, i.e., m_NewBatch to true and m_FirstBatchDone to
+   * false.
+   */
+  protected void reset() {
+<span class="nc" id="L686">    super.reset();</span>
+    
+<span class="nc" id="L688">    m_Initialized = false;</span>
+<span class="nc" id="L689">  }</span>
+
+  /**
+   * Determines the output format based on the input format and returns 
+   * this. In case the output format cannot be returned immediately, i.e.,
+   * immediateOutputFormat() returns false, then this method will be called
+   * from batchFinished().
+   *
+   * @param inputFormat     the input format to base the output format on
+   * @return                the output format
+   * @throws Exception      in case the determination goes wrong
+   * @see   #hasImmediateOutputFormat()
+   * @see   #batchFinished()
+   */
+  protected Instances determineOutputFormat(Instances inputFormat) throws Exception {
+<span class="nc" id="L704">    return new Instances(inputFormat);</span>
+  }
+  
+  /**
+   * initializes the filter with the given dataset, i.e., the kernel gets
+   * built. Needs to be called before the first call of Filter.useFilter or
+   * batchFinished(), if not the -F option (or setInitFile(File) is used).
+   * 
+   * @param instances	the data to initialize with
+   * @throws Exception	if building of kernel fails
+   */
+  public void initFilter(Instances instances) throws Exception {
+    HashMap	symbols;
+    
+    // determine kernel factor
+<span class="nc" id="L719">    symbols = new HashMap();</span>
+<span class="nc" id="L720">    symbols.put(&quot;A&quot;, new Double(instances.numAttributes()));</span>
+<span class="nc" id="L721">    symbols.put(&quot;N&quot;, new Double(instances.numInstances()));</span>
+<span class="nc" id="L722">    m_KernelFactor = MathematicalExpression.evaluate(getKernelFactorExpression(), symbols);</span>
+    
+    // init filters
+<span class="nc bnc" id="L725" title="All 2 branches missed.">    if (!m_checksTurnedOff) {</span>
+<span class="nc" id="L726">      m_Missing = new ReplaceMissingValues();</span>
+<span class="nc" id="L727">      m_Missing.setInputFormat(instances);</span>
+<span class="nc" id="L728">      instances = Filter.useFilter(instances, m_Missing); </span>
+    } 
+    else {
+<span class="nc" id="L731">      m_Missing = null;</span>
+    }
+
+<span class="nc bnc" id="L734" title="All 2 branches missed.">    if (getKernel().getCapabilities().handles(Capability.NUMERIC_ATTRIBUTES)) {</span>
+<span class="nc" id="L735">	boolean onlyNumeric = true;</span>
+<span class="nc bnc" id="L736" title="All 2 branches missed.">	if (!m_checksTurnedOff) {</span>
+<span class="nc bnc" id="L737" title="All 2 branches missed.">	  for (int i = 0; i &lt; instances.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L738" title="All 2 branches missed.">	    if (i != instances.classIndex()) {</span>
+<span class="nc bnc" id="L739" title="All 2 branches missed.">	      if (!instances.attribute(i).isNumeric()) {</span>
+<span class="nc" id="L740">		onlyNumeric = false;</span>
+<span class="nc" id="L741">		break;</span>
+	      }
+	    }
+	  }
+	}
+	
+<span class="nc bnc" id="L747" title="All 2 branches missed.">	if (!onlyNumeric) {</span>
+<span class="nc" id="L748">	  m_NominalToBinary = new NominalToBinary();</span>
+<span class="nc" id="L749">	  m_NominalToBinary.setInputFormat(instances);</span>
+<span class="nc" id="L750">	  instances = Filter.useFilter(instances, m_NominalToBinary);</span>
+	} 
+	else {
+<span class="nc" id="L753">	  m_NominalToBinary = null;</span>
+	}
+    }
+    else {
+<span class="nc" id="L757">      m_NominalToBinary = null;</span>
+    }
+
+<span class="nc bnc" id="L760" title="All 4 branches missed.">    if ((m_Filter != null) &amp;&amp; (m_Filter.getClass() != AllFilter.class)) {</span>
+<span class="nc" id="L761">      m_ActualFilter = Filter.makeCopy(m_Filter);</span>
+<span class="nc" id="L762">      m_ActualFilter.setInputFormat(instances);</span>
+<span class="nc" id="L763">      instances = Filter.useFilter(instances, m_ActualFilter);</span>
+    }
+    else {
+<span class="nc" id="L766">      m_ActualFilter = null;</span>
+    }
+
+<span class="nc" id="L769">    m_NumTrainInstances = instances.numInstances();</span>
+
+    // set factor for kernel
+<span class="nc" id="L772">    m_ActualKernel = Kernel.makeCopy(m_Kernel);</span>
+<span class="nc bnc" id="L773" title="All 2 branches missed.">    if (m_ActualKernel instanceof RBFKernel)</span>
+<span class="nc" id="L774">      ((RBFKernel) m_ActualKernel).setGamma(</span>
+<span class="nc" id="L775">	  m_KernelFactor * ((RBFKernel) m_ActualKernel).getGamma());</span>
+    // build kernel
+<span class="nc" id="L777">    m_ActualKernel.buildKernel(instances);</span>
+
+<span class="nc" id="L779">    m_Initialized = true;</span>
+<span class="nc" id="L780">  }</span>
+
+  /** 
+   * Returns the Capabilities of this filter.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+    Capabilities 	result;
+    
+<span class="nc bnc" id="L791" title="All 2 branches missed.">    if (getKernel() == null) {</span>
+<span class="nc" id="L792">      result = super.getCapabilities();</span>
+<span class="nc" id="L793">      result.disableAll();</span>
+    } else {
+<span class="nc" id="L795">      result = getKernel().getCapabilities();</span>
+    }
+
+<span class="nc" id="L798">    result.setMinimumNumberInstances(0);</span>
+    
+<span class="nc" id="L800">    return result;</span>
+  }
+
+  /**
+   * Processes the given data (may change the provided dataset) and returns
+   * the modified version. This method is called in batchFinished().
+   *
+   * @param instances   the data to process
+   * @return            the modified data
+   * @throws Exception  in case the processing goes wrong
+   * @see               #batchFinished()
+   */
+  protected Instances process(Instances instances) throws Exception {
+    // initializing necessary?
+<span class="nc bnc" id="L814" title="All 2 branches missed.">    if (!m_Initialized) {</span>
+      // do we have a file to initialize with?
+<span class="nc bnc" id="L816" title="All 4 branches missed.">      if ((getInitFile() != null) &amp;&amp; getInitFile().isFile()) {</span>
+<span class="nc" id="L817">	DataSource source = new DataSource(getInitFile().getAbsolutePath());</span>
+<span class="nc" id="L818">	Instances data = source.getDataSet();</span>
+<span class="nc" id="L819">	m_InitFileClassIndex.setUpper(data.numAttributes() - 1);</span>
+<span class="nc" id="L820">	data.setClassIndex(m_InitFileClassIndex.getIndex());</span>
+<span class="nc" id="L821">	initFilter(data);</span>
+      }
+      else {
+<span class="nc" id="L824">	initFilter(instances);</span>
+      }
+    }
+
+    // apply filters
+<span class="nc bnc" id="L829" title="All 2 branches missed.">    if (m_Missing != null)</span>
+<span class="nc" id="L830">      instances = Filter.useFilter(instances, m_Missing); </span>
+<span class="nc bnc" id="L831" title="All 2 branches missed.">    if (m_NominalToBinary != null)</span>
+<span class="nc" id="L832">      instances = Filter.useFilter(instances, m_NominalToBinary); </span>
+<span class="nc bnc" id="L833" title="All 2 branches missed.">    if (m_ActualFilter != null)</span>
+<span class="nc" id="L834">      instances = Filter.useFilter(instances, m_ActualFilter);</span>
+
+    // backup class attribute and remove it
+<span class="nc" id="L837">    double[] classes = instances.attributeToDoubleArray(instances.classIndex());</span>
+<span class="nc" id="L838">    int classIndex = instances.classIndex();</span>
+<span class="nc" id="L839">    Attribute classAttribute = (Attribute)instances.classAttribute().copy();</span>
+<span class="nc" id="L840">    instances.setClassIndex(-1);</span>
+<span class="nc" id="L841">    instances.deleteAttributeAt(classIndex);</span>
+
+    // generate new header
+<span class="nc" id="L844">    FastVector atts = new FastVector();</span>
+<span class="nc bnc" id="L845" title="All 2 branches missed.">    for (int j = 0; j &lt; m_NumTrainInstances; j++)</span>
+<span class="nc" id="L846">      atts.addElement(new Attribute(&quot;Kernel &quot; + j));</span>
+<span class="nc" id="L847">    atts.addElement(classAttribute);</span>
+<span class="nc" id="L848">    Instances result = new Instances(&quot;Kernel&quot;, atts, 0);</span>
+<span class="nc" id="L849">    result.setClassIndex(result.numAttributes() - 1);</span>
+
+    // compute matrix
+<span class="nc bnc" id="L852" title="All 2 branches missed.">    for (int i = 0; i &lt; instances.numInstances(); i++) {</span>
+<span class="nc" id="L853">      double[] k = new double[m_NumTrainInstances + 1];</span>
+      
+<span class="nc bnc" id="L855" title="All 2 branches missed.">      for (int j = 0; j &lt; m_NumTrainInstances; j++) {</span>
+<span class="nc" id="L856">	double v = m_ActualKernel.eval(-1, j, instances.instance(i));</span>
+<span class="nc" id="L857">	k[j] = v;</span>
+      }
+<span class="nc" id="L859">      k[k.length - 1] = classes[i];</span>
+
+      // create new instance
+<span class="nc" id="L862">      Instance in = new Instance(1.0, k);</span>
+<span class="nc" id="L863">      result.add(in);    </span>
+    }
+
+<span class="nc bnc" id="L866" title="All 2 branches missed.">    if (!isFirstBatchDone())</span>
+<span class="nc" id="L867">      setOutputFormat(result);</span>
+    
+<span class="nc" id="L869">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L878">    return RevisionUtils.extract(&quot;$Revision: 9570 $&quot;);</span>
+  }
+
+  /**
+   * runs the filter with the given arguments
+   *
+   * @param args      the commandline arguments
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L887">    runFilter(new KernelFilter(), args);</span>
+<span class="nc" id="L888">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

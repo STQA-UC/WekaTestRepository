@@ -1,0 +1,988 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>EigenvalueDecomposition.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core.matrix</a> &gt; <span class="el_source">EigenvalueDecomposition.java</span></div><h1>EigenvalueDecomposition.java</h1><pre class="source lang-java linenums">/*
+ * This software is a cooperative product of The MathWorks and the National
+ * Institute of Standards and Technology (NIST) which has been released to the
+ * public domain. Neither The MathWorks nor NIST assumes any responsibility
+ * whatsoever for its use by other parties, and makes no guarantees, expressed
+ * or implied, about its quality, reliability, or any other characteristic.
+ */
+
+/*
+ * EigenvalueDecomposition.java
+ * Copyright (C) 1999 The Mathworks and NIST
+ *
+ */
+
+package weka.core.matrix;
+
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+
+import java.io.Serializable;
+
+/** 
+ * Eigenvalues and eigenvectors of a real matrix. 
+ * &lt;P&gt;
+ * If A is symmetric, then A = V*D*V' where the eigenvalue matrix D is diagonal
+ * and the eigenvector matrix V is orthogonal.  I.e. A =
+ * V.times(D.times(V.transpose())) and V.times(V.transpose()) equals the
+ * identity matrix.
+ * &lt;P&gt;
+ * If A is not symmetric, then the eigenvalue matrix D is block diagonal with
+ * the real eigenvalues in 1-by-1 blocks and any complex eigenvalues, lambda +
+ * i*mu, in 2-by-2 blocks, [lambda, mu; -mu, lambda].  The columns of V
+ * represent the eigenvectors in the sense that A*V = V*D, i.e. A.times(V)
+ * equals V.times(D).  The matrix V may be badly conditioned, or even singular,
+ * so the validity of the equation A = V*D*inverse(V) depends upon V.cond().
+ * &lt;p/&gt;
+ * Adapted from the &lt;a href=&quot;http://math.nist.gov/javanumerics/jama/&quot; target=&quot;_blank&quot;&gt;JAMA&lt;/a&gt; package.
+ *
+ * @author The Mathworks and NIST 
+ * @author Fracpete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 1.4 $
+ */
+public class EigenvalueDecomposition 
+  implements Serializable, RevisionHandler {
+
+  /** for serialization */
+  private static final long serialVersionUID = 4011654467211422319L;
+
+  /** 
+   * Row and column dimension (square matrix).
+   * @serial matrix dimension.
+   */
+  private int n;
+
+  /** 
+   * Symmetry flag.
+   * @serial internal symmetry flag.
+   */
+  private boolean issymmetric;
+
+  /** 
+   * Arrays for internal storage of eigenvalues.
+   * @serial internal storage of eigenvalues.
+   */
+  private double[] d, e;
+
+  /** 
+   * Array for internal storage of eigenvectors.
+   * @serial internal storage of eigenvectors.
+   */
+  private double[][] V;
+
+  /** 
+   * Array for internal storage of nonsymmetric Hessenberg form.
+   * @serial internal storage of nonsymmetric Hessenberg form.
+   */
+  private double[][] H;
+
+  /** 
+   * Working storage for nonsymmetric algorithm.
+   * @serial working storage for nonsymmetric algorithm.
+   */
+  private double[] ort;
+
+  /**
+   * helper variables for the comples scalar division
+   * @see #cdiv(double,double,double,double)
+   */
+  private transient double cdivr, cdivi;
+
+  /** 
+   * Symmetric Householder reduction to tridiagonal form.
+   * &lt;p/&gt;
+   * This is derived from the Algol procedures tred2 by Bowdler, Martin,
+   * Reinsch, and Wilkinson, Handbook for Auto. Comp., Vol.ii-Linear Algebra,
+   * and the corresponding Fortran subroutine in EISPACK.
+   */
+  private void tred2() {
+
+<span class="fc bfc" id="L100" title="All 2 branches covered.">    for (int j = 0; j &lt; n; j++) {</span>
+<span class="fc" id="L101">      d[j] = V[n-1][j];</span>
+    }
+
+    // Householder reduction to tridiagonal form.
+
+<span class="fc bfc" id="L106" title="All 2 branches covered.">    for (int i = n-1; i &gt; 0; i--) {</span>
+
+      // Scale to avoid under/overflow.
+
+<span class="fc" id="L110">      double scale = 0.0;</span>
+<span class="fc" id="L111">      double h = 0.0;</span>
+<span class="fc bfc" id="L112" title="All 2 branches covered.">      for (int k = 0; k &lt; i; k++) {</span>
+<span class="fc" id="L113">        scale = scale + Math.abs(d[k]);</span>
+      }
+<span class="fc bfc" id="L115" title="All 2 branches covered.">      if (scale == 0.0) {</span>
+<span class="fc" id="L116">        e[i] = d[i-1];</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">        for (int j = 0; j &lt; i; j++) {</span>
+<span class="fc" id="L118">          d[j] = V[i-1][j];</span>
+<span class="fc" id="L119">          V[i][j] = 0.0;</span>
+<span class="fc" id="L120">          V[j][i] = 0.0;</span>
+        }
+      } else {
+
+        // Generate Householder vector.
+
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        for (int k = 0; k &lt; i; k++) {</span>
+<span class="fc" id="L127">          d[k] /= scale;</span>
+<span class="fc" id="L128">          h += d[k] * d[k];</span>
+        }
+<span class="fc" id="L130">        double f = d[i-1];</span>
+<span class="fc" id="L131">        double g = Math.sqrt(h);</span>
+<span class="fc bfc" id="L132" title="All 2 branches covered.">        if (f &gt; 0) {</span>
+<span class="fc" id="L133">          g = -g;</span>
+        }
+<span class="fc" id="L135">        e[i] = scale * g;</span>
+<span class="fc" id="L136">        h = h - f * g;</span>
+<span class="fc" id="L137">        d[i-1] = f - g;</span>
+<span class="fc bfc" id="L138" title="All 2 branches covered.">        for (int j = 0; j &lt; i; j++) {</span>
+<span class="fc" id="L139">          e[j] = 0.0;</span>
+        }
+
+        // Apply similarity transformation to remaining columns.
+
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        for (int j = 0; j &lt; i; j++) {</span>
+<span class="fc" id="L145">          f = d[j];</span>
+<span class="fc" id="L146">          V[j][i] = f;</span>
+<span class="fc" id="L147">          g = e[j] + V[j][j] * f;</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">          for (int k = j+1; k &lt;= i-1; k++) {</span>
+<span class="fc" id="L149">            g += V[k][j] * d[k];</span>
+<span class="fc" id="L150">            e[k] += V[k][j] * f;</span>
+          }
+<span class="fc" id="L152">          e[j] = g;</span>
+        }
+<span class="fc" id="L154">        f = 0.0;</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">        for (int j = 0; j &lt; i; j++) {</span>
+<span class="fc" id="L156">          e[j] /= h;</span>
+<span class="fc" id="L157">          f += e[j] * d[j];</span>
+        }
+<span class="fc" id="L159">        double hh = f / (h + h);</span>
+<span class="fc bfc" id="L160" title="All 2 branches covered.">        for (int j = 0; j &lt; i; j++) {</span>
+<span class="fc" id="L161">          e[j] -= hh * d[j];</span>
+        }
+<span class="fc bfc" id="L163" title="All 2 branches covered.">        for (int j = 0; j &lt; i; j++) {</span>
+<span class="fc" id="L164">          f = d[j];</span>
+<span class="fc" id="L165">          g = e[j];</span>
+<span class="fc bfc" id="L166" title="All 2 branches covered.">          for (int k = j; k &lt;= i-1; k++) {</span>
+<span class="fc" id="L167">            V[k][j] -= (f * e[k] + g * d[k]);</span>
+          }
+<span class="fc" id="L169">          d[j] = V[i-1][j];</span>
+<span class="fc" id="L170">          V[i][j] = 0.0;</span>
+        }
+      }
+<span class="fc" id="L173">      d[i] = h;</span>
+    }
+
+    // Accumulate transformations.
+
+<span class="fc bfc" id="L178" title="All 2 branches covered.">    for (int i = 0; i &lt; n-1; i++) {</span>
+<span class="fc" id="L179">      V[n-1][i] = V[i][i];</span>
+<span class="fc" id="L180">      V[i][i] = 1.0;</span>
+<span class="fc" id="L181">      double h = d[i+1];</span>
+<span class="fc bfc" id="L182" title="All 2 branches covered.">      if (h != 0.0) {</span>
+<span class="fc bfc" id="L183" title="All 2 branches covered.">        for (int k = 0; k &lt;= i; k++) {</span>
+<span class="fc" id="L184">          d[k] = V[k][i+1] / h;</span>
+        }
+<span class="fc bfc" id="L186" title="All 2 branches covered.">        for (int j = 0; j &lt;= i; j++) {</span>
+<span class="fc" id="L187">          double g = 0.0;</span>
+<span class="fc bfc" id="L188" title="All 2 branches covered.">          for (int k = 0; k &lt;= i; k++) {</span>
+<span class="fc" id="L189">            g += V[k][i+1] * V[k][j];</span>
+          }
+<span class="fc bfc" id="L191" title="All 2 branches covered.">          for (int k = 0; k &lt;= i; k++) {</span>
+<span class="fc" id="L192">            V[k][j] -= g * d[k];</span>
+          }
+        }
+      }
+<span class="fc bfc" id="L196" title="All 2 branches covered.">      for (int k = 0; k &lt;= i; k++) {</span>
+<span class="fc" id="L197">        V[k][i+1] = 0.0;</span>
+      }
+    }
+<span class="fc bfc" id="L200" title="All 2 branches covered.">    for (int j = 0; j &lt; n; j++) {</span>
+<span class="fc" id="L201">      d[j] = V[n-1][j];</span>
+<span class="fc" id="L202">      V[n-1][j] = 0.0;</span>
+    }
+<span class="fc" id="L204">    V[n-1][n-1] = 1.0;</span>
+<span class="fc" id="L205">    e[0] = 0.0;</span>
+<span class="fc" id="L206">  } </span>
+
+  /** 
+   * Symmetric tridiagonal QL algorithm.
+   * &lt;p/&gt;
+   * This is derived from the Algol procedures tql2, by Bowdler, Martin,
+   * Reinsch, and Wilkinson, Handbook for Auto. Comp., Vol.ii-Linear Algebra,
+   * and the corresponding Fortran subroutine in EISPACK.
+   */
+  private void tql2() {
+
+<span class="fc bfc" id="L217" title="All 2 branches covered.">    for (int i = 1; i &lt; n; i++) {</span>
+<span class="fc" id="L218">      e[i-1] = e[i];</span>
+    }
+<span class="fc" id="L220">    e[n-1] = 0.0;</span>
+
+<span class="fc" id="L222">    double f = 0.0;</span>
+<span class="fc" id="L223">    double tst1 = 0.0;</span>
+<span class="fc" id="L224">    double eps = Math.pow(2.0,-52.0);</span>
+<span class="fc bfc" id="L225" title="All 2 branches covered.">    for (int l = 0; l &lt; n; l++) {</span>
+
+      // Find small subdiagonal element
+
+<span class="fc" id="L229">      tst1 = Math.max(tst1,Math.abs(d[l]) + Math.abs(e[l]));</span>
+<span class="fc" id="L230">      int m = l;</span>
+<span class="pc bpc" id="L231" title="1 of 2 branches missed.">      while (m &lt; n) {</span>
+<span class="fc bfc" id="L232" title="All 2 branches covered.">        if (Math.abs(e[m]) &lt;= eps*tst1) {</span>
+<span class="fc" id="L233">          break;</span>
+        }
+<span class="fc" id="L235">        m++;</span>
+      }
+
+      // If m == l, d[l] is an eigenvalue,
+      // otherwise, iterate.
+
+<span class="fc bfc" id="L241" title="All 2 branches covered.">      if (m &gt; l) {</span>
+<span class="fc" id="L242">        int iter = 0;</span>
+        do {
+<span class="fc" id="L244">          iter = iter + 1;  // (Could check iteration count here.)</span>
+
+          // Compute implicit shift
+
+<span class="fc" id="L248">          double g = d[l];</span>
+<span class="fc" id="L249">          double p = (d[l+1] - g) / (2.0 * e[l]);</span>
+<span class="fc" id="L250">          double r = Maths.hypot(p,1.0);</span>
+<span class="fc bfc" id="L251" title="All 2 branches covered.">          if (p &lt; 0) {</span>
+<span class="fc" id="L252">            r = -r;</span>
+          }
+<span class="fc" id="L254">          d[l] = e[l] / (p + r);</span>
+<span class="fc" id="L255">          d[l+1] = e[l] * (p + r);</span>
+<span class="fc" id="L256">          double dl1 = d[l+1];</span>
+<span class="fc" id="L257">          double h = g - d[l];</span>
+<span class="fc bfc" id="L258" title="All 2 branches covered.">          for (int i = l+2; i &lt; n; i++) {</span>
+<span class="fc" id="L259">            d[i] -= h;</span>
+          }
+<span class="fc" id="L261">          f = f + h;</span>
+
+          // Implicit QL transformation.
+
+<span class="fc" id="L265">          p = d[m];</span>
+<span class="fc" id="L266">          double c = 1.0;</span>
+<span class="fc" id="L267">          double c2 = c;</span>
+<span class="fc" id="L268">          double c3 = c;</span>
+<span class="fc" id="L269">          double el1 = e[l+1];</span>
+<span class="fc" id="L270">          double s = 0.0;</span>
+<span class="fc" id="L271">          double s2 = 0.0;</span>
+<span class="fc bfc" id="L272" title="All 2 branches covered.">          for (int i = m-1; i &gt;= l; i--) {</span>
+<span class="fc" id="L273">            c3 = c2;</span>
+<span class="fc" id="L274">            c2 = c;</span>
+<span class="fc" id="L275">            s2 = s;</span>
+<span class="fc" id="L276">            g = c * e[i];</span>
+<span class="fc" id="L277">            h = c * p;</span>
+<span class="fc" id="L278">            r = Maths.hypot(p,e[i]);</span>
+<span class="fc" id="L279">            e[i+1] = s * r;</span>
+<span class="fc" id="L280">            s = e[i] / r;</span>
+<span class="fc" id="L281">            c = p / r;</span>
+<span class="fc" id="L282">            p = c * d[i] - s * g;</span>
+<span class="fc" id="L283">            d[i+1] = h + s * (c * g + s * d[i]);</span>
+
+            // Accumulate transformation.
+
+<span class="fc bfc" id="L287" title="All 2 branches covered.">            for (int k = 0; k &lt; n; k++) {</span>
+<span class="fc" id="L288">              h = V[k][i+1];</span>
+<span class="fc" id="L289">              V[k][i+1] = s * V[k][i] + c * h;</span>
+<span class="fc" id="L290">              V[k][i] = c * V[k][i] - s * h;</span>
+            }
+          }
+<span class="fc" id="L293">          p = -s * s2 * c3 * el1 * e[l] / dl1;</span>
+<span class="fc" id="L294">          e[l] = s * p;</span>
+<span class="fc" id="L295">          d[l] = c * p;</span>
+
+          // Check for convergence.
+
+<span class="fc bfc" id="L299" title="All 2 branches covered.">        } while (Math.abs(e[l]) &gt; eps*tst1);</span>
+      }
+<span class="fc" id="L301">      d[l] = d[l] + f;</span>
+<span class="fc" id="L302">      e[l] = 0.0;</span>
+    }
+
+    // Sort eigenvalues and corresponding vectors.
+
+<span class="fc bfc" id="L307" title="All 2 branches covered.">    for (int i = 0; i &lt; n-1; i++) {</span>
+<span class="fc" id="L308">      int k = i;</span>
+<span class="fc" id="L309">      double p = d[i];</span>
+<span class="fc bfc" id="L310" title="All 2 branches covered.">      for (int j = i+1; j &lt; n; j++) {</span>
+<span class="fc bfc" id="L311" title="All 2 branches covered.">        if (d[j] &lt; p) {</span>
+<span class="fc" id="L312">          k = j;</span>
+<span class="fc" id="L313">          p = d[j];</span>
+        }
+      }
+<span class="fc bfc" id="L316" title="All 2 branches covered.">      if (k != i) {</span>
+<span class="fc" id="L317">        d[k] = d[i];</span>
+<span class="fc" id="L318">        d[i] = p;</span>
+<span class="fc bfc" id="L319" title="All 2 branches covered.">        for (int j = 0; j &lt; n; j++) {</span>
+<span class="fc" id="L320">          p = V[j][i];</span>
+<span class="fc" id="L321">          V[j][i] = V[j][k];</span>
+<span class="fc" id="L322">          V[j][k] = p;</span>
+        }
+      }
+    }
+<span class="fc" id="L326">  }</span>
+
+  /**
+   * Nonsymmetric reduction to Hessenberg form.
+   * &lt;p/&gt;
+   * This is derived from the Algol procedures orthes and ortran, by Martin
+   * and Wilkinson, Handbook for Auto. Comp., Vol.ii-Linear Algebra, and the
+   * corresponding Fortran subroutines in EISPACK.
+   */
+  private void orthes() {
+
+<span class="fc" id="L337">    int low = 0;</span>
+<span class="fc" id="L338">    int high = n-1;</span>
+
+<span class="pc bpc" id="L340" title="1 of 2 branches missed.">    for (int m = low+1; m &lt;= high-1; m++) {</span>
+
+      // Scale column.
+
+<span class="nc" id="L344">      double scale = 0.0;</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">      for (int i = m; i &lt;= high; i++) {</span>
+<span class="nc" id="L346">        scale = scale + Math.abs(H[i][m-1]);</span>
+      }
+<span class="nc bnc" id="L348" title="All 2 branches missed.">      if (scale != 0.0) {</span>
+
+        // Compute Householder transformation.
+
+<span class="nc" id="L352">        double h = 0.0;</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">        for (int i = high; i &gt;= m; i--) {</span>
+<span class="nc" id="L354">          ort[i] = H[i][m-1]/scale;</span>
+<span class="nc" id="L355">          h += ort[i] * ort[i];</span>
+        }
+<span class="nc" id="L357">        double g = Math.sqrt(h);</span>
+<span class="nc bnc" id="L358" title="All 2 branches missed.">        if (ort[m] &gt; 0) {</span>
+<span class="nc" id="L359">          g = -g;</span>
+        }
+<span class="nc" id="L361">        h = h - ort[m] * g;</span>
+<span class="nc" id="L362">        ort[m] = ort[m] - g;</span>
+
+        // Apply Householder similarity transformation
+        // H = (I-u*u'/h)*H*(I-u*u')/h)
+
+<span class="nc bnc" id="L367" title="All 2 branches missed.">        for (int j = m; j &lt; n; j++) {</span>
+<span class="nc" id="L368">          double f = 0.0;</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">          for (int i = high; i &gt;= m; i--) {</span>
+<span class="nc" id="L370">            f += ort[i]*H[i][j];</span>
+          }
+<span class="nc" id="L372">          f = f/h;</span>
+<span class="nc bnc" id="L373" title="All 2 branches missed.">          for (int i = m; i &lt;= high; i++) {</span>
+<span class="nc" id="L374">            H[i][j] -= f*ort[i];</span>
+          }
+        }
+
+<span class="nc bnc" id="L378" title="All 2 branches missed.">        for (int i = 0; i &lt;= high; i++) {</span>
+<span class="nc" id="L379">          double f = 0.0;</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">          for (int j = high; j &gt;= m; j--) {</span>
+<span class="nc" id="L381">            f += ort[j]*H[i][j];</span>
+          }
+<span class="nc" id="L383">          f = f/h;</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">          for (int j = m; j &lt;= high; j++) {</span>
+<span class="nc" id="L385">            H[i][j] -= f*ort[j];</span>
+          }
+        }
+<span class="nc" id="L388">        ort[m] = scale*ort[m];</span>
+<span class="nc" id="L389">        H[m][m-1] = scale*g;</span>
+      }
+    }
+
+    // Accumulate transformations (Algol's ortran).
+
+<span class="fc bfc" id="L395" title="All 2 branches covered.">    for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L396" title="All 2 branches covered.">      for (int j = 0; j &lt; n; j++) {</span>
+<span class="pc bpc" id="L397" title="1 of 2 branches missed.">        V[i][j] = (i == j ? 1.0 : 0.0);</span>
+      }
+    }
+
+<span class="pc bpc" id="L401" title="1 of 2 branches missed.">    for (int m = high-1; m &gt;= low+1; m--) {</span>
+<span class="nc bnc" id="L402" title="All 2 branches missed.">      if (H[m][m-1] != 0.0) {</span>
+<span class="nc bnc" id="L403" title="All 2 branches missed.">        for (int i = m+1; i &lt;= high; i++) {</span>
+<span class="nc" id="L404">          ort[i] = H[i][m-1];</span>
+        }
+<span class="nc bnc" id="L406" title="All 2 branches missed.">        for (int j = m; j &lt;= high; j++) {</span>
+<span class="nc" id="L407">          double g = 0.0;</span>
+<span class="nc bnc" id="L408" title="All 2 branches missed.">          for (int i = m; i &lt;= high; i++) {</span>
+<span class="nc" id="L409">            g += ort[i] * V[i][j];</span>
+          }
+          // Double division avoids possible underflow
+<span class="nc" id="L412">          g = (g / ort[m]) / H[m][m-1];</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">          for (int i = m; i &lt;= high; i++) {</span>
+<span class="nc" id="L414">            V[i][j] += g * ort[i];</span>
+          }
+        }
+      }
+    }
+<span class="fc" id="L419">  }</span>
+
+
+  /** 
+   * Complex scalar division.
+   */
+  private void cdiv(double xr, double xi, double yr, double yi) {
+    double r,d;
+<span class="nc bnc" id="L427" title="All 2 branches missed.">    if (Math.abs(yr) &gt; Math.abs(yi)) {</span>
+<span class="nc" id="L428">      r = yi/yr;</span>
+<span class="nc" id="L429">      d = yr + r*yi;</span>
+<span class="nc" id="L430">      cdivr = (xr + r*xi)/d;</span>
+<span class="nc" id="L431">      cdivi = (xi - r*xr)/d;</span>
+    } else {
+<span class="nc" id="L433">      r = yr/yi;</span>
+<span class="nc" id="L434">      d = yi + r*yr;</span>
+<span class="nc" id="L435">      cdivr = (r*xr + xi)/d;</span>
+<span class="nc" id="L436">      cdivi = (r*xi - xr)/d;</span>
+    }
+<span class="nc" id="L438">  }</span>
+
+
+  /**
+   * Nonsymmetric reduction from Hessenberg to real Schur form.
+   * &lt;p/&gt;
+   * This is derived from the Algol procedure hqr2, by Martin and Wilkinson,
+   * Handbook for Auto. Comp., Vol.ii-Linear Algebra, and the corresponding
+   * Fortran subroutine in EISPACK.
+   */
+  private void hqr2() {
+
+    // Initialize
+
+<span class="fc" id="L452">    int nn = this.n;</span>
+<span class="fc" id="L453">    int n = nn-1;</span>
+<span class="fc" id="L454">    int low = 0;</span>
+<span class="fc" id="L455">    int high = nn-1;</span>
+<span class="fc" id="L456">    double eps = Math.pow(2.0,-52.0);</span>
+<span class="fc" id="L457">    double exshift = 0.0;</span>
+<span class="fc" id="L458">    double p=0,q=0,r=0,s=0,z=0,t,w,x,y;</span>
+
+    // Store roots isolated by balanc and compute matrix norm
+
+<span class="fc" id="L462">    double norm = 0.0;</span>
+<span class="fc bfc" id="L463" title="All 2 branches covered.">    for (int i = 0; i &lt; nn; i++) {</span>
+<span class="pc bpc" id="L464" title="3 of 6 branches missed.">      if (i &lt; low | i &gt; high) {</span>
+<span class="nc" id="L465">        d[i] = H[i][i];</span>
+<span class="nc" id="L466">        e[i] = 0.0;</span>
+      }
+<span class="fc bfc" id="L468" title="All 2 branches covered.">      for (int j = Math.max(i-1,0); j &lt; nn; j++) {</span>
+<span class="fc" id="L469">        norm = norm + Math.abs(H[i][j]);</span>
+      }
+    }
+
+    // Outer loop over eigenvalue index
+
+<span class="fc" id="L475">    int iter = 0;</span>
+<span class="fc bfc" id="L476" title="All 2 branches covered.">    while (n &gt;= low) {</span>
+
+      // Look for single small sub-diagonal element
+
+<span class="fc" id="L480">      int l = n;</span>
+<span class="pc bpc" id="L481" title="1 of 2 branches missed.">      while (l &gt; low) {</span>
+<span class="nc" id="L482">        s = Math.abs(H[l-1][l-1]) + Math.abs(H[l][l]);</span>
+<span class="nc bnc" id="L483" title="All 2 branches missed.">        if (s == 0.0) {</span>
+<span class="nc" id="L484">          s = norm;</span>
+        }
+<span class="nc bnc" id="L486" title="All 2 branches missed.">        if (Math.abs(H[l][l-1]) &lt; eps * s) {</span>
+<span class="nc" id="L487">          break;</span>
+        }
+<span class="nc" id="L489">        l--;</span>
+      }
+
+      // Check for convergence
+      // One root found
+
+<span class="pc bpc" id="L495" title="1 of 2 branches missed.">      if (l == n) {</span>
+<span class="fc" id="L496">        H[n][n] = H[n][n] + exshift;</span>
+<span class="fc" id="L497">        d[n] = H[n][n];</span>
+<span class="fc" id="L498">        e[n] = 0.0;</span>
+<span class="fc" id="L499">        n--;</span>
+<span class="fc" id="L500">        iter = 0;</span>
+
+        // Two roots found
+
+<span class="nc bnc" id="L504" title="All 2 branches missed.">      } else if (l == n-1) {</span>
+<span class="nc" id="L505">        w = H[n][n-1] * H[n-1][n];</span>
+<span class="nc" id="L506">        p = (H[n-1][n-1] - H[n][n]) / 2.0;</span>
+<span class="nc" id="L507">        q = p * p + w;</span>
+<span class="nc" id="L508">        z = Math.sqrt(Math.abs(q));</span>
+<span class="nc" id="L509">        H[n][n] = H[n][n] + exshift;</span>
+<span class="nc" id="L510">        H[n-1][n-1] = H[n-1][n-1] + exshift;</span>
+<span class="nc" id="L511">        x = H[n][n];</span>
+
+        // Real pair
+
+<span class="nc bnc" id="L515" title="All 2 branches missed.">        if (q &gt;= 0) {</span>
+<span class="nc bnc" id="L516" title="All 2 branches missed.">          if (p &gt;= 0) {</span>
+<span class="nc" id="L517">            z = p + z;</span>
+          } else {
+<span class="nc" id="L519">            z = p - z;</span>
+          }
+<span class="nc" id="L521">          d[n-1] = x + z;</span>
+<span class="nc" id="L522">          d[n] = d[n-1];</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">          if (z != 0.0) {</span>
+<span class="nc" id="L524">            d[n] = x - w / z;</span>
+          }
+<span class="nc" id="L526">          e[n-1] = 0.0;</span>
+<span class="nc" id="L527">          e[n] = 0.0;</span>
+<span class="nc" id="L528">          x = H[n][n-1];</span>
+<span class="nc" id="L529">          s = Math.abs(x) + Math.abs(z);</span>
+<span class="nc" id="L530">          p = x / s;</span>
+<span class="nc" id="L531">          q = z / s;</span>
+<span class="nc" id="L532">          r = Math.sqrt(p * p+q * q);</span>
+<span class="nc" id="L533">          p = p / r;</span>
+<span class="nc" id="L534">          q = q / r;</span>
+
+          // Row modification
+
+<span class="nc bnc" id="L538" title="All 2 branches missed.">          for (int j = n-1; j &lt; nn; j++) {</span>
+<span class="nc" id="L539">            z = H[n-1][j];</span>
+<span class="nc" id="L540">            H[n-1][j] = q * z + p * H[n][j];</span>
+<span class="nc" id="L541">            H[n][j] = q * H[n][j] - p * z;</span>
+          }
+
+          // Column modification
+
+<span class="nc bnc" id="L546" title="All 2 branches missed.">          for (int i = 0; i &lt;= n; i++) {</span>
+<span class="nc" id="L547">            z = H[i][n-1];</span>
+<span class="nc" id="L548">            H[i][n-1] = q * z + p * H[i][n];</span>
+<span class="nc" id="L549">            H[i][n] = q * H[i][n] - p * z;</span>
+          }
+
+          // Accumulate transformations
+
+<span class="nc bnc" id="L554" title="All 2 branches missed.">          for (int i = low; i &lt;= high; i++) {</span>
+<span class="nc" id="L555">            z = V[i][n-1];</span>
+<span class="nc" id="L556">            V[i][n-1] = q * z + p * V[i][n];</span>
+<span class="nc" id="L557">            V[i][n] = q * V[i][n] - p * z;</span>
+          }
+
+          // Complex pair
+
+        } else {
+<span class="nc" id="L563">          d[n-1] = x + p;</span>
+<span class="nc" id="L564">          d[n] = x + p;</span>
+<span class="nc" id="L565">          e[n-1] = z;</span>
+<span class="nc" id="L566">          e[n] = -z;</span>
+        }
+<span class="nc" id="L568">        n = n - 2;</span>
+<span class="nc" id="L569">        iter = 0;</span>
+
+        // No convergence yet
+
+      } else {
+
+        // Form shift
+
+<span class="nc" id="L577">        x = H[n][n];</span>
+<span class="nc" id="L578">        y = 0.0;</span>
+<span class="nc" id="L579">        w = 0.0;</span>
+<span class="nc bnc" id="L580" title="All 2 branches missed.">        if (l &lt; n) {</span>
+<span class="nc" id="L581">          y = H[n-1][n-1];</span>
+<span class="nc" id="L582">          w = H[n][n-1] * H[n-1][n];</span>
+        }
+
+        // Wilkinson's original ad hoc shift
+
+<span class="nc bnc" id="L587" title="All 2 branches missed.">        if (iter == 10) {</span>
+<span class="nc" id="L588">          exshift += x;</span>
+<span class="nc bnc" id="L589" title="All 2 branches missed.">          for (int i = low; i &lt;= n; i++) {</span>
+<span class="nc" id="L590">            H[i][i] -= x;</span>
+          }
+<span class="nc" id="L592">          s = Math.abs(H[n][n-1]) + Math.abs(H[n-1][n-2]);</span>
+<span class="nc" id="L593">          x = y = 0.75 * s;</span>
+<span class="nc" id="L594">          w = -0.4375 * s * s;</span>
+        }
+
+        // MATLAB's new ad hoc shift
+
+<span class="nc bnc" id="L599" title="All 2 branches missed.">        if (iter == 30) {</span>
+<span class="nc" id="L600">          s = (y - x) / 2.0;</span>
+<span class="nc" id="L601">          s = s * s + w;</span>
+<span class="nc bnc" id="L602" title="All 2 branches missed.">          if (s &gt; 0) {</span>
+<span class="nc" id="L603">            s = Math.sqrt(s);</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">            if (y &lt; x) {</span>
+<span class="nc" id="L605">              s = -s;</span>
+            }
+<span class="nc" id="L607">            s = x - w / ((y - x) / 2.0 + s);</span>
+<span class="nc bnc" id="L608" title="All 2 branches missed.">            for (int i = low; i &lt;= n; i++) {</span>
+<span class="nc" id="L609">              H[i][i] -= s;</span>
+            }
+<span class="nc" id="L611">            exshift += s;</span>
+<span class="nc" id="L612">            x = y = w = 0.964;</span>
+          }
+        }
+
+<span class="nc" id="L616">        iter = iter + 1;   // (Could check iteration count here.)</span>
+
+        // Look for two consecutive small sub-diagonal elements
+
+<span class="nc" id="L620">        int m = n-2;</span>
+<span class="nc bnc" id="L621" title="All 2 branches missed.">        while (m &gt;= l) {</span>
+<span class="nc" id="L622">          z = H[m][m];</span>
+<span class="nc" id="L623">          r = x - z;</span>
+<span class="nc" id="L624">          s = y - z;</span>
+<span class="nc" id="L625">          p = (r * s - w) / H[m+1][m] + H[m][m+1];</span>
+<span class="nc" id="L626">          q = H[m+1][m+1] - z - r - s;</span>
+<span class="nc" id="L627">          r = H[m+2][m+1];</span>
+<span class="nc" id="L628">          s = Math.abs(p) + Math.abs(q) + Math.abs(r);</span>
+<span class="nc" id="L629">          p = p / s;</span>
+<span class="nc" id="L630">          q = q / s;</span>
+<span class="nc" id="L631">          r = r / s;</span>
+<span class="nc bnc" id="L632" title="All 2 branches missed.">          if (m == l) {</span>
+<span class="nc" id="L633">            break;</span>
+          }
+<span class="nc" id="L635">          if (Math.abs(H[m][m-1]) * (Math.abs(q) + Math.abs(r)) &lt;</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">              eps * (Math.abs(p) * (Math.abs(H[m-1][m-1]) + Math.abs(z) +</span>
+<span class="nc" id="L637">                  Math.abs(H[m+1][m+1])))) {</span>
+<span class="nc" id="L638">            break;</span>
+                  }
+<span class="nc" id="L640">          m--;</span>
+        }
+
+<span class="nc bnc" id="L643" title="All 2 branches missed.">        for (int i = m+2; i &lt;= n; i++) {</span>
+<span class="nc" id="L644">          H[i][i-2] = 0.0;</span>
+<span class="nc bnc" id="L645" title="All 2 branches missed.">          if (i &gt; m+2) {</span>
+<span class="nc" id="L646">            H[i][i-3] = 0.0;</span>
+          }
+        }
+
+        // Double QR step involving rows l:n and columns m:n
+
+<span class="nc bnc" id="L652" title="All 2 branches missed.">        for (int k = m; k &lt;= n-1; k++) {</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">          boolean notlast = (k != n-1);</span>
+<span class="nc bnc" id="L654" title="All 2 branches missed.">          if (k != m) {</span>
+<span class="nc" id="L655">            p = H[k][k-1];</span>
+<span class="nc" id="L656">            q = H[k+1][k-1];</span>
+<span class="nc bnc" id="L657" title="All 2 branches missed.">            r = (notlast ? H[k+2][k-1] : 0.0);</span>
+<span class="nc" id="L658">            x = Math.abs(p) + Math.abs(q) + Math.abs(r);</span>
+<span class="nc bnc" id="L659" title="All 2 branches missed.">            if (x != 0.0) {</span>
+<span class="nc" id="L660">              p = p / x;</span>
+<span class="nc" id="L661">              q = q / x;</span>
+<span class="nc" id="L662">              r = r / x;</span>
+            }
+          }
+<span class="nc bnc" id="L665" title="All 2 branches missed.">          if (x == 0.0) {</span>
+<span class="nc" id="L666">            break;</span>
+          }
+<span class="nc" id="L668">          s = Math.sqrt(p * p + q * q + r * r);</span>
+<span class="nc bnc" id="L669" title="All 2 branches missed.">          if (p &lt; 0) {</span>
+<span class="nc" id="L670">            s = -s;</span>
+          }
+<span class="nc bnc" id="L672" title="All 2 branches missed.">          if (s != 0) {</span>
+<span class="nc bnc" id="L673" title="All 2 branches missed.">            if (k != m) {</span>
+<span class="nc" id="L674">              H[k][k-1] = -s * x;</span>
+<span class="nc bnc" id="L675" title="All 2 branches missed.">            } else if (l != m) {</span>
+<span class="nc" id="L676">              H[k][k-1] = -H[k][k-1];</span>
+            }
+<span class="nc" id="L678">            p = p + s;</span>
+<span class="nc" id="L679">            x = p / s;</span>
+<span class="nc" id="L680">            y = q / s;</span>
+<span class="nc" id="L681">            z = r / s;</span>
+<span class="nc" id="L682">            q = q / p;</span>
+<span class="nc" id="L683">            r = r / p;</span>
+
+            // Row modification
+
+<span class="nc bnc" id="L687" title="All 2 branches missed.">            for (int j = k; j &lt; nn; j++) {</span>
+<span class="nc" id="L688">              p = H[k][j] + q * H[k+1][j];</span>
+<span class="nc bnc" id="L689" title="All 2 branches missed.">              if (notlast) {</span>
+<span class="nc" id="L690">                p = p + r * H[k+2][j];</span>
+<span class="nc" id="L691">                H[k+2][j] = H[k+2][j] - p * z;</span>
+              }
+<span class="nc" id="L693">              H[k][j] = H[k][j] - p * x;</span>
+<span class="nc" id="L694">              H[k+1][j] = H[k+1][j] - p * y;</span>
+            }
+
+            // Column modification
+
+<span class="nc bnc" id="L699" title="All 2 branches missed.">            for (int i = 0; i &lt;= Math.min(n,k+3); i++) {</span>
+<span class="nc" id="L700">              p = x * H[i][k] + y * H[i][k+1];</span>
+<span class="nc bnc" id="L701" title="All 2 branches missed.">              if (notlast) {</span>
+<span class="nc" id="L702">                p = p + z * H[i][k+2];</span>
+<span class="nc" id="L703">                H[i][k+2] = H[i][k+2] - p * r;</span>
+              }
+<span class="nc" id="L705">              H[i][k] = H[i][k] - p;</span>
+<span class="nc" id="L706">              H[i][k+1] = H[i][k+1] - p * q;</span>
+            }
+
+            // Accumulate transformations
+
+<span class="nc bnc" id="L711" title="All 2 branches missed.">            for (int i = low; i &lt;= high; i++) {</span>
+<span class="nc" id="L712">              p = x * V[i][k] + y * V[i][k+1];</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">              if (notlast) {</span>
+<span class="nc" id="L714">                p = p + z * V[i][k+2];</span>
+<span class="nc" id="L715">                V[i][k+2] = V[i][k+2] - p * r;</span>
+              }
+<span class="nc" id="L717">              V[i][k] = V[i][k] - p;</span>
+<span class="nc" id="L718">              V[i][k+1] = V[i][k+1] - p * q;</span>
+            }
+          }  // (s != 0)
+        }  // k loop
+      }  // check convergence
+    }  // while (n &gt;= low)
+
+    // Backsubstitute to find vectors of upper triangular form
+
+<span class="pc bpc" id="L727" title="1 of 2 branches missed.">    if (norm == 0.0) {</span>
+<span class="nc" id="L728">      return;</span>
+    }
+
+<span class="fc bfc" id="L731" title="All 2 branches covered.">    for (n = nn-1; n &gt;= 0; n--) {</span>
+<span class="fc" id="L732">      p = d[n];</span>
+<span class="fc" id="L733">      q = e[n];</span>
+
+      // Real vector
+
+<span class="pc bpc" id="L737" title="1 of 2 branches missed.">      if (q == 0) {</span>
+<span class="fc" id="L738">        int l = n;</span>
+<span class="fc" id="L739">        H[n][n] = 1.0;</span>
+<span class="pc bpc" id="L740" title="1 of 2 branches missed.">        for (int i = n-1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L741">          w = H[i][i] - p;</span>
+<span class="nc" id="L742">          r = 0.0;</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">          for (int j = l; j &lt;= n; j++) {</span>
+<span class="nc" id="L744">            r = r + H[i][j] * H[j][n];</span>
+          }
+<span class="nc bnc" id="L746" title="All 2 branches missed.">          if (e[i] &lt; 0.0) {</span>
+<span class="nc" id="L747">            z = w;</span>
+<span class="nc" id="L748">            s = r;</span>
+          } else {
+<span class="nc" id="L750">            l = i;</span>
+<span class="nc bnc" id="L751" title="All 2 branches missed.">            if (e[i] == 0.0) {</span>
+<span class="nc bnc" id="L752" title="All 2 branches missed.">              if (w != 0.0) {</span>
+<span class="nc" id="L753">                H[i][n] = -r / w;</span>
+              } else {
+<span class="nc" id="L755">                H[i][n] = -r / (eps * norm);</span>
+              }
+
+              // Solve real equations
+
+            } else {
+<span class="nc" id="L761">              x = H[i][i+1];</span>
+<span class="nc" id="L762">              y = H[i+1][i];</span>
+<span class="nc" id="L763">              q = (d[i] - p) * (d[i] - p) + e[i] * e[i];</span>
+<span class="nc" id="L764">              t = (x * s - z * r) / q;</span>
+<span class="nc" id="L765">              H[i][n] = t;</span>
+<span class="nc bnc" id="L766" title="All 2 branches missed.">              if (Math.abs(x) &gt; Math.abs(z)) {</span>
+<span class="nc" id="L767">                H[i+1][n] = (-r - w * t) / x;</span>
+              } else {
+<span class="nc" id="L769">                H[i+1][n] = (-s - y * t) / z;</span>
+              }
+            }
+
+            // Overflow control
+
+<span class="nc" id="L775">            t = Math.abs(H[i][n]);</span>
+<span class="nc bnc" id="L776" title="All 2 branches missed.">            if ((eps * t) * t &gt; 1) {</span>
+<span class="nc bnc" id="L777" title="All 2 branches missed.">              for (int j = i; j &lt;= n; j++) {</span>
+<span class="nc" id="L778">                H[j][n] = H[j][n] / t;</span>
+              }
+            }
+          }
+        }
+
+        // Complex vector
+
+<span class="nc bnc" id="L786" title="All 2 branches missed.">      } else if (q &lt; 0) {</span>
+<span class="nc" id="L787">        int l = n-1;</span>
+
+        // Last vector component imaginary so matrix is triangular
+
+<span class="nc bnc" id="L791" title="All 2 branches missed.">        if (Math.abs(H[n][n-1]) &gt; Math.abs(H[n-1][n])) {</span>
+<span class="nc" id="L792">          H[n-1][n-1] = q / H[n][n-1];</span>
+<span class="nc" id="L793">          H[n-1][n] = -(H[n][n] - p) / H[n][n-1];</span>
+        } else {
+<span class="nc" id="L795">          cdiv(0.0,-H[n-1][n],H[n-1][n-1]-p,q);</span>
+<span class="nc" id="L796">          H[n-1][n-1] = cdivr;</span>
+<span class="nc" id="L797">          H[n-1][n] = cdivi;</span>
+        }
+<span class="nc" id="L799">        H[n][n-1] = 0.0;</span>
+<span class="nc" id="L800">        H[n][n] = 1.0;</span>
+<span class="nc bnc" id="L801" title="All 2 branches missed.">        for (int i = n-2; i &gt;= 0; i--) {</span>
+          double ra,sa,vr,vi;
+<span class="nc" id="L803">          ra = 0.0;</span>
+<span class="nc" id="L804">          sa = 0.0;</span>
+<span class="nc bnc" id="L805" title="All 2 branches missed.">          for (int j = l; j &lt;= n; j++) {</span>
+<span class="nc" id="L806">            ra = ra + H[i][j] * H[j][n-1];</span>
+<span class="nc" id="L807">            sa = sa + H[i][j] * H[j][n];</span>
+          }
+<span class="nc" id="L809">          w = H[i][i] - p;</span>
+
+<span class="nc bnc" id="L811" title="All 2 branches missed.">          if (e[i] &lt; 0.0) {</span>
+<span class="nc" id="L812">            z = w;</span>
+<span class="nc" id="L813">            r = ra;</span>
+<span class="nc" id="L814">            s = sa;</span>
+          } else {
+<span class="nc" id="L816">            l = i;</span>
+<span class="nc bnc" id="L817" title="All 2 branches missed.">            if (e[i] == 0) {</span>
+<span class="nc" id="L818">              cdiv(-ra,-sa,w,q);</span>
+<span class="nc" id="L819">              H[i][n-1] = cdivr;</span>
+<span class="nc" id="L820">              H[i][n] = cdivi;</span>
+            } else {
+
+              // Solve complex equations
+
+<span class="nc" id="L825">              x = H[i][i+1];</span>
+<span class="nc" id="L826">              y = H[i+1][i];</span>
+<span class="nc" id="L827">              vr = (d[i] - p) * (d[i] - p) + e[i] * e[i] - q * q;</span>
+<span class="nc" id="L828">              vi = (d[i] - p) * 2.0 * q;</span>
+<span class="nc bnc" id="L829" title="All 6 branches missed.">              if (vr == 0.0 &amp; vi == 0.0) {</span>
+<span class="nc" id="L830">                vr = eps * norm * (Math.abs(w) + Math.abs(q) +</span>
+<span class="nc" id="L831">                    Math.abs(x) + Math.abs(y) + Math.abs(z));</span>
+              }
+<span class="nc" id="L833">              cdiv(x*r-z*ra+q*sa,x*s-z*sa-q*ra,vr,vi);</span>
+<span class="nc" id="L834">              H[i][n-1] = cdivr;</span>
+<span class="nc" id="L835">              H[i][n] = cdivi;</span>
+<span class="nc bnc" id="L836" title="All 2 branches missed.">              if (Math.abs(x) &gt; (Math.abs(z) + Math.abs(q))) {</span>
+<span class="nc" id="L837">                H[i+1][n-1] = (-ra - w * H[i][n-1] + q * H[i][n]) / x;</span>
+<span class="nc" id="L838">                H[i+1][n] = (-sa - w * H[i][n] - q * H[i][n-1]) / x;</span>
+              } else {
+<span class="nc" id="L840">                cdiv(-r-y*H[i][n-1],-s-y*H[i][n],z,q);</span>
+<span class="nc" id="L841">                H[i+1][n-1] = cdivr;</span>
+<span class="nc" id="L842">                H[i+1][n] = cdivi;</span>
+              }
+            }
+
+            // Overflow control
+
+<span class="nc" id="L848">            t = Math.max(Math.abs(H[i][n-1]),Math.abs(H[i][n]));</span>
+<span class="nc bnc" id="L849" title="All 2 branches missed.">            if ((eps * t) * t &gt; 1) {</span>
+<span class="nc bnc" id="L850" title="All 2 branches missed.">              for (int j = i; j &lt;= n; j++) {</span>
+<span class="nc" id="L851">                H[j][n-1] = H[j][n-1] / t;</span>
+<span class="nc" id="L852">                H[j][n] = H[j][n] / t;</span>
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Vectors of isolated roots
+
+<span class="fc bfc" id="L862" title="All 2 branches covered.">    for (int i = 0; i &lt; nn; i++) {</span>
+<span class="pc bpc" id="L863" title="3 of 6 branches missed.">      if (i &lt; low | i &gt; high) {</span>
+<span class="nc bnc" id="L864" title="All 2 branches missed.">        for (int j = i; j &lt; nn; j++) {</span>
+<span class="nc" id="L865">          V[i][j] = H[i][j];</span>
+        }
+      }
+    }
+
+    // Back transformation to get eigenvectors of original matrix
+
+<span class="fc bfc" id="L872" title="All 2 branches covered.">    for (int j = nn-1; j &gt;= low; j--) {</span>
+<span class="fc bfc" id="L873" title="All 2 branches covered.">      for (int i = low; i &lt;= high; i++) {</span>
+<span class="fc" id="L874">        z = 0.0;</span>
+<span class="fc bfc" id="L875" title="All 2 branches covered.">        for (int k = low; k &lt;= Math.min(j,high); k++) {</span>
+<span class="fc" id="L876">          z = z + V[i][k] * H[k][j];</span>
+        }
+<span class="fc" id="L878">        V[i][j] = z;</span>
+      }
+    }
+<span class="fc" id="L881">  }</span>
+
+
+  /** 
+   * Check for symmetry, then construct the eigenvalue decomposition
+   *
+   * @param Arg    Square matrix
+   */
+<span class="fc" id="L889">  public EigenvalueDecomposition(Matrix Arg) {</span>
+<span class="fc" id="L890">    double[][] A = Arg.getArray();</span>
+<span class="fc" id="L891">    n = Arg.getColumnDimension();</span>
+<span class="fc" id="L892">    V = new double[n][n];</span>
+<span class="fc" id="L893">    d = new double[n];</span>
+<span class="fc" id="L894">    e = new double[n];</span>
+
+<span class="fc" id="L896">    issymmetric = true;</span>
+<span class="fc bfc" id="L897" title="All 4 branches covered.">    for (int j = 0; (j &lt; n) &amp; issymmetric; j++) {</span>
+<span class="fc bfc" id="L898" title="All 4 branches covered.">      for (int i = 0; (i &lt; n) &amp; issymmetric; i++) {</span>
+<span class="fc bfc" id="L899" title="All 2 branches covered.">        issymmetric = (A[i][j] == A[j][i]);</span>
+      }
+    }
+
+<span class="fc bfc" id="L903" title="All 2 branches covered.">    if (issymmetric) {</span>
+<span class="fc bfc" id="L904" title="All 2 branches covered.">      for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc bfc" id="L905" title="All 2 branches covered.">        for (int j = 0; j &lt; n; j++) {</span>
+<span class="fc" id="L906">          V[i][j] = A[i][j];</span>
+        }
+      }
+
+      // Tridiagonalize.
+<span class="fc" id="L911">      tred2();</span>
+
+      // Diagonalize.
+<span class="fc" id="L914">      tql2();</span>
+
+    } else {
+<span class="fc" id="L917">      H = new double[n][n];</span>
+<span class="fc" id="L918">      ort = new double[n];</span>
+
+<span class="fc bfc" id="L920" title="All 2 branches covered.">      for (int j = 0; j &lt; n; j++) {</span>
+<span class="fc bfc" id="L921" title="All 2 branches covered.">        for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc" id="L922">          H[i][j] = A[i][j];</span>
+        }
+      }
+
+      // Reduce to Hessenberg form.
+<span class="fc" id="L927">      orthes();</span>
+
+      // Reduce Hessenberg to real Schur form.
+<span class="fc" id="L930">      hqr2();</span>
+    }
+<span class="fc" id="L932">  }</span>
+
+  /** 
+   * Return the eigenvector matrix
+   * @return     V
+   */
+  public Matrix getV() {
+<span class="fc" id="L939">    return new Matrix(V,n,n);</span>
+  }
+
+  /** 
+   * Return the real parts of the eigenvalues
+   * @return     real(diag(D))
+   */
+  public double[] getRealEigenvalues() {
+<span class="fc" id="L947">    return d;</span>
+  }
+
+  /** 
+   * Return the imaginary parts of the eigenvalues
+   * @return     imag(diag(D))
+   */
+  public double[] getImagEigenvalues() {
+<span class="nc" id="L955">    return e;</span>
+  }
+
+  /** 
+   * Return the block diagonal eigenvalue matrix
+   * @return     D
+   */
+  public Matrix getD() {
+<span class="nc" id="L963">    Matrix X = new Matrix(n,n);</span>
+<span class="nc" id="L964">    double[][] D = X.getArray();</span>
+<span class="nc bnc" id="L965" title="All 2 branches missed.">    for (int i = 0; i &lt; n; i++) {</span>
+<span class="nc bnc" id="L966" title="All 2 branches missed.">      for (int j = 0; j &lt; n; j++) {</span>
+<span class="nc" id="L967">        D[i][j] = 0.0;</span>
+      }
+<span class="nc" id="L969">      D[i][i] = d[i];</span>
+<span class="nc bnc" id="L970" title="All 2 branches missed.">      if (e[i] &gt; 0) {</span>
+<span class="nc" id="L971">        D[i][i+1] = e[i];</span>
+<span class="nc bnc" id="L972" title="All 2 branches missed.">      } else if (e[i] &lt; 0) {</span>
+<span class="nc" id="L973">        D[i][i-1] = e[i];</span>
+      }
+    }
+<span class="nc" id="L976">    return X;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L985">    return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

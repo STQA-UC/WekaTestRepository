@@ -1,0 +1,1494 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>AttributeVisualizationPanel.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui</a> &gt; <span class="el_source">AttributeVisualizationPanel.java</span></div><h1>AttributeVisualizationPanel.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    AttributeVisualizationPanel.java
+ *    Copyright (C) 2003 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.gui;
+
+import weka.core.Attribute;
+import weka.core.AttributeStats;
+import weka.core.FastVector;
+import weka.core.Instances;
+import weka.core.SparseInstance;
+import weka.core.Utils;
+import weka.gui.visualize.PrintableComponent;
+import weka.gui.visualize.PrintablePanel;
+
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.ItemEvent;
+import java.awt.event.ItemListener;
+import java.awt.event.MouseEvent;
+import java.io.FileReader;
+
+import javax.swing.JComboBox;
+import javax.swing.JFrame;
+
+/**
+ * Creates a panel that shows a visualization of an
+ * attribute in a dataset. For nominal attribute it
+ * shows a bar plot, with each bar corresponding to
+ * each nominal value of the attribute with its height
+ * equal to the frequecy that value appears in the
+ * dataset. For numeric attributes, it displays a
+ * histogram. The width of an interval in the
+ * histogram is calculated using Scott's(1979)
+ * method: &lt;br&gt;
+ *    intervalWidth = Max(1, 3.49*Std.Dev*numInstances^(1/3))
+ * Then the number of intervals is calculated by: &lt;br&gt;
+ *   intervals = max(1, Math.round(Range/intervalWidth);
+ *
+ * @author Ashraf M. Kibriya (amk14@cs.waikato.ac.nz)
+ * @version $Revision: 7589 $
+ */
+<span class="nc" id="L67">public class AttributeVisualizationPanel</span>
+  extends PrintablePanel {
+
+  /** for serialization */
+  private static final long serialVersionUID = -8650490488825371193L;
+  
+  /** This holds the current set of instances */
+  protected Instances m_data;
+  
+  /**
+   * This holds the attribute stats of the current attribute on display. It is
+   * calculated in setAttribute(int idx) when it is called to set a new
+   * attribute index.
+   */
+  protected AttributeStats m_as;
+  
+  /** Cache of attribute stats info for the current data set */
+  protected AttributeStats[] m_asCache;
+  
+  /** This holds the index of the current attribute on display and should be
+   *  set through setAttribute(int idx).
+   */
+  protected int m_attribIndex;
+  
+  /**
+   * This holds the max value of the current attribute. In case of nominal
+   * attribute it is the highest count that a nominal value has in the
+   * attribute (given by m_as.nominalCounts[i]), otherwise in case of numeric
+   * attribute it is simply the maximum value present in the attribute (given by
+   * m_as.numericStats.max). It is used to calculate the ratio of the height of
+   * the bars with respect to the height of the display area.
+   */
+  protected int m_maxValue;
+  
+  /**
+   * This array holds the count (or height) for the each of the bars in a
+   * barplot or a histogram. In case of barplots (and current attribute being
+   * nominal) its length (and the number of bars) is equal to the number of
+   * nominal values in the current attribute, with each field of the array being
+   * equal to the count of each nominal that it represents (the count of ith
+   * nominal value of an attribute is given by m_as.nominalCounts[i]). Whereas,
+   * in case of histograms (and current attribute being numeric) the width of
+   * its intervals is calculated by Scott's(1979) method: &lt;br&gt;
+   *    intervalWidth = Max(1, 3.49*Std.Dev*numInstances^(1/3))
+   * And the number of intervals by: &lt;br&gt;
+   *   intervals = max(1, Math.round(Range/intervalWidth);
+   * Then each field of this array contains the number of values of the current
+   * attribute that fall in the histogram interval that it represents. &lt;br&gt;
+   * NOTE: The values of this array are only calculated if the class attribute
+   * is not set or if it is numeric.
+   */
+  protected int m_histBarCounts[];
+  
+  /**
+   * This array holds the per class count (or per class height) of the each of
+   * the bars in a barplot or a histogram.
+   * For nominal attributes the format is: &lt;br&gt;
+   *    m_histBarClassCounts[nominalValue][classValue+1].
+   * For numeric attributes the format is: &lt;br&gt;
+   *    m_histBarClassCounts[interval][classValues+1], &lt;br&gt;
+   *      where the number of intervals is calculated by the Scott's method as
+   *            mentioned above.
+   * The array is initialized to have 1+numClasses to accomodate for instances
+   * with missing class value. The ones with missing class value are displayed
+   * as a black sub par in a histogram or a barplot.
+   *
+   * NOTE: The values of this array are only calculated if the class attribute
+   * is set and it is nominal.
+   */
+//  int m_histBarClassCounts[][];
+    SparseInstance m_histBarClassCounts[];
+  
+  /**
+   * Contains the range of each bar in a histogram. It is used to work out the
+   * range of bar the mouse pointer is on in getToolTipText().
+   */
+  protected double m_barRange;
+  
+  /** Contains the current class index. */
+  protected int m_classIndex;
+  
+  /** This stores the BarCalc or HistCalc thread while a new barplot or
+   * histogram is being calculated. */
+  private Thread m_hc;
+  
+  /** True if the thread m_hc above is running. */
+<span class="nc" id="L153">  private boolean m_threadRun=false;</span>
+  
+<span class="nc" id="L155">  private boolean m_doneCurrentAttribute = false;</span>
+<span class="nc" id="L156">  private boolean m_displayCurrentAttribute = false;</span>
+  
+  /** This stores and lets the user select a class attribute. It also has
+   * an entry &quot;No Class&quot; if the user does not want to set a class attribute
+   * for colouring.
+   */
+  protected JComboBox m_colorAttrib;
+  
+  /**
+   * Fontmetrics used to get the font size which is required for calculating
+   * displayable area size, bar height ratio and width of strings that are
+   * displayed on top of bars indicating their count.
+   */
+  private FontMetrics m_fm;
+  
+  /**
+   * Lock variable to synchronize the different threads running currently in
+   * this class. There are two to three threads in this class, AWT paint thread
+   * which is handled differently in paintComponent() which checks on
+   * m_threadRun to determine if it can perform full paint or not, the second
+   * thread is the main execution thread and the third is the one represented by
+   * m_hc which we start when we want to calculate the internal fields for a bar
+   * plot or a histogram.
+   */
+<span class="nc" id="L180">  private Integer m_locker = new Integer(1);</span>
+  
+  //Image img;
+  
+  /** Contains discrete colours for colouring of subbars of histograms and
+   * bar plots when the class attribute is set and is nominal
+   */
+<span class="nc" id="L187">  private FastVector m_colorList = new FastVector();</span>
+  
+  /** default colour list */
+<span class="nc" id="L190">  private static final Color [] m_defaultColors = {Color.blue,</span>
+<span class="nc" id="L191">  Color.red,</span>
+<span class="nc" id="L192">  Color.cyan,</span>
+<span class="nc" id="L193">  new Color(75, 123, 130),</span>
+<span class="nc" id="L194">  Color.pink,</span>
+<span class="nc" id="L195">  Color.green,</span>
+<span class="nc" id="L196">  Color.orange,</span>
+<span class="nc" id="L197">  new Color(255, 0, 255),</span>
+<span class="nc" id="L198">  new Color(255, 0, 0),</span>
+<span class="nc" id="L199">  new Color(0, 255, 0),</span>
+  };
+  
+  /**
+   * Constructor - If used then the class will not show the class selection
+   * combo box.
+   */
+  public AttributeVisualizationPanel() {
+<span class="nc" id="L207">    this(false);</span>
+<span class="nc" id="L208">  }</span>
+  
+  /**
+   * Constructor.
+   * @param showColouringOption - should be true if the class selection combo
+   * box is to be displayed with the histogram/barplot, or false otherwise.
+   * P.S: the combo box is always created it just won't be shown if
+   * showColouringOption is false.
+   */
+<span class="nc" id="L217">  public AttributeVisualizationPanel(boolean showColouringOption) {</span>
+<span class="nc" id="L218">    this.setFont( new Font(&quot;Default&quot;, Font.PLAIN, 9) );</span>
+<span class="nc" id="L219">    m_fm = this.getFontMetrics( this.getFont() );</span>
+<span class="nc" id="L220">    this.setToolTipText(&quot;&quot;);</span>
+<span class="nc" id="L221">    FlowLayout fl= new FlowLayout(FlowLayout.LEFT);</span>
+<span class="nc" id="L222">    this.setLayout(fl);</span>
+<span class="nc" id="L223">    this.addComponentListener( new ComponentAdapter() {</span>
+      public void componentResized(ComponentEvent ce) {
+        if(m_data!=null) {
+          // calcGraph();
+        }
+<span class="nc" id="L228">      }</span>
+    });
+    
+<span class="nc" id="L231">    m_colorAttrib = new JComboBox();</span>
+<span class="nc" id="L232">    m_colorAttrib.addItemListener( new ItemListener() {</span>
+      public void itemStateChanged(ItemEvent ie) {
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if(ie.getStateChange()==ItemEvent.SELECTED) {</span>
+<span class="nc" id="L235">          m_classIndex = m_colorAttrib.getSelectedIndex() - 1;</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">          if (m_as != null) {</span>
+<span class="nc" id="L237">            setAttribute(m_attribIndex);</span>
+          }
+        }
+<span class="nc" id="L240">      }</span>
+    });
+    
+<span class="nc bnc" id="L243" title="All 2 branches missed.">    if(showColouringOption) {</span>
+      //m_colorAttrib.setVisible(false);
+<span class="nc" id="L245">      this.add(m_colorAttrib);</span>
+<span class="nc" id="L246">      validate();</span>
+    }
+<span class="nc" id="L248">  }</span>
+  
+  /**
+   * Sets the instances for use
+   *
+   * @param newins a set of Instances
+   */
+  public void setInstances(Instances newins) {
+<span class="nc" id="L256">    m_attribIndex = 0;</span>
+<span class="nc" id="L257">    m_as = null;</span>
+<span class="nc" id="L258">    m_data = new Instances(newins);</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">    if(m_colorAttrib!=null) {</span>
+<span class="nc" id="L260">      m_colorAttrib.removeAllItems();</span>
+<span class="nc" id="L261">      m_colorAttrib.addItem(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_SetInstances_ColorAttrib_Text_First&quot;));</span>
+<span class="nc bnc" id="L262" title="All 2 branches missed.">      for(int i=0; i&lt;m_data.numAttributes(); i++) {</span>
+<span class="nc" id="L263">	String type = &quot;&quot;;</span>
+<span class="nc bnc" id="L264" title="All 6 branches missed.">	switch (m_data.attribute(i).type()) {</span>
+	  case Attribute.NOMINAL:
+<span class="nc" id="L266">	    type = Messages.getInstance().getString(&quot;AttributeVisualizationPanel_SetInstances_AttributeNOMINAL_Text&quot;);</span>
+<span class="nc" id="L267">	    break;</span>
+	  case Attribute.NUMERIC:
+<span class="nc" id="L269">	    type = Messages.getInstance().getString(&quot;AttributeVisualizationPanel_SetInstances_AttributeNUMERIC_Text&quot;);</span>
+<span class="nc" id="L270">	    break;</span>
+	  case Attribute.STRING:
+<span class="nc" id="L272">	    type = Messages.getInstance().getString(&quot;AttributeVisualizationPanel_SetInstances_AttributeSTRING_Text&quot;);</span>
+<span class="nc" id="L273">	    break;</span>
+	  case Attribute.DATE:
+<span class="nc" id="L275">	    type = Messages.getInstance().getString(&quot;AttributeVisualizationPanel_SetInstances_AttributeDATE_Text&quot;);</span>
+<span class="nc" id="L276">	    break;</span>
+	  case Attribute.RELATIONAL:
+<span class="nc" id="L278">	    type = Messages.getInstance().getString(&quot;AttributeVisualizationPanel_SetInstances_AttributeRELATIONAL_Text&quot;);</span>
+<span class="nc" id="L279">	    break;</span>
+	  default:
+<span class="nc" id="L281">	    type = Messages.getInstance().getString(&quot;AttributeVisualizationPanel_SetInstances_AttributeDEFAULT_Text&quot;);</span>
+	}
+<span class="nc" id="L283">        m_colorAttrib.addItem(new String(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_SetInstances_ColorAttrib_Text_Second&quot;) + m_data.attribute(i).name()+</span>
+<span class="nc" id="L284">        &quot; &quot; + type));</span>
+      }
+<span class="nc bnc" id="L286" title="All 2 branches missed.">      if (m_data.classIndex() &gt;= 0) {</span>
+<span class="nc" id="L287">        m_colorAttrib.setSelectedIndex(m_data.classIndex() + 1);</span>
+      } else {
+<span class="nc" id="L289">        m_colorAttrib.setSelectedIndex(m_data.numAttributes());</span>
+      }
+      //if (m_data.classIndex() &gt;= 0) {
+      //    m_colorAttrib.setSelectedIndex(m_data.classIndex());
+      //}
+    }
+<span class="nc bnc" id="L295" title="All 2 branches missed.">    if (m_data.classIndex() &gt;= 0) {</span>
+<span class="nc" id="L296">      m_classIndex = m_data.classIndex();</span>
+    } else {
+<span class="nc" id="L298">      m_classIndex = m_data.numAttributes()-1;</span>
+    }
+    
+<span class="nc" id="L301">    m_asCache = new AttributeStats[m_data.numAttributes()];</span>
+<span class="nc" id="L302">  }</span>
+  
+  /**
+   * Returns the class selection combo box if the parent component wants to
+   * place it in itself or in some component other than this component.
+   */
+  public JComboBox getColorBox() {
+<span class="nc" id="L309">    return m_colorAttrib;</span>
+  }
+  
+  /**
+   * Get the coloring (class) index for the plot
+   *
+   * @return an &lt;code&gt;int&lt;/code&gt; value
+   */
+  public int getColoringIndex() {
+<span class="nc" id="L318">    return m_classIndex; //m_colorAttrib.getSelectedIndex();</span>
+  }
+  
+  /**
+   * Set the coloring (class) index for the plot
+   *
+   * @param ci an &lt;code&gt;int&lt;/code&gt; value
+   */
+  public void setColoringIndex(int ci) {
+<span class="nc" id="L327">    m_classIndex = ci;</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">    if(m_colorAttrib!=null)</span>
+<span class="nc" id="L329">      m_colorAttrib.setSelectedIndex(ci + 1);</span>
+    else
+<span class="nc" id="L331">      setAttribute(m_attribIndex);</span>
+<span class="nc" id="L332">  }</span>
+  
+  /**
+   * Tells the panel which attribute to visualize.
+   *
+   * @param index The index of the attribute
+   */
+  public void setAttribute(int index) {
+    
+<span class="nc" id="L341">    synchronized (m_locker) {</span>
+      //m_threadRun = true;
+<span class="nc" id="L343">      m_threadRun = false;</span>
+<span class="nc" id="L344">      m_doneCurrentAttribute = false;</span>
+<span class="nc" id="L345">      m_displayCurrentAttribute = true;</span>
+      //if(m_hc!=null &amp;&amp; m_hc.isAlive()) m_hc.stop();
+<span class="nc" id="L347">      m_attribIndex = index;</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">      if (m_asCache[index] != null) {</span>
+<span class="nc" id="L349">        m_as = m_asCache[index];</span>
+      } else {
+<span class="nc" id="L351">        m_asCache[index] = m_data.attributeStats(index);</span>
+<span class="nc" id="L352">        m_as = m_asCache[index];</span>
+      }
+//      m_as = m_data.attributeStats(m_attribIndex);
+      //m_classIndex = m_colorAttrib.getSelectedIndex();
+    }
+<span class="nc" id="L357">    this.repaint();</span>
+//    calcGraph();
+<span class="nc" id="L359">  }</span>
+  
+  /**
+   * Recalculates the barplot or histogram to display, required usually when the
+   * attribute is changed or the component is resized.
+   */
+  public void calcGraph(int panelWidth, int panelHeight) {
+    
+<span class="nc" id="L367">    synchronized (m_locker) {</span>
+<span class="nc" id="L368">      m_threadRun = true;</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">      if(m_as.nominalCounts!=null) {</span>
+<span class="nc" id="L370">        m_hc = new BarCalc(panelWidth, panelHeight);</span>
+<span class="nc" id="L371">        m_hc.setPriority(m_hc.MIN_PRIORITY);</span>
+<span class="nc" id="L372">        m_hc.start();</span>
+      }
+<span class="nc bnc" id="L374" title="All 2 branches missed.">      else if(m_as.numericStats!=null) {</span>
+<span class="nc" id="L375">        m_hc = new HistCalc();</span>
+<span class="nc" id="L376">        m_hc.setPriority(m_hc.MIN_PRIORITY);</span>
+<span class="nc" id="L377">        m_hc.start();</span>
+      } else {
+<span class="nc" id="L379">        m_histBarCounts = null;</span>
+<span class="nc" id="L380">        m_histBarClassCounts = null;</span>
+<span class="nc" id="L381">        m_doneCurrentAttribute = true;</span>
+<span class="nc" id="L382">        m_threadRun = false;</span>
+<span class="nc" id="L383">        this.repaint();</span>
+      }
+    }
+<span class="nc" id="L386">  }</span>
+  
+  /**
+   * Internal class that calculates the barplot to display, in a separate
+   * thread. In particular it initializes some of the crucial internal fields
+   * required by paintComponent() to display the histogram for the current
+   * attribute. These include: m_histBarCounts or m_histBarClassCounts,
+   * m_maxValue and m_colorList.
+   */
+  private class BarCalc extends Thread {
+    private int m_panelWidth;
+    private int m_panelHeight;
+    
+<span class="nc" id="L399">    public BarCalc(int panelWidth, int panelHeight) {</span>
+<span class="nc" id="L400">      m_panelWidth = panelWidth;</span>
+<span class="nc" id="L401">      m_panelHeight = panelHeight;</span>
+<span class="nc" id="L402">    }</span>
+    
+    public void run() {
+<span class="nc" id="L405">      synchronized (m_locker) {</span>
+        // there is no use doing/displaying anything if the resolution
+        // of the panel is less than the number of values for this attribute
+<span class="nc bnc" id="L408" title="All 2 branches missed.">        if (m_data.attribute(m_attribIndex).numValues() &gt; m_panelWidth) {</span>
+<span class="nc" id="L409">          m_histBarClassCounts = null;</span>
+<span class="nc" id="L410">          m_threadRun = false;</span>
+<span class="nc" id="L411">          m_doneCurrentAttribute = true;</span>
+<span class="nc" id="L412">          m_displayCurrentAttribute = false;</span>
+<span class="nc" id="L413">          AttributeVisualizationPanel.this.repaint();</span>
+<span class="nc" id="L414">          return;</span>
+        }
+        
+<span class="nc bnc" id="L417" title="All 2 branches missed.">        if((m_classIndex &gt;= 0) &amp;&amp;</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">        (m_data.attribute(m_classIndex).isNominal())) {</span>
+          SparseInstance histClassCounts[];
+<span class="nc" id="L420">          histClassCounts = new SparseInstance[m_data.attribute(m_attribIndex).numValues()];</span>
+          /*int histClassCounts[][];
+          histClassCounts=new int[m_data.attribute(m_attribIndex).numValues()]
+                                 [m_data.attribute(m_classIndex).numValues()+1]; */
+          
+<span class="nc bnc" id="L425" title="All 2 branches missed.">          if (m_as.nominalCounts.length &gt; 0) {</span>
+<span class="nc" id="L426">            m_maxValue = m_as.nominalCounts[0];</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">            for(int i=0; i&lt;m_data.attribute(m_attribIndex).numValues(); i++) {</span>
+<span class="nc bnc" id="L428" title="All 2 branches missed.">              if(m_as.nominalCounts[i]&gt;m_maxValue)</span>
+<span class="nc" id="L429">        	m_maxValue = m_as.nominalCounts[i];</span>
+            }
+          }
+          else {
+<span class="nc" id="L433">            m_maxValue = 0;</span>
+          }
+          
+<span class="nc bnc" id="L436" title="All 2 branches missed.">          if(m_colorList.size()==0)</span>
+<span class="nc" id="L437">            m_colorList.addElement(Color.black);</span>
+<span class="nc" id="L438">          for(int i=m_colorList.size();</span>
+<span class="nc bnc" id="L439" title="All 2 branches missed.">          i &lt; m_data.attribute(m_classIndex).numValues()+1; i++) {</span>
+<span class="nc" id="L440">            Color pc = m_defaultColors[(i-1) % 10];</span>
+<span class="nc" id="L441">            int ija =  (i-1) / 10;</span>
+<span class="nc" id="L442">            ija *= 2;</span>
+            
+<span class="nc bnc" id="L444" title="All 2 branches missed.">            for (int j=0;j&lt;ija;j++) {</span>
+<span class="nc" id="L445">              pc = pc.darker();</span>
+            }
+            
+<span class="nc" id="L448">            m_colorList.addElement(pc);</span>
+          }
+          
+          // first sort data on attribute values
+<span class="nc" id="L452">          m_data.sort(m_attribIndex);</span>
+<span class="nc" id="L453">          double[] tempClassCounts = null;</span>
+<span class="nc" id="L454">          int tempAttValueIndex = -1;</span>
+          
+<span class="nc bnc" id="L456" title="All 2 branches missed.">          for(int k=0; k&lt;m_data.numInstances(); k++) {</span>
+            //System.out.println(&quot;attrib: &quot;+
+            //                   m_data.instance(k).value(m_attribIndex)+
+            //                   &quot; class: &quot;+
+            //                   m_data.instance(k).value(m_classIndex));
+<span class="nc bnc" id="L461" title="All 2 branches missed.">            if(!m_data.instance(k).isMissing(m_attribIndex)) {</span>
+              // check to see if we need to allocate some space here
+<span class="nc bnc" id="L463" title="All 2 branches missed.">              if (m_data.instance(k).value(m_attribIndex) != tempAttValueIndex) {</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">                if (tempClassCounts != null) {</span>
+                  // set up the sparse instance for the previous bar (if any)
+<span class="nc" id="L466">                  int numNonZero = 0;</span>
+<span class="nc bnc" id="L467" title="All 2 branches missed.">                  for (int z = 0; z &lt; tempClassCounts.length; z++) {</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">                    if (tempClassCounts[z] &gt; 0) {</span>
+<span class="nc" id="L469">                      numNonZero++;</span>
+                    }
+                  }
+<span class="nc" id="L472">                  double[] nonZeroVals = new double[numNonZero];</span>
+<span class="nc" id="L473">                  int[] nonZeroIndices = new int[numNonZero];</span>
+<span class="nc" id="L474">                  int count = 0;</span>
+<span class="nc bnc" id="L475" title="All 2 branches missed.">                  for (int z = 0; z &lt; tempClassCounts.length; z++) {</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">                    if (tempClassCounts[z] &gt; 0) {</span>
+<span class="nc" id="L477">                      nonZeroVals[count] = tempClassCounts[z];</span>
+<span class="nc" id="L478">                      nonZeroIndices[count++] = z;</span>
+                    }
+                  }
+<span class="nc" id="L481">                  SparseInstance tempS = </span>
+<span class="nc" id="L482">                    new SparseInstance(1.0, nonZeroVals, nonZeroIndices, tempClassCounts.length);</span>
+<span class="nc" id="L483">                  histClassCounts[tempAttValueIndex] = tempS;</span>
+                }
+                
+<span class="nc" id="L486">                tempClassCounts = new double[m_data.attribute(m_classIndex).numValues() + 1];</span>
+<span class="nc" id="L487">                tempAttValueIndex = (int)m_data.instance(k).value(m_attribIndex);</span>
+                
+                /* histClassCounts[(int)m_data.instance(k).value(m_attribIndex)] = 
+                  new double[m_data.attribute(m_classIndex).numValues()+1]; */ 
+              }
+<span class="nc bnc" id="L492" title="All 2 branches missed.">              if(m_data.instance(k).isMissing(m_classIndex)) {</span>
+                /* histClassCounts[(int)m_data.instance(k).value(m_attribIndex)]
+                               [0] += m_data.instance(k).weight(); */
+<span class="nc" id="L495">                tempClassCounts[0] += m_data.instance(k).weight();</span>
+              } else {
+<span class="nc" id="L497">                tempClassCounts[(int)m_data.instance(k).value(m_classIndex)+1] </span>
+<span class="nc" id="L498">                                += m_data.instance(k).weight();</span>
+                
+                /*histClassCounts[(int)m_data.instance(k).value(m_attribIndex)]
+                              [(int)m_data.instance(k).value(m_classIndex)+1] += m_data.instance(k).weight();*/
+              }
+            }
+          }
+          
+          // set up sparse instance for last bar?
+<span class="nc bnc" id="L507" title="All 2 branches missed.">          if (tempClassCounts != null) {</span>
+            // set up the sparse instance for the previous bar (if any)
+<span class="nc" id="L509">            int numNonZero = 0;</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">            for (int z = 0; z &lt; tempClassCounts.length; z++) {</span>
+<span class="nc bnc" id="L511" title="All 2 branches missed.">              if (tempClassCounts[z] &gt; 0) {</span>
+<span class="nc" id="L512">                numNonZero++;</span>
+              }
+            }
+<span class="nc" id="L515">            double[] nonZeroVals = new double[numNonZero];</span>
+<span class="nc" id="L516">            int[] nonZeroIndices = new int[numNonZero];</span>
+<span class="nc" id="L517">            int count = 0;</span>
+<span class="nc bnc" id="L518" title="All 2 branches missed.">            for (int z = 0; z &lt; tempClassCounts.length; z++) {</span>
+<span class="nc bnc" id="L519" title="All 2 branches missed.">              if (tempClassCounts[z] &gt; 0) {</span>
+<span class="nc" id="L520">                nonZeroVals[count] = tempClassCounts[z];</span>
+<span class="nc" id="L521">                nonZeroIndices[count++] = z;</span>
+              }
+            }
+<span class="nc" id="L524">            SparseInstance tempS = </span>
+<span class="nc" id="L525">              new SparseInstance(1.0, nonZeroVals, nonZeroIndices, tempClassCounts.length);</span>
+<span class="nc" id="L526">            histClassCounts[tempAttValueIndex] = tempS;</span>
+          }
+          
+          /*for(int k=0; k&lt;m_data.numInstances(); k++) {
+            //System.out.println(&quot;attrib: &quot;+
+            //                   m_data.instance(k).value(m_attribIndex)+
+            //                   &quot; class: &quot;+
+            //                   m_data.instance(k).value(m_classIndex));
+            if(!m_data.instance(k).isMissing(m_attribIndex))
+              if(m_data.instance(k).isMissing(m_classIndex))
+                histClassCounts[(int)m_data.instance(k).value(m_attribIndex)]
+                               [0]++;
+              else
+                histClassCounts[(int)m_data.instance(k).value(m_attribIndex)]
+                              [(int)m_data.instance(k).value(m_classIndex)+1]++;
+          } */
+          
+          //for(int i=0; i&lt;histClassCounts.length; i++) {
+          //int sum=0;
+          //for(int j=0; j&lt;histClassCounts[i].length; j++) {
+          //    sum = sum+histClassCounts[i][j];
+          //}
+          //System.out.println(&quot;histCount: &quot;+sum+&quot; Actual: &quot;+
+          //                   m_as.nominalCounts[i]);
+          //}
+          
+<span class="nc" id="L552">          m_threadRun=false;</span>
+<span class="nc" id="L553">          m_doneCurrentAttribute = true;</span>
+<span class="nc" id="L554">          m_displayCurrentAttribute = true;</span>
+<span class="nc" id="L555">          m_histBarClassCounts = histClassCounts;</span>
+          // m_histBarClassCounts = histClassCounts;
+          //Image tmpImg = new BufferedImage(getWidth(), getHeight(),
+          //                                 BufferedImage.TYPE_INT_RGB);
+          //drawGraph( tmpImg.getGraphics() );
+          //img = tmpImg;
+<span class="nc" id="L561">          AttributeVisualizationPanel.this.repaint();</span>
+        }
+        else {
+          int histCounts[];
+<span class="nc" id="L565">          histCounts  = new int[m_data.attribute(m_attribIndex).numValues()];</span>
+          
+<span class="nc bnc" id="L567" title="All 2 branches missed.">          if (m_as.nominalCounts.length &gt; 0) {</span>
+<span class="nc" id="L568">            m_maxValue = m_as.nominalCounts[0];</span>
+<span class="nc bnc" id="L569" title="All 2 branches missed.">            for(int i=0; i&lt;m_data.attribute(m_attribIndex).numValues(); i++) {</span>
+<span class="nc bnc" id="L570" title="All 2 branches missed.">              if(m_as.nominalCounts[i]&gt;m_maxValue)</span>
+<span class="nc" id="L571">        	m_maxValue = m_as.nominalCounts[i];</span>
+            }
+          }
+          else {
+<span class="nc" id="L575">            m_maxValue = 0;</span>
+          }
+          
+<span class="nc bnc" id="L578" title="All 2 branches missed.">          for(int k=0; k&lt;m_data.numInstances(); k++) {</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">            if(!m_data.instance(k).isMissing(m_attribIndex))</span>
+<span class="nc" id="L580">              histCounts[(int)m_data.instance(k).value(m_attribIndex)]++;</span>
+          }
+<span class="nc" id="L582">          m_threadRun=false;</span>
+<span class="nc" id="L583">          m_histBarCounts = histCounts;</span>
+<span class="nc" id="L584">          m_doneCurrentAttribute = true;</span>
+<span class="nc" id="L585">          m_displayCurrentAttribute = true;</span>
+          //Image tmpImg = new BufferedImage(getWidth(), getHeight(),
+          //                                 BufferedImage.TYPE_INT_RGB);
+          //drawGraph( tmpImg.getGraphics() );
+          //img = tmpImg;
+<span class="nc" id="L590">          AttributeVisualizationPanel.this.repaint();</span>
+        }
+      } //end synchronized
+<span class="nc" id="L593">    }  //end run()</span>
+  }
+  
+  /**
+   * Internal class that calculates the histogram to display, in a separate
+   * thread. In particular it initializes some of the crucial internal fields
+   * required by paintComponent() to display the histogram for the current
+   * attribute. These include: m_histBarCounts or m_histBarClassCounts,
+   * m_maxValue and m_colorList.
+   */
+<span class="nc" id="L603">  private class HistCalc extends Thread {</span>
+    public void run() {
+<span class="nc" id="L605">      synchronized (m_locker) {</span>
+<span class="nc bnc" id="L606" title="All 2 branches missed.">        if((m_classIndex &gt;= 0) &amp;&amp;</span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">           (m_data.attribute(m_classIndex).isNominal())) {</span>
+          
+<span class="nc" id="L609">          int intervals; double intervalWidth=0.0;</span>
+          
+          //This uses the M.P.Wand's method to calculate the histogram's
+          //interval width. See &quot;Data-Based Choice of Histogram Bin Width&quot;, in
+          //The American Statistician, Vol. 51, No. 1, Feb., 1997, pp. 59-64.
+          //intervalWidth = Math.pow(6D/( -psi(2, g21())*m_data.numInstances()),
+          //                          1/3D );
+          
+          //This uses the Scott's method to calculate the histogram's interval
+          //width. See &quot;On optimal and data-based histograms&quot;.
+          // See Biometrika, 66, 605-610 OR see the same paper mentioned above.
+<span class="nc" id="L620">          intervalWidth =  3.49 * m_as.numericStats.stdDev *</span>
+<span class="nc" id="L621">                           Math.pow(m_data.numInstances(), -1/3D);</span>
+          //The Math.max is introduced to remove the possibility of
+          //intervals=0 and =NAN that can happen if respectively all the numeric
+          //values are the same or the interval width is evaluated to zero.
+<span class="nc" id="L625">          intervals = Math.max(1,</span>
+<span class="nc" id="L626">          (int)Math.round( (m_as.numericStats.max - m_as.numericStats.min) /</span>
+<span class="nc" id="L627">                           intervalWidth) );</span>
+          
+          //System.out.println(&quot;Max: &quot;+m_as.numericStats.max+
+          //                   &quot; Min: &quot;+m_as.numericStats.min+
+          //                   &quot; stdDev: &quot;+m_as.numericStats.stdDev+
+          //                   &quot;intervalWidth: &quot;+intervalWidth);
+          
+          //The number 4 below actually represents a padding of 3 pixels on
+          //each side of the histogram, and is also reflected in other parts of 
+          //the code in the shape of numerical constants like &quot;6&quot; here.
+<span class="nc bnc" id="L637" title="All 2 branches missed.">          if(intervals &gt; AttributeVisualizationPanel.this.getWidth()) {</span>
+<span class="nc" id="L638">            intervals = AttributeVisualizationPanel.this.getWidth()-6;</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">            if(intervals&lt;1)//if width is too small then use 1 and forget padding</span>
+<span class="nc" id="L640">              intervals = 1;</span>
+          }
+<span class="nc" id="L642">          int histClassCounts[][]  =</span>
+<span class="nc" id="L643">                          new int[intervals]</span>
+<span class="nc" id="L644">                                 [m_data.attribute(m_classIndex).numValues()+1];</span>
+          
+<span class="nc" id="L646">          double barRange   = (m_as.numericStats.max - m_as.numericStats.min) /</span>
+<span class="nc" id="L647">                              (double)histClassCounts.length;</span>
+          
+<span class="nc" id="L649">          m_maxValue = 0;</span>
+          
+<span class="nc bnc" id="L651" title="All 2 branches missed.">          if(m_colorList.size()==0)</span>
+<span class="nc" id="L652">            m_colorList.addElement(Color.black);</span>
+<span class="nc" id="L653">          for(int i = m_colorList.size();</span>
+<span class="nc bnc" id="L654" title="All 2 branches missed.">          i &lt; m_data.attribute(m_classIndex).numValues()+1; i++) {</span>
+<span class="nc" id="L655">            Color pc = m_defaultColors[(i-1) % 10];</span>
+<span class="nc" id="L656">            int ija =  (i-1) / 10;</span>
+<span class="nc" id="L657">            ija *= 2;</span>
+<span class="nc bnc" id="L658" title="All 2 branches missed.">            for (int j=0;j&lt;ija;j++) {</span>
+<span class="nc" id="L659">              pc = pc.darker();</span>
+            }
+<span class="nc" id="L661">            m_colorList.addElement(pc);</span>
+          }
+          
+<span class="nc bnc" id="L664" title="All 2 branches missed.">          for(int k=0; k&lt;m_data.numInstances(); k++) {</span>
+<span class="nc" id="L665">            int t=0; //This holds the interval that the attibute value of the</span>
+                     //new instance belongs to.
+            try {
+<span class="nc bnc" id="L668" title="All 2 branches missed.">              if(!m_data.instance(k).isMissing(m_attribIndex)) {</span>
+                //1. see footnote at the end of this file
+<span class="nc" id="L670">                t = (int)Math.ceil( (float)(</span>
+<span class="nc" id="L671">                (m_data.instance(k).value(m_attribIndex)-m_as.numericStats.min)</span>
+<span class="nc" id="L672">                / barRange) );</span>
+<span class="nc bnc" id="L673" title="All 2 branches missed.">                if(t==0) {</span>
+<span class="nc bnc" id="L674" title="All 2 branches missed.">                  if(m_data.instance(k).isMissing(m_classIndex))</span>
+<span class="nc" id="L675">                    histClassCounts[t][0]++;</span>
+                  else
+<span class="nc" id="L677">                    histClassCounts[t][(int)m_data.instance(k).value(m_classIndex)+1]++;</span>
+                  //if(histCounts[t]&gt;m_maxValue)
+                  //  m_maxValue = histCounts[t];
+                }
+                else {
+<span class="nc bnc" id="L682" title="All 2 branches missed.">                  if(m_data.instance(k).isMissing(m_classIndex))</span>
+<span class="nc" id="L683">                    histClassCounts[t-1][0]++;</span>
+                  else
+<span class="nc" id="L685">                    histClassCounts[t-1][(int)m_data.instance(k).value(m_classIndex)+1]++;</span>
+                  //if(histCounts[t-1]&gt;m_maxValue)
+                  //  m_maxValue = histCounts[t-1];
+                }
+              }
+            }
+<span class="nc" id="L691">            catch(ArrayIndexOutOfBoundsException ae) {</span>
+<span class="nc" id="L692">              System.out.println(&quot;t:&quot;+(t)+</span>
+<span class="nc" id="L693">              &quot; barRange:&quot;+barRange+</span>
+<span class="nc" id="L694">              &quot; histLength:&quot;+histClassCounts.length+</span>
+<span class="nc" id="L695">              &quot; value:&quot;+m_data.instance(k).value(m_attribIndex)+</span>
+<span class="nc" id="L696">              &quot; min:&quot;+m_as.numericStats.min+</span>
+<span class="nc" id="L697">              &quot; sumResult:&quot;+</span>
+<span class="nc" id="L698">              (m_data.instance(k).value(m_attribIndex) -</span>
+<span class="nc" id="L699">              m_as.numericStats.min)+</span>
+<span class="nc" id="L700">              &quot; divideResult:&quot;+</span>
+<span class="nc" id="L701">              (float)((m_data.instance(k).value(m_attribIndex) -</span>
+<span class="nc" id="L702">              m_as.numericStats.min) / barRange)+</span>
+<span class="nc" id="L703">              &quot; finalResult:&quot;+</span>
+<span class="nc" id="L704">              Math.ceil((float)((m_data.instance(k).value(m_attribIndex)-</span>
+<span class="nc" id="L705">              m_as.numericStats.min) / barRange)) );</span>
+            }
+          }
+<span class="nc bnc" id="L708" title="All 2 branches missed.">          for(int i=0; i&lt;histClassCounts.length; i++) {</span>
+<span class="nc" id="L709">            int sum=0;</span>
+<span class="nc bnc" id="L710" title="All 2 branches missed.">            for(int j=0; j&lt;histClassCounts[i].length; j++)</span>
+<span class="nc" id="L711">              sum = sum+histClassCounts[i][j];</span>
+<span class="nc bnc" id="L712" title="All 2 branches missed.">            if(m_maxValue&lt;sum)</span>
+<span class="nc" id="L713">              m_maxValue = sum;</span>
+          }
+          
+          // convert to sparse instances
+<span class="nc" id="L717">          SparseInstance[] histClassCountsSparse = </span>
+<span class="nc" id="L718">            new SparseInstance[histClassCounts.length];</span>
+          
+<span class="nc bnc" id="L720" title="All 2 branches missed.">          for (int i = 0; i &lt; histClassCounts.length; i++) {</span>
+<span class="nc" id="L721">            int numSparseValues = 0;</span>
+<span class="nc bnc" id="L722" title="All 2 branches missed.">            for (int j = 0; j &lt; histClassCounts[i].length; j++) {</span>
+<span class="nc bnc" id="L723" title="All 2 branches missed.">              if (histClassCounts[i][j] &gt; 0) {</span>
+<span class="nc" id="L724">                numSparseValues++;</span>
+              }
+            }
+<span class="nc" id="L727">            double[] sparseValues = new double[numSparseValues];</span>
+<span class="nc" id="L728">            int[] sparseIndices = new int[numSparseValues];</span>
+<span class="nc" id="L729">            int count = 0;</span>
+<span class="nc bnc" id="L730" title="All 2 branches missed.">            for (int j = 0; j &lt; histClassCounts[i].length; j++) {</span>
+<span class="nc bnc" id="L731" title="All 2 branches missed.">              if (histClassCounts[i][j] &gt; 0) {</span>
+<span class="nc" id="L732">                sparseValues[count] = histClassCounts[i][j];</span>
+<span class="nc" id="L733">                sparseIndices[count++] = j;</span>
+              }
+            }
+            
+<span class="nc" id="L737">            SparseInstance tempS = </span>
+<span class="nc" id="L738">              new SparseInstance(1.0, sparseValues, sparseIndices, </span>
+<span class="nc" id="L739">                  histClassCounts[i].length);</span>
+<span class="nc" id="L740">            histClassCountsSparse[i] = tempS;</span>
+            
+          }
+          
+<span class="nc" id="L744">          m_histBarClassCounts = histClassCountsSparse;</span>
+          // m_histBarClassCounts = histClassCounts;
+<span class="nc" id="L746">          m_barRange =  barRange;</span>
+          
+        }
+        else { //else if the class attribute is numeric or the class is not set
+          
+          int intervals; double intervalWidth;
+          //At the time of this coding the
+          //possibility of datasets with zero instances
+          //was being dealt with in the
+          //PreProcessPanel of weka Explorer.
+          
+          //old method of calculating number of intervals
+          //intervals =  m_as.totalCount&gt;10 ?
+          //                  (int)(m_as.totalCount*0.1):(int)m_as.totalCount;
+          
+          //This uses the M.P.Wand's method to calculate the histogram's
+          //interval width. See &quot;Data-Based Choice of Histogram Bin Width&quot;, in
+          //The American Statistician, Vol. 51, No. 1, Feb., 1997, pp. 59-64.
+          //intervalWidth = Math.pow(6D/(-psi(2, g21())*m_data.numInstances() ),
+          //                          1/3D );
+          
+          //This uses the Scott's method to calculate the histogram's interval
+          //width. See &quot;On optimal and data-based histograms&quot;.
+          // See Biometrika, 66, 605-610 OR see the same paper mentioned above.
+<span class="nc" id="L770">          intervalWidth =  3.49 * m_as.numericStats.stdDev *</span>
+<span class="nc" id="L771">                           Math.pow(m_data.numInstances(), -1/3D);</span>
+          //The Math.max is introduced to remove the possibility of
+          //intervals=0 and =NAN that can happen if respectively all the numeric
+          //values are the same or the interval width is evaluated to zero.
+<span class="nc" id="L775">          intervals = Math.max(1,</span>
+<span class="nc" id="L776">          (int)Math.round( (m_as.numericStats.max - m_as.numericStats.min) /</span>
+<span class="nc" id="L777">                           intervalWidth) );</span>
+          
+          //The number 4 below actually represents a padding of 3 pixels on
+          //each side of the histogram, and is also reflected in other parts of 
+          //the code in the shape of numerical constants like &quot;6&quot; here.
+<span class="nc bnc" id="L782" title="All 2 branches missed.">          if(intervals &gt; AttributeVisualizationPanel.this.getWidth()) {</span>
+<span class="nc" id="L783">            intervals = AttributeVisualizationPanel.this.getWidth()-6;</span>
+<span class="nc bnc" id="L784" title="All 2 branches missed.">            if(intervals&lt;1)</span>
+<span class="nc" id="L785">              intervals = 1;</span>
+          }
+          
+<span class="nc" id="L788">          int histCounts[]  = new int[intervals];</span>
+<span class="nc" id="L789">          double barRange   = (m_as.numericStats.max - m_as.numericStats.min) /</span>
+<span class="nc" id="L790">                              (double)histCounts.length;</span>
+          
+<span class="nc" id="L792">          m_maxValue = 0;</span>
+          
+<span class="nc bnc" id="L794" title="All 2 branches missed.">          for(int k=0; k&lt;m_data.numInstances(); k++) {</span>
+<span class="nc" id="L795">            int t=0; //This holds the interval to which the current attribute's</span>
+                    //value of this particular instance k belongs to.
+            
+<span class="nc bnc" id="L798" title="All 2 branches missed.">            if(m_data.instance(k).isMissing(m_attribIndex)) </span>
+<span class="nc" id="L799">              continue; //ignore missing values</span>
+            
+            try {
+              //1. see footnote at the end of this file
+<span class="nc" id="L803">              t =(int) Math.ceil((float)(</span>
+<span class="nc" id="L804">              (m_data.instance(k).value(m_attribIndex)-m_as.numericStats.min)</span>
+<span class="nc" id="L805">              / barRange));</span>
+<span class="nc bnc" id="L806" title="All 2 branches missed.">              if(t==0) {</span>
+<span class="nc" id="L807">                histCounts[t]++;</span>
+<span class="nc bnc" id="L808" title="All 2 branches missed.">                if(histCounts[t]&gt;m_maxValue)</span>
+<span class="nc" id="L809">                  m_maxValue = histCounts[t];</span>
+              }
+              else {
+<span class="nc" id="L812">                histCounts[t-1]++;</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">                if(histCounts[t-1]&gt;m_maxValue)</span>
+<span class="nc" id="L814">                  m_maxValue = histCounts[t-1];</span>
+              }
+            }
+<span class="nc" id="L817">            catch(ArrayIndexOutOfBoundsException ae) {</span>
+<span class="nc" id="L818">              ae.printStackTrace();</span>
+<span class="nc" id="L819">              System.out.println(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_HistCalc_Run_ArrayIndexOutOfBoundsException_Text_First&quot;) + (t)+</span>
+<span class="nc" id="L820">              Messages.getInstance().getString(&quot;AttributeVisualizationPanel_HistCalc_Run_ArrayIndexOutOfBoundsException_Text_Second&quot;) + barRange+</span>
+<span class="nc" id="L821">              Messages.getInstance().getString(&quot;AttributeVisualizationPanel_HistCalc_Run_ArrayIndexOutOfBoundsException_Text_Third&quot;) + histCounts.length+</span>
+<span class="nc" id="L822">              Messages.getInstance().getString(&quot;AttributeVisualizationPanel_HistCalc_Run_ArrayIndexOutOfBoundsException_Text_Fourth&quot;) + m_data.instance(k).value(m_attribIndex)+</span>
+<span class="nc" id="L823">              Messages.getInstance().getString(&quot;AttributeVisualizationPanel_HistCalc_Run_ArrayIndexOutOfBoundsException_Text_Fifth&quot;) + m_as.numericStats.min+</span>
+<span class="nc" id="L824">              Messages.getInstance().getString(&quot;AttributeVisualizationPanel_HistCalc_Run_ArrayIndexOutOfBoundsException_Text_Sixth&quot;) +</span>
+<span class="nc" id="L825">              (m_data.instance(k).value(m_attribIndex)-m_as.numericStats.min)+</span>
+<span class="nc" id="L826">              Messages.getInstance().getString(&quot;AttributeVisualizationPanel_HistCalc_Run_ArrayIndexOutOfBoundsException_Text_Seventh&quot;) +</span>
+<span class="nc" id="L827">              (float)((m_data.instance(k).value(m_attribIndex) -</span>
+<span class="nc" id="L828">              m_as.numericStats.min)/barRange)+</span>
+<span class="nc" id="L829">              Messages.getInstance().getString(&quot;AttributeVisualizationPanel_HistCalc_Run_ArrayIndexOutOfBoundsException_Text_Eighth&quot;) +</span>
+<span class="nc" id="L830">              Math.ceil( (float)((m_data.instance(k).value(m_attribIndex) -</span>
+<span class="nc" id="L831">              m_as.numericStats.min) / barRange)) );</span>
+            }
+          }
+<span class="nc" id="L834">          m_histBarCounts = histCounts;</span>
+<span class="nc" id="L835">          m_barRange =  barRange;</span>
+        }
+        
+<span class="nc" id="L838">        m_threadRun=false;</span>
+<span class="nc" id="L839">        m_displayCurrentAttribute = true;</span>
+<span class="nc" id="L840">        m_doneCurrentAttribute = true;</span>
+        //Image tmpImg = new BufferedImage(getWidth(), getHeight(),
+        //                                 BufferedImage.TYPE_INT_RGB);
+        //drawGraph( tmpImg.getGraphics() );
+        //img = tmpImg;
+<span class="nc" id="L845">        AttributeVisualizationPanel.this.repaint();</span>
+      }
+<span class="nc" id="L847">    }</span>
+    
+    /****Code for M.P.Wand's method of histogram bin width selection.
+     *   There is some problem with it. It always comes up -ve value
+     *   which is raised to the power 1/3 and gives an NAN.
+     * private static final int M=400;
+     * private double psi(int r, double g) {
+     * double val;
+     *
+     * double sum=0.0;
+     * for(int i=0; i&lt;M; i++) {
+     * double valCjKj=0.0;
+     * for(int j=0; j&lt;M; j++) {
+     * valCjKj += c(j) * k(r, j-i, g);
+     * }
+     * sum += valCjKj*c(i);
+     * }
+     *
+     * val = Math.pow(m_data.numInstances(), -2) * sum;
+     * //System.out.println(&quot;psi returns: &quot;+val);
+     * return val;
+     * }
+     * private double g21() {
+     * double val;
+     *
+     * val = Math.pow(2 / ( Math.sqrt(2D*Math.PI)*psi(4, g22()) * 
+     *                      m_data.numInstances() ), 1/5D)
+     *       * Math.sqrt(2) * m_as.numericStats.stdDev;
+     * //System.out.println(&quot;g21 returns: &quot;+val);
+     * return val;
+     * }
+     * private double g22() {
+     * double val;
+     *
+     * val = Math.pow( 2D/(5*m_data.numInstances()), 1/7D) * 
+     *       Math.sqrt(2) * m_as.numericStats.stdDev;
+     * //System.out.println(&quot;g22 returns: &quot;+val);
+     * return val;
+     * }
+     * private double c(int j) {
+     * double val=0.0;
+     * double sigma = (m_as.numericStats.max - m_as.numericStats.min)/(M-1);
+     *
+     * //System.out.println(&quot;In c before doing the sum we have&quot;);
+     * //System.out.println(&quot;max: &quot; +m_as.numericStats.max+&quot; min: &quot;+
+     * //                   m_as.numericStats.min+&quot; sigma: &quot;+sigma);
+     *
+     * for(int i=0; i&lt;m_data.numInstances(); i++) {
+     * if(!m_data.instance(i).isMissing(m_attribIndex))
+     * val += Math.max( 0,
+     * ( 1 - Math.abs( Math.pow(sigma, -1)*(m_data.instance(i).value(m_attribIndex) - j) ) )
+     * );
+     * }
+     * //System.out.println(&quot;c returns: &quot;+val);
+     * return val;
+     * }
+     * private double k(int r, int j, double g) {
+     * double val;
+     * double sigma = (m_as.numericStats.max - m_as.numericStats.min)/(M-1);
+     * //System.out.println(&quot;Before calling L we have&quot;);
+     * //System.out.println(&quot;Max: &quot;+m_as.numericStats.max+&quot; Min: &quot;+m_as.numericStats.min+&quot;\n&quot;+
+     * //			 &quot;r: &quot;+r+&quot; j: &quot;+j+&quot; g: &quot;+g);
+     * val = Math.pow( g, -r-1) * L(sigma*j/g);
+     * //System.out.println(&quot;k returns: &quot;+val);
+     * return val;
+     * }
+     * private double L(double x) {
+     * double val;
+     *
+     * val = Math.pow( 2*Math.PI, -1/2D ) * Math.exp( -(x*x)/2D );
+     * //System.out.println(&quot;L returns: &quot;+val);
+     * return val;
+     * }
+     *******End of Wand's method
+     */
+  }
+  
+  
+  /**
+   * Returns &quot;&amp;lt;nominal value&amp;gt; [&amp;lt;nominal value count&amp;gt;]&quot;
+   * if displaying a bar plot and mouse is on some bar.
+   * If displaying histogram then it
+   *     &lt;li&gt;returns &quot;count &amp;lt;br&amp;gt; [&amp;lt;bars Range&amp;gt;]&quot; if mouse is
+   *     on the first bar. &lt;/li&gt;
+   *     &lt;li&gt;returns &quot;count &amp;lt;br&amp;gt; (&amp;lt;bar's Range&amp;gt;]&quot; if mouse is
+   *     on some bar other than the first one. &lt;/li&gt;
+   * Otherwise it returns &quot;&quot;
+   *
+   * @param ev The mouse event
+   */
+  public String getToolTipText(MouseEvent ev) {
+    
+<span class="nc bnc" id="L939" title="All 4 branches missed.">    if(m_as!=null &amp;&amp; m_as.nominalCounts!=null) { //if current attrib is nominal</span>
+      
+<span class="nc" id="L941">      float intervalWidth = this.getWidth() / (float)m_as.nominalCounts.length;</span>
+      float heightRatio;      
+<span class="nc" id="L943">      int barWidth, x=0, y=0;</span>
+      
+      //if intervalWidth is at least six then bar width is 80% of intervalwidth
+<span class="nc bnc" id="L946" title="All 2 branches missed.">      if(intervalWidth&gt;5) //the rest is padding</span>
+<span class="nc" id="L947">        barWidth = (int)Math.floor(intervalWidth*0.8F);</span>
+      else
+<span class="nc" id="L949">        barWidth = 1;  //Otherwise barwidth is 1 &amp; padding would be at least 1.</span>
+      
+      //initializing x to maximum of 1 or 10% of interval width (i.e. half of 
+      //the padding which is 20% of interval width, as there is 10% on each 
+      //side of the bar) so that it points to the start of the 1st bar
+<span class="nc bnc" id="L954" title="All 2 branches missed.">      x = x + (int)( (Math.floor(intervalWidth*0.1F))&lt;1 ? </span>
+<span class="nc" id="L955">                     1:(Math.floor(intervalWidth*0.1F)) );</span>
+
+      //Adding to x the appropriate value so that it points to the 1st bar of 
+      //our &quot;centered&quot; barplot. If subtracting barplots width from panel width 
+      //gives &lt;=2 then the barplot is not centered.
+<span class="nc" id="L960">      if(this.getWidth() - (m_as.nominalCounts.length*barWidth+</span>
+<span class="nc bnc" id="L961" title="All 2 branches missed.">                           (int)( (Math.floor(intervalWidth*0.2F))&lt;1 ? </span>
+<span class="nc" id="L962">                                   1:(Math.floor(intervalWidth*0.2F)) ) * </span>
+<span class="nc bnc" id="L963" title="All 2 branches missed.">                           m_as.nominalCounts.length) &gt; 2 ) {</span>
+        
+        //The following amounts to adding to x the half of the area left after
+        //subtracting from the components width the width of the whole barplot
+        //(i.e. width of all the bars plus the width of all the bar paddings, 
+        //thereby equaling to the whole barplot), since our barplot is centered.
+<span class="nc" id="L969">        x += ( this.getWidth() - (m_as.nominalCounts.length*barWidth + </span>
+<span class="nc bnc" id="L970" title="All 2 branches missed.">                                 (int)( (Math.floor(intervalWidth*0.2F))&lt;1 ? </span>
+<span class="nc" id="L971">                                        1:(Math.floor(intervalWidth*0.2F)) ) * </span>
+<span class="nc" id="L972">                                 m_as.nominalCounts.length) ) / 2;</span>
+      }
+        
+<span class="nc bnc" id="L975" title="All 2 branches missed.">      for(int i=0; i&lt;m_as.nominalCounts.length; i++) {        </span>
+<span class="nc" id="L976">        heightRatio = (this.getHeight()-(float)m_fm.getHeight())/m_maxValue;</span>
+        //initializing y to point to (from top) the start of the bar
+<span class="nc" id="L978">        y = this.getHeight()-Math.round(m_as.nominalCounts[i]*heightRatio);</span>
+        
+        //if our mouse is on a bar then return the count of this bar in our
+        //barplot 
+<span class="nc bnc" id="L982" title="All 4 branches missed.">        if(ev.getX() &gt;= x &amp;&amp; ev.getX()&lt;=x+barWidth &amp;&amp; </span>
+<span class="nc" id="L983">           ev.getY() &gt;= this.getHeight() - </span>
+<span class="nc bnc" id="L984" title="All 2 branches missed.">                        Math.round(m_as.nominalCounts[i]*heightRatio) )</span>
+<span class="nc" id="L985">          return(m_data.attribute(m_attribIndex).value(i)+</span>
+<span class="nc" id="L986">                 &quot; [&quot;+m_as.nominalCounts[i]+&quot;]&quot;);</span>
+        //otherwise advance x to next bar and check that. Add barwidth to x 
+        //and padding which is max(1, 20% of interval width)
+<span class="nc bnc" id="L989" title="All 2 branches missed.">        x = x+barWidth+(int)( (Math.floor(intervalWidth*0.2F))&lt;1 ? </span>
+<span class="nc" id="L990">                              1:(Math.floor(intervalWidth*0.2F)) );</span>
+      }
+    }
+<span class="nc bnc" id="L993" title="All 2 branches missed.">    else if(m_threadRun==false &amp;&amp;     //if attrib is numeric</span>
+<span class="nc bnc" id="L994" title="All 4 branches missed.">            (m_histBarCounts!=null || m_histBarClassCounts!=null)) {</span>
+
+      float heightRatio, intervalWidth;
+<span class="nc" id="L997">      int x=0, y=0,  barWidth;</span>
+<span class="nc" id="L998">      double bar = m_as.numericStats.min;</span>
+      
+      //if the class attribute is set and it is nominal 
+<span class="nc bnc" id="L1001" title="All 4 branches missed.">      if((m_classIndex &gt;= 0) &amp;&amp; (m_data.attribute(m_classIndex).isNominal())) {</span>
+        //there is 3 pixels of padding on each side of the histogram
+        //the barwidth is 1 if after removing the padding its width is less
+        //then the displayable width
+<span class="nc bnc" id="L1005" title="All 2 branches missed.">        barWidth = ((this.getWidth()-6)/m_histBarClassCounts.length)&lt;1 ? </span>
+<span class="nc" id="L1006">                   1:((this.getWidth()-6)/m_histBarClassCounts.length);</span>
+        
+        //initializing x to 3 adding appropriate value to make it point to the 
+        //start of the 1st bar of our &quot;centered&quot; histogram.
+<span class="nc" id="L1010">        x = 3;</span>
+<span class="nc bnc" id="L1011" title="All 2 branches missed.">        if( (this.getWidth() - (x + m_histBarClassCounts.length*barWidth)) &gt; 5 )</span>
+<span class="nc" id="L1012">          x += (this.getWidth() - (x + m_histBarClassCounts.length*barWidth))/2;</span>
+        
+<span class="nc" id="L1014">        heightRatio = (this.getHeight()-(float)m_fm.getHeight())/m_maxValue;</span>
+        
+<span class="nc bnc" id="L1016" title="All 2 branches missed.">        if( ev.getX()-x &gt;= 0) {</span>
+          //The temp holds the index of the current interval that we are looking
+          //at
+<span class="nc" id="L1019">          int temp = (int)((ev.getX()-x)/(barWidth+0.0000000001));</span>
+<span class="nc bnc" id="L1020" title="All 2 branches missed.">          if(temp == 0){  //handle the special case temp==0. see footnote 1</span>
+<span class="nc" id="L1021">            int sum=0;</span>
+<span class="nc bnc" id="L1022" title="All 2 branches missed.">            for(int k=0; k&lt;m_histBarClassCounts[0].numValues(); k++)</span>
+<span class="nc" id="L1023">              sum += m_histBarClassCounts[0].valueSparse(k);</span>
+            //return the count of the interval mouse is pointing to plus 
+            //the range of values that fall into this interval
+<span class="nc" id="L1026">            return (Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_First&quot;) + sum+</span>
+<span class="nc" id="L1027">            		Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Second&quot;) + Utils.doubleToString(bar+m_barRange*temp,3)+</span>
+<span class="nc" id="L1028">                    &quot;, &quot;+Utils.doubleToString((bar+m_barRange*(temp+1)),3)+</span>
+<span class="nc" id="L1029">                    Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Fourth&quot;));</span>
+          }
+<span class="nc bnc" id="L1031" title="All 2 branches missed.">          else if( temp &lt; m_histBarClassCounts.length ) { //handle case temp!=0</span>
+<span class="nc" id="L1032">            int sum=0;</span>
+<span class="nc bnc" id="L1033" title="All 2 branches missed.">            for(int k=0; k&lt;m_histBarClassCounts[temp].numValues(); k++)</span>
+<span class="nc" id="L1034">              sum+=m_histBarClassCounts[temp].valueSparse(k);</span>
+            //return the count of the interval mouse is pointing to plus 
+            //the range of values that fall into this interval
+<span class="nc" id="L1037">            return (Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Fifth&quot;) + sum + Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Sixth&quot;) +</span>
+<span class="nc" id="L1038">                    Utils.doubleToString(bar+m_barRange*temp,3)+&quot;, &quot;+</span>
+<span class="nc" id="L1039">                    Utils.doubleToString((bar+m_barRange*(temp+1)),3)+</span>
+<span class="nc" id="L1040">                    Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Eighth&quot;));</span>
+          }
+        }
+      }
+      else {  //else if the class attribute is not set or is numeric
+<span class="nc bnc" id="L1045" title="All 2 branches missed.">        barWidth = ((this.getWidth()-6)/m_histBarCounts.length) &lt; 1 ? </span>
+<span class="nc" id="L1046">                   1 : ((this.getWidth()-6)/m_histBarCounts.length);</span>
+        
+        //initializing x to 3 adding appropriate value to make it point to the 
+        //start of the 1st bar of our &quot;centered&quot; histogram.
+<span class="nc" id="L1050">        x = 3;</span>
+<span class="nc bnc" id="L1051" title="All 2 branches missed.">        if( (this.getWidth() - (x + m_histBarCounts.length*barWidth)) &gt; 5 )</span>
+<span class="nc" id="L1052">          x += (this.getWidth() - (x + m_histBarCounts.length*barWidth))/2;</span>
+        
+<span class="nc" id="L1054">        heightRatio = (this.getHeight()-(float)m_fm.getHeight())/m_maxValue;</span>
+        
+<span class="nc bnc" id="L1056" title="All 2 branches missed.">        if( ev.getX()-x &gt;= 0) {</span>
+          //Temp holds the index of the current bar we are looking at.
+<span class="nc" id="L1058">          int temp = (int)((ev.getX()-x)/(barWidth+0.0000000001));</span>
+          
+          //return interval count as well as its range
+<span class="nc bnc" id="L1061" title="All 2 branches missed.">          if(temp == 0) //handle special case temp==0. see footnote 1.</span>
+<span class="nc" id="L1062">            return (Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Nineth&quot;) +</span>
+<span class="nc" id="L1063">                    m_histBarCounts[0]+Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Texth&quot;) + Utils.doubleToString(bar+m_barRange*temp,3)+&quot;, &quot;+</span>
+<span class="nc" id="L1064">                    Utils.doubleToString((bar+m_barRange*(temp+1)),3)+</span>
+<span class="nc" id="L1065">                    Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Twelveth&quot;));</span>
+<span class="nc bnc" id="L1066" title="All 2 branches missed.">          else if(temp &lt; m_histBarCounts.length) //handle case temp!=0</span>
+<span class="nc" id="L1067">            return (Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Thirteenth&quot;) +</span>
+<span class="nc" id="L1068">                    m_histBarCounts[temp]+ Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Fourteenth&quot;) + Utils.doubleToString(bar+m_barRange*temp,3)+&quot;, &quot;+</span>
+<span class="nc" id="L1069">                    Utils.doubleToString((bar+m_barRange*(temp+1)),3)+</span>
+<span class="nc" id="L1070">                    Messages.getInstance().getString(&quot;AttributeVisualizationPanel_GetToolTipText_Text_Sixteenth&quot;));</span>
+        }
+      }
+    }
+<span class="nc" id="L1074">    return PrintableComponent.getToolTipText(m_Printer);</span>
+  }
+  
+  
+  /**
+   * Paints this component
+   *
+   * @param g The graphics object for this component
+   */
+  public void paintComponent(Graphics g) {
+<span class="nc" id="L1084">    g.clearRect(0,0,this.getWidth(), this.getHeight());</span>
+    
+<span class="nc bnc" id="L1086" title="All 2 branches missed.">    if(m_as!=null) {    //If calculations have been done and histogram/barplot</span>
+<span class="nc bnc" id="L1087" title="All 4 branches missed.">      if (!m_doneCurrentAttribute &amp;&amp; !m_threadRun) {</span>
+<span class="nc" id="L1088">        calcGraph(this.getWidth(), this.getHeight());</span>
+      }
+      
+<span class="nc bnc" id="L1091" title="All 4 branches missed.">      if(m_threadRun==false &amp;&amp; m_displayCurrentAttribute) {  //calculation thread is not running</span>
+<span class="nc" id="L1092">        int buttonHeight=0;</span>
+        
+<span class="nc bnc" id="L1094" title="All 2 branches missed.">        if(m_colorAttrib!=null)</span>
+<span class="nc" id="L1095">          buttonHeight =m_colorAttrib.getHeight()+m_colorAttrib.getLocation().y;</span>
+        
+        //if current attribute is nominal then draw barplot.
+<span class="nc bnc" id="L1098" title="All 2 branches missed.">        if(m_as.nominalCounts != null &amp;&amp; </span>
+<span class="nc bnc" id="L1099" title="All 4 branches missed.">           (m_histBarClassCounts!=null || m_histBarCounts!=null) ) {</span>
+          float heightRatio, intervalWidth;
+<span class="nc" id="L1101">          int x=0, y=0, barHeight, barWidth;</span>
+          
+          //if the class attribute is set and is nominal then draw coloured 
+          //subbars for each bar
+<span class="nc bnc" id="L1105" title="All 2 branches missed.">          if((m_classIndex &gt;= 0) &amp;&amp; </span>
+<span class="nc bnc" id="L1106" title="All 2 branches missed.">             (m_data.attribute(m_classIndex).isNominal())) {</span>
+               
+<span class="nc" id="L1108">            intervalWidth=(this.getWidth()/(float)m_histBarClassCounts.length);</span>
+            
+            //Barwidth is 80% of interval width.The remaining 20% is padding,
+            //10% on each side of the bar. If interval width is less then 5 the
+            //20% of that value is less than 1, in that case we use bar width of
+            //1 and padding of 1 pixel on each side of the bar.
+<span class="nc bnc" id="L1114" title="All 2 branches missed.">            if(intervalWidth&gt;5)</span>
+<span class="nc" id="L1115">              barWidth = (int)Math.floor(intervalWidth*0.8F);</span>
+            else
+<span class="nc" id="L1117">              barWidth = 1;</span>
+
+            //initializing x to 10% of interval width or to 1 if 10% is &lt;1. This
+            //is essentially the LHS padding of the 1st bar.
+<span class="nc bnc" id="L1121" title="All 2 branches missed.">            x = x + (int)( (Math.floor(intervalWidth*0.1F))&lt;1 ?</span>
+<span class="nc" id="L1122">                           1 : (Math.floor(intervalWidth*0.1F)) );</span>
+            
+            //Add appropriate value to x so that it starts at the 1st bar of 
+            //a &quot;centered&quot; barplot.
+<span class="nc" id="L1126">            if(this.getWidth() - (m_histBarClassCounts.length*barWidth + </span>
+<span class="nc bnc" id="L1127" title="All 2 branches missed.">                                 (int)( (Math.floor(intervalWidth*0.2F))&lt;1 ? </span>
+<span class="nc" id="L1128">                                        1 :(Math.floor(intervalWidth*0.2F))</span>
+<span class="nc bnc" id="L1129" title="All 2 branches missed.">                                      ) * m_histBarClassCounts.length) &gt; 2 ) {</span>
+              //We take the width of all the bars and all the paddings (20%
+              //of interval width), and subtract it from the width of the panel
+              //to get the extra space that would be left after drawing. We 
+              //divide that space by 2 to get its mid-point and add that to our
+              //x, thus making the whole bar plot drawn centered in our 
+              //component.
+<span class="nc" id="L1136">              x += (this.getWidth()-(m_histBarClassCounts.length*barWidth+</span>
+<span class="nc bnc" id="L1137" title="All 2 branches missed.">                                    (int)( (Math.floor(intervalWidth*0.2F))&lt;1 ?</span>
+<span class="nc" id="L1138">                                           1 : (Math.floor(intervalWidth*0.2F))</span>
+<span class="nc" id="L1139">                                         ) * m_histBarClassCounts.length))/2;</span>
+            }
+            
+            //this holds the count of the bar and will be calculated by adding
+            //up the counts of individual subbars. It is displayed at the top
+            //of each bar.
+<span class="nc" id="L1145">            int sum=0;</span>
+<span class="nc bnc" id="L1146" title="All 2 branches missed.">            for(int i=0; i&lt;m_histBarClassCounts.length; i++) {</span>
+              //calculating the proportion of the components height compared to 
+              //the maxvalue in our attribute, also taking into account the 
+              //height of font to display bars count and the height of the class 
+              //ComboBox.
+<span class="nc" id="L1151">              heightRatio = ( this.getHeight()-(float)m_fm.getHeight() - </span>
+<span class="nc" id="L1152">                              buttonHeight ) / m_maxValue;              </span>
+<span class="nc" id="L1153">              y=this.getHeight();</span>
+<span class="nc bnc" id="L1154" title="All 2 branches missed.">              if (m_histBarClassCounts[i] != null) {</span>
+<span class="nc bnc" id="L1155" title="All 2 branches missed.">                for(int j=0; j&lt;m_histBarClassCounts[i].numAttributes(); j++) {</span>
+<span class="nc" id="L1156">                  sum = (int) (sum + m_histBarClassCounts[i].value(j));</span>
+<span class="nc" id="L1157">                  y = (int) (y-Math.round(m_histBarClassCounts[i].value(j)*heightRatio));</span>
+                  //selecting the colour corresponding to the current class.
+<span class="nc" id="L1159">                  g.setColor( (Color)m_colorList.elementAt(j) );</span>
+<span class="nc" id="L1160">                  g.fillRect(x, y, barWidth, </span>
+<span class="nc" id="L1161">                      (int) Math.round(m_histBarClassCounts[i].value(j)*heightRatio));</span>
+<span class="nc" id="L1162">                  g.setColor(Color.black);</span>
+                }
+              }
+              //drawing the bar count at the top of the bar if it is less than
+              //interval width. draw it 1px up to avoid touching the bar.
+<span class="nc bnc" id="L1167" title="All 2 branches missed.">              if(m_fm.stringWidth(Integer.toString(sum))&lt;intervalWidth)</span>
+<span class="nc" id="L1168">                g.drawString(Integer.toString(sum), x, y-1);</span>
+              //advancing x to the next bar by adding bar width and padding
+              //of both the bars (i.e. RHS padding of the bar just drawn and LHS
+              //padding of the new bar).
+<span class="nc bnc" id="L1172" title="All 2 branches missed.">              x = x+barWidth+(int)( (Math.floor(intervalWidth*0.2F))&lt;1 ? </span>
+<span class="nc" id="L1173">                                     1:(Math.floor(intervalWidth*0.2F)) );</span>
+              //reseting sum for the next bar.
+<span class="nc" id="L1175">              sum=0;</span>
+            }
+              
+          }
+          //else if class attribute is numeric or not set then draw black bars.
+          else {
+<span class="nc" id="L1181">            intervalWidth =  (this.getWidth()/(float)m_histBarCounts.length);</span>
+            
+            //same as in the case of nominal class (see inside of if stmt 
+            //corresponding to the current else above).
+<span class="nc bnc" id="L1185" title="All 2 branches missed.">            if(intervalWidth&gt;5)</span>
+<span class="nc" id="L1186">              barWidth = (int)Math.floor(intervalWidth*0.8F);</span>
+            else
+<span class="nc" id="L1188">              barWidth = 1;</span>
+            
+            //same as in the case of nominal class (see inside of if stmt 
+            //corresponding to the current else above).
+<span class="nc bnc" id="L1192" title="All 2 branches missed.">            x = x + (int)( (Math.floor(intervalWidth*0.1F))&lt;1 ? </span>
+<span class="nc" id="L1193">                           1:(Math.floor(intervalWidth*0.1F)) );</span>
+            
+            //same as in the case of nominal class
+<span class="nc" id="L1196">            if( this.getWidth() - (m_histBarCounts.length*barWidth+</span>
+<span class="nc bnc" id="L1197" title="All 2 branches missed.">                                  (int)( (Math.floor(intervalWidth*0.2F))&lt;1 ? </span>
+<span class="nc" id="L1198">                                         1:(Math.floor(intervalWidth*0.2F)) ) * </span>
+<span class="nc bnc" id="L1199" title="All 2 branches missed.">                                  m_histBarCounts.length) &gt; 2 ) {</span>
+<span class="nc" id="L1200">              x += (this.getWidth() -(m_histBarCounts.length*barWidth + </span>
+<span class="nc bnc" id="L1201" title="All 2 branches missed.">                                     (int)((Math.floor(intervalWidth*0.2F))&lt;1 ? </span>
+<span class="nc" id="L1202">                                           1:(Math.floor(intervalWidth*0.2F)))*</span>
+<span class="nc" id="L1203">                                     m_histBarCounts.length))/2;</span>
+            }
+            
+<span class="nc bnc" id="L1206" title="All 2 branches missed.">            for(int i=0; i&lt;m_histBarCounts.length; i++) {</span>
+              //calculating the proportion of the height of the component 
+              //compared to the maxValue in our attribute.
+<span class="nc" id="L1209">              heightRatio = (this.getHeight()-(float)m_fm.getHeight() - </span>
+<span class="nc" id="L1210">                             buttonHeight) / m_maxValue;</span>
+<span class="nc" id="L1211">              y = this.getHeight()-Math.round(m_histBarCounts[i]*heightRatio);</span>
+<span class="nc" id="L1212">              g.fillRect(x, y, barWidth, </span>
+<span class="nc" id="L1213">                         Math.round(m_histBarCounts[i]*heightRatio));</span>
+              //draw the bar count if it's width is smaller than intervalWidth.
+              //draw it 1px above to avoid touching the bar.
+<span class="nc" id="L1216">              if(m_fm.stringWidth(Integer.toString(m_histBarCounts[i])) &lt; </span>
+<span class="nc bnc" id="L1217" title="All 2 branches missed.">                                    intervalWidth)</span>
+<span class="nc" id="L1218">                g.drawString(Integer.toString(m_histBarCounts[i]), x, y-1);</span>
+              //Advance x to the next bar by adding bar-width and padding
+              //of the bars (RHS padding of current bar &amp; LHS padding of next 
+              //bar).
+<span class="nc bnc" id="L1222" title="All 2 branches missed.">              x = x+barWidth+(int)( (Math.floor(intervalWidth*0.2F))&lt;1 ? </span>
+<span class="nc" id="L1223">                                     1:(Math.floor(intervalWidth*0.2F)) );</span>
+            }
+          }
+          
+        } //&lt;--end if m_as.nominalCount!=null
+        //if the current attribute is numeric then draw a histogram.
+<span class="nc bnc" id="L1229" title="All 2 branches missed.">        else if(m_as.numericStats != null &amp;&amp; </span>
+<span class="nc bnc" id="L1230" title="All 4 branches missed.">                (m_histBarClassCounts!=null || m_histBarCounts!=null)) {</span>
+
+          float heightRatio, intervalWidth;
+<span class="nc" id="L1233">          int x=0, y=0,  barWidth;</span>
+          
+          //If the class attribute is set and is not numeric then draw coloured 
+          //subbars for the histogram bars
+<span class="nc bnc" id="L1237" title="All 2 branches missed.">          if((m_classIndex &gt;=0) &amp;&amp; </span>
+<span class="nc bnc" id="L1238" title="All 2 branches missed.">             (m_data.attribute(m_classIndex).isNominal())) {</span>
+            
+            //There is a padding of 3px on each side of the histogram.
+<span class="nc bnc" id="L1241" title="All 2 branches missed.">            barWidth = ((this.getWidth()-6)/m_histBarClassCounts.length)&lt;1 ? </span>
+<span class="nc" id="L1242">                       1 : ((this.getWidth()-6)/m_histBarClassCounts.length);</span>
+            
+            //initializing x to start at the start of the 1st bar after padding.
+<span class="nc" id="L1245">            x = 3;</span>
+            //Adding appropriate value to x to account for a &quot;centered&quot; 
+            //histogram
+<span class="nc" id="L1248">            if( (this.getWidth() - </span>
+<span class="nc bnc" id="L1249" title="All 2 branches missed.">                (x + m_histBarClassCounts.length*barWidth)) &gt; 5 ) {</span>
+              //We take the current value of x (histogram's RHS padding) and add
+              //the barWidths of all the bars to it to us the size of 
+              //our histogram. We subtract that from the width of the panel 
+              //giving us the extra space that would be left if the histogram is
+              //drawn and divide that by 2 to get the midpoint of that extra
+              //space. That space is then added to our x, hence making the 
+              //histogram centered.
+<span class="nc" id="L1257">              x += ( this.getWidth() - </span>
+<span class="nc" id="L1258">                    (x + m_histBarClassCounts.length*barWidth) ) / 2;</span>
+            }
+            
+<span class="nc bnc" id="L1261" title="All 2 branches missed.">            for(int i=0; i&lt;m_histBarClassCounts.length; i++) {</span>
+<span class="nc bnc" id="L1262" title="All 2 branches missed.">              if (m_histBarClassCounts[i] != null) {</span>
+                //Calculating height ratio. Leave space of 19 for an axis line at 
+                //the bottom
+<span class="nc" id="L1265">                heightRatio = (this.getHeight()-(float)m_fm.getHeight() - </span>
+<span class="nc" id="L1266">                    buttonHeight-19) / m_maxValue;</span>
+<span class="nc" id="L1267">                y = this.getHeight()-19;</span>
+                //This would hold the count of the bar (sum of sub-bars).
+<span class="nc" id="L1269">                int sum = 0;</span>
+<span class="nc bnc" id="L1270" title="All 2 branches missed.">                for(int j=0; j&lt;m_histBarClassCounts[i].numValues(); j++) {</span>
+<span class="nc" id="L1271">                  y = (int) (y-Math.round(m_histBarClassCounts[i].valueSparse(j)*heightRatio));</span>
+                  //System.out.println(&quot;Filling x:&quot;+x+&quot; y:&quot;+y+&quot; width:&quot;+barWidth+
+                  //                   &quot; height:&quot;+
+                  //                   (m_histBarClassCounts[i][j]*heightRatio));
+                  //selecting the color corresponding to our class
+<span class="nc" id="L1276">                  g.setColor( (Color)m_colorList.elementAt(m_histBarClassCounts[i].index(j)) );</span>
+                  //drawing the bar if its width is greater than 1
+<span class="nc bnc" id="L1278" title="All 2 branches missed.">                  if(barWidth&gt;1)</span>
+<span class="nc" id="L1279">                    g.fillRect(x, y, </span>
+<span class="nc" id="L1280">                        barWidth, </span>
+<span class="nc" id="L1281">                        (int) Math.round(m_histBarClassCounts[i].valueSparse(j)*heightRatio));</span>
+                  //otherwise drawing a line
+<span class="nc bnc" id="L1283" title="All 2 branches missed.">                  else if((m_histBarClassCounts[i].valueSparse(j)*heightRatio)&gt;0)</span>
+<span class="nc" id="L1284">                    g.drawLine(x, y, x, </span>
+<span class="nc" id="L1285">                        (int) (y+Math.round(m_histBarClassCounts[i].valueSparse(j)*heightRatio)));</span>
+<span class="nc" id="L1286">                  g.setColor(Color.black);</span>
+<span class="nc" id="L1287">                  sum = (int) (sum + m_histBarClassCounts[i].valueSparse(j));</span>
+                }
+                //Drawing bar count on the top of the bar if it is &lt; barWidth
+<span class="nc bnc" id="L1290" title="All 2 branches missed.">                if(m_fm.stringWidth(&quot; &quot;+Integer.toString(sum))&lt;barWidth)</span>
+<span class="nc" id="L1291">                  g.drawString(&quot; &quot;+Integer.toString(sum), x, y-1);</span>
+                //Moving x to the next bar
+<span class="nc" id="L1293">                x = x+barWidth;</span>
+              }
+            }
+            
+            //Now drawing the axis line at the bottom of the histogram
+            //initializing x again to the start of the plot
+<span class="nc" id="L1299">            x = 3;</span>
+<span class="nc" id="L1300">            if( (this.getWidth() - </span>
+<span class="nc bnc" id="L1301" title="All 2 branches missed.">                (x + m_histBarClassCounts.length*barWidth)) &gt; 5 )</span>
+<span class="nc" id="L1302">              x += (this.getWidth() - </span>
+<span class="nc" id="L1303">                   (x + m_histBarClassCounts.length*barWidth))/2;</span>
+            
+<span class="nc" id="L1305">            g.drawLine(x, this.getHeight()-17,</span>
+<span class="nc bnc" id="L1306" title="All 2 branches missed.">                       (barWidth==1)?x+barWidth*m_histBarClassCounts.length-1 : </span>
+<span class="nc" id="L1307">                                     x+barWidth*m_histBarClassCounts.length,</span>
+<span class="nc" id="L1308">                       this.getHeight()-17); //axis line -- see footnote 2.</span>
+<span class="nc" id="L1309">            g.drawLine(x, this.getHeight()-16, </span>
+<span class="nc" id="L1310">                       x, this.getHeight()-12); //minimum line</span>
+<span class="nc" id="L1311">            g.drawString(Utils.doubleToString(m_as.numericStats.min, 2),</span>
+<span class="nc" id="L1312">                         x,</span>
+<span class="nc" id="L1313">                         this.getHeight()-12+m_fm.getHeight()); //minimum value</span>
+<span class="nc" id="L1314">            g.drawLine(x+(barWidth*m_histBarClassCounts.length)/2,</span>
+<span class="nc" id="L1315">                       this.getHeight()-16,</span>
+<span class="nc" id="L1316">                       x+(barWidth*m_histBarClassCounts.length)/2,</span>
+<span class="nc" id="L1317">                       this.getHeight()-12); //median line</span>
+            //Drawing median value. X position for drawing the value is: from 
+            //start of the plot take the mid point and subtract from it half
+            //of the width of the value to draw.
+<span class="nc" id="L1321">            g.drawString(Utils.doubleToString(m_as.numericStats.max/2+m_as.numericStats.min/2, 2),</span>
+<span class="nc" id="L1322">                         x+(barWidth*m_histBarClassCounts.length)/2 - </span>
+<span class="nc" id="L1323">                           m_fm.stringWidth(Utils.doubleToString(m_as.numericStats.max/2+m_as.numericStats.min/2, 2))/2,</span>
+<span class="nc" id="L1324">                         this.getHeight()-12+m_fm.getHeight()); //median value</span>
+<span class="nc bnc" id="L1325" title="All 2 branches missed.">            g.drawLine((barWidth==1) ? x+barWidth*m_histBarClassCounts.length-1:</span>
+<span class="nc" id="L1326">                                       x+barWidth*m_histBarClassCounts.length,</span>
+<span class="nc" id="L1327">                       this.getHeight()-16,</span>
+<span class="nc bnc" id="L1328" title="All 2 branches missed.">                       (barWidth==1) ? x+barWidth*m_histBarClassCounts.length-1:</span>
+<span class="nc" id="L1329">                                       x+barWidth*m_histBarClassCounts.length,</span>
+<span class="nc" id="L1330">                       this.getHeight()-12); //maximum line</span>
+<span class="nc" id="L1331">            g.drawString(Utils.doubleToString(m_as.numericStats.max, 2),</span>
+<span class="nc bnc" id="L1332" title="All 2 branches missed.">                         (barWidth==1) ?</span>
+<span class="nc" id="L1333">              x+barWidth*m_histBarClassCounts.length-m_fm.stringWidth(Utils.doubleToString(m_as.numericStats.max, 2))-1:</span>
+<span class="nc" id="L1334">              x+barWidth*m_histBarClassCounts.length-m_fm.stringWidth(Utils.doubleToString(m_as.numericStats.max, 2)),</span>
+<span class="nc" id="L1335">              this.getHeight()-12+m_fm.getHeight()); //maximum value -- see 2.</span>
+          }
+          else {  //if class attribute is numeric
+            //There is a padding of 3px on each side of the histogram.
+<span class="nc bnc" id="L1339" title="All 2 branches missed.">            barWidth = ((this.getWidth()-6)/m_histBarCounts.length) &lt; 1 ? </span>
+<span class="nc" id="L1340">                        1:((this.getWidth()-6)/m_histBarCounts.length);</span>
+
+            //Same as above. Pls inside of the if stmt.
+<span class="nc" id="L1343">            x = 3;</span>
+<span class="nc bnc" id="L1344" title="All 2 branches missed.">            if( (this.getWidth() - (x + m_histBarCounts.length*barWidth)) &gt; 5 )</span>
+<span class="nc" id="L1345">              x += (this.getWidth() - (x + m_histBarCounts.length*barWidth))/2;</span>
+            
+            //Same as above
+<span class="nc bnc" id="L1348" title="All 2 branches missed.">            for(int i=0; i&lt;m_histBarCounts.length; i++) {</span>
+              //calculating the ration of the component's height compared to 
+              //the maxValue in our current attribute. Leaving 19 pixels to
+              //draw the axis at the bottom of the histogram.
+<span class="nc" id="L1352">              heightRatio = (this.getHeight()-(float)m_fm.getHeight() - </span>
+<span class="nc" id="L1353">                             buttonHeight-19) / m_maxValue;</span>
+<span class="nc" id="L1354">              y = this.getHeight() - </span>
+<span class="nc" id="L1355">                  Math.round(m_histBarCounts[i]*heightRatio)-19;</span>
+              //System.out.println(&quot;Filling x:&quot;+x+&quot; y:&quot;+y+&quot; width:&quot;+barWidth+
+              //                   &quot; height:&quot;+(m_histBarCounts[i]*heightRatio));
+              //same as in the if stmt above
+<span class="nc bnc" id="L1359" title="All 2 branches missed.">              if(barWidth&gt;1)</span>
+<span class="nc" id="L1360">                g.drawRect(x, y, barWidth, </span>
+<span class="nc" id="L1361">                           Math.round(m_histBarCounts[i]*heightRatio));</span>
+<span class="nc bnc" id="L1362" title="All 2 branches missed.">              else if((m_histBarCounts[i]*heightRatio)&gt;0)</span>
+<span class="nc" id="L1363">                g.drawLine(x, y, </span>
+<span class="nc" id="L1364">                           x, y+Math.round(m_histBarCounts[i]*heightRatio));</span>
+<span class="nc" id="L1365">              if(m_fm.stringWidth(&quot; &quot;+Integer.toString(m_histBarCounts[i])) &lt; </span>
+<span class="nc bnc" id="L1366" title="All 2 branches missed.">                    barWidth)</span>
+<span class="nc" id="L1367">                g.drawString(&quot; &quot;+Integer.toString(m_histBarCounts[i]), x, y-1);</span>
+              
+<span class="nc" id="L1369">              x = x+barWidth;</span>
+            }
+            
+            //Now drawing the axis at the bottom of the histogram
+<span class="nc" id="L1373">            x = 3;</span>
+<span class="nc bnc" id="L1374" title="All 2 branches missed.">            if( (this.getWidth() - (x + m_histBarCounts.length*barWidth)) &gt; 5 )</span>
+<span class="nc" id="L1375">              x += (this.getWidth() - (x + m_histBarCounts.length*barWidth))/2;</span>
+            
+            //This is exact the same as in the if stmt above. See the inside of
+            //the stmt for details
+<span class="nc" id="L1379">            g.drawLine(x, this.getHeight()-17,</span>
+<span class="nc bnc" id="L1380" title="All 2 branches missed.">                       (barWidth==1) ? x+barWidth*m_histBarCounts.length-1 : </span>
+<span class="nc" id="L1381">                                       x+barWidth*m_histBarCounts.length,</span>
+<span class="nc" id="L1382">                       this.getHeight()-17); //axis line</span>
+<span class="nc" id="L1383">            g.drawLine(x, this.getHeight()-16, </span>
+<span class="nc" id="L1384">                       x, this.getHeight()-12); //minimum line</span>
+<span class="nc" id="L1385">            g.drawString(Utils.doubleToString(m_as.numericStats.min, 2),</span>
+<span class="nc" id="L1386">                         x,</span>
+<span class="nc" id="L1387">                         this.getHeight()-12+m_fm.getHeight()); //minimum value</span>
+<span class="nc" id="L1388">            g.drawLine(x+(barWidth*m_histBarCounts.length)/2,</span>
+<span class="nc" id="L1389">                       this.getHeight()-16,</span>
+<span class="nc" id="L1390">                       x+(barWidth*m_histBarCounts.length)/2,</span>
+<span class="nc" id="L1391">                       this.getHeight()-12); //median line</span>
+<span class="nc" id="L1392">            g.drawString(Utils.doubleToString(m_as.numericStats.max/2+m_as.numericStats.min/2, 2),</span>
+<span class="nc" id="L1393">                         x+(barWidth*m_histBarCounts.length)/2 - </span>
+<span class="nc" id="L1394">                           m_fm.stringWidth(Utils.doubleToString(m_as.numericStats.max/2+m_as.numericStats.min/2, 2))/2,</span>
+<span class="nc" id="L1395">                         this.getHeight()-12+m_fm.getHeight()); //median value</span>
+<span class="nc bnc" id="L1396" title="All 2 branches missed.">            g.drawLine((barWidth==1) ? x+barWidth*m_histBarCounts.length-1 : </span>
+<span class="nc" id="L1397">                                        x+barWidth*m_histBarCounts.length,</span>
+<span class="nc" id="L1398">                       this.getHeight()-16,</span>
+<span class="nc bnc" id="L1399" title="All 2 branches missed.">                       (barWidth==1) ? x+barWidth*m_histBarCounts.length-1 : </span>
+<span class="nc" id="L1400">                                       x+barWidth*m_histBarCounts.length,</span>
+<span class="nc" id="L1401">                       this.getHeight()-12); //maximum line</span>
+<span class="nc" id="L1402">            g.drawString(Utils.doubleToString(m_as.numericStats.max, 2),</span>
+<span class="nc bnc" id="L1403" title="All 2 branches missed.">                         (barWidth==1) ? </span>
+<span class="nc" id="L1404">              x+barWidth*m_histBarCounts.length-m_fm.stringWidth(Utils.doubleToString(m_as.numericStats.max, 2))-1 : </span>
+<span class="nc" id="L1405">              x+barWidth*m_histBarCounts.length-m_fm.stringWidth(Utils.doubleToString(m_as.numericStats.max, 2)),</span>
+<span class="nc" id="L1406">              this.getHeight()-12+m_fm.getHeight()); //maximum value</span>
+          }
+          //System.out.println(&quot;barWidth:&quot;+barWidth+
+          //                   &quot; histBarCount:&quot;+m_histBarCounts.length);
+          
+        } else {
+<span class="nc" id="L1412">          g.clearRect(0, 0, this.getWidth(), this.getHeight());</span>
+<span class="nc" id="L1413">          g.drawString(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_PaintComponent_G_DrawString_Text_First&quot;),</span>
+<span class="nc" id="L1414">          this.getWidth()/2 - m_fm.</span>
+<span class="nc" id="L1415">          stringWidth(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_PaintComponent_StringWidth_Text_First&quot;))/2,</span>
+<span class="nc" id="L1416">          this.getHeight()/2-m_fm.getHeight()/2);</span>
+        }
+      } //&lt;--end if of calculation thread
+<span class="nc bnc" id="L1419" title="All 2 branches missed.">      else if (m_displayCurrentAttribute) {   //if still calculation thread is running plot</span>
+<span class="nc" id="L1420">        g.clearRect(0, 0, this.getWidth(), this.getHeight());</span>
+<span class="nc" id="L1421">        g.drawString(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_PaintComponent_G_DrawString_Text_Second&quot;),</span>
+<span class="nc" id="L1422">        this.getWidth()/2 - m_fm.stringWidth(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_PaintComponent_StringWidth_Text_Second&quot;))/2,</span>
+<span class="nc" id="L1423">        this.getHeight()/2-m_fm.getHeight()/2);</span>
+      }
+<span class="nc bnc" id="L1425" title="All 2 branches missed.">      else if (!m_displayCurrentAttribute) {</span>
+<span class="nc" id="L1426">        g.clearRect(0, 0, this.getWidth(), this.getHeight());</span>
+<span class="nc" id="L1427">        g.drawString(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_PaintComponent_G_DrawString_Text_Third&quot;),</span>
+<span class="nc" id="L1428">        this.getWidth()/2 - m_fm.stringWidth(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_PaintComponent_StringWidth_Text_Third&quot;))/2,</span>
+<span class="nc" id="L1429">        this.getHeight()/2-m_fm.getHeight()/2);</span>
+      }
+    } //&lt;--end if(m_as==null) this means 
+<span class="nc" id="L1432">  }</span>
+  
+  
+  /**
+   * Main method to test this class from command line
+   *
+   * @param args The arff file and the index of the attribute to use
+   */
+  public static void main(String [] args) {
+<span class="nc bnc" id="L1441" title="All 2 branches missed.">    if(args.length!=3) {</span>
+<span class="nc" id="L1442">      final JFrame jf = new JFrame(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_Main_JFrame_Text&quot;));</span>
+<span class="nc" id="L1443">      AttributeVisualizationPanel ap = new AttributeVisualizationPanel();</span>
+      try {
+<span class="nc" id="L1445">        Instances ins = new Instances( new FileReader(args[0]) );</span>
+<span class="nc" id="L1446">        ap.setInstances(ins);</span>
+<span class="nc" id="L1447">        System.out.println(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_Main_Text_First&quot;) + args[0]+</span>
+<span class="nc" id="L1448">                           Messages.getInstance().getString(&quot;AttributeVisualizationPanel_Main_Text_Second&quot;) + ap.m_data.relationName()+</span>
+<span class="nc" id="L1449">                           Messages.getInstance().getString(&quot;AttributeVisualizationPanel_Main_Text_Third&quot;) + ap.m_data.numAttributes());</span>
+<span class="nc" id="L1450">        ap.setAttribute( Integer.parseInt(args[1]) );</span>
+      }
+<span class="nc" id="L1452">      catch(Exception ex) { ex.printStackTrace(); System.exit(-1); }</span>
+<span class="nc" id="L1453">      System.out.println(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_Main_Text_Fourth&quot;));</span>
+<span class="nc bnc" id="L1454" title="All 2 branches missed.">      for(int i=0; i&lt;ap.m_data.numAttributes(); i++)</span>
+<span class="nc" id="L1455">        System.out.println(ap.m_data.attribute(i).name());</span>
+      
+<span class="nc" id="L1457">      jf.setSize(500, 300);</span>
+<span class="nc" id="L1458">      jf.getContentPane().setLayout( new BorderLayout() );</span>
+<span class="nc" id="L1459">      jf.getContentPane().add(ap, BorderLayout.CENTER );</span>
+<span class="nc" id="L1460">      jf.setDefaultCloseOperation( jf.EXIT_ON_CLOSE );</span>
+<span class="nc" id="L1461">      jf.setVisible(true);</span>
+    }
+    else
+<span class="nc" id="L1464">      System.out.println(Messages.getInstance().getString(&quot;AttributeVisualizationPanel_Main_Text_Fifth&quot;));</span>
+<span class="nc" id="L1465">  }</span>
+}
+
+
+/*
+ * t =(int) Math.ceil((float)(
+ *              (m_data.instance(k).value(m_attribIndex)-m_as.numericStats.min)
+ *                           / barRange));
+ * 1. 
+ * This equation gives a value between (i-1)+smallfraction and i if the 
+ * attribute m_attribIndex for the current instances lies in the ith
+ * interval. We then increment the value of our i-1th field of our 
+ * histogram/barplot array. 
+ * If, for example, barRange=3 then, apart from the 1st 
+ * interval, each interval i has values in the range 
+ * (minValue+3*i-1, minValue+3*i]. The 1st interval has range 
+ * [minValue, minValue+i]. Hence it can be seen in the code we specifically 
+ * handle t=0 separately.
+ *
+ */
+
+
+/**
+ * (barWidth==1)?x+barWidth*m_histBarClassCounts.length-1 : 
+ *                                    x+barWidth*m_histBarClassCounts.length
+ * 2. 
+ * In the case barWidth==1 we subtract 1 otherwise the line become one pixel
+ * longer than the actual size of the histogram
+ */
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

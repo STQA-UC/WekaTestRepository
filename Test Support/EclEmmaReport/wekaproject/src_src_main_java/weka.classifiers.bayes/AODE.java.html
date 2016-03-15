@@ -1,0 +1,783 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>AODE.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.bayes</a> &gt; <span class="el_source">AODE.java</span></div><h1>AODE.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    AODE.java
+ *    Copyright (C) 2003
+ *    Algorithm developed by: Geoff Webb
+ *    Code written by: Janice Boughton &amp; Zhihai Wang
+ */
+
+package weka.classifiers.bayes;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.UpdateableClassifier;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * AODE achieves highly accurate classification by averaging over all of a small space of alternative naive-Bayes-like models that have weaker (and hence less detrimental) independence assumptions than naive Bayes. The resulting algorithm is computationally efficient while delivering highly accurate classification on many learning  tasks.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see&lt;br/&gt;
+ * &lt;br/&gt;
+ * G. Webb, J. Boughton, Z. Wang (2005). Not So Naive Bayes: Aggregating One-Dependence Estimators. Machine Learning. 58(1):5-24.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Further papers are available at&lt;br/&gt;
+ *   http://www.csse.monash.edu.au/~webb/.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Can use an m-estimate for smoothing base probability estimates in place of the Laplace correction (via option -M).&lt;br/&gt;
+ * Default frequency limit set to 1.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;article{Webb2005,
+ *    author = {G. Webb and J. Boughton and Z. Wang},
+ *    journal = {Machine Learning},
+ *    number = {1},
+ *    pages = {5-24},
+ *    title = {Not So Naive Bayes: Aggregating One-Dependence Estimators},
+ *    volume = {58},
+ *    year = {2005}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Output debugging information
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -F &amp;lt;int&amp;gt;
+ *  Impose a frequency limit for superParents
+ *  (default is 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Use m-estimate instead of laplace correction
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;int&amp;gt;
+ *  Specify a weight to use with m-estimate
+ *  (default is 1)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Janice Boughton (jrbought@csse.monash.edu.au)
+ * @author Zhihai Wang (zhw@csse.monash.edu.au)
+ * @version $Revision: 5516 $
+ */
+<span class="fc" id="L102">public class AODE</span>
+    extends Classifier
+    implements OptionHandler, WeightedInstancesHandler, UpdateableClassifier, 
+               TechnicalInformationHandler {
+    
+  /** for serialization */
+  static final long serialVersionUID = 9197439980415113523L;
+  
+  /**
+   * 3D array (m_NumClasses * m_TotalAttValues * m_TotalAttValues)
+   * of attribute counts, i.e., the number of times an attribute value occurs
+   * in conjunction with another attribute value and a class value.  
+   */
+  private double [][][] m_CondiCounts;
+    
+  /** The number of times each class value occurs in the dataset */
+  private double [] m_ClassCounts;
+    
+  /** The sums of attribute-class counts  
+   *    -- if there are no missing values for att, then
+   *       m_SumForCounts[classVal][att] will be the same as
+   *       m_ClassCounts[classVal] 
+   */
+  private double [][] m_SumForCounts;
+
+  /** The number of classes */
+  private int m_NumClasses;
+    
+  /** The number of attributes in dataset, including class */
+  private int m_NumAttributes;
+    
+  /** The number of instances in the dataset */
+  private int m_NumInstances;
+    
+  /** The index of the class attribute */
+  private int m_ClassIndex;
+    
+  /** The dataset */
+  private Instances m_Instances;
+    
+  /**
+   * The total number of values (including an extra for each attribute's 
+   * missing value, which are included in m_CondiCounts) for all attributes 
+   * (not including class). E.g., for three atts each with two possible values,
+   * m_TotalAttValues would be 9 (6 values + 3 missing).
+   * This variable is used when allocating space for m_CondiCounts matrix.
+   */
+  private int m_TotalAttValues;
+    
+  /** The starting index (in the m_CondiCounts matrix) of the values for each
+   * attribute */
+  private int [] m_StartAttIndex;
+    
+  /** The number of values for each attribute */
+  private int [] m_NumAttValues;
+    
+  /** The frequency of each attribute value for the dataset */
+  private double [] m_Frequencies;
+
+  /** The number of valid class values observed in dataset 
+   *  -- with no missing classes, this number is the same as m_NumInstances.
+   */
+  private double m_SumInstances;
+
+  /** An att's frequency must be this value or more to be a superParent */
+<span class="fc" id="L167">  private int m_Limit = 1;</span>
+
+  /** If true, outputs debugging info */
+<span class="fc" id="L170">  private boolean m_Debug = false;</span>
+
+  /** flag for using m-estimates */
+<span class="fc" id="L173">  private boolean m_MEstimates = false;</span>
+
+  /** value for m in m-estimate */
+<span class="fc" id="L176">  private int m_Weight = 1;</span>
+
+ 
+  /**
+   * Returns a string describing this classifier
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L186">    return &quot;AODE achieves highly accurate classification by averaging over &quot;</span>
+      +&quot;all of a small space of alternative naive-Bayes-like models that have &quot;
+      +&quot;weaker (and hence less detrimental) independence assumptions than &quot;
+      +&quot;naive Bayes. The resulting algorithm is computationally efficient &quot;
+      +&quot;while delivering highly accurate classification on many learning  &quot;
+      +&quot;tasks.\n\n&quot;
+      +&quot;For more information, see\n\n&quot;
+<span class="nc" id="L193">      + getTechnicalInformation().toString() + &quot;\n\n&quot;</span>
+<span class="nc" id="L194">      +&quot;Further papers are available at\n&quot;</span>
+<span class="nc" id="L195">      +&quot;  http://www.csse.monash.edu.au/~webb/.\n\n&quot;</span>
+<span class="nc" id="L196">      + &quot;Can use an m-estimate for smoothing base probability estimates &quot;</span>
+<span class="nc" id="L197">      + &quot;in place of the Laplace correction (via option -M).\n&quot;</span>
+<span class="nc" id="L198">      + &quot;Default frequency limit set to 1.&quot;;</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L211">    result = new TechnicalInformation(Type.ARTICLE);</span>
+<span class="nc" id="L212">    result.setValue(Field.AUTHOR, &quot;G. Webb and J. Boughton and Z. Wang&quot;);</span>
+<span class="nc" id="L213">    result.setValue(Field.YEAR, &quot;2005&quot;);</span>
+<span class="nc" id="L214">    result.setValue(Field.TITLE, &quot;Not So Naive Bayes: Aggregating One-Dependence Estimators&quot;);</span>
+<span class="nc" id="L215">    result.setValue(Field.JOURNAL, &quot;Machine Learning&quot;);</span>
+<span class="nc" id="L216">    result.setValue(Field.VOLUME, &quot;58&quot;);</span>
+<span class="nc" id="L217">    result.setValue(Field.NUMBER, &quot;1&quot;);</span>
+<span class="nc" id="L218">    result.setValue(Field.PAGES, &quot;5-24&quot;);</span>
+
+<span class="nc" id="L220">    return result;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L229">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L230">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L233">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L234">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L237">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L238">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+
+    // instances
+<span class="fc" id="L241">    result.setMinimumNumberInstances(0);</span>
+    
+<span class="fc" id="L243">    return result;</span>
+  }
+ 
+  /**
+   * Generates the classifier.
+   *
+   * @param instances set of instances serving as training data
+   * @throws Exception if the classifier has not been generated
+   * successfully
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L256">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L259">    m_Instances = new Instances(instances);</span>
+<span class="fc" id="L260">    m_Instances.deleteWithMissingClass();</span>
+
+    // reset variable for this fold
+<span class="fc" id="L263">    m_SumInstances = 0;</span>
+<span class="fc" id="L264">    m_ClassIndex = instances.classIndex();</span>
+<span class="fc" id="L265">    m_NumInstances = m_Instances.numInstances();</span>
+<span class="fc" id="L266">    m_NumAttributes = m_Instances.numAttributes();</span>
+<span class="fc" id="L267">    m_NumClasses = m_Instances.numClasses();</span>
+ 
+    // allocate space for attribute reference arrays
+<span class="fc" id="L270">    m_StartAttIndex = new int[m_NumAttributes];</span>
+<span class="fc" id="L271">    m_NumAttValues = new int[m_NumAttributes];</span>
+ 
+<span class="fc" id="L273">    m_TotalAttValues = 0;</span>
+<span class="fc bfc" id="L274" title="All 2 branches covered.">    for(int i = 0; i &lt; m_NumAttributes; i++) {</span>
+<span class="fc bfc" id="L275" title="All 2 branches covered.">       if(i != m_ClassIndex) {</span>
+<span class="fc" id="L276">          m_StartAttIndex[i] = m_TotalAttValues;</span>
+<span class="fc" id="L277">          m_NumAttValues[i] = m_Instances.attribute(i).numValues();</span>
+<span class="fc" id="L278">          m_TotalAttValues += m_NumAttValues[i] + 1;</span>
+          // + 1 so room for missing value count
+       } else {
+          // m_StartAttIndex[i] = -1;  // class isn't included
+<span class="fc" id="L282">	  m_NumAttValues[i] = m_NumClasses;</span>
+       }
+    }
+
+    // allocate space for counts and frequencies
+<span class="fc" id="L287">    m_CondiCounts = new double[m_NumClasses][m_TotalAttValues][m_TotalAttValues];</span>
+<span class="fc" id="L288">    m_ClassCounts = new double[m_NumClasses];</span>
+<span class="fc" id="L289">    m_SumForCounts = new double[m_NumClasses][m_NumAttributes];</span>
+<span class="fc" id="L290">    m_Frequencies = new double[m_TotalAttValues];</span>
+
+    // calculate the counts
+<span class="fc bfc" id="L293" title="All 2 branches covered.">    for(int k = 0; k &lt; m_NumInstances; k++) {</span>
+<span class="fc" id="L294">       addToCounts((Instance)m_Instances.instance(k));</span>
+    }
+
+    // free up some space
+<span class="fc" id="L298">    m_Instances = new Instances(m_Instances, 0);</span>
+<span class="fc" id="L299">  }</span>
+ 
+
+  /**
+   * Updates the classifier with the given instance.
+   *
+   * @param instance the new training instance to include in the model 
+   */
+    public void updateClassifier(Instance instance) {
+<span class="fc" id="L308">	this.addToCounts(instance);</span>
+<span class="fc" id="L309">    }</span>
+
+    /** 
+     * Puts an instance's values into m_CondiCounts, m_ClassCounts and 
+     * m_SumInstances.
+     *
+     * @param instance  the instance whose values are to be put into the counts
+     *                  variables
+     */
+  private void addToCounts(Instance instance) {
+ 
+    double [] countsPointer;
+ 
+<span class="pc bpc" id="L322" title="1 of 2 branches missed.">    if(instance.classIsMissing())</span>
+<span class="nc" id="L323">       return;   // ignore instances with missing class</span>
+
+<span class="fc" id="L325">    int classVal = (int)instance.classValue();</span>
+<span class="fc" id="L326">    double weight = instance.weight();</span>
+ 
+<span class="fc" id="L328">    m_ClassCounts[classVal] += weight;</span>
+<span class="fc" id="L329">    m_SumInstances += weight;</span>
+   
+    // store instance's att val indexes in an array, b/c accessing it 
+    // in loop(s) is more efficient
+<span class="fc" id="L333">    int [] attIndex = new int[m_NumAttributes];</span>
+<span class="fc bfc" id="L334" title="All 2 branches covered.">    for(int i = 0; i &lt; m_NumAttributes; i++) {</span>
+<span class="fc bfc" id="L335" title="All 2 branches covered.">       if(i == m_ClassIndex)</span>
+<span class="fc" id="L336">          attIndex[i] = -1;  // we don't use the class attribute in counts</span>
+       else {
+<span class="fc bfc" id="L338" title="All 2 branches covered.">          if(instance.isMissing(i))</span>
+<span class="fc" id="L339">             attIndex[i] = m_StartAttIndex[i] + m_NumAttValues[i];</span>
+          else
+<span class="fc" id="L341">             attIndex[i] = m_StartAttIndex[i] + (int)instance.value(i);</span>
+       }
+    }
+
+<span class="fc bfc" id="L345" title="All 2 branches covered.">    for(int Att1 = 0; Att1 &lt; m_NumAttributes; Att1++) {</span>
+<span class="fc bfc" id="L346" title="All 2 branches covered.">       if(attIndex[Att1] == -1)</span>
+<span class="fc" id="L347">          continue;   // avoid pointless looping as Att1 is currently the class attribute</span>
+
+<span class="fc" id="L349">       m_Frequencies[attIndex[Att1]] += weight;</span>
+       
+       // if this is a missing value, we don't want to increase sumforcounts
+<span class="fc bfc" id="L352" title="All 2 branches covered.">       if(!instance.isMissing(Att1))</span>
+<span class="fc" id="L353">          m_SumForCounts[classVal][Att1] += weight;</span>
+
+       // save time by referencing this now, rather than do it repeatedly in the loop
+<span class="fc" id="L356">       countsPointer = m_CondiCounts[classVal][attIndex[Att1]];</span>
+
+<span class="fc bfc" id="L358" title="All 2 branches covered.">       for(int Att2 = 0; Att2 &lt; m_NumAttributes; Att2++) {</span>
+<span class="fc bfc" id="L359" title="All 2 branches covered.">          if(attIndex[Att2] != -1) {</span>
+<span class="fc" id="L360">             countsPointer[attIndex[Att2]] += weight;</span>
+          }
+       }
+    }
+<span class="fc" id="L364">  }</span>
+ 
+ 
+  /**
+   * Calculates the class membership probabilities for the given test
+   * instance.
+   *
+   * @param instance the instance to be classified
+   * @return predicted class probability distribution
+   * @throws Exception if there is a problem generating the prediction
+   */
+  public double [] distributionForInstance(Instance instance) throws Exception {
+ 
+    // accumulates posterior probabilities for each class
+<span class="fc" id="L378">    double [] probs = new double[m_NumClasses];</span>
+
+    // index for parent attribute value, and a count of parents used
+    int pIndex, parentCount;
+ 
+    // pointers for efficiency
+    // for current class, point to joint frequency for any pair of att values
+    double [][] countsForClass;
+    // for current class &amp; parent, point to joint frequency for any att value
+    double [] countsForClassParent;
+
+    // store instance's att indexes in an int array, so accessing them 
+    // is more efficient in loop(s).
+<span class="fc" id="L391">    int [] attIndex = new int[m_NumAttributes];</span>
+<span class="fc bfc" id="L392" title="All 2 branches covered.">    for(int att = 0; att &lt; m_NumAttributes; att++) {</span>
+<span class="fc bfc" id="L393" title="All 4 branches covered.">       if(instance.isMissing(att) || att == m_ClassIndex)</span>
+<span class="fc" id="L394">          attIndex[att] = -1;   // can't use class or missing values in calculations</span>
+       else
+<span class="fc" id="L396">	  attIndex[att] = m_StartAttIndex[att] + (int)instance.value(att);</span>
+    }
+
+    // calculate probabilities for each possible class value
+<span class="fc bfc" id="L400" title="All 2 branches covered.">    for(int classVal = 0; classVal &lt; m_NumClasses; classVal++) {</span>
+ 
+<span class="fc" id="L402">       probs[classVal] = 0;</span>
+<span class="fc" id="L403">       double spodeP = 0;  // P(X,y) for current parent and class</span>
+<span class="fc" id="L404">       parentCount = 0;</span>
+ 
+<span class="fc" id="L406">       countsForClass = m_CondiCounts[classVal];</span>
+
+       // each attribute has a turn of being the parent
+<span class="fc bfc" id="L409" title="All 2 branches covered.">       for(int parent = 0; parent &lt; m_NumAttributes; parent++) {</span>
+<span class="fc bfc" id="L410" title="All 2 branches covered.">          if(attIndex[parent] == -1)</span>
+<span class="fc" id="L411">             continue;  // skip class attribute or missing value</span>
+
+          // determine correct index for the parent in m_CondiCounts matrix
+<span class="fc" id="L414">          pIndex = attIndex[parent];</span>
+
+          // check that the att value has a frequency of m_Limit or greater
+<span class="fc bfc" id="L417" title="All 2 branches covered.">	  if(m_Frequencies[pIndex] &lt; m_Limit) </span>
+<span class="fc" id="L418">             continue;</span>
+
+<span class="fc" id="L420">          countsForClassParent = countsForClass[pIndex];</span>
+
+          // block the parent from being its own child
+<span class="fc" id="L423">          attIndex[parent] = -1;</span>
+
+<span class="fc" id="L425">          parentCount++;</span>
+
+          // joint frequency of class and parent
+<span class="fc" id="L428">          double classparentfreq = countsForClassParent[pIndex];</span>
+
+          // find the number of missing values for parent's attribute
+<span class="fc" id="L431">          double missing4ParentAtt = </span>
+<span class="fc" id="L432">              m_Frequencies[m_StartAttIndex[parent] + m_NumAttValues[parent]];</span>
+
+          // calculate the prior probability -- P(parent &amp; classVal)
+<span class="pc bpc" id="L435" title="1 of 2 branches missed.">          if (!m_MEstimates) {</span>
+<span class="fc" id="L436">             spodeP = (classparentfreq + 1.0)</span>
+<span class="fc" id="L437">                / ((m_SumInstances - missing4ParentAtt) + m_NumClasses</span>
+<span class="fc" id="L438">	           * m_NumAttValues[parent]);</span>
+          } else {
+<span class="nc" id="L440">             spodeP = (classparentfreq + ((double)m_Weight</span>
+<span class="nc" id="L441">                        / (double)(m_NumClasses * m_NumAttValues[parent])))</span>
+<span class="nc" id="L442">                / ((m_SumInstances - missing4ParentAtt) + m_Weight);</span>
+          }
+
+          // take into account the value of each attribute
+<span class="fc bfc" id="L446" title="All 2 branches covered.">          for(int att = 0; att &lt; m_NumAttributes; att++) {</span>
+<span class="fc bfc" id="L447" title="All 2 branches covered.">             if(attIndex[att] == -1)</span>
+<span class="fc" id="L448">                continue;</span>
+ 
+<span class="fc" id="L450">             double missingForParentandChildAtt = </span>
+<span class="fc" id="L451">              countsForClassParent[m_StartAttIndex[att] + m_NumAttValues[att]];</span>
+
+<span class="pc bpc" id="L453" title="1 of 2 branches missed.">             if(!m_MEstimates) {</span>
+<span class="fc" id="L454">                spodeP *= (countsForClassParent[attIndex[att]] + 1.0)</span>
+<span class="fc" id="L455">                    / ((classparentfreq - missingForParentandChildAtt)</span>
+<span class="fc" id="L456">                       + m_NumAttValues[att]);</span>
+             } else {
+<span class="nc" id="L458">                spodeP *= (countsForClassParent[attIndex[att]]</span>
+<span class="nc" id="L459">                           + ((double)m_Weight / (double)m_NumAttValues[att]))</span>
+<span class="nc" id="L460">                    / ((classparentfreq - missingForParentandChildAtt)</span>
+<span class="nc" id="L461">                       + m_Weight);</span>
+             }
+          }
+
+          // add this probability to the overall probability
+<span class="fc" id="L466">          probs[classVal] += spodeP;</span>
+ 
+          // unblock the parent
+<span class="fc" id="L469">          attIndex[parent] = pIndex;</span>
+       }
+ 
+       // check that at least one att was a parent
+<span class="fc bfc" id="L473" title="All 2 branches covered.">       if(parentCount &lt; 1) {</span>
+
+          // do plain naive bayes conditional prob
+<span class="fc" id="L476">	  probs[classVal] = NBconditionalProb(instance, classVal);</span>
+
+       } else {
+ 
+          // divide by number of parent atts to get the mean
+<span class="fc" id="L481">          probs[classVal] /= (double)(parentCount);</span>
+       }
+    }
+ 
+<span class="fc" id="L485">    Utils.normalize(probs);</span>
+<span class="fc" id="L486">    return probs;</span>
+  }
+
+
+  /**
+   * Calculates the probability of the specified class for the given test
+   * instance, using naive Bayes.
+   *
+   * @param instance the instance to be classified
+   * @param classVal the class for which to calculate the probability
+   * @return predicted class probability
+   */
+  public double NBconditionalProb(Instance instance, int classVal) {
+    
+    double prob;
+    double [][] pointer;
+
+    // calculate the prior probability
+<span class="pc bpc" id="L504" title="1 of 2 branches missed.">    if(!m_MEstimates) {</span>
+<span class="fc" id="L505">       prob = (m_ClassCounts[classVal] + 1.0) / (m_SumInstances + m_NumClasses);</span>
+    } else {
+<span class="nc" id="L507">       prob = (m_ClassCounts[classVal]</span>
+<span class="nc" id="L508">               + ((double)m_Weight / (double)m_NumClasses))</span>
+<span class="nc" id="L509">             / (m_SumInstances + m_Weight);</span>
+    }
+<span class="fc" id="L511">    pointer = m_CondiCounts[classVal];</span>
+    
+    // consider effect of each att value
+<span class="fc bfc" id="L514" title="All 2 branches covered.">    for(int att = 0; att &lt; m_NumAttributes; att++) {</span>
+<span class="fc bfc" id="L515" title="All 4 branches covered.">       if(att == m_ClassIndex || instance.isMissing(att))</span>
+<span class="fc" id="L516">          continue;</span>
+
+       // determine correct index for att in m_CondiCounts
+<span class="fc" id="L519">       int aIndex = m_StartAttIndex[att] + (int)instance.value(att);</span>
+
+<span class="pc bpc" id="L521" title="1 of 2 branches missed.">       if(!m_MEstimates) {</span>
+<span class="fc" id="L522">          prob *= (double)(pointer[aIndex][aIndex] + 1.0)</span>
+<span class="fc" id="L523">              / ((double)m_SumForCounts[classVal][att] + m_NumAttValues[att]);</span>
+       } else {
+<span class="nc" id="L525">          prob *= (double)(pointer[aIndex][aIndex] </span>
+<span class="nc" id="L526">                    + ((double)m_Weight / (double)m_NumAttValues[att]))</span>
+<span class="nc" id="L527">                 / (double)(m_SumForCounts[classVal][att] + m_Weight);</span>
+       }
+    }
+<span class="fc" id="L530">    return prob;</span>
+  }
+
+
+  /**
+   * Returns an enumeration describing the available options
+   *
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+        
+<span class="fc" id="L541">    Vector newVector = new Vector(4);</span>
+        
+<span class="fc" id="L543">    newVector.addElement(</span>
+<span class="fc" id="L544">       new Option(&quot;\tOutput debugging information\n&quot;,</span>
+<span class="fc" id="L545">                  &quot;D&quot;, 0,&quot;-D&quot;));</span>
+<span class="fc" id="L546">    newVector.addElement(</span>
+<span class="fc" id="L547">       new Option(&quot;\tImpose a frequency limit for superParents\n&quot;</span>
+<span class="fc" id="L548">                  + &quot;\t(default is 1)&quot;, &quot;F&quot;, 1,&quot;-F &lt;int&gt;&quot;));</span>
+<span class="fc" id="L549">    newVector.addElement(</span>
+<span class="fc" id="L550">       new Option(&quot;\tUse m-estimate instead of laplace correction\n&quot;,</span>
+<span class="fc" id="L551">                  &quot;M&quot;, 0,&quot;-M&quot;));</span>
+<span class="fc" id="L552">    newVector.addElement(</span>
+<span class="fc" id="L553">       new Option(&quot;\tSpecify a weight to use with m-estimate\n&quot;</span>
+<span class="fc" id="L554">                  + &quot;\t(default is 1)&quot;, &quot;W&quot;, 1,&quot;-W &lt;int&gt;&quot;));</span>
+<span class="fc" id="L555">    return newVector.elements();</span>
+  }
+
+    
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Output debugging information
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -F &amp;lt;int&amp;gt;
+   *  Impose a frequency limit for superParents
+   *  (default is 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  Use m-estimate instead of laplace correction
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;int&amp;gt;
+   *  Specify a weight to use with m-estimate
+   *  (default is 1)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="fc" id="L588">    m_Debug = Utils.getFlag('D', options);</span>
+
+<span class="fc" id="L590">    String Freq = Utils.getOption('F', options);</span>
+<span class="fc bfc" id="L591" title="All 2 branches covered.">    if (Freq.length() != 0) </span>
+<span class="fc" id="L592">       m_Limit = Integer.parseInt(Freq);</span>
+    else
+<span class="fc" id="L594">       m_Limit = 1;</span>
+ 
+<span class="fc" id="L596">    m_MEstimates = Utils.getFlag('M', options);</span>
+<span class="fc" id="L597">    String weight = Utils.getOption('W', options);</span>
+<span class="pc bpc" id="L598" title="1 of 2 branches missed.">    if (weight.length() != 0) {</span>
+<span class="nc bnc" id="L599" title="All 2 branches missed.">       if (!m_MEstimates)</span>
+<span class="nc" id="L600">          throw new Exception(&quot;Can't use Laplace AND m-estimate weight. Choose one.&quot;);</span>
+<span class="nc" id="L601">       m_Weight = Integer.parseInt(weight);</span>
+    } 
+    else {
+<span class="pc bpc" id="L604" title="1 of 2 branches missed.">       if (m_MEstimates)</span>
+<span class="nc" id="L605">          m_Weight = 1;</span>
+    }
+
+<span class="fc" id="L608">    Utils.checkForRemainingOptions(options);</span>
+<span class="fc" id="L609">  }</span>
+    
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+<span class="fc" id="L617">    Vector result  = new Vector();</span>
+
+<span class="pc bpc" id="L619" title="1 of 2 branches missed.">    if (m_Debug)</span>
+<span class="nc" id="L620">       result.add(&quot;-D&quot;);</span>
+        
+<span class="fc" id="L622">    result.add(&quot;-F&quot;);</span>
+<span class="fc" id="L623">    result.add(&quot;&quot; + m_Limit);</span>
+
+<span class="pc bpc" id="L625" title="1 of 2 branches missed.">    if (m_MEstimates) {</span>
+<span class="nc" id="L626">       result.add(&quot;-M&quot;);</span>
+<span class="nc" id="L627">       result.add(&quot;-W&quot;);</span>
+<span class="nc" id="L628">       result.add(&quot;&quot; + m_Weight);</span>
+    }
+    
+<span class="fc" id="L631">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+    
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String weightTipText() {
+<span class="nc" id="L640">    return &quot;Set the weight for m-estimate.&quot;;</span>
+  }
+
+  /**
+   * Sets the weight for m-estimate
+   *
+   * @param w the weight
+   */
+  public void setWeight(int w) {
+<span class="nc bnc" id="L649" title="All 2 branches missed.">    if (!getUseMEstimates()) {</span>
+<span class="nc" id="L650">      System.out.println(</span>
+<span class="nc" id="L651">          &quot;Weight is only used in conjunction with m-estimate - ignored!&quot;);</span>
+    }
+    else {
+<span class="nc bnc" id="L654" title="All 2 branches missed.">      if (w &gt; 0)</span>
+<span class="nc" id="L655">        m_Weight = w;</span>
+      else
+<span class="nc" id="L657">        System.out.println(&quot;Weight must be greater than 0!&quot;);</span>
+    }
+<span class="nc" id="L659">  }</span>
+
+  /**
+   * Gets the weight used in m-estimate
+   *
+   * @return the frequency limit
+   */
+  public int getWeight() {
+<span class="nc" id="L667">    return m_Weight;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String useMEstimatesTipText() {
+<span class="nc" id="L676">    return &quot;Use m-estimate instead of laplace correction.&quot;;</span>
+  }
+
+  /**
+   * Gets if m-estimaces is being used.
+   *
+   * @return Value of m_MEstimates.
+   */
+  public boolean getUseMEstimates() {
+<span class="nc" id="L685">    return m_MEstimates;</span>
+  }
+
+  /**
+   * Sets if m-estimates is to be used.
+   *
+   * @param value     Value to assign to m_MEstimates.
+   */
+  public void setUseMEstimates(boolean value) {
+<span class="nc" id="L694">    m_MEstimates = value;</span>
+<span class="nc" id="L695">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String frequencyLimitTipText() {
+<span class="nc" id="L703">    return &quot;Attributes with a frequency in the train set below &quot;</span>
+           + &quot;this value aren't used as parents.&quot;;
+  }
+
+  /**
+   * Sets the frequency limit
+   *
+   * @param f the frequency limit
+   */
+  public void setFrequencyLimit(int f) {
+<span class="nc" id="L713">    m_Limit = f;</span>
+<span class="nc" id="L714">  }</span>
+
+  /**
+   * Gets the frequency limit.
+   *
+   * @return the frequency limit
+   */
+  public int getFrequencyLimit() {
+<span class="nc" id="L722">    return m_Limit;</span>
+  }
+
+  /**
+   * Returns a description of the classifier.
+   *
+   * @return a description of the classifier as a string.
+   */
+  public String toString() {
+ 
+<span class="fc" id="L732">    StringBuffer text = new StringBuffer();</span>
+        
+<span class="fc" id="L734">    text.append(&quot;The AODE Classifier&quot;);</span>
+<span class="pc bpc" id="L735" title="1 of 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="fc" id="L736">       text.append(&quot;: No model built yet.&quot;);</span>
+    } else {
+       try {
+<span class="nc bnc" id="L739" title="All 2 branches missed.">          for (int i = 0; i &lt; m_NumClasses; i++) {</span>
+             // print to string, the prior probabilities of class values
+<span class="nc" id="L741">             text.append(&quot;\nClass &quot; + m_Instances.classAttribute().value(i) +</span>
+<span class="nc" id="L742">                       &quot;: Prior probability = &quot; + Utils.</span>
+<span class="nc" id="L743">                          doubleToString(((m_ClassCounts[i] + 1)</span>
+<span class="nc" id="L744">                       /(m_SumInstances + m_NumClasses)), 4, 2)+&quot;\n\n&quot;);</span>
+          }
+                
+<span class="nc" id="L747">          text.append(&quot;Dataset: &quot; + m_Instances.relationName() + &quot;\n&quot;</span>
+<span class="nc" id="L748">                      + &quot;Instances: &quot; + m_NumInstances + &quot;\n&quot;</span>
+<span class="nc" id="L749">                      + &quot;Attributes: &quot; + m_NumAttributes + &quot;\n&quot;</span>
+<span class="nc" id="L750">		      + &quot;Frequency limit for superParents: &quot; + m_Limit + &quot;\n&quot;);</span>
+<span class="nc" id="L751">          text.append(&quot;Correction: &quot;);</span>
+<span class="nc bnc" id="L752" title="All 2 branches missed.">          if (!m_MEstimates)</span>
+<span class="nc" id="L753">             text.append(&quot;laplace\n&quot;);</span>
+          else
+<span class="nc" id="L755">             text.append(&quot;m-estimate (m=&quot; + m_Weight + &quot;)\n&quot;);</span>
+                
+<span class="nc" id="L757">       } catch (Exception ex) {</span>
+<span class="nc" id="L758">          text.append(ex.getMessage());</span>
+       }
+    }
+        
+<span class="fc" id="L762">    return text.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L771">    return RevisionUtils.extract(&quot;$Revision: 5516 $&quot;);</span>
+  }
+    
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L780">    runClassifier(new AODE(), argv);</span>
+<span class="nc" id="L781">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

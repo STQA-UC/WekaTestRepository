@@ -1,0 +1,1141 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>CfsSubsetEval.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">CfsSubsetEval.java</span></div><h1>CfsSubsetEval.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    CfsSubsetEval.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package  weka.attributeSelection;
+
+import weka.core.Capabilities;
+import weka.core.ContingencyTables;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.supervised.attribute.Discretize;
+
+import java.util.BitSet;
+import java.util.Enumeration;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * CfsSubsetEval :&lt;br/&gt;
+ * &lt;br/&gt;
+ * Evaluates the worth of a subset of attributes by considering the individual predictive ability of each feature along with the degree of redundancy between them.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Subsets of features that are highly correlated with the class while having low intercorrelation are preferred.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * M. A. Hall (1998). Correlation-based Feature Subset Selection for Machine Learning. Hamilton, New Zealand.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;phdthesis{Hall1998,
+ *    address = {Hamilton, New Zealand},
+ *    author = {M. A. Hall},
+ *    school = {University of Waikato},
+ *    title = {Correlation-based Feature Subset Selection for Machine Learning},
+ *    year = {1998}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Treat missing values as a separate value.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -L
+ *  Don't include locally predictive attributes.&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version $Revision: 6133 $
+ * @see Discretize
+ */
+public class CfsSubsetEval
+  extends ASEvaluation
+  implements SubsetEvaluator, 
+             OptionHandler, 
+             TechnicalInformationHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = 747878400813276317L;
+
+  /** The training instances */
+  private Instances m_trainInstances;
+  /** Discretise attributes when class in nominal */
+  private Discretize m_disTransform;
+  /** The class index */
+  private int m_classIndex;
+  /** Is the class numeric */
+  private boolean m_isNumeric;
+  /** Number of attributes in the training data */
+  private int m_numAttribs;
+  /** Number of instances in the training data */
+  private int m_numInstances;
+  /** Treat missing values as separate values */
+  private boolean m_missingSeparate;
+  /** Include locally predicitive attributes */
+  private boolean m_locallyPredictive;
+  /** Holds the matrix of attribute correlations */
+  //  private Matrix m_corr_matrix;
+  private float [][] m_corr_matrix;
+  /** Standard deviations of attributes (when using pearsons correlation) */
+  private double[] m_std_devs;
+  /** Threshold for admitting locally predictive features */
+  private double m_c_Threshold;
+
+  /**
+   * Returns a string describing this attribute evaluator
+   * @return a description of the evaluator suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L127">    return &quot;CfsSubsetEval :\n\nEvaluates the worth of a subset of attributes &quot;</span>
+      +&quot;by considering the individual predictive ability of each feature &quot;
+      +&quot;along with the degree of redundancy between them.\n\n&quot;
+      +&quot;Subsets of features that are highly correlated with the class &quot;
+      +&quot;while having low intercorrelation are preferred.\n\n&quot;
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L133">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation        result;
+    
+<span class="nc" id="L146">    result = new TechnicalInformation(Type.PHDTHESIS);</span>
+<span class="nc" id="L147">    result.setValue(Field.AUTHOR, &quot;M. A. Hall&quot;);</span>
+<span class="nc" id="L148">    result.setValue(Field.YEAR, &quot;1998&quot;);</span>
+<span class="nc" id="L149">    result.setValue(Field.TITLE, &quot;Correlation-based Feature Subset Selection for Machine Learning&quot;);</span>
+<span class="nc" id="L150">    result.setValue(Field.SCHOOL, &quot;University of Waikato&quot;);</span>
+<span class="nc" id="L151">    result.setValue(Field.ADDRESS, &quot;Hamilton, New Zealand&quot;);</span>
+    
+<span class="nc" id="L153">    return result;</span>
+  }
+
+  /**
+   * Constructor
+   */
+<span class="fc" id="L159">  public CfsSubsetEval () {</span>
+<span class="fc" id="L160">    resetOptions();</span>
+<span class="fc" id="L161">  }</span>
+
+
+  /**
+   * Returns an enumeration describing the available options.
+   * @return an enumeration of all the available options.
+   *
+   **/
+  public Enumeration listOptions () {
+<span class="nc" id="L170">    Vector newVector = new Vector(3);</span>
+<span class="nc" id="L171">    newVector.addElement(new Option(&quot;\tTreat missing values as a separate &quot; </span>
+<span class="nc" id="L172">                                    + &quot;value.&quot;, &quot;M&quot;, 0, &quot;-M&quot;));</span>
+<span class="nc" id="L173">    newVector.addElement(new Option(&quot;\tDon't include locally predictive attributes&quot; </span>
+<span class="nc" id="L174">                                    + &quot;.&quot;, &quot;L&quot;, 0, &quot;-L&quot;));</span>
+<span class="nc" id="L175">    return  newVector.elements();</span>
+  }
+
+
+  /**
+   * Parses and sets a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  Treat missing values as a separate value.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -L
+   *  Don't include locally predictive attributes.&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   *
+   **/
+  public void setOptions (String[] options)
+    throws Exception {
+
+<span class="fc" id="L200">    resetOptions();</span>
+<span class="fc" id="L201">    setMissingSeparate(Utils.getFlag('M', options));</span>
+<span class="pc bpc" id="L202" title="1 of 2 branches missed.">    setLocallyPredictive(!Utils.getFlag('L', options));</span>
+<span class="fc" id="L203">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String locallyPredictiveTipText() {
+<span class="nc" id="L211">    return &quot;Identify locally predictive attributes. Iteratively adds &quot;</span>
+      +&quot;attributes with the highest correlation with the class as long &quot;
+      +&quot;as there is not already an attribute in the subset that has a &quot;
+      +&quot;higher correlation with the attribute in question&quot;;
+  }
+
+  /**
+   * Include locally predictive attributes
+   *
+   * @param b true or false
+   */
+  public void setLocallyPredictive (boolean b) {
+<span class="fc" id="L223">    m_locallyPredictive = b;</span>
+<span class="fc" id="L224">  }</span>
+
+
+  /**
+   * Return true if including locally predictive attributes
+   *
+   * @return true if locally predictive attributes are to be used
+   */
+  public boolean getLocallyPredictive () {
+<span class="fc" id="L233">    return  m_locallyPredictive;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String missingSeparateTipText() {
+<span class="nc" id="L242">    return &quot;Treat missing as a separate value. Otherwise, counts for missing &quot;</span>
+      +&quot;values are distributed across other values in proportion to their &quot;
+      +&quot;frequency.&quot;;
+  }
+
+  /**
+   * Treat missing as a separate value
+   *
+   * @param b true or false
+   */
+  public void setMissingSeparate (boolean b) {
+<span class="fc" id="L253">    m_missingSeparate = b;</span>
+<span class="fc" id="L254">  }</span>
+
+
+  /**
+   * Return true is missing is treated as a separate value
+   *
+   * @return true if missing is to be treated as a separate value
+   */
+  public boolean getMissingSeparate () {
+<span class="fc" id="L263">    return  m_missingSeparate;</span>
+  }
+
+
+  /**
+   * Gets the current settings of CfsSubsetEval
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions () {
+<span class="fc" id="L273">    String[] options = new String[2];</span>
+<span class="fc" id="L274">    int current = 0;</span>
+
+<span class="pc bpc" id="L276" title="1 of 2 branches missed.">    if (getMissingSeparate()) {</span>
+<span class="nc" id="L277">      options[current++] = &quot;-M&quot;;</span>
+    }
+
+<span class="pc bpc" id="L280" title="1 of 2 branches missed.">    if (!getLocallyPredictive()) {</span>
+<span class="nc" id="L281">      options[current++] = &quot;-L&quot;;</span>
+    }
+
+<span class="pc bfc" id="L284" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc" id="L285">      options[current++] = &quot;&quot;;</span>
+    }
+
+<span class="fc" id="L288">    return  options;</span>
+  }
+
+  /**
+   * Returns the capabilities of this evaluator.
+   *
+   * @return            the capabilities of this evaluator
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L298">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L299">    result.disableAll();</span>
+    
+    // attributes
+<span class="fc" id="L302">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L303">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L304">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L305">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="fc" id="L308">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L309">    result.enable(Capability.NUMERIC_CLASS);</span>
+<span class="fc" id="L310">    result.enable(Capability.DATE_CLASS);</span>
+<span class="fc" id="L311">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="fc" id="L313">    return result;</span>
+  }
+
+  /**
+   * Generates a attribute evaluator. Has to initialize all fields of the 
+   * evaluator that are not being set via options.
+   *
+   * CFS also discretises attributes (if necessary) and initializes
+   * the correlation matrix.
+   *
+   * @param data set of instances serving as training data 
+   * @throws Exception if the evaluator has not been 
+   * generated successfully
+   */
+  public void buildEvaluator (Instances data)
+    throws Exception {
+
+    // can evaluator handle data?
+<span class="fc" id="L331">    getCapabilities().testWithFail(data);</span>
+
+<span class="fc" id="L333">    m_trainInstances = new Instances(data);</span>
+<span class="fc" id="L334">    m_trainInstances.deleteWithMissingClass();</span>
+<span class="fc" id="L335">    m_classIndex = m_trainInstances.classIndex();</span>
+<span class="fc" id="L336">    m_numAttribs = m_trainInstances.numAttributes();</span>
+<span class="fc" id="L337">    m_numInstances = m_trainInstances.numInstances();</span>
+<span class="fc" id="L338">    m_isNumeric = m_trainInstances.attribute(m_classIndex).isNumeric();</span>
+
+<span class="fc bfc" id="L340" title="All 2 branches covered.">    if (!m_isNumeric) {</span>
+<span class="fc" id="L341">      m_disTransform = new Discretize();</span>
+<span class="fc" id="L342">      m_disTransform.setUseBetterEncoding(true);</span>
+<span class="fc" id="L343">      m_disTransform.setInputFormat(m_trainInstances);</span>
+<span class="fc" id="L344">      m_trainInstances = Filter.useFilter(m_trainInstances, m_disTransform);</span>
+    }
+
+<span class="fc" id="L347">    m_std_devs = new double[m_numAttribs];</span>
+<span class="fc" id="L348">    m_corr_matrix = new float [m_numAttribs][];</span>
+<span class="fc bfc" id="L349" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="fc" id="L350">      m_corr_matrix[i] = new float [i+1];</span>
+    }
+
+<span class="fc bfc" id="L353" title="All 2 branches covered.">    for (int i = 0; i &lt; m_corr_matrix.length; i++) {</span>
+<span class="fc" id="L354">      m_corr_matrix[i][i] = 1.0f;</span>
+<span class="fc" id="L355">      m_std_devs[i] = 1.0;</span>
+    }
+
+<span class="fc bfc" id="L358" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="fc bfc" id="L359" title="All 2 branches covered.">      for (int j = 0; j &lt; m_corr_matrix[i].length - 1; j++) {</span>
+<span class="fc" id="L360">        m_corr_matrix[i][j] = -999;</span>
+      }
+    }
+<span class="fc" id="L363">  }</span>
+
+
+  /**
+   * evaluates a subset of attributes
+   *
+   * @param subset a bitset representing the attribute subset to be 
+   * evaluated 
+   * @return the merit
+   * @throws Exception if the subset could not be evaluated
+   */
+  public double evaluateSubset (BitSet subset)
+    throws Exception {
+<span class="fc" id="L376">    double num = 0.0;</span>
+<span class="fc" id="L377">    double denom = 0.0;</span>
+    float corr;
+    int larger, smaller;
+    // do numerator
+<span class="fc bfc" id="L381" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="fc bfc" id="L382" title="All 2 branches covered.">      if (i != m_classIndex) {</span>
+<span class="fc bfc" id="L383" title="All 2 branches covered.">        if (subset.get(i)) {</span>
+<span class="fc bfc" id="L384" title="All 2 branches covered.">          if (i &gt; m_classIndex) {</span>
+<span class="fc" id="L385">            larger = i; smaller = m_classIndex;</span>
+          } else {
+<span class="fc" id="L387">            smaller = i; larger = m_classIndex;</span>
+          }
+          /*      int larger = (i &gt; m_classIndex ? i : m_classIndex);
+                  int smaller = (i &gt; m_classIndex ? m_classIndex : i); */
+<span class="fc bfc" id="L391" title="All 2 branches covered.">          if (m_corr_matrix[larger][smaller] == -999) {</span>
+<span class="fc" id="L392">            corr = correlate(i, m_classIndex);</span>
+<span class="fc" id="L393">            m_corr_matrix[larger][smaller] = corr;</span>
+<span class="fc" id="L394">            num += (m_std_devs[i] * corr);</span>
+          }
+          else {
+<span class="fc" id="L397">            num += (m_std_devs[i] * m_corr_matrix[larger][smaller]);</span>
+          }
+        }
+      }
+    }
+
+    // do denominator
+<span class="fc bfc" id="L404" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="fc bfc" id="L405" title="All 2 branches covered.">      if (i != m_classIndex) {</span>
+<span class="fc bfc" id="L406" title="All 2 branches covered.">        if (subset.get(i)) {</span>
+<span class="fc" id="L407">          denom += (1.0 * m_std_devs[i] * m_std_devs[i]);</span>
+
+<span class="fc bfc" id="L409" title="All 2 branches covered.">          for (int j = 0; j &lt; m_corr_matrix[i].length - 1; j++) {</span>
+<span class="fc bfc" id="L410" title="All 2 branches covered.">            if (subset.get(j)) {</span>
+<span class="fc bfc" id="L411" title="All 2 branches covered.">              if (m_corr_matrix[i][j] == -999) {</span>
+<span class="fc" id="L412">                corr = correlate(i, j);</span>
+<span class="fc" id="L413">                m_corr_matrix[i][j] = corr;</span>
+<span class="fc" id="L414">                denom += (2.0 * m_std_devs[i] * m_std_devs[j] * corr);</span>
+              }
+              else {
+<span class="fc" id="L417">                denom += (2.0 * m_std_devs[i] * m_std_devs[j] * m_corr_matrix[i][j]);</span>
+              }
+            }
+          }
+        }
+      }
+    }
+
+<span class="pc bpc" id="L425" title="1 of 2 branches missed.">    if (denom &lt; 0.0) {</span>
+<span class="nc" id="L426">      denom *= -1.0;</span>
+    }
+
+<span class="fc bfc" id="L429" title="All 2 branches covered.">    if (denom == 0.0) {</span>
+<span class="fc" id="L430">      return  (0.0);</span>
+    }
+
+<span class="fc" id="L433">    double merit = (num/Math.sqrt(denom));</span>
+
+<span class="pc bpc" id="L435" title="1 of 2 branches missed.">    if (merit &lt; 0.0) {</span>
+<span class="nc" id="L436">      merit *= -1.0;</span>
+    }
+
+<span class="fc" id="L439">    return  merit;</span>
+  }
+
+
+  private float correlate (int att1, int att2) {
+<span class="fc bfc" id="L444" title="All 2 branches covered.">    if (!m_isNumeric) {</span>
+<span class="fc" id="L445">      return  (float) symmUncertCorr(att1, att2);</span>
+    }
+
+<span class="fc" id="L448">    boolean att1_is_num = (m_trainInstances.attribute(att1).isNumeric());</span>
+<span class="fc" id="L449">    boolean att2_is_num = (m_trainInstances.attribute(att2).isNumeric());</span>
+
+<span class="pc bpc" id="L451" title="1 of 4 branches missed.">    if (att1_is_num &amp;&amp; att2_is_num) {</span>
+<span class="fc" id="L452">      return  (float) num_num(att1, att2);</span>
+    }
+<span class="fc bfc" id="L454" title="All 2 branches covered.">    else {if (att2_is_num) {</span>
+<span class="fc" id="L455">      return  (float) num_nom2(att1, att2);</span>
+    }
+<span class="pc bpc" id="L457" title="1 of 2 branches missed.">    else {if (att1_is_num) {</span>
+<span class="nc" id="L458">      return  (float) num_nom2(att2, att1);</span>
+    }
+    }
+    }
+
+<span class="fc" id="L463">    return (float) nom_nom(att1, att2);</span>
+  }
+
+
+  private double symmUncertCorr (int att1, int att2) {
+    int i, j, k, ii, jj;
+    int ni, nj;
+<span class="fc" id="L470">    double sum = 0.0;</span>
+    double sumi[], sumj[];
+    double counts[][];
+    Instance inst;
+    double corr_measure;
+<span class="fc" id="L475">    boolean flag = false;</span>
+<span class="fc" id="L476">    double temp = 0.0;</span>
+
+<span class="pc bpc" id="L478" title="1 of 4 branches missed.">    if (att1 == m_classIndex || att2 == m_classIndex) {</span>
+<span class="fc" id="L479">      flag = true;</span>
+    }
+
+<span class="fc" id="L482">    ni = m_trainInstances.attribute(att1).numValues() + 1;</span>
+<span class="fc" id="L483">    nj = m_trainInstances.attribute(att2).numValues() + 1;</span>
+<span class="fc" id="L484">    counts = new double[ni][nj];</span>
+<span class="fc" id="L485">    sumi = new double[ni];</span>
+<span class="fc" id="L486">    sumj = new double[nj];</span>
+
+<span class="fc bfc" id="L488" title="All 2 branches covered.">    for (i = 0; i &lt; ni; i++) {</span>
+<span class="fc" id="L489">      sumi[i] = 0.0;</span>
+
+<span class="fc bfc" id="L491" title="All 2 branches covered.">      for (j = 0; j &lt; nj; j++) {</span>
+<span class="fc" id="L492">        sumj[j] = 0.0;</span>
+<span class="fc" id="L493">        counts[i][j] = 0.0;</span>
+      }
+    }
+
+    // Fill the contingency table
+<span class="fc bfc" id="L498" title="All 2 branches covered.">    for (i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="fc" id="L499">      inst = m_trainInstances.instance(i);</span>
+
+<span class="fc bfc" id="L501" title="All 2 branches covered.">      if (inst.isMissing(att1)) {</span>
+<span class="fc" id="L502">        ii = ni - 1;</span>
+      }
+      else {
+<span class="fc" id="L505">        ii = (int)inst.value(att1);</span>
+      }
+
+<span class="fc bfc" id="L508" title="All 2 branches covered.">      if (inst.isMissing(att2)) {</span>
+<span class="fc" id="L509">        jj = nj - 1;</span>
+      }
+      else {
+<span class="fc" id="L512">        jj = (int)inst.value(att2);</span>
+      }
+
+<span class="fc" id="L515">      counts[ii][jj]++;</span>
+    }
+
+    // get the row totals
+<span class="fc bfc" id="L519" title="All 2 branches covered.">    for (i = 0; i &lt; ni; i++) {</span>
+<span class="fc" id="L520">      sumi[i] = 0.0;</span>
+
+<span class="fc bfc" id="L522" title="All 2 branches covered.">      for (j = 0; j &lt; nj; j++) {</span>
+<span class="fc" id="L523">        sumi[i] += counts[i][j];</span>
+<span class="fc" id="L524">        sum += counts[i][j];</span>
+      }
+    }
+
+    // get the column totals
+<span class="fc bfc" id="L529" title="All 2 branches covered.">    for (j = 0; j &lt; nj; j++) {</span>
+<span class="fc" id="L530">      sumj[j] = 0.0;</span>
+
+<span class="fc bfc" id="L532" title="All 2 branches covered.">      for (i = 0; i &lt; ni; i++) {</span>
+<span class="fc" id="L533">        sumj[j] += counts[i][j];</span>
+      }
+    }
+
+    // distribute missing counts
+<span class="pc bpc" id="L538" title="1 of 2 branches missed.">    if (!m_missingSeparate &amp;&amp; </span>
+<span class="fc bfc" id="L539" title="All 2 branches covered.">        (sumi[ni-1] &lt; m_numInstances) &amp;&amp; </span>
+<span class="pc bpc" id="L540" title="1 of 2 branches missed.">        (sumj[nj-1] &lt; m_numInstances)) {</span>
+<span class="fc" id="L541">      double[] i_copy = new double[sumi.length];</span>
+<span class="fc" id="L542">      double[] j_copy = new double[sumj.length];</span>
+<span class="fc" id="L543">      double[][] counts_copy = new double[sumi.length][sumj.length];</span>
+
+<span class="fc bfc" id="L545" title="All 2 branches covered.">      for (i = 0; i &lt; ni; i++) {</span>
+<span class="fc" id="L546">        System.arraycopy(counts[i], 0, counts_copy[i], 0, sumj.length);</span>
+      }
+
+<span class="fc" id="L549">      System.arraycopy(sumi, 0, i_copy, 0, sumi.length);</span>
+<span class="fc" id="L550">      System.arraycopy(sumj, 0, j_copy, 0, sumj.length);</span>
+<span class="fc" id="L551">      double total_missing = </span>
+<span class="fc" id="L552">        (sumi[ni - 1] + sumj[nj - 1] - counts[ni - 1][nj - 1]);</span>
+
+      // do the missing i's
+<span class="fc bfc" id="L555" title="All 2 branches covered.">      if (sumi[ni - 1] &gt; 0.0) {</span>
+<span class="fc bfc" id="L556" title="All 2 branches covered.">        for (j = 0; j &lt; nj - 1; j++) {</span>
+<span class="fc bfc" id="L557" title="All 2 branches covered.">          if (counts[ni - 1][j] &gt; 0.0) {</span>
+<span class="fc bfc" id="L558" title="All 2 branches covered.">            for (i = 0; i &lt; ni - 1; i++) {</span>
+<span class="fc" id="L559">              temp = ((i_copy[i]/(sum - i_copy[ni - 1]))*counts[ni - 1][j]);</span>
+<span class="fc" id="L560">              counts[i][j] += temp;</span>
+<span class="fc" id="L561">              sumi[i] += temp;</span>
+            }
+
+<span class="fc" id="L564">            counts[ni - 1][j] = 0.0;</span>
+          }
+        }
+      }
+
+<span class="fc" id="L569">      sumi[ni - 1] = 0.0;</span>
+
+      // do the missing j's
+<span class="fc bfc" id="L572" title="All 2 branches covered.">      if (sumj[nj - 1] &gt; 0.0) {</span>
+<span class="fc bfc" id="L573" title="All 2 branches covered.">        for (i = 0; i &lt; ni - 1; i++) {</span>
+<span class="fc bfc" id="L574" title="All 2 branches covered.">          if (counts[i][nj - 1] &gt; 0.0) {</span>
+<span class="fc bfc" id="L575" title="All 2 branches covered.">            for (j = 0; j &lt; nj - 1; j++) {</span>
+<span class="fc" id="L576">              temp = ((j_copy[j]/(sum - j_copy[nj - 1]))*counts[i][nj - 1]);</span>
+<span class="fc" id="L577">              counts[i][j] += temp;</span>
+<span class="fc" id="L578">              sumj[j] += temp;</span>
+            }
+
+<span class="fc" id="L581">            counts[i][nj - 1] = 0.0;</span>
+          }
+        }
+      }
+
+<span class="fc" id="L586">      sumj[nj - 1] = 0.0;</span>
+
+      // do the both missing
+<span class="pc bpc" id="L589" title="1 of 4 branches missed.">      if (counts[ni - 1][nj - 1] &gt; 0.0 &amp;&amp; total_missing != sum) {</span>
+<span class="fc bfc" id="L590" title="All 2 branches covered.">        for (i = 0; i &lt; ni - 1; i++) {</span>
+<span class="fc bfc" id="L591" title="All 2 branches covered.">          for (j = 0; j &lt; nj - 1; j++) {</span>
+<span class="fc" id="L592">            temp = (counts_copy[i][j]/(sum - total_missing)) * </span>
+<span class="fc" id="L593">              counts_copy[ni - 1][nj - 1];</span>
+            
+<span class="fc" id="L595">            counts[i][j] += temp;</span>
+<span class="fc" id="L596">            sumi[i] += temp;</span>
+<span class="fc" id="L597">            sumj[j] += temp;</span>
+          }
+        }
+
+<span class="fc" id="L601">        counts[ni - 1][nj - 1] = 0.0;</span>
+      }
+    }
+
+<span class="fc" id="L605">    corr_measure = ContingencyTables.symmetricalUncertainty(counts);</span>
+
+<span class="fc bfc" id="L607" title="All 2 branches covered.">    if (Utils.eq(corr_measure, 0.0)) {</span>
+<span class="fc bfc" id="L608" title="All 2 branches covered.">      if (flag == true) {</span>
+<span class="fc" id="L609">        return  (0.0);</span>
+      }
+      else {
+<span class="fc" id="L612">        return  (1.0);</span>
+      }
+    }
+    else {
+<span class="fc" id="L616">      return  (corr_measure);</span>
+    }
+  }
+
+
+  private double num_num (int att1, int att2) {
+    int i;
+    Instance inst;
+<span class="fc" id="L624">    double r, diff1, diff2, num = 0.0, sx = 0.0, sy = 0.0;</span>
+<span class="fc" id="L625">    double mx = m_trainInstances.meanOrMode(m_trainInstances.attribute(att1));</span>
+<span class="fc" id="L626">    double my = m_trainInstances.meanOrMode(m_trainInstances.attribute(att2));</span>
+
+<span class="fc bfc" id="L628" title="All 2 branches covered.">    for (i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="fc" id="L629">      inst = m_trainInstances.instance(i);</span>
+<span class="pc bpc" id="L630" title="1 of 2 branches missed.">      diff1 = (inst.isMissing(att1))? 0.0 : (inst.value(att1) - mx);</span>
+<span class="pc bpc" id="L631" title="1 of 2 branches missed.">      diff2 = (inst.isMissing(att2))? 0.0 : (inst.value(att2) - my);</span>
+<span class="fc" id="L632">      num += (diff1*diff2);</span>
+<span class="fc" id="L633">      sx += (diff1*diff1);</span>
+<span class="fc" id="L634">      sy += (diff2*diff2);</span>
+    }
+
+<span class="pc bpc" id="L637" title="1 of 2 branches missed.">    if (sx != 0.0) {</span>
+<span class="pc bpc" id="L638" title="1 of 2 branches missed.">      if (m_std_devs[att1] == 1.0) {</span>
+<span class="fc" id="L639">        m_std_devs[att1] = Math.sqrt((sx/m_numInstances));</span>
+      }
+    }
+
+<span class="pc bpc" id="L643" title="1 of 2 branches missed.">    if (sy != 0.0) {</span>
+<span class="pc bpc" id="L644" title="1 of 2 branches missed.">      if (m_std_devs[att2] == 1.0) {</span>
+<span class="fc" id="L645">        m_std_devs[att2] = Math.sqrt((sy/m_numInstances));</span>
+      }
+    }
+
+<span class="pc bpc" id="L649" title="1 of 2 branches missed.">    if ((sx*sy) &gt; 0.0) {</span>
+<span class="fc" id="L650">      r = (num/(Math.sqrt(sx*sy)));</span>
+<span class="fc bfc" id="L651" title="All 2 branches covered.">      return  ((r &lt; 0.0)? -r : r);</span>
+    }
+    else {
+<span class="nc bnc" id="L654" title="All 4 branches missed.">      if (att1 != m_classIndex &amp;&amp; att2 != m_classIndex) {</span>
+<span class="nc" id="L655">        return  1.0;</span>
+      }
+      else {
+<span class="nc" id="L658">        return  0.0;</span>
+      }
+    }
+  }
+
+
+  private double num_nom2 (int att1, int att2) {
+    int i, ii, k;
+    double temp;
+    Instance inst;
+<span class="fc" id="L668">    int mx = (int)m_trainInstances.</span>
+<span class="fc" id="L669">      meanOrMode(m_trainInstances.attribute(att1));</span>
+<span class="fc" id="L670">    double my = m_trainInstances.</span>
+<span class="fc" id="L671">      meanOrMode(m_trainInstances.attribute(att2));</span>
+<span class="fc" id="L672">    double stdv_num = 0.0;</span>
+    double diff1, diff2;
+<span class="fc" id="L674">    double r = 0.0, rr;</span>
+<span class="pc bpc" id="L675" title="1 of 2 branches missed.">    int nx = (!m_missingSeparate) </span>
+<span class="fc" id="L676">      ? m_trainInstances.attribute(att1).numValues() </span>
+<span class="nc" id="L677">      : m_trainInstances.attribute(att1).numValues() + 1;</span>
+
+<span class="fc" id="L679">    double[] prior_nom = new double[nx];</span>
+<span class="fc" id="L680">    double[] stdvs_nom = new double[nx];</span>
+<span class="fc" id="L681">    double[] covs = new double[nx];</span>
+
+<span class="fc bfc" id="L683" title="All 2 branches covered.">    for (i = 0; i &lt; nx; i++) {</span>
+<span class="fc" id="L684">      stdvs_nom[i] = covs[i] = prior_nom[i] = 0.0;</span>
+    }
+
+    // calculate frequencies (and means) of the values of the nominal 
+    // attribute
+<span class="fc bfc" id="L689" title="All 2 branches covered.">    for (i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="fc" id="L690">      inst = m_trainInstances.instance(i);</span>
+
+<span class="pc bpc" id="L692" title="1 of 2 branches missed.">      if (inst.isMissing(att1)) {</span>
+<span class="nc bnc" id="L693" title="All 2 branches missed.">        if (!m_missingSeparate) {</span>
+<span class="nc" id="L694">          ii = mx;</span>
+        }
+        else {
+<span class="nc" id="L697">          ii = nx - 1;</span>
+        }
+      }
+      else {
+<span class="fc" id="L701">        ii = (int)inst.value(att1);</span>
+      }
+
+      // increment freq for nominal
+<span class="fc" id="L705">      prior_nom[ii]++;</span>
+    }
+
+<span class="fc bfc" id="L708" title="All 2 branches covered.">    for (k = 0; k &lt; m_numInstances; k++) {</span>
+<span class="fc" id="L709">      inst = m_trainInstances.instance(k);</span>
+      // std dev of numeric attribute
+<span class="pc bpc" id="L711" title="1 of 2 branches missed.">      diff2 = (inst.isMissing(att2))? 0.0 : (inst.value(att2) - my);</span>
+<span class="fc" id="L712">      stdv_num += (diff2*diff2);</span>
+
+      // 
+<span class="fc bfc" id="L715" title="All 2 branches covered.">      for (i = 0; i &lt; nx; i++) {</span>
+<span class="pc bpc" id="L716" title="1 of 2 branches missed.">        if (inst.isMissing(att1)) {</span>
+<span class="nc bnc" id="L717" title="All 2 branches missed.">          if (!m_missingSeparate) {</span>
+<span class="nc bnc" id="L718" title="All 2 branches missed.">            temp = (i == mx)? 1.0 : 0.0;</span>
+          }
+          else {
+<span class="nc bnc" id="L721" title="All 2 branches missed.">            temp = (i == (nx - 1))? 1.0 : 0.0;</span>
+          }
+        }
+        else {
+<span class="fc bfc" id="L725" title="All 2 branches covered.">          temp = (i == inst.value(att1))? 1.0 : 0.0;</span>
+        }
+
+<span class="fc" id="L728">        diff1 = (temp - (prior_nom[i]/m_numInstances));</span>
+<span class="fc" id="L729">        stdvs_nom[i] += (diff1*diff1);</span>
+<span class="fc" id="L730">        covs[i] += (diff1*diff2);</span>
+      }
+    }
+
+    // calculate weighted correlation
+<span class="fc bfc" id="L735" title="All 2 branches covered.">    for (i = 0, temp = 0.0; i &lt; nx; i++) {</span>
+      // calculate the weighted variance of the nominal
+<span class="fc" id="L737">      temp += ((prior_nom[i]/m_numInstances)*(stdvs_nom[i]/m_numInstances));</span>
+
+<span class="pc bpc" id="L739" title="1 of 2 branches missed.">      if ((stdvs_nom[i]*stdv_num) &gt; 0.0) {</span>
+        //System.out.println(&quot;Stdv :&quot;+stdvs_nom[i]);
+<span class="fc" id="L741">        rr = (covs[i]/(Math.sqrt(stdvs_nom[i]*stdv_num)));</span>
+
+<span class="fc bfc" id="L743" title="All 2 branches covered.">        if (rr &lt; 0.0) {</span>
+<span class="fc" id="L744">          rr = -rr;</span>
+        }
+
+<span class="fc" id="L747">        r += ((prior_nom[i]/m_numInstances)*rr);</span>
+      }
+      /* if there is zero variance for the numeric att at a specific 
+         level of the catergorical att then if neither is the class then 
+         make this correlation at this level maximally bad i.e. 1.0. 
+         If either is the class then maximally bad correlation is 0.0 */
+<span class="nc bnc" id="L753" title="All 4 branches missed.">      else {if (att1 != m_classIndex &amp;&amp; att2 != m_classIndex) {</span>
+<span class="nc" id="L754">        r += ((prior_nom[i]/m_numInstances)*1.0);</span>
+      }
+      }
+    }
+
+    // set the standard deviations for these attributes if necessary
+    // if ((att1 != classIndex) &amp;&amp; (att2 != classIndex)) // =============
+<span class="pc bpc" id="L761" title="1 of 2 branches missed.">    if (temp != 0.0) {</span>
+<span class="pc bpc" id="L762" title="1 of 2 branches missed.">      if (m_std_devs[att1] == 1.0) {</span>
+<span class="fc" id="L763">        m_std_devs[att1] = Math.sqrt(temp);</span>
+      }
+    }
+
+<span class="pc bpc" id="L767" title="1 of 2 branches missed.">    if (stdv_num != 0.0) {</span>
+<span class="fc bfc" id="L768" title="All 2 branches covered.">      if (m_std_devs[att2] == 1.0) {</span>
+<span class="fc" id="L769">        m_std_devs[att2] = Math.sqrt((stdv_num/m_numInstances));</span>
+      }
+    }
+
+<span class="pc bpc" id="L773" title="1 of 2 branches missed.">    if (r == 0.0) {</span>
+<span class="nc bnc" id="L774" title="All 4 branches missed.">      if (att1 != m_classIndex &amp;&amp; att2 != m_classIndex) {</span>
+<span class="nc" id="L775">        r = 1.0;</span>
+      }
+    }
+
+<span class="fc" id="L779">    return  r;</span>
+  }
+
+
+  private double nom_nom (int att1, int att2) {
+    int i, j, ii, jj, z;
+    double temp1, temp2;
+    Instance inst;
+<span class="fc" id="L787">    int mx = (int)m_trainInstances.</span>
+<span class="fc" id="L788">      meanOrMode(m_trainInstances.attribute(att1));</span>
+<span class="fc" id="L789">    int my = (int)m_trainInstances.</span>
+<span class="fc" id="L790">      meanOrMode(m_trainInstances.attribute(att2));</span>
+    double diff1, diff2;
+<span class="fc" id="L792">    double r = 0.0, rr;</span>
+<span class="pc bpc" id="L793" title="1 of 2 branches missed.">    int nx = (!m_missingSeparate) </span>
+<span class="fc" id="L794">      ? m_trainInstances.attribute(att1).numValues() </span>
+<span class="nc" id="L795">      : m_trainInstances.attribute(att1).numValues() + 1;</span>
+
+<span class="pc bpc" id="L797" title="1 of 2 branches missed.">    int ny = (!m_missingSeparate)</span>
+<span class="fc" id="L798">      ? m_trainInstances.attribute(att2).numValues() </span>
+<span class="nc" id="L799">      : m_trainInstances.attribute(att2).numValues() + 1;</span>
+
+<span class="fc" id="L801">    double[][] prior_nom = new double[nx][ny];</span>
+<span class="fc" id="L802">    double[] sumx = new double[nx];</span>
+<span class="fc" id="L803">    double[] sumy = new double[ny];</span>
+<span class="fc" id="L804">    double[] stdvsx = new double[nx];</span>
+<span class="fc" id="L805">    double[] stdvsy = new double[ny];</span>
+<span class="fc" id="L806">    double[][] covs = new double[nx][ny];</span>
+
+<span class="fc bfc" id="L808" title="All 2 branches covered.">    for (i = 0; i &lt; nx; i++) {</span>
+<span class="fc" id="L809">      sumx[i] = stdvsx[i] = 0.0;</span>
+    }
+
+<span class="fc bfc" id="L812" title="All 2 branches covered.">    for (j = 0; j &lt; ny; j++) {</span>
+<span class="fc" id="L813">      sumy[j] = stdvsy[j] = 0.0;</span>
+    }
+
+<span class="fc bfc" id="L816" title="All 2 branches covered.">    for (i = 0; i &lt; nx; i++) {</span>
+<span class="fc bfc" id="L817" title="All 2 branches covered.">      for (j = 0; j &lt; ny; j++) {</span>
+<span class="fc" id="L818">        covs[i][j] = prior_nom[i][j] = 0.0;</span>
+      }
+    }
+
+    // calculate frequencies (and means) of the values of the nominal 
+    // attribute
+<span class="fc bfc" id="L824" title="All 2 branches covered.">    for (i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="fc" id="L825">      inst = m_trainInstances.instance(i);</span>
+
+<span class="pc bpc" id="L827" title="1 of 2 branches missed.">      if (inst.isMissing(att1)) {</span>
+<span class="nc bnc" id="L828" title="All 2 branches missed.">        if (!m_missingSeparate) {</span>
+<span class="nc" id="L829">          ii = mx;</span>
+        }
+        else {
+<span class="nc" id="L832">          ii = nx - 1;</span>
+        }
+      }
+      else {
+<span class="fc" id="L836">        ii = (int)inst.value(att1);</span>
+      }
+
+<span class="pc bpc" id="L839" title="1 of 2 branches missed.">      if (inst.isMissing(att2)) {</span>
+<span class="nc bnc" id="L840" title="All 2 branches missed.">        if (!m_missingSeparate) {</span>
+<span class="nc" id="L841">          jj = my;</span>
+        }
+        else {
+<span class="nc" id="L844">          jj = ny - 1;</span>
+        }
+      }
+      else {
+<span class="fc" id="L848">        jj = (int)inst.value(att2);</span>
+      }
+
+      // increment freq for nominal
+<span class="fc" id="L852">      prior_nom[ii][jj]++;</span>
+<span class="fc" id="L853">      sumx[ii]++;</span>
+<span class="fc" id="L854">      sumy[jj]++;</span>
+    }
+
+<span class="fc bfc" id="L857" title="All 2 branches covered.">    for (z = 0; z &lt; m_numInstances; z++) {</span>
+<span class="fc" id="L858">      inst = m_trainInstances.instance(z);</span>
+
+<span class="fc bfc" id="L860" title="All 2 branches covered.">      for (j = 0; j &lt; ny; j++) {</span>
+<span class="pc bpc" id="L861" title="1 of 2 branches missed.">        if (inst.isMissing(att2)) {</span>
+<span class="nc bnc" id="L862" title="All 2 branches missed.">          if (!m_missingSeparate) {</span>
+<span class="nc bnc" id="L863" title="All 2 branches missed.">            temp2 = (j == my)? 1.0 : 0.0;</span>
+          }
+          else {
+<span class="nc bnc" id="L866" title="All 2 branches missed.">            temp2 = (j == (ny - 1))? 1.0 : 0.0;</span>
+          }
+        }
+        else {
+<span class="fc bfc" id="L870" title="All 2 branches covered.">          temp2 = (j == inst.value(att2))? 1.0 : 0.0;</span>
+        }
+
+<span class="fc" id="L873">        diff2 = (temp2 - (sumy[j]/m_numInstances));</span>
+<span class="fc" id="L874">        stdvsy[j] += (diff2*diff2);</span>
+      }
+
+      // 
+<span class="fc bfc" id="L878" title="All 2 branches covered.">      for (i = 0; i &lt; nx; i++) {</span>
+<span class="pc bpc" id="L879" title="1 of 2 branches missed.">        if (inst.isMissing(att1)) {</span>
+<span class="nc bnc" id="L880" title="All 2 branches missed.">          if (!m_missingSeparate) {</span>
+<span class="nc bnc" id="L881" title="All 2 branches missed.">            temp1 = (i == mx)? 1.0 : 0.0;</span>
+          }
+          else {
+<span class="nc bnc" id="L884" title="All 2 branches missed.">            temp1 = (i == (nx - 1))? 1.0 : 0.0;</span>
+          }
+        }
+        else {
+<span class="fc bfc" id="L888" title="All 2 branches covered.">          temp1 = (i == inst.value(att1))? 1.0 : 0.0;</span>
+        }
+
+<span class="fc" id="L891">        diff1 = (temp1 - (sumx[i]/m_numInstances));</span>
+<span class="fc" id="L892">        stdvsx[i] += (diff1*diff1);</span>
+
+<span class="fc bfc" id="L894" title="All 2 branches covered.">        for (j = 0; j &lt; ny; j++) {</span>
+<span class="pc bpc" id="L895" title="1 of 2 branches missed.">          if (inst.isMissing(att2)) {</span>
+<span class="nc bnc" id="L896" title="All 2 branches missed.">            if (!m_missingSeparate) {</span>
+<span class="nc bnc" id="L897" title="All 2 branches missed.">              temp2 = (j == my)? 1.0 : 0.0;</span>
+            }
+            else {
+<span class="nc bnc" id="L900" title="All 2 branches missed.">              temp2 = (j == (ny - 1))? 1.0 : 0.0;</span>
+            }
+          }
+          else {
+<span class="fc bfc" id="L904" title="All 2 branches covered.">            temp2 = (j == inst.value(att2))? 1.0 : 0.0;</span>
+          }
+
+<span class="fc" id="L907">          diff2 = (temp2 - (sumy[j]/m_numInstances));</span>
+<span class="fc" id="L908">          covs[i][j] += (diff1*diff2);</span>
+        }
+      }
+    }
+
+    // calculate weighted correlation
+<span class="fc bfc" id="L914" title="All 2 branches covered.">    for (i = 0; i &lt; nx; i++) {</span>
+<span class="fc bfc" id="L915" title="All 2 branches covered.">      for (j = 0; j &lt; ny; j++) {</span>
+<span class="pc bpc" id="L916" title="1 of 2 branches missed.">        if ((stdvsx[i]*stdvsy[j]) &gt; 0.0) {</span>
+          //System.out.println(&quot;Stdv :&quot;+stdvs_nom[i]);
+<span class="fc" id="L918">          rr = (covs[i][j]/(Math.sqrt(stdvsx[i]*stdvsy[j])));</span>
+
+<span class="fc bfc" id="L920" title="All 2 branches covered.">          if (rr &lt; 0.0) {</span>
+<span class="fc" id="L921">            rr = -rr;</span>
+          }
+
+<span class="fc" id="L924">          r += ((prior_nom[i][j]/m_numInstances)*rr);</span>
+        }
+        // if there is zero variance for either of the categorical atts then if
+        // neither is the class then make this
+        // correlation at this level maximally bad i.e. 1.0. If either is 
+        // the class then maximally bad correlation is 0.0
+<span class="nc bnc" id="L930" title="All 4 branches missed.">        else {if (att1 != m_classIndex &amp;&amp; att2 != m_classIndex) {</span>
+<span class="nc" id="L931">          r += ((prior_nom[i][j]/m_numInstances)*1.0);</span>
+        }
+        }
+      }
+    }
+
+    // calculate weighted standard deviations for these attributes
+    // (if necessary)
+<span class="fc bfc" id="L939" title="All 2 branches covered.">    for (i = 0, temp1 = 0.0; i &lt; nx; i++) {</span>
+<span class="fc" id="L940">      temp1 += ((sumx[i]/m_numInstances)*(stdvsx[i]/m_numInstances));</span>
+    }
+
+<span class="pc bpc" id="L943" title="1 of 2 branches missed.">    if (temp1 != 0.0) {</span>
+<span class="pc bpc" id="L944" title="1 of 2 branches missed.">      if (m_std_devs[att1] == 1.0) {</span>
+<span class="nc" id="L945">        m_std_devs[att1] = Math.sqrt(temp1);</span>
+      }
+    }
+
+<span class="fc bfc" id="L949" title="All 2 branches covered.">    for (j = 0, temp2 = 0.0; j &lt; ny; j++) {</span>
+<span class="fc" id="L950">      temp2 += ((sumy[j]/m_numInstances)*(stdvsy[j]/m_numInstances));</span>
+    }
+
+<span class="pc bpc" id="L953" title="1 of 2 branches missed.">    if (temp2 != 0.0) {</span>
+<span class="pc bpc" id="L954" title="1 of 2 branches missed.">      if (m_std_devs[att2] == 1.0) {</span>
+<span class="nc" id="L955">        m_std_devs[att2] = Math.sqrt(temp2);</span>
+      }
+    }
+
+<span class="pc bpc" id="L959" title="1 of 2 branches missed.">    if (r == 0.0) {</span>
+<span class="nc bnc" id="L960" title="All 4 branches missed.">      if (att1 != m_classIndex &amp;&amp; att2 != m_classIndex) {</span>
+<span class="nc" id="L961">        r = 1.0;</span>
+      }
+    }
+
+<span class="fc" id="L965">    return  r;</span>
+  }
+
+
+  /**
+   * returns a string describing CFS
+   *
+   * @return the description as a string
+   */
+  public String toString () {
+<span class="fc" id="L975">    StringBuffer text = new StringBuffer();</span>
+
+<span class="pc bpc" id="L977" title="1 of 2 branches missed.">    if (m_trainInstances == null) {</span>
+<span class="nc" id="L978">      text.append(&quot;CFS subset evaluator has not been built yet\n&quot;);</span>
+    }
+    else {
+<span class="fc" id="L981">      text.append(&quot;\tCFS Subset Evaluator\n&quot;);</span>
+
+<span class="pc bpc" id="L983" title="1 of 2 branches missed.">      if (m_missingSeparate) {</span>
+<span class="nc" id="L984">        text.append(&quot;\tTreating missing values as a separate value\n&quot;);</span>
+      }
+
+<span class="pc bpc" id="L987" title="1 of 2 branches missed.">      if (m_locallyPredictive) {</span>
+<span class="fc" id="L988">        text.append(&quot;\tIncluding locally predictive attributes\n&quot;);</span>
+      }
+    }
+
+<span class="fc" id="L992">    return  text.toString();</span>
+  }
+
+
+  private void addLocallyPredictive (BitSet best_group) {
+    int i, j;
+<span class="fc" id="L998">    boolean done = false;</span>
+<span class="fc" id="L999">    boolean ok = true;</span>
+<span class="fc" id="L1000">    double temp_best = -1.0;</span>
+    float corr;
+<span class="fc" id="L1002">    j = 0;</span>
+<span class="fc" id="L1003">    BitSet temp_group = (BitSet)best_group.clone();</span>
+    int larger, smaller;
+
+<span class="fc bfc" id="L1006" title="All 2 branches covered.">    while (!done) {</span>
+<span class="fc" id="L1007">      temp_best = -1.0;</span>
+
+      // find best not already in group
+<span class="fc bfc" id="L1010" title="All 2 branches covered.">      for (i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="fc bfc" id="L1011" title="All 2 branches covered.">        if (i &gt; m_classIndex) {</span>
+<span class="fc" id="L1012">          larger = i; smaller = m_classIndex;</span>
+        } else {
+<span class="fc" id="L1014">          smaller = i; larger = m_classIndex;</span>
+        }
+        /*      int larger = (i &gt; m_classIndex ? i : m_classIndex);
+                int smaller = (i &gt; m_classIndex ? m_classIndex : i); */
+<span class="fc bfc" id="L1018" title="All 4 branches covered.">        if ((!temp_group.get(i)) &amp;&amp; (i != m_classIndex)) {</span>
+<span class="pc bpc" id="L1019" title="1 of 2 branches missed.">          if (m_corr_matrix[larger][smaller] == -999) {</span>
+<span class="nc" id="L1020">            corr = correlate(i, m_classIndex);</span>
+<span class="nc" id="L1021">            m_corr_matrix[larger][smaller] = corr;</span>
+          }
+
+<span class="fc bfc" id="L1024" title="All 2 branches covered.">          if (m_corr_matrix[larger][smaller]  &gt; temp_best) {</span>
+<span class="fc" id="L1025">            temp_best = m_corr_matrix[larger][smaller];</span>
+<span class="fc" id="L1026">            j = i;</span>
+          }
+        }
+      }
+
+<span class="fc bfc" id="L1031" title="All 2 branches covered.">      if (temp_best == -1.0) {</span>
+<span class="fc" id="L1032">        done = true;</span>
+      }
+      else {
+<span class="fc" id="L1035">        ok = true;</span>
+<span class="fc" id="L1036">        temp_group.set(j);</span>
+
+        // check the best against correlations with others already
+        // in group 
+<span class="fc bfc" id="L1040" title="All 2 branches covered.">        for (i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="fc bfc" id="L1041" title="All 2 branches covered.">          if (i &gt; j) {</span>
+<span class="fc" id="L1042">            larger = i; smaller = j;</span>
+          } else {
+<span class="fc" id="L1044">            larger = j; smaller = i;</span>
+          }
+          /*  int larger = (i &gt; j ? i : j);
+              int smaller = (i &gt; j ? j : i); */
+<span class="fc bfc" id="L1048" title="All 2 branches covered.">          if (best_group.get(i)) {</span>
+<span class="fc bfc" id="L1049" title="All 2 branches covered.">            if (m_corr_matrix[larger][smaller] == -999) {</span>
+<span class="fc" id="L1050">              corr = correlate(i, j);</span>
+<span class="fc" id="L1051">              m_corr_matrix[larger][smaller] = corr;</span>
+            }
+
+<span class="fc bfc" id="L1054" title="All 2 branches covered.">            if (m_corr_matrix[larger][smaller] &gt; temp_best - m_c_Threshold) {</span>
+<span class="fc" id="L1055">              ok = false;</span>
+<span class="fc" id="L1056">              break;</span>
+            }
+          }
+        }
+
+        // if ok then add to best_group
+<span class="fc bfc" id="L1062" title="All 2 branches covered.">        if (ok) {</span>
+<span class="fc" id="L1063">          best_group.set(j);</span>
+        }
+      }
+    }
+<span class="fc" id="L1067">  }</span>
+
+
+  /**
+   * Calls locallyPredictive in order to include locally predictive
+   * attributes (if requested).
+   *
+   * @param attributeSet the set of attributes found by the search
+   * @return a possibly ranked list of postprocessed attributes
+   * @throws Exception if postprocessing fails for some reason
+   */
+  public int[] postProcess (int[] attributeSet)
+    throws Exception {
+<span class="fc" id="L1080">    int j = 0;</span>
+
+<span class="pc bpc" id="L1082" title="1 of 2 branches missed.">    if (!m_locallyPredictive) {</span>
+      //      m_trainInstances = new Instances(m_trainInstances,0);
+<span class="nc" id="L1084">      return  attributeSet;</span>
+    }
+
+<span class="fc" id="L1087">    BitSet bestGroup = new BitSet(m_numAttribs);</span>
+
+<span class="fc bfc" id="L1089" title="All 2 branches covered.">    for (int i = 0; i &lt; attributeSet.length; i++) {</span>
+<span class="fc" id="L1090">      bestGroup.set(attributeSet[i]);</span>
+    }
+
+<span class="fc" id="L1093">    addLocallyPredictive(bestGroup);</span>
+
+    // count how many are set
+<span class="fc bfc" id="L1096" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="fc bfc" id="L1097" title="All 2 branches covered.">      if (bestGroup.get(i)) {</span>
+<span class="fc" id="L1098">        j++;</span>
+      }
+    }
+
+<span class="fc" id="L1102">    int[] newSet = new int[j];</span>
+<span class="fc" id="L1103">    j = 0;</span>
+
+<span class="fc bfc" id="L1105" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="fc bfc" id="L1106" title="All 2 branches covered.">      if (bestGroup.get(i)) {</span>
+<span class="fc" id="L1107">        newSet[j++] = i;</span>
+      }
+    }
+
+    //    m_trainInstances = new Instances(m_trainInstances,0);
+<span class="fc" id="L1112">    return  newSet;</span>
+  }
+
+
+  protected void resetOptions () {
+<span class="fc" id="L1117">    m_trainInstances = null;</span>
+<span class="fc" id="L1118">    m_missingSeparate = false;</span>
+<span class="fc" id="L1119">    m_locallyPredictive = true;</span>
+<span class="fc" id="L1120">    m_c_Threshold = 0.0;</span>
+<span class="fc" id="L1121">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1129">    return RevisionUtils.extract(&quot;$Revision: 6133 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param args the options
+   */
+  public static void main (String[] args) {
+<span class="nc" id="L1138">    runEvaluator(new CfsSubsetEval(), args);</span>
+<span class="nc" id="L1139">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

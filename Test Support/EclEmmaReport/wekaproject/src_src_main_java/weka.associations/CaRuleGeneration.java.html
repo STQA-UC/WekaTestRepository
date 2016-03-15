@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>CaRuleGeneration.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.associations</a> &gt; <span class="el_source">CaRuleGeneration.java</span></div><h1>CaRuleGeneration.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    CaRuleGeneration.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.associations;
+
+import weka.core.Attribute;
+import weka.core.FastVector;
+import weka.core.Instances;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.UnassignedClassException;
+
+import java.io.Serializable;
+import java.util.Hashtable;
+import java.util.TreeSet;
+
+
+/**
+ * Class implementing the rule generation procedure of the predictive apriori algorithm for class association rules.
+ *
+ * For association rules in gerneral the method is described in:
+ * T. Scheffer (2001). &lt;i&gt;Finding Association Rules That Trade Support 
+ * Optimally against Confidence&lt;/i&gt;. Proc of the 5th European Conf.
+ * on Principles and Practice of Knowledge Discovery in Databases (PKDD'01),
+ * pp. 424-435. Freiburg, Germany: Springer-Verlag. &lt;p&gt;
+ *
+ * The implementation follows the paper expect for adding a rule to the output of the
+ * &lt;i&gt;n&lt;/i&gt; best rules. A rule is added if:
+ * the expected predictive accuracy of this rule is among the &lt;i&gt;n&lt;/i&gt; best and it is 
+ * not subsumed by a rule with at least the same expected predictive accuracy
+ * (out of an unpublished manuscript from T. Scheffer). 
+ *
+ * @author Stefan Mutter (mutter@cs.waikato.ac.nz)
+ * @version $Revision: 1.4 $ */
+public class CaRuleGeneration
+  extends RuleGeneration
+  implements Serializable, RevisionHandler {
+
+  /** for serialization */
+  private static final long serialVersionUID = 3065752149646517703L;
+
+  /**
+   * Constructor
+   * @param itemSet the item set that forms the premise of the rule
+   */
+  public CaRuleGeneration(ItemSet itemSet){
+<span class="nc" id="L66">    super(itemSet);  </span>
+<span class="nc" id="L67">  }</span>
+
+  /**
+   * Generates all rules for an item set. The item set is the premise.
+   * @param numRules the number of association rules the use wants to mine.
+   * This number equals the size &lt;i&gt;n&lt;/i&gt; of the list of the
+   * best rules.
+   * @param midPoints the mid points of the intervals
+   * @param priors Hashtable that contains the prior probabilities
+   * @param expectation the minimum value of the expected predictive accuracy
+   * that is needed to get into the list of the best rules
+   * @param instances the instances for which association rules are generated
+   * @param best the list of the &lt;i&gt;n&lt;/i&gt; best rules.
+   * The list is implemented as a TreeSet
+   * @param genTime the maximum time of generation
+   * @return all the rules with minimum confidence for the given item set
+   */
+  public TreeSet generateRules(int numRules, double[] midPoints, Hashtable priors, double expectation, Instances instances, TreeSet best, int genTime) {
+
+<span class="nc" id="L86">    boolean redundant = false;</span>
+<span class="nc" id="L87">    FastVector consequences = new FastVector();</span>
+    ItemSet premise;
+<span class="nc" id="L89">    RuleItem current = null, old = null;</span>
+
+    Hashtable hashtable;
+
+<span class="nc" id="L93">    m_change = false;</span>
+<span class="nc" id="L94">    m_midPoints = midPoints;</span>
+<span class="nc" id="L95">    m_priors = priors;</span>
+<span class="nc" id="L96">    m_best = best;</span>
+<span class="nc" id="L97">    m_expectation = expectation;</span>
+<span class="nc" id="L98">    m_count = genTime;</span>
+<span class="nc" id="L99">    m_instances = instances;</span>
+
+    //create rule body
+<span class="nc" id="L102">    premise =null;</span>
+<span class="nc" id="L103">    premise = new ItemSet(m_totalTransactions);</span>
+<span class="nc" id="L104">    int[] premiseItems = new int[m_items.length];</span>
+<span class="nc" id="L105">    System.arraycopy(m_items, 0, premiseItems, 0, m_items.length);</span>
+<span class="nc" id="L106">    premise.setItem(premiseItems);</span>
+<span class="nc" id="L107">    premise.setCounter(m_counter);</span>
+
+<span class="nc" id="L109">    consequences = singleConsequence(instances);</span>
+
+    //create n best rules
+<span class="nc bnc" id="L112" title="All 2 branches missed.">    do{</span>
+<span class="nc bnc" id="L113" title="All 4 branches missed.">      if(premise == null || consequences.size() == 0)</span>
+<span class="nc" id="L114">	return m_best;</span>
+<span class="nc" id="L115">      m_minRuleCount = 1;</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">      while(expectation((double)m_minRuleCount,premise.counter(),m_midPoints,m_priors) &lt;= m_expectation){</span>
+<span class="nc" id="L117">	m_minRuleCount++;</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">	if(m_minRuleCount &gt; premise.counter())</span>
+<span class="nc" id="L119">	  return m_best;</span>
+      }
+<span class="nc" id="L121">      redundant = false;</span>
+
+      //create possible heads  
+<span class="nc" id="L124">      FastVector allRuleItems = new FastVector();</span>
+<span class="nc" id="L125">      int h = 0;</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">      while(h &lt; consequences.size()){</span>
+<span class="nc" id="L127">	RuleItem dummie = new RuleItem();</span>
+<span class="nc" id="L128">	m_count++;</span>
+<span class="nc" id="L129">	current = dummie.generateRuleItem(premise,(ItemSet)consequences.elementAt(h),instances,m_count,m_minRuleCount,m_midPoints,m_priors);</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">	if(current != null)</span>
+<span class="nc" id="L131">	  allRuleItems.addElement(current);</span>
+<span class="nc" id="L132">	h++;</span>
+      }
+
+      //update best
+<span class="nc bnc" id="L136" title="All 2 branches missed.">      for(h =0; h&lt; allRuleItems.size();h++){</span>
+<span class="nc" id="L137">	current = (RuleItem)allRuleItems.elementAt(h);</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">	if(m_best.size() &lt; numRules){</span>
+<span class="nc" id="L139">	  m_change =true;</span>
+<span class="nc" id="L140">	  redundant = removeRedundant(current);  </span>
+	}
+	else{
+<span class="nc" id="L143">	  m_expectation = ((RuleItem)(m_best.first())).accuracy();</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">	  if(current.accuracy() &gt; m_expectation){</span>
+<span class="nc" id="L145">	    boolean remove = m_best.remove(m_best.first());</span>
+<span class="nc" id="L146">	    m_change = true;</span>
+<span class="nc" id="L147">	    redundant = removeRedundant(current);</span>
+<span class="nc" id="L148">	    m_expectation = ((RuleItem)(m_best.first())).accuracy();</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">	    while(expectation((double)m_minRuleCount, (current.premise()).counter(),m_midPoints,m_priors) &lt; m_expectation){</span>
+<span class="nc" id="L150">	      m_minRuleCount++;</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">	      if(m_minRuleCount &gt; (current.premise()).counter())</span>
+<span class="nc" id="L152">		break;</span>
+	    } 
+	  }  
+	}   
+      }   
+<span class="nc" id="L157">    }while(redundant); </span>
+<span class="nc" id="L158">    return m_best;</span>
+  }
+
+  /**
+   * Methods that decides whether or not rule a subsumes rule b.
+   * The defintion of subsumption is:
+   * Rule a subsumes rule b, if a subsumes b
+   * AND
+   * a has got least the same expected predictive accuracy as b.
+   * @param a an association rule stored as a RuleItem
+   * @param b an association rule stored as a RuleItem
+   * @return true if rule a subsumes rule b or false otherwise.
+   */  
+  public static boolean aSubsumesB(RuleItem a, RuleItem b){
+
+<span class="nc bnc" id="L173" title="All 2 branches missed.">    if(!a.consequence().equals(b.consequence()))</span>
+<span class="nc" id="L174">      return false;</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">    if(a.accuracy() &lt; b.accuracy())</span>
+<span class="nc" id="L176">      return false;</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">    for(int k = 0; k &lt; ((a.premise()).items()).length;k++){</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">      if((a.premise()).itemAt(k) != (b.premise()).itemAt(k)){</span>
+<span class="nc bnc" id="L179" title="All 6 branches missed.">	if(((a.premise()).itemAt(k) != -1 &amp;&amp; (b.premise()).itemAt(k) != -1) || (b.premise()).itemAt(k) == -1)</span>
+<span class="nc" id="L180">	  return false;</span>
+      }
+      /*if(a.m_consequence.m_items[k] != b.m_consequence.m_items[k]){
+            if((a.m_consequence.m_items[k] != -1 &amp;&amp; b.m_consequence.m_items[k] != -1) || a.m_consequence.m_items[k] == -1)
+                return false;
+        }*/
+    }
+<span class="nc" id="L187">    return true;</span>
+
+  }
+
+  /**
+   * Converts the header info of the given set of instances into a set 
+   * of item sets (singletons). The ordering of values in the header file 
+   * determines the lexicographic order.
+   *
+   * @param instances the set of instances whose header info is to be used
+   * @return a set of item sets, each containing a single item
+   * @exception Exception if singletons can't be generated successfully
+   */
+  public static FastVector singletons(Instances instances) throws Exception {
+
+<span class="nc" id="L202">    FastVector setOfItemSets = new FastVector();</span>
+    ItemSet current;
+
+<span class="nc bnc" id="L205" title="All 2 branches missed.">    if(instances.classIndex() == -1)</span>
+<span class="nc" id="L206">      throw new UnassignedClassException(&quot;Class index is negative (not set)!&quot;);</span>
+<span class="nc" id="L207">    Attribute att = instances.classAttribute();</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">    for (int i = 0; i &lt; instances.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">      if (instances.attribute(i).isNumeric())</span>
+<span class="nc" id="L210">	throw new Exception(&quot;Can't handle numeric attributes!&quot;);</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">      if(i != instances.classIndex()){</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">	for (int j = 0; j &lt; instances.attribute(i).numValues(); j++) {</span>
+<span class="nc" id="L213">	  current = new ItemSet(instances.numInstances());</span>
+<span class="nc" id="L214">	  int[] currentItems = new int[instances.numAttributes()];</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">	  for (int k = 0; k &lt; instances.numAttributes(); k++)</span>
+<span class="nc" id="L216">	    currentItems[k] = -1;</span>
+<span class="nc" id="L217">	  currentItems[i] = j;</span>
+<span class="nc" id="L218">	  current.setItem(currentItems);</span>
+<span class="nc" id="L219">	  setOfItemSets.addElement(current);</span>
+	}
+      }
+    }
+<span class="nc" id="L223">    return setOfItemSets;</span>
+  }
+
+  /**
+   * generates a consequence of length 1 for a class association rule.
+   * @param instances the instances under consideration
+   * @return FastVector with consequences of length 1
+   */  
+  public static FastVector singleConsequence(Instances instances){
+
+    ItemSet consequence;
+<span class="nc" id="L234">    FastVector consequences = new FastVector();</span>
+
+<span class="nc bnc" id="L236" title="All 2 branches missed.">    for (int j = 0; j &lt; (instances.classAttribute()).numValues(); j++) {</span>
+<span class="nc" id="L237">      consequence = new ItemSet(instances.numInstances());</span>
+<span class="nc" id="L238">      int[] consequenceItems = new int[instances.numAttributes()];</span>
+<span class="nc" id="L239">      consequence.setItem(consequenceItems);</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">      for (int k = 0; k &lt; instances.numAttributes(); k++) </span>
+<span class="nc" id="L241">	consequence.setItemAt(-1,k);</span>
+<span class="nc" id="L242">      consequence.setItemAt(j,instances.classIndex());</span>
+<span class="nc" id="L243">      consequences.addElement(consequence);</span>
+    }
+<span class="nc" id="L245">    return consequences;</span>
+
+  }
+
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L255">    return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

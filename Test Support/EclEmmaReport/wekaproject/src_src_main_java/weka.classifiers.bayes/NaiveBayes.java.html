@@ -1,0 +1,948 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>NaiveBayes.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.bayes</a> &gt; <span class="el_source">NaiveBayes.java</span></div><h1>NaiveBayes.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    NaiveBayes.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.bayes;
+
+import weka.classifiers.Classifier;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.estimators.DiscreteEstimator;
+import weka.estimators.Estimator;
+import weka.estimators.KernelEstimator;
+import weka.estimators.NormalEstimator;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class for a Naive Bayes classifier using estimator classes. Numeric estimator precision values are chosen based on analysis of the  training data. For this reason, the classifier is not an UpdateableClassifier (which in typical usage are initialized with zero training instances) -- if you need the UpdateableClassifier functionality, use the NaiveBayesUpdateable classifier. The NaiveBayesUpdateable classifier will  use a default precision of 0.1 for numeric attributes when buildClassifier is called with zero training instances.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information on Naive Bayes classifiers, see&lt;br/&gt;
+ * &lt;br/&gt;
+ * George H. John, Pat Langley: Estimating Continuous Distributions in Bayesian Classifiers. In: Eleventh Conference on Uncertainty in Artificial Intelligence, San Mateo, 338-345, 1995.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{John1995,
+ *    address = {San Mateo},
+ *    author = {George H. John and Pat Langley},
+ *    booktitle = {Eleventh Conference on Uncertainty in Artificial Intelligence},
+ *    pages = {338-345},
+ *    publisher = {Morgan Kaufmann},
+ *    title = {Estimating Continuous Distributions in Bayesian Classifiers},
+ *    year = {1995}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -K
+ *  Use kernel density estimator rather than normal
+ *  distribution for numeric attributes&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Use supervised discretization to process numeric attributes
+ * &lt;/pre&gt;
+ *
+ * &lt;pre&gt; -O
+ *  Display model in old format (good when there are many classes)
+ * &lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @version $Revision: 5516 $
+ */
+<span class="fc" id="L95">public class NaiveBayes extends Classifier </span>
+implements OptionHandler, WeightedInstancesHandler, 
+           TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 5995231201785697655L;
+
+  /** The attribute estimators. */
+  protected Estimator [][] m_Distributions;
+
+  /** The class estimator. */
+  protected Estimator m_ClassDistribution;
+
+  /**
+   * Whether to use kernel density estimator rather than normal distribution
+   * for numeric attributes
+   */
+<span class="fc" id="L112">  protected boolean m_UseKernelEstimator = false;</span>
+
+  /**
+   * Whether to use discretization than normal distribution
+   * for numeric attributes
+   */
+<span class="fc" id="L118">  protected boolean m_UseDiscretization = false;</span>
+
+  /** The number of classes (or 1 for numeric class) */
+  protected int m_NumClasses;
+
+  /**
+   * The dataset header for the purposes of printing out a semi-intelligible 
+   * model 
+   */
+  protected Instances m_Instances;
+
+  /*** The precision parameter used for numeric attributes */
+  protected static final double DEFAULT_NUM_PRECISION = 0.01;
+
+  /**
+   * The discretization filter.
+   */
+<span class="fc" id="L135">  protected weka.filters.supervised.attribute.Discretize m_Disc = null;</span>
+
+<span class="fc" id="L137">  protected boolean m_displayModelInOldFormat = false;</span>
+
+  /**
+   * Returns a string describing this classifier
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L145">    return &quot;Class for a Naive Bayes classifier using estimator classes. Numeric&quot;</span>
+      +&quot; estimator precision values are chosen based on analysis of the &quot;
+      +&quot; training data. For this reason, the classifier is not an&quot;
+      +&quot; UpdateableClassifier (which in typical usage are initialized with zero&quot;
+      +&quot; training instances) -- if you need the UpdateableClassifier functionality,&quot;
+      +&quot; use the NaiveBayesUpdateable classifier. The NaiveBayesUpdateable&quot;
+      +&quot; classifier will  use a default precision of 0.1 for numeric attributes&quot;
+      +&quot; when buildClassifier is called with zero training instances.\n\n&quot;
+      +&quot;For more information on Naive Bayes classifiers, see\n\n&quot;
+<span class="nc" id="L154">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+
+<span class="nc" id="L167">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L168">    result.setValue(Field.AUTHOR, &quot;George H. John and Pat Langley&quot;);</span>
+<span class="nc" id="L169">    result.setValue(Field.TITLE, &quot;Estimating Continuous Distributions in Bayesian Classifiers&quot;);</span>
+<span class="nc" id="L170">    result.setValue(Field.BOOKTITLE, &quot;Eleventh Conference on Uncertainty in Artificial Intelligence&quot;);</span>
+<span class="nc" id="L171">    result.setValue(Field.YEAR, &quot;1995&quot;);</span>
+<span class="nc" id="L172">    result.setValue(Field.PAGES, &quot;338-345&quot;);</span>
+<span class="nc" id="L173">    result.setValue(Field.PUBLISHER, &quot;Morgan Kaufmann&quot;);</span>
+<span class="nc" id="L174">    result.setValue(Field.ADDRESS, &quot;San Mateo&quot;);</span>
+
+<span class="nc" id="L176">    return result;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L185">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L186">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L189">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L190">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L191">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L194">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L195">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+
+    // instances
+<span class="fc" id="L198">    result.setMinimumNumberInstances(0);</span>
+
+<span class="fc" id="L200">    return result;</span>
+  }
+
+  /**
+   * Generates the classifier.
+   *
+   * @param instances set of instances serving as training data 
+   * @exception Exception if the classifier has not been generated 
+   * successfully
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L213">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L216">    instances = new Instances(instances);</span>
+<span class="fc" id="L217">    instances.deleteWithMissingClass();</span>
+
+<span class="fc" id="L219">    m_NumClasses = instances.numClasses();</span>
+
+    // Copy the instances
+<span class="fc" id="L222">    m_Instances = new Instances(instances);</span>
+
+    // Discretize instances if required
+<span class="pc bpc" id="L225" title="1 of 2 branches missed.">    if (m_UseDiscretization) {</span>
+<span class="nc" id="L226">      m_Disc = new weka.filters.supervised.attribute.Discretize();</span>
+<span class="nc" id="L227">      m_Disc.setInputFormat(m_Instances);</span>
+<span class="nc" id="L228">      m_Instances = weka.filters.Filter.useFilter(m_Instances, m_Disc);</span>
+    } else {
+<span class="fc" id="L230">      m_Disc = null;</span>
+    }
+
+    // Reserve space for the distributions
+<span class="fc" id="L234">    m_Distributions = new Estimator[m_Instances.numAttributes() - 1]</span>
+<span class="fc" id="L235">      [m_Instances.numClasses()];</span>
+<span class="fc" id="L236">    m_ClassDistribution = new DiscreteEstimator(m_Instances.numClasses(), </span>
+<span class="fc" id="L237">                                                true);</span>
+<span class="fc" id="L238">    int attIndex = 0;</span>
+<span class="fc" id="L239">    Enumeration enu = m_Instances.enumerateAttributes();</span>
+<span class="fc bfc" id="L240" title="All 2 branches covered.">    while (enu.hasMoreElements()) {</span>
+<span class="fc" id="L241">      Attribute attribute = (Attribute) enu.nextElement();</span>
+
+      // If the attribute is numeric, determine the estimator 
+      // numeric precision from differences between adjacent values
+<span class="fc" id="L245">      double numPrecision = DEFAULT_NUM_PRECISION;</span>
+<span class="fc bfc" id="L246" title="All 2 branches covered.">      if (attribute.type() == Attribute.NUMERIC) {</span>
+<span class="fc" id="L247">	m_Instances.sort(attribute);</span>
+<span class="fc bfc" id="L248" title="All 2 branches covered.">	if ((m_Instances.numInstances() &gt; 0)</span>
+<span class="fc bfc" id="L249" title="All 2 branches covered.">	    &amp;&amp; !m_Instances.instance(0).isMissing(attribute)) {</span>
+<span class="fc" id="L250">	  double lastVal = m_Instances.instance(0).value(attribute);</span>
+<span class="fc" id="L251">	  double currentVal, deltaSum = 0;</span>
+<span class="fc" id="L252">	  int distinct = 0;</span>
+<span class="fc bfc" id="L253" title="All 2 branches covered.">	  for (int i = 1; i &lt; m_Instances.numInstances(); i++) {</span>
+<span class="fc" id="L254">	    Instance currentInst = m_Instances.instance(i);</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">	    if (currentInst.isMissing(attribute)) {</span>
+<span class="fc" id="L256">	      break;</span>
+	    }
+<span class="fc" id="L258">	    currentVal = currentInst.value(attribute);</span>
+<span class="pc bpc" id="L259" title="1 of 2 branches missed.">	    if (currentVal != lastVal) {</span>
+<span class="fc" id="L260">	      deltaSum += currentVal - lastVal;</span>
+<span class="fc" id="L261">	      lastVal = currentVal;</span>
+<span class="fc" id="L262">	      distinct++;</span>
+	    }
+	  }
+<span class="pc bpc" id="L265" title="1 of 2 branches missed.">	  if (distinct &gt; 0) {</span>
+<span class="fc" id="L266">	    numPrecision = deltaSum / distinct;</span>
+	  }
+	}
+      }
+
+
+<span class="fc bfc" id="L272" title="All 2 branches covered.">      for (int j = 0; j &lt; m_Instances.numClasses(); j++) {</span>
+<span class="pc bpc" id="L273" title="1 of 3 branches missed.">	switch (attribute.type()) {</span>
+	case Attribute.NUMERIC: 
+<span class="pc bpc" id="L275" title="1 of 2 branches missed.">	  if (m_UseKernelEstimator) {</span>
+<span class="nc" id="L276">	    m_Distributions[attIndex][j] = </span>
+<span class="nc" id="L277">	      new KernelEstimator(numPrecision);</span>
+	  } else {
+<span class="fc" id="L279">	    m_Distributions[attIndex][j] = </span>
+<span class="fc" id="L280">	      new NormalEstimator(numPrecision);</span>
+	  }
+<span class="fc" id="L282">	  break;</span>
+	case Attribute.NOMINAL:
+<span class="fc" id="L284">	  m_Distributions[attIndex][j] = </span>
+<span class="fc" id="L285">	    new DiscreteEstimator(attribute.numValues(), true);</span>
+<span class="fc" id="L286">	  break;</span>
+	default:
+<span class="nc" id="L288">	  throw new Exception(&quot;Attribute type unknown to NaiveBayes&quot;);</span>
+	}
+      }
+<span class="fc" id="L291">      attIndex++;</span>
+    }
+
+    // Compute counts
+<span class="fc" id="L295">    Enumeration enumInsts = m_Instances.enumerateInstances();</span>
+<span class="fc bfc" id="L296" title="All 2 branches covered.">    while (enumInsts.hasMoreElements()) {</span>
+<span class="fc" id="L297">      Instance instance = </span>
+<span class="fc" id="L298">	(Instance) enumInsts.nextElement();</span>
+<span class="fc" id="L299">      updateClassifier(instance);</span>
+    }
+
+    // Save space
+<span class="fc" id="L303">    m_Instances = new Instances(m_Instances, 0);</span>
+<span class="fc" id="L304">  }</span>
+
+
+  /**
+   * Updates the classifier with the given instance.
+   *
+   * @param instance the new training instance to include in the model 
+   * @exception Exception if the instance could not be incorporated in
+   * the model.
+   */
+  public void updateClassifier(Instance instance) throws Exception {
+
+<span class="pc bpc" id="L316" title="1 of 2 branches missed.">    if (!instance.classIsMissing()) {</span>
+<span class="fc" id="L317">      Enumeration enumAtts = m_Instances.enumerateAttributes();</span>
+<span class="fc" id="L318">      int attIndex = 0;</span>
+<span class="fc bfc" id="L319" title="All 2 branches covered.">      while (enumAtts.hasMoreElements()) {</span>
+<span class="fc" id="L320">	Attribute attribute = (Attribute) enumAtts.nextElement();</span>
+<span class="fc bfc" id="L321" title="All 2 branches covered.">	if (!instance.isMissing(attribute)) {</span>
+<span class="fc" id="L322">	  m_Distributions[attIndex][(int)instance.classValue()].</span>
+<span class="fc" id="L323">            addValue(instance.value(attribute), instance.weight());</span>
+	}
+<span class="fc" id="L325">	attIndex++;</span>
+      }
+<span class="fc" id="L327">      m_ClassDistribution.addValue(instance.classValue(),</span>
+<span class="fc" id="L328">                                   instance.weight());</span>
+    }
+<span class="fc" id="L330">  }</span>
+
+
+  /**
+   * Calculates the class membership probabilities for the given test 
+   * instance.
+   *
+   * @param instance the instance to be classified
+   * @return predicted class probability distribution
+   * @exception Exception if there is a problem generating the prediction
+   */
+  public double [] distributionForInstance(Instance instance) 
+    throws Exception { 
+
+<span class="pc bpc" id="L344" title="1 of 2 branches missed.">    if (m_UseDiscretization) {</span>
+<span class="nc" id="L345">      m_Disc.input(instance);</span>
+<span class="nc" id="L346">      instance = m_Disc.output();</span>
+    }
+<span class="fc" id="L348">    double [] probs = new double[m_NumClasses];</span>
+<span class="fc bfc" id="L349" title="All 2 branches covered.">    for (int j = 0; j &lt; m_NumClasses; j++) {</span>
+<span class="fc" id="L350">      probs[j] = m_ClassDistribution.getProbability(j);</span>
+    }
+<span class="fc" id="L352">    Enumeration enumAtts = instance.enumerateAttributes();</span>
+<span class="fc" id="L353">    int attIndex = 0;</span>
+<span class="fc bfc" id="L354" title="All 2 branches covered.">    while (enumAtts.hasMoreElements()) {</span>
+<span class="fc" id="L355">      Attribute attribute = (Attribute) enumAtts.nextElement();</span>
+<span class="fc bfc" id="L356" title="All 2 branches covered.">      if (!instance.isMissing(attribute)) {</span>
+<span class="fc" id="L357">	double temp, max = 0;</span>
+<span class="fc bfc" id="L358" title="All 2 branches covered.">	for (int j = 0; j &lt; m_NumClasses; j++) {</span>
+<span class="fc" id="L359">	  temp = Math.max(1e-75, Math.pow(m_Distributions[attIndex][j].</span>
+<span class="fc" id="L360">                                          getProbability(instance.value(attribute)), </span>
+<span class="fc" id="L361">                                          m_Instances.attribute(attIndex).weight()));</span>
+<span class="fc" id="L362">	  probs[j] *= temp;</span>
+<span class="fc bfc" id="L363" title="All 2 branches covered.">	  if (probs[j] &gt; max) {</span>
+<span class="fc" id="L364">	    max = probs[j];</span>
+	  }
+<span class="pc bpc" id="L366" title="1 of 2 branches missed.">	  if (Double.isNaN(probs[j])) {</span>
+<span class="nc" id="L367">	    throw new Exception(&quot;NaN returned from estimator for attribute &quot;</span>
+<span class="nc" id="L368">                                + attribute.name() + &quot;:\n&quot;</span>
+<span class="nc" id="L369">                                + m_Distributions[attIndex][j].toString());</span>
+	  }
+	}
+<span class="pc bpc" id="L372" title="1 of 4 branches missed.">	if ((max &gt; 0) &amp;&amp; (max &lt; 1e-75)) { // Danger of probability underflow</span>
+<span class="fc bfc" id="L373" title="All 2 branches covered.">	  for (int j = 0; j &lt; m_NumClasses; j++) {</span>
+<span class="fc" id="L374">	    probs[j] *= 1e75;</span>
+	  }
+	}
+      }
+<span class="fc" id="L378">      attIndex++;</span>
+    }
+
+    // Display probabilities
+<span class="fc" id="L382">    Utils.normalize(probs);</span>
+<span class="fc" id="L383">    return probs;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="fc" id="L393">    Vector newVector = new Vector(3);</span>
+
+<span class="fc" id="L395">    newVector.addElement(</span>
+<span class="fc" id="L396">              new Option(&quot;\tUse kernel density estimator rather than normal\n&quot;</span>
+                         +&quot;\tdistribution for numeric attributes&quot;,
+<span class="fc" id="L398">                         &quot;K&quot;, 0,&quot;-K&quot;));</span>
+<span class="fc" id="L399">    newVector.addElement(</span>
+<span class="fc" id="L400">              new Option(&quot;\tUse supervised discretization to process numeric attributes\n&quot;,</span>
+<span class="fc" id="L401">                         &quot;D&quot;, 0,&quot;-D&quot;));</span>
+    
+<span class="fc" id="L403">    newVector.addElement(</span>
+<span class="fc" id="L404">              new Option(&quot;\tDisplay model in old format (good when there are &quot;</span>
+                         + &quot;many classes)\n&quot;,
+<span class="fc" id="L406">                         &quot;O&quot;, 0, &quot;-O&quot;));</span>
+    
+<span class="fc" id="L408">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -K
+   *  Use kernel density estimator rather than normal
+   *  distribution for numeric attributes&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Use supervised discretization to process numeric attributes
+   * &lt;/pre&gt;
+   *
+   * &lt;pre&gt; -O
+   *  Display model in old format (good when there are many classes)
+   * &lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @exception Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="fc" id="L436">    boolean k = Utils.getFlag('K', options);</span>
+<span class="fc" id="L437">    boolean d = Utils.getFlag('D', options);</span>
+<span class="pc bpc" id="L438" title="3 of 4 branches missed.">    if (k &amp;&amp; d) {</span>
+<span class="nc" id="L439">      throw new IllegalArgumentException(&quot;Can't use both kernel density &quot; +</span>
+                                         &quot;estimation and discretization!&quot;);
+    }
+<span class="fc" id="L442">    setUseSupervisedDiscretization(d);</span>
+<span class="fc" id="L443">    setUseKernelEstimator(k);</span>
+<span class="fc" id="L444">    setDisplayModelInOldFormat(Utils.getFlag('O', options));</span>
+<span class="fc" id="L445">    Utils.checkForRemainingOptions(options);</span>
+<span class="fc" id="L446">  }</span>
+
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+
+<span class="fc" id="L455">    String [] options = new String [3];</span>
+<span class="fc" id="L456">    int current = 0;</span>
+
+<span class="pc bpc" id="L458" title="1 of 2 branches missed.">    if (m_UseKernelEstimator) {</span>
+<span class="nc" id="L459">      options[current++] = &quot;-K&quot;;</span>
+    }
+
+<span class="pc bpc" id="L462" title="1 of 2 branches missed.">    if (m_UseDiscretization) {</span>
+<span class="nc" id="L463">      options[current++] = &quot;-D&quot;;</span>
+    }
+
+<span class="pc bpc" id="L466" title="1 of 2 branches missed.">    if (m_displayModelInOldFormat) {</span>
+<span class="nc" id="L467">      options[current++] = &quot;-O&quot;;</span>
+    }
+
+<span class="pc bfc" id="L470" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc" id="L471">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="fc" id="L473">    return options;</span>
+  }
+
+  /**
+   * Returns a description of the classifier.
+   *
+   * @return a description of the classifier as a string.
+   */
+  public String toString() {
+<span class="pc bpc" id="L482" title="1 of 2 branches missed.">    if (m_displayModelInOldFormat) {</span>
+<span class="nc" id="L483">      return toStringOriginal();</span>
+    }
+
+<span class="fc" id="L486">    StringBuffer temp = new StringBuffer();</span>
+<span class="fc" id="L487">    temp.append(&quot;Naive Bayes Classifier&quot;);</span>
+<span class="pc bpc" id="L488" title="1 of 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="fc" id="L489">      temp.append(&quot;: No model built yet.&quot;);</span>
+    } else {
+
+<span class="nc" id="L492">      int maxWidth = 0;</span>
+<span class="nc" id="L493">      int maxAttWidth = 0;</span>
+<span class="nc" id="L494">      boolean containsKernel = false;</span>
+
+      // set up max widths
+      // class values
+<span class="nc bnc" id="L498" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Instances.numClasses(); i++) {</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">        if (m_Instances.classAttribute().value(i).length() &gt; maxWidth) {</span>
+<span class="nc" id="L500">          maxWidth = m_Instances.classAttribute().value(i).length();</span>
+        }
+      }
+      // attributes
+<span class="nc bnc" id="L504" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Instances.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L505" title="All 2 branches missed.">        if (i != m_Instances.classIndex()) {</span>
+<span class="nc" id="L506">          Attribute a = m_Instances.attribute(i);</span>
+<span class="nc bnc" id="L507" title="All 2 branches missed.">          if (a.name().length() &gt; maxAttWidth) {</span>
+<span class="nc" id="L508">            maxAttWidth = m_Instances.attribute(i).name().length();</span>
+          }
+<span class="nc bnc" id="L510" title="All 2 branches missed.">          if (a.isNominal()) {</span>
+            // check values
+<span class="nc bnc" id="L512" title="All 2 branches missed.">            for (int j = 0; j &lt; a.numValues(); j++) {</span>
+<span class="nc" id="L513">              String val = a.value(j) + &quot;  &quot;;</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">              if (val.length() &gt; maxAttWidth) {</span>
+<span class="nc" id="L515">                maxAttWidth = val.length();</span>
+              }
+            }
+          }
+        }
+      }
+
+<span class="nc bnc" id="L522" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Distributions.length; i++) {</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">        for (int j = 0; j &lt; m_Instances.numClasses(); j++) {</span>
+<span class="nc bnc" id="L524" title="All 2 branches missed.">          if (m_Distributions[i][0] instanceof NormalEstimator) {</span>
+            // check mean/precision dev against maxWidth
+<span class="nc" id="L526">            NormalEstimator n = (NormalEstimator)m_Distributions[i][j];</span>
+<span class="nc" id="L527">            double mean = Math.log(Math.abs(n.getMean())) / Math.log(10.0);</span>
+<span class="nc" id="L528">            double precision = Math.log(Math.abs(n.getPrecision())) / Math.log(10.0);</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">            double width = (mean &gt; precision)</span>
+<span class="nc" id="L530">              ? mean</span>
+<span class="nc" id="L531">              : precision;</span>
+<span class="nc bnc" id="L532" title="All 2 branches missed.">            if (width &lt; 0) {</span>
+<span class="nc" id="L533">              width = 1;</span>
+            }
+            // decimal + # decimal places + 1
+<span class="nc" id="L536">            width += 6.0;</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">            if ((int)width &gt; maxWidth) {</span>
+<span class="nc" id="L538">              maxWidth = (int)width;</span>
+            }
+<span class="nc bnc" id="L540" title="All 2 branches missed.">          } else if (m_Distributions[i][0] instanceof KernelEstimator) {</span>
+<span class="nc" id="L541">            containsKernel = true;</span>
+<span class="nc" id="L542">            KernelEstimator ke = (KernelEstimator)m_Distributions[i][j];</span>
+<span class="nc" id="L543">            int numK = ke.getNumKernels();</span>
+<span class="nc" id="L544">            String temps = &quot;K&quot; + numK + &quot;: mean (weight)&quot;;</span>
+<span class="nc bnc" id="L545" title="All 2 branches missed.">            if (maxAttWidth &lt; temps.length()) {</span>
+<span class="nc" id="L546">              maxAttWidth = temps.length();</span>
+            }
+            // check means + weights against maxWidth
+<span class="nc bnc" id="L549" title="All 2 branches missed.">            if (ke.getNumKernels() &gt; 0) {</span>
+<span class="nc" id="L550">              double[] means = ke.getMeans();</span>
+<span class="nc" id="L551">              double[] weights = ke.getWeights();</span>
+<span class="nc bnc" id="L552" title="All 2 branches missed.">              for (int k = 0; k &lt; ke.getNumKernels(); k++) {</span>
+<span class="nc" id="L553">                String m = Utils.doubleToString(means[k], maxWidth, 4).trim();</span>
+<span class="nc" id="L554">                m += &quot; (&quot; + Utils.doubleToString(weights[k], maxWidth, 1).trim() + &quot;)&quot;;</span>
+<span class="nc bnc" id="L555" title="All 2 branches missed.">                if (maxWidth &lt; m.length()) {</span>
+<span class="nc" id="L556">                  maxWidth = m.length();</span>
+                }
+              }
+            }
+<span class="nc bnc" id="L560" title="All 2 branches missed.">          } else if (m_Distributions[i][0] instanceof DiscreteEstimator) {</span>
+<span class="nc" id="L561">            DiscreteEstimator d = (DiscreteEstimator)m_Distributions[i][j];</span>
+<span class="nc bnc" id="L562" title="All 2 branches missed.">            for (int k = 0; k &lt; d.getNumSymbols(); k++) {</span>
+<span class="nc" id="L563">              String size = &quot;&quot; + d.getCount(k);</span>
+<span class="nc bnc" id="L564" title="All 2 branches missed.">              if (size.length() &gt; maxWidth) {</span>
+<span class="nc" id="L565">                maxWidth = size.length();</span>
+              }
+            }
+<span class="nc" id="L568">            int sum = (&quot;&quot; + d.getSumOfCounts()).length();</span>
+<span class="nc bnc" id="L569" title="All 2 branches missed.">            if (sum &gt; maxWidth) {</span>
+<span class="nc" id="L570">              maxWidth = sum;</span>
+            }
+          }
+        }
+      }
+
+      // Check width of class labels
+<span class="nc bnc" id="L577" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Instances.numClasses(); i++) {</span>
+<span class="nc" id="L578">        String cSize = m_Instances.classAttribute().value(i);</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">        if (cSize.length() &gt; maxWidth) {</span>
+<span class="nc" id="L580">          maxWidth = cSize.length();</span>
+        }
+      }
+
+      // Check width of class priors
+<span class="nc bnc" id="L585" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Instances.numClasses(); i++) {</span>
+<span class="nc" id="L586">        String priorP = </span>
+<span class="nc" id="L587">          Utils.doubleToString(((DiscreteEstimator)m_ClassDistribution).getProbability(i),</span>
+<span class="nc" id="L588">                               maxWidth, 2).trim();</span>
+<span class="nc" id="L589">        priorP = &quot;(&quot; + priorP + &quot;)&quot;;</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">        if (priorP.length() &gt; maxWidth) {</span>
+<span class="nc" id="L591">          maxWidth = priorP.length();</span>
+        }
+      }
+    
+<span class="nc bnc" id="L595" title="All 2 branches missed.">      if (maxAttWidth &lt; &quot;Attribute&quot;.length()) {</span>
+<span class="nc" id="L596">        maxAttWidth = &quot;Attribute&quot;.length();</span>
+      }
+
+<span class="nc bnc" id="L599" title="All 2 branches missed.">      if (maxAttWidth &lt; &quot;  weight sum&quot;.length()) {</span>
+<span class="nc" id="L600">        maxAttWidth = &quot;  weight sum&quot;.length();</span>
+      }
+
+<span class="nc bnc" id="L603" title="All 2 branches missed.">      if (containsKernel) {</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">        if (maxAttWidth &lt; &quot;  [precision]&quot;.length()) {</span>
+<span class="nc" id="L605">          maxAttWidth = &quot;  [precision]&quot;.length();</span>
+        }
+      }
+
+<span class="nc" id="L609">      maxAttWidth += 2;</span>
+    
+
+
+<span class="nc" id="L613">      temp.append(&quot;\n\n&quot;);</span>
+<span class="nc" id="L614">      temp.append(pad(&quot;Class&quot;, &quot; &quot;, </span>
+<span class="nc" id="L615">                      (maxAttWidth + maxWidth + 1) - &quot;Class&quot;.length(), </span>
+<span class="nc" id="L616">                      true));</span>
+
+<span class="nc" id="L618">      temp.append(&quot;\n&quot;);</span>
+<span class="nc" id="L619">      temp.append(pad(&quot;Attribute&quot;, &quot; &quot;, maxAttWidth - &quot;Attribute&quot;.length(), false));</span>
+      // class labels
+<span class="nc bnc" id="L621" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Instances.numClasses(); i++) {</span>
+<span class="nc" id="L622">        String classL = m_Instances.classAttribute().value(i);</span>
+<span class="nc" id="L623">        temp.append(pad(classL, &quot; &quot;, maxWidth + 1 - classL.length(), true));</span>
+      }
+<span class="nc" id="L625">      temp.append(&quot;\n&quot;);</span>
+      // class priors
+<span class="nc" id="L627">      temp.append(pad(&quot;&quot;, &quot; &quot;, maxAttWidth, true));</span>
+<span class="nc bnc" id="L628" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Instances.numClasses(); i++) {</span>
+<span class="nc" id="L629">        String priorP = </span>
+<span class="nc" id="L630">          Utils.doubleToString(((DiscreteEstimator)m_ClassDistribution).getProbability(i),</span>
+<span class="nc" id="L631">                               maxWidth, 2).trim();</span>
+<span class="nc" id="L632">        priorP = &quot;(&quot; + priorP + &quot;)&quot;;</span>
+<span class="nc" id="L633">        temp.append(pad(priorP, &quot; &quot;, maxWidth + 1 - priorP.length(), true));</span>
+      }
+<span class="nc" id="L635">      temp.append(&quot;\n&quot;);</span>
+<span class="nc" id="L636">      temp.append(pad(&quot;&quot;, &quot;=&quot;, maxAttWidth + </span>
+<span class="nc" id="L637">                      (maxWidth * m_Instances.numClasses()) </span>
+<span class="nc" id="L638">                      + m_Instances.numClasses() + 1, true));</span>
+<span class="nc" id="L639">      temp.append(&quot;\n&quot;);</span>
+
+      // loop over the attributes
+<span class="nc" id="L642">      int counter = 0;</span>
+<span class="nc bnc" id="L643" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Instances.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L644" title="All 2 branches missed.">        if (i == m_Instances.classIndex()) {</span>
+<span class="nc" id="L645">          continue;</span>
+        }
+<span class="nc" id="L647">        String attName = m_Instances.attribute(i).name();</span>
+<span class="nc" id="L648">        temp.append(attName + &quot;\n&quot;);</span>
+          
+<span class="nc bnc" id="L650" title="All 2 branches missed.">        if (m_Distributions[counter][0] instanceof NormalEstimator) {</span>
+<span class="nc" id="L651">          String meanL = &quot;  mean&quot;;</span>
+<span class="nc" id="L652">          temp.append(pad(meanL, &quot; &quot;, maxAttWidth + 1 - meanL.length(), false));</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">          for (int j = 0; j &lt; m_Instances.numClasses(); j++) {            </span>
+            // means
+<span class="nc" id="L655">            NormalEstimator n = (NormalEstimator)m_Distributions[counter][j];</span>
+<span class="nc" id="L656">            String mean = </span>
+<span class="nc" id="L657">              Utils.doubleToString(n.getMean(), maxWidth, 4).trim();</span>
+<span class="nc" id="L658">            temp.append(pad(mean, &quot; &quot;, maxWidth + 1 - mean.length(), true));</span>
+          }
+<span class="nc" id="L660">          temp.append(&quot;\n&quot;);            </span>
+          // now do std deviations
+<span class="nc" id="L662">          String stdDevL = &quot;  std. dev.&quot;;</span>
+<span class="nc" id="L663">          temp.append(pad(stdDevL, &quot; &quot;, maxAttWidth + 1 - stdDevL.length(), false));</span>
+<span class="nc bnc" id="L664" title="All 2 branches missed.">          for (int j = 0; j &lt; m_Instances.numClasses(); j++) {</span>
+<span class="nc" id="L665">            NormalEstimator n = (NormalEstimator)m_Distributions[counter][j];</span>
+<span class="nc" id="L666">            String stdDev = </span>
+<span class="nc" id="L667">              Utils.doubleToString(n.getStdDev(), maxWidth, 4).trim();</span>
+<span class="nc" id="L668">            temp.append(pad(stdDev, &quot; &quot;, maxWidth + 1 - stdDev.length(), true));</span>
+          }
+<span class="nc" id="L670">          temp.append(&quot;\n&quot;);</span>
+          // now the weight sums
+<span class="nc" id="L672">          String weightL = &quot;  weight sum&quot;;</span>
+<span class="nc" id="L673">          temp.append(pad(weightL, &quot; &quot;, maxAttWidth + 1 - weightL.length(), false));</span>
+<span class="nc bnc" id="L674" title="All 2 branches missed.">          for (int j = 0; j &lt; m_Instances.numClasses(); j++) {</span>
+<span class="nc" id="L675">            NormalEstimator n = (NormalEstimator)m_Distributions[counter][j];</span>
+<span class="nc" id="L676">            String weight = </span>
+<span class="nc" id="L677">              Utils.doubleToString(n.getSumOfWeights(), maxWidth, 4).trim();</span>
+<span class="nc" id="L678">            temp.append(pad(weight, &quot; &quot;, maxWidth + 1 - weight.length(), true));</span>
+          }
+<span class="nc" id="L680">          temp.append(&quot;\n&quot;);</span>
+          // now the precisions
+<span class="nc" id="L682">          String precisionL = &quot;  precision&quot;;</span>
+<span class="nc" id="L683">          temp.append(pad(precisionL, &quot; &quot;, maxAttWidth + 1 - precisionL.length(), false));</span>
+<span class="nc bnc" id="L684" title="All 2 branches missed.">          for (int j = 0; j &lt; m_Instances.numClasses(); j++) {</span>
+<span class="nc" id="L685">            NormalEstimator n = (NormalEstimator)m_Distributions[counter][j];</span>
+<span class="nc" id="L686">            String precision = </span>
+<span class="nc" id="L687">              Utils.doubleToString(n.getPrecision(), maxWidth, 4).trim();</span>
+<span class="nc" id="L688">            temp.append(pad(precision, &quot; &quot;, maxWidth + 1 - precision.length(), true));</span>
+          }
+<span class="nc" id="L690">          temp.append(&quot;\n\n&quot;);</span>
+            
+<span class="nc bnc" id="L692" title="All 2 branches missed.">        } else if (m_Distributions[counter][0] instanceof DiscreteEstimator) {</span>
+<span class="nc" id="L693">          Attribute a = m_Instances.attribute(i);</span>
+<span class="nc bnc" id="L694" title="All 2 branches missed.">          for (int j = 0; j &lt; a.numValues(); j++) {</span>
+<span class="nc" id="L695">            String val = &quot;  &quot; + a.value(j);</span>
+<span class="nc" id="L696">            temp.append(pad(val, &quot; &quot;, maxAttWidth + 1 - val.length(), false));</span>
+<span class="nc bnc" id="L697" title="All 2 branches missed.">            for (int k = 0; k &lt; m_Instances.numClasses(); k++) {</span>
+<span class="nc" id="L698">              DiscreteEstimator d = (DiscreteEstimator)m_Distributions[counter][k];</span>
+<span class="nc" id="L699">              String count = &quot;&quot; + d.getCount(j);</span>
+<span class="nc" id="L700">              temp.append(pad(count, &quot; &quot;, maxWidth + 1 - count.length(), true));</span>
+            }
+<span class="nc" id="L702">            temp.append(&quot;\n&quot;);</span>
+          }
+          // do the totals
+<span class="nc" id="L705">          String total = &quot;  [total]&quot;;</span>
+<span class="nc" id="L706">          temp.append(pad(total, &quot; &quot;, maxAttWidth + 1 - total.length(), false));</span>
+<span class="nc bnc" id="L707" title="All 2 branches missed.">          for (int k = 0; k &lt; m_Instances.numClasses(); k++) {</span>
+<span class="nc" id="L708">            DiscreteEstimator d = (DiscreteEstimator)m_Distributions[counter][k];</span>
+<span class="nc" id="L709">            String count = &quot;&quot; + d.getSumOfCounts();</span>
+<span class="nc" id="L710">            temp.append(pad(count, &quot; &quot;, maxWidth + 1 - count.length(), true));</span>
+          }
+<span class="nc" id="L712">          temp.append(&quot;\n\n&quot;);</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">        } else if (m_Distributions[counter][0] instanceof KernelEstimator) {</span>
+<span class="nc" id="L714">          String kL = &quot;  [# kernels]&quot;;</span>
+<span class="nc" id="L715">          temp.append(pad(kL, &quot; &quot;, maxAttWidth + 1 - kL.length(), false));</span>
+<span class="nc bnc" id="L716" title="All 2 branches missed.">          for (int k = 0; k &lt; m_Instances.numClasses(); k++) {</span>
+<span class="nc" id="L717">            KernelEstimator ke = (KernelEstimator)m_Distributions[counter][k];</span>
+<span class="nc" id="L718">            String nk = &quot;&quot; + ke.getNumKernels();</span>
+<span class="nc" id="L719">            temp.append(pad(nk, &quot; &quot;, maxWidth + 1 - nk.length(), true));</span>
+          }
+<span class="nc" id="L721">          temp.append(&quot;\n&quot;);</span>
+          // do num kernels, std. devs and precisions
+<span class="nc" id="L723">          String stdDevL = &quot;  [std. dev]&quot;;</span>
+<span class="nc" id="L724">          temp.append(pad(stdDevL, &quot; &quot;, maxAttWidth + 1 - stdDevL.length(), false));</span>
+<span class="nc bnc" id="L725" title="All 2 branches missed.">          for (int k = 0; k &lt; m_Instances.numClasses(); k++) {</span>
+<span class="nc" id="L726">            KernelEstimator ke = (KernelEstimator)m_Distributions[counter][k];</span>
+<span class="nc" id="L727">            String stdD = Utils.doubleToString(ke.getStdDev(), maxWidth, 4).trim(); </span>
+<span class="nc" id="L728">            temp.append(pad(stdD, &quot; &quot;, maxWidth + 1 - stdD.length(), true));</span>
+          }
+<span class="nc" id="L730">          temp.append(&quot;\n&quot;);</span>
+<span class="nc" id="L731">          String precL = &quot;  [precision]&quot;;</span>
+<span class="nc" id="L732">          temp.append(pad(precL, &quot; &quot;, maxAttWidth + 1 - precL.length(), false));</span>
+<span class="nc bnc" id="L733" title="All 2 branches missed.">          for (int k = 0; k &lt; m_Instances.numClasses(); k++) {</span>
+<span class="nc" id="L734">            KernelEstimator ke = (KernelEstimator)m_Distributions[counter][k];</span>
+<span class="nc" id="L735">            String prec = Utils.doubleToString(ke.getPrecision(), maxWidth, 4).trim(); </span>
+<span class="nc" id="L736">            temp.append(pad(prec, &quot; &quot;, maxWidth + 1 - prec.length(), true));</span>
+          }
+<span class="nc" id="L738">          temp.append(&quot;\n&quot;);</span>
+          // first determine max number of kernels accross the classes
+<span class="nc" id="L740">          int maxK = 0;</span>
+<span class="nc bnc" id="L741" title="All 2 branches missed.">          for (int k = 0; k &lt; m_Instances.numClasses(); k++) {</span>
+<span class="nc" id="L742">            KernelEstimator ke = (KernelEstimator)m_Distributions[counter][k];</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">            if (ke.getNumKernels() &gt; maxK) {</span>
+<span class="nc" id="L744">              maxK = ke.getNumKernels();</span>
+            }
+          }
+<span class="nc bnc" id="L747" title="All 2 branches missed.">          for (int j = 0; j &lt; maxK; j++) {</span>
+            // means first
+<span class="nc" id="L749">            String meanL = &quot;  K&quot; + (j+1) + &quot;: mean (weight)&quot;;</span>
+<span class="nc" id="L750">            temp.append(pad(meanL, &quot; &quot;, maxAttWidth + 1 - meanL.length(), false));</span>
+<span class="nc bnc" id="L751" title="All 2 branches missed.">            for (int k = 0; k &lt; m_Instances.numClasses(); k++) {</span>
+<span class="nc" id="L752">              KernelEstimator ke = (KernelEstimator)m_Distributions[counter][k];</span>
+<span class="nc" id="L753">              double[] means = ke.getMeans();</span>
+<span class="nc" id="L754">              double[] weights = ke.getWeights();</span>
+<span class="nc" id="L755">              String m = &quot;--&quot;;</span>
+<span class="nc bnc" id="L756" title="All 2 branches missed.">              if (ke.getNumKernels() == 0) {</span>
+<span class="nc" id="L757">                m = &quot;&quot; + 0;</span>
+<span class="nc bnc" id="L758" title="All 2 branches missed.">              } else if (j &lt; ke.getNumKernels()) {</span>
+<span class="nc" id="L759">                m = Utils.doubleToString(means[j], maxWidth, 4).trim();</span>
+<span class="nc" id="L760">                m += &quot; (&quot; + Utils.doubleToString(weights[j], maxWidth, 1).trim() + &quot;)&quot;;</span>
+              }
+<span class="nc" id="L762">              temp.append(pad(m, &quot; &quot;, maxWidth + 1 - m.length(), true));</span>
+            }
+<span class="nc" id="L764">            temp.append(&quot;\n&quot;);              </span>
+          }
+<span class="nc" id="L766">          temp.append(&quot;\n&quot;);</span>
+        }
+
+
+<span class="nc" id="L770">        counter++;</span>
+      }
+    }
+      
+<span class="fc" id="L774">    return temp.toString();</span>
+  }
+
+  /**
+   * Returns a description of the classifier in the old format.
+   *
+   * @return a description of the classifier as a string.
+   */
+  protected String toStringOriginal() {
+    
+<span class="nc" id="L784">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc" id="L786">    text.append(&quot;Naive Bayes Classifier&quot;);</span>
+<span class="nc bnc" id="L787" title="All 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="nc" id="L788">      text.append(&quot;: No model built yet.&quot;);</span>
+    } else {
+      try {
+<span class="nc bnc" id="L791" title="All 2 branches missed.">	for (int i = 0; i &lt; m_Distributions[0].length; i++) {</span>
+<span class="nc" id="L792">	  text.append(&quot;\n\nClass &quot; + m_Instances.classAttribute().value(i) +</span>
+<span class="nc" id="L793">                      &quot;: Prior probability = &quot; + Utils.</span>
+<span class="nc" id="L794">                      doubleToString(m_ClassDistribution.getProbability(i),</span>
+<span class="nc" id="L795">                                     4, 2) + &quot;\n\n&quot;);</span>
+<span class="nc" id="L796">	  Enumeration enumAtts = m_Instances.enumerateAttributes();</span>
+<span class="nc" id="L797">	  int attIndex = 0;</span>
+<span class="nc bnc" id="L798" title="All 2 branches missed.">	  while (enumAtts.hasMoreElements()) {</span>
+<span class="nc" id="L799">	    Attribute attribute = (Attribute) enumAtts.nextElement();</span>
+<span class="nc bnc" id="L800" title="All 2 branches missed.">	    if (attribute.weight() &gt; 0) {</span>
+<span class="nc" id="L801">	      text.append(attribute.name() + &quot;:  &quot; </span>
+<span class="nc" id="L802">                          + m_Distributions[attIndex][i]);</span>
+	    }
+<span class="nc" id="L804">	    attIndex++;</span>
+	  }
+	}
+<span class="nc" id="L807">      } catch (Exception ex) {</span>
+<span class="nc" id="L808">	text.append(ex.getMessage());</span>
+      }
+    }
+
+<span class="nc" id="L812">    return text.toString();</span>
+  } 
+
+  private String pad(String source, String padChar, 
+                     int length, boolean leftPad) {
+<span class="nc" id="L817">    StringBuffer temp = new StringBuffer();</span>
+
+<span class="nc bnc" id="L819" title="All 2 branches missed.">    if (leftPad) {</span>
+<span class="nc bnc" id="L820" title="All 2 branches missed.">      for (int i = 0; i&lt; length; i++) {</span>
+<span class="nc" id="L821">        temp.append(padChar);</span>
+      }
+<span class="nc" id="L823">      temp.append(source);</span>
+    } else {
+<span class="nc" id="L825">      temp.append(source);</span>
+<span class="nc bnc" id="L826" title="All 2 branches missed.">      for (int i = 0; i&lt; length; i++) {</span>
+<span class="nc" id="L827">        temp.append(padChar);</span>
+      }
+    }
+<span class="nc" id="L830">    return temp.toString();</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String useKernelEstimatorTipText() {
+<span class="nc" id="L839">    return &quot;Use a kernel estimator for numeric attributes rather than a &quot;</span>
+      +&quot;normal distribution.&quot;;
+  }
+  /**
+   * Gets if kernel estimator is being used.
+   *
+   * @return Value of m_UseKernelEstimatory.
+   */
+  public boolean getUseKernelEstimator() {
+
+<span class="nc" id="L849">    return m_UseKernelEstimator;</span>
+  }
+
+  /**
+   * Sets if kernel estimator is to be used.
+   *
+   * @param v  Value to assign to m_UseKernelEstimatory.
+   */
+  public void setUseKernelEstimator(boolean v) {
+
+<span class="fc" id="L859">    m_UseKernelEstimator = v;</span>
+<span class="pc bpc" id="L860" title="1 of 2 branches missed.">    if (v) {</span>
+<span class="nc" id="L861">      setUseSupervisedDiscretization(false);</span>
+    }
+<span class="fc" id="L863">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String useSupervisedDiscretizationTipText() {
+<span class="nc" id="L871">    return &quot;Use supervised discretization to convert numeric attributes to nominal &quot;</span>
+      +&quot;ones.&quot;;
+  }
+
+  /**
+   * Get whether supervised discretization is to be used.
+   *
+   * @return true if supervised discretization is to be used.
+   */
+  public boolean getUseSupervisedDiscretization() {
+
+<span class="nc" id="L882">    return m_UseDiscretization;</span>
+  }
+
+  /**
+   * Set whether supervised discretization is to be used.
+   *
+   * @param newblah true if supervised discretization is to be used.
+   */
+  public void setUseSupervisedDiscretization(boolean newblah) {
+
+<span class="fc" id="L892">    m_UseDiscretization = newblah;</span>
+<span class="pc bpc" id="L893" title="1 of 2 branches missed.">    if (newblah) {</span>
+<span class="nc" id="L894">      setUseKernelEstimator(false);</span>
+    }
+<span class="fc" id="L896">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String displayModelInOldFormatTipText() {
+<span class="nc" id="L904">    return &quot;Use old format for model output. The old format is &quot;</span>
+      + &quot;better when there are many class values. The new format &quot;
+      + &quot;is better when there are fewer classes and many attributes.&quot;;
+  }
+
+  /**
+   * Set whether to display model output in the old, original
+   * format.
+   *
+   * @param d true if model ouput is to be shown in the old format
+   */
+  public void setDisplayModelInOldFormat(boolean d) {
+<span class="fc" id="L916">    m_displayModelInOldFormat = d;</span>
+<span class="fc" id="L917">  }</span>
+
+  /**
+   * Get whether to display model output in the old, original
+   * format.
+   *
+   * @return true if model ouput is to be shown in the old format
+   */
+  public boolean getDisplayModelInOldFormat() {
+<span class="nc" id="L926">    return m_displayModelInOldFormat;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L935">    return RevisionUtils.extract(&quot;$Revision: 5516 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L944">    runClassifier(new NaiveBayes(), argv);</span>
+<span class="nc" id="L945">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

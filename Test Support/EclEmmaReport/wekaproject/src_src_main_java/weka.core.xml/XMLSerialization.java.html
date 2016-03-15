@@ -1,0 +1,1710 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>XMLSerialization.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core.xml</a> &gt; <span class="el_source">XMLSerialization.java</span></div><h1>XMLSerialization.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * XMLSerialization.java
+ * Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.core.xml;
+
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.Version;
+
+import java.beans.BeanInfo;
+import java.beans.Introspector;
+import java.beans.PropertyDescriptor;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.OutputStream;
+import java.io.Reader;
+import java.io.Writer;
+import java.lang.reflect.Array;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.Vector;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+
+/**
+ * With this class objects can be serialized to XML instead into a binary 
+ * format. It uses introspection (cf. beans) to retrieve the data from the
+ * given object, i.e. it can only access beans-conform fields automatically.
+ * &lt;p&gt;
+ * The generic approach of writing data as XML can be overriden by adding 
+ * custom methods for reading/writing in a derived class
+ * (cf. &lt;code&gt;m_Properties&lt;/code&gt;, &lt;code&gt;m_CustomMethods&lt;/code&gt;).&lt;br&gt;
+ * Custom read and write methods must have the same signature (and also be 
+ * &lt;code&gt;public&lt;/code&gt;!) as the &lt;code&gt;readFromXML&lt;/code&gt; and &lt;code&gt;writeToXML&lt;/code&gt;
+ * methods. Methods that apply to the naming rule &lt;code&gt;read + property name&lt;/code&gt;
+ * are added automatically to the list of methods by the method 
+ * &lt;code&gt;XMLSerializationMethodHandler.addMethods(...)&lt;/code&gt;.  
+ * &lt;p&gt;
+ * Other properties that are not conform the bean set/get-methods have to be 
+ * processed manually in a derived class (cf. &lt;code&gt;readPostProcess(Object)&lt;/code&gt;, 
+ * &lt;code&gt;writePostProcess(Object)&lt;/code&gt;).
+ * &lt;p&gt;
+ * For a complete XML serialization/deserialization have a look at the 
+ * &lt;code&gt;KOML&lt;/code&gt; class.
+ * &lt;p&gt;
+ * If a stored class has a constructor that takes a String to initialize
+ * (e.g. String or Double) then the content of the tag will used for the
+ * constructor, e.g. from 
+ * &lt;pre&gt;&amp;lt;object name=&quot;name&quot; class=&quot;String&quot; primitive=&quot;no&quot;&amp;gt;Smith&amp;lt;/object&amp;gt;&lt;/pre&gt;
+ * &quot;Smith&quot; will be used to instantiate a String object as constructor argument.
+ * &lt;p&gt;   
+ * 
+ * @see KOML
+ * @see #fromXML(Document)
+ * @see #toXML(Object)
+ * @see #m_Properties
+ * @see #m_CustomMethods
+ * @see #readPostProcess(Object)
+ * @see #writePostProcess(Object)
+ * @see #readFromXML(Element)
+ * @see #writeToXML(Element, Object, String)
+ * 
+ * @author FracPete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 1.16 $ 
+ */
+<span class="nc" id="L95">public class XMLSerialization</span>
+   implements RevisionHandler {
+  
+   /** for debugging purposes only */
+<span class="nc" id="L99">   protected static boolean DEBUG = false;</span>
+  
+   /** the node that is currently processed, in case of writing the parent node
+    * (something might go wrong writing the new child) and in case of reading 
+    * the actual node that is tried to process */
+<span class="nc" id="L104">   protected Element m_CurrentNode = null;</span>
+   
+   /** the tag for an object */
+   public final static String TAG_OBJECT = &quot;object&quot;;
+   
+   /** the version attribute */
+   public final static String ATT_VERSION = XMLDocument.ATT_VERSION;
+  
+   /** the tag for the name */
+   public final static String ATT_NAME = XMLDocument.ATT_NAME;
+   
+   /** the tag for the class */
+   public final static String ATT_CLASS = &quot;class&quot;;
+   
+   /** the tag whether primitive or not (yes/no) */
+   public final static String ATT_PRIMITIVE = &quot;primitive&quot;;
+   
+   /** the tag whether array or not (yes/no) */
+   public final static String ATT_ARRAY = &quot;array&quot;;
+   
+   /** the tag whether null or not (yes/no) */
+   public final static String ATT_NULL = &quot;null&quot;;
+   
+   /** the value &quot;yes&quot; for the primitive and array attribute */
+   public final static String VAL_YES = XMLDocument.VAL_YES;
+   
+   /** the value &quot;no&quot; for the primitive and array attribute */
+   public final static String VAL_NO = XMLDocument.VAL_NO;
+   
+   /** the value of the name for the root node */
+   public final static String VAL_ROOT = &quot;__root__&quot;;
+   
+   /** the root node of the XML document */
+   public final static String ROOT_NODE = TAG_OBJECT; 
+   
+   /** default value for attribute ATT_PRIMITIVE
+    * @see #ATT_PRIMITIVE */
+   public final static String ATT_PRIMITIVE_DEFAULT = VAL_NO;
+   
+   /** default value for attribute ATT_ARRAY
+    * @see #ATT_ARRAY */
+   public final static String ATT_ARRAY_DEFAULT = VAL_NO;
+   
+   /** default value for attribute ATT_NULL
+    * @see #ATT_NULL */
+   public final static String ATT_NULL_DEFAULT = VAL_NO;
+   
+   /** the DOCTYPE for the serialization */
+<span class="nc" id="L152">   public final static String DOCTYPE = </span>
+<span class="nc" id="L153">        &quot;&lt;!&quot; + XMLDocument.DTD_DOCTYPE + &quot; &quot; + ROOT_NODE + &quot;\n&quot;</span>
+      + &quot;[\n&quot;
+      + &quot;   &lt;!&quot; + XMLDocument.DTD_ELEMENT + &quot; &quot; + TAG_OBJECT + &quot; (&quot; + XMLDocument.DTD_PCDATA + XMLDocument.DTD_SEPARATOR + TAG_OBJECT + &quot;)&quot; + XMLDocument.DTD_ZERO_OR_MORE + &quot;&gt;\n&quot;
+      + &quot;   &lt;!&quot; + XMLDocument.DTD_ATTLIST + &quot; &quot; + TAG_OBJECT + &quot; &quot; + ATT_NAME + &quot;      &quot; + XMLDocument.DTD_CDATA + &quot; &quot; + XMLDocument.DTD_REQUIRED + &quot;&gt;\n&quot;
+      + &quot;   &lt;!&quot; + XMLDocument.DTD_ATTLIST + &quot; &quot; + TAG_OBJECT + &quot; &quot; + ATT_CLASS + &quot;     &quot; + XMLDocument.DTD_CDATA + &quot; &quot; + XMLDocument.DTD_REQUIRED + &quot;&gt;\n&quot;
+      + &quot;   &lt;!&quot; + XMLDocument.DTD_ATTLIST + &quot; &quot; + TAG_OBJECT + &quot; &quot; + ATT_PRIMITIVE + &quot; &quot; + XMLDocument.DTD_CDATA + &quot; \&quot;&quot; + ATT_PRIMITIVE_DEFAULT + &quot;\&quot;&gt;\n&quot;
+      + &quot;   &lt;!&quot; + XMLDocument.DTD_ATTLIST + &quot; &quot; + TAG_OBJECT + &quot; &quot; + ATT_ARRAY + &quot;     &quot; + XMLDocument.DTD_CDATA + &quot; \&quot;&quot; + ATT_ARRAY_DEFAULT + &quot;\&quot;&gt;   &lt;!-- the dimensions of the array; no=0, yes=1 --&gt;\n&quot;
+      + &quot;   &lt;!&quot; + XMLDocument.DTD_ATTLIST + &quot; &quot; + TAG_OBJECT + &quot; &quot; + ATT_NULL + &quot;      &quot; + XMLDocument.DTD_CDATA + &quot; \&quot;&quot; + ATT_NULL_DEFAULT + &quot;\&quot;&gt;\n&quot;
+<span class="nc" id="L161">      + &quot;   &lt;!&quot; + XMLDocument.DTD_ATTLIST + &quot; &quot; + TAG_OBJECT + &quot; &quot; + ATT_VERSION + &quot;   &quot; + XMLDocument.DTD_CDATA + &quot; \&quot;&quot; + Version.VERSION + &quot;\&quot;&gt;\n&quot;</span>
+<span class="nc" id="L162">      + &quot;]\n&quot;</span>
+<span class="nc" id="L163">      + &quot;&gt;&quot;;</span>
+   
+   /** the XMLDocument that performs the transformation to and fro XML */
+<span class="nc" id="L166">   protected XMLDocument m_Document = null;</span>
+   
+   /** for handling properties (ignored/allowed) */
+<span class="nc" id="L169">   protected PropertyHandler m_Properties = null;</span>
+   
+   /** for handling custom read/write methods */
+<span class="nc" id="L172">   protected XMLSerializationMethodHandler m_CustomMethods = null;</span>
+
+   /** for overriding class names (Class &amp;lt;-&amp;gt; Classname (String)) 
+    * @see #overrideClassname(Object) */
+<span class="nc" id="L176">   protected Hashtable m_ClassnameOverride = null;</span>
+   
+   /**
+    * initializes the serialization
+    * 
+    * @throws Exception if initialization fails
+    */
+   public XMLSerialization() throws Exception {
+<span class="nc" id="L184">      super();</span>
+<span class="nc" id="L185">      clear();</span>
+<span class="nc" id="L186">   }</span>
+   
+   /**
+    * used for debugging purposes, i.e. only if DEBUG is set to true.
+    * needs a newly generated Throwable instance to get the method/line from
+    * @param t      a throwable instance, generated in the calling method
+    * @param msg    a message to pring
+    * @see          #DEBUG
+    */
+   protected void trace(Throwable t, String msg) {
+<span class="nc bnc" id="L196" title="All 4 branches missed.">     if ( (DEBUG) &amp;&amp; (t.getStackTrace().length &gt; 0) ) {</span>
+<span class="nc" id="L197">       System.out.println(&quot;trace: &quot; + t.getStackTrace()[0] + &quot;: &quot; + msg);</span>
+     }
+<span class="nc" id="L199">   }</span>
+   
+   /**
+    * generates internally a new XML document and clears also the IgnoreList and
+    * the mappings for the Read/Write-Methods
+    * 
+    * @throws Exception	if something goes wrong
+    */
+   public void clear() throws Exception {
+<span class="nc" id="L208">      m_Document = new XMLDocument();</span>
+<span class="nc" id="L209">      m_Document.setValidating(true);</span>
+<span class="nc" id="L210">      m_Document.newDocument(DOCTYPE, ROOT_NODE);</span>
+      
+<span class="nc" id="L212">      m_Properties        = new PropertyHandler();</span>
+<span class="nc" id="L213">      m_CustomMethods     = new XMLSerializationMethodHandler(this);</span>
+
+<span class="nc" id="L215">      m_ClassnameOverride = new Hashtable();</span>
+      // java.io.File is sometimes represented as another class:
+      // - Win32: sun.awt.shell.Win32ShellFolder2 
+      // - Linux: sun.awt.shell.DefaultShellFolder
+      // -&gt; we set it to &quot;java.io.File&quot;
+<span class="nc" id="L220">      m_ClassnameOverride.put(java.io.File.class, java.io.File.class.getName());</span>
+      
+<span class="nc" id="L222">      setVersion(Version.VERSION); </span>
+      
+<span class="nc" id="L224">      m_CurrentNode = null;</span>
+<span class="nc" id="L225">   }</span>
+   
+   /**
+    * sets the given version string in the XML document
+    * 
+    * @param version	the new version string
+    */
+   private void setVersion(String version) {
+      Document     doc;
+      
+<span class="nc" id="L235">      doc = m_Document.getDocument();</span>
+<span class="nc" id="L236">      doc.getDocumentElement().setAttribute(ATT_VERSION, version);</span>
+<span class="nc" id="L237">   }</span>
+   
+   /**
+    * returns the WEKA version with which the serialized object was created
+    * 
+    * @return		the current version
+    * @see Version 
+    */
+   public String getVersion() {
+      Document     doc;
+      String       result;
+      
+<span class="nc" id="L249">      doc    = m_Document.getDocument();</span>
+<span class="nc" id="L250">      result = doc.getDocumentElement().getAttribute(ATT_VERSION);</span>
+      
+<span class="nc" id="L252">      return result;</span>
+   }
+   
+   /**
+    * Checks the version in the current Document with the one of the current
+    * release. If the version differ, a warning is printed.
+    */
+   private void checkVersion() {
+      String            versionStr;
+      Version           version;
+      
+<span class="nc" id="L263">      version    = new Version();</span>
+<span class="nc" id="L264">      versionStr = getVersion();</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">      if (versionStr.equals(&quot;&quot;))</span>
+<span class="nc" id="L266">         System.out.println(&quot;WARNING: has no version!&quot;);</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">      else if (version.isOlder(versionStr))</span>
+<span class="nc" id="L268">         System.out.println(&quot;WARNING: loading a newer version (&quot; + versionStr + &quot; &gt; &quot; + Version.VERSION + &quot;)!&quot;);</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">      else if (version.isNewer(versionStr))</span>
+<span class="nc" id="L270">         System.out.println(&quot;NOTE: loading an older version (&quot; + versionStr + &quot; &lt; &quot; + Version.VERSION + &quot;)!&quot;);</span>
+<span class="nc" id="L271">   }</span>
+   
+   /**
+    * returns a hashtable with PropertyDescriptors that have &quot;get&quot; and &quot;set&quot; 
+    * methods indexed by the property name.
+    * 
+    * @see java.beans.PropertyDescriptor
+    * @param o the object to retrieve the descriptors from
+    * @return the PropertyDescriptors indexed by name of the property
+    * @throws Exception if the introspection fails
+    */
+   protected Hashtable getDescriptors(Object o) throws Exception {
+      BeanInfo                   info;
+      PropertyDescriptor[]       desc;
+      int                        i;
+      Hashtable                  result;
+      
+<span class="nc" id="L288">      result = new Hashtable();</span>
+
+<span class="nc" id="L290">      info = Introspector.getBeanInfo(o.getClass());</span>
+<span class="nc" id="L291">      desc = info.getPropertyDescriptors();</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">      for (i = 0; i &lt; desc.length; i++) {</span>
+         // get AND set method?
+<span class="nc bnc" id="L294" title="All 4 branches missed.">         if ( (desc[i].getReadMethod() != null) &amp;&amp; (desc[i].getWriteMethod() != null) ) {</span>
+            // in ignore list, i.e. a general ignore without complete path?
+<span class="nc bnc" id="L296" title="All 2 branches missed.">            if (m_Properties.isIgnored(desc[i].getDisplayName()))</span>
+<span class="nc" id="L297">               continue;</span>
+            
+            // in ignore list of the class?
+<span class="nc bnc" id="L300" title="All 2 branches missed.">            if (m_Properties.isIgnored(o, desc[i].getDisplayName()))</span>
+<span class="nc" id="L301">               continue;</span>
+            
+            // not an allowed property
+<span class="nc bnc" id="L304" title="All 2 branches missed.">            if (!m_Properties.isAllowed(o, desc[i].getDisplayName()))</span>
+<span class="nc" id="L305">               continue;</span>
+            
+<span class="nc" id="L307">            result.put(desc[i].getDisplayName(), desc[i]);</span>
+         }
+      }
+      
+<span class="nc" id="L311">      return result;</span>
+   }
+
+   /**
+    * returns the path of the &quot;name&quot; attribute from the root down to this node
+    * (including it).
+    * 
+    * @param node the node to get the path for
+    * @return the complete &quot;name&quot; path of this node
+    */
+   protected String getPath(Element node) {
+      String            result;
+      
+<span class="nc" id="L324">      result = node.getAttribute(ATT_NAME);</span>
+
+<span class="nc bnc" id="L326" title="All 2 branches missed.">      while (node.getParentNode() != node.getOwnerDocument()) {</span>
+<span class="nc" id="L327">         node   = (Element) node.getParentNode(); </span>
+<span class="nc" id="L328">         result = node.getAttribute(ATT_NAME) + &quot;.&quot; + result;</span>
+      }
+      
+<span class="nc" id="L331">      return result;</span>
+   }
+   
+   /**
+    * returns either &lt;code&gt;VAL_YES&lt;/code&gt; or &lt;code&gt;VAL_NO&lt;/code&gt; depending 
+    * on the value of &lt;code&gt;b&lt;/code&gt;
+    * 
+    * @param b the boolean to turn into a string
+    * @return the value in string representation
+    */
+   protected String booleanToString(boolean b) {
+<span class="nc bnc" id="L342" title="All 2 branches missed.">      if (b)</span>
+<span class="nc" id="L343">         return VAL_YES;</span>
+      else
+<span class="nc" id="L345">         return VAL_NO;</span>
+   }
+   
+   /**
+    * turns the given string into a boolean, if a positive number is given, 
+    * then zero is considered FALSE, every other number TRUE; the empty string 
+    * is also considered being FALSE
+    * 
+    * @param s the string to turn into a boolean
+    * @return the string as boolean
+    */
+   protected boolean stringToBoolean(String s) {
+<span class="nc bnc" id="L357" title="All 2 branches missed.">      if (s.equals(&quot;&quot;))</span>
+<span class="nc" id="L358">         return false;</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">      else if (s.equals(VAL_YES))</span>
+<span class="nc" id="L360">         return true;</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">      else if (s.equalsIgnoreCase(&quot;true&quot;))</span>
+<span class="nc" id="L362">         return true;</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">      else if (s.replaceAll(&quot;[0-9]*&quot;, &quot;&quot;).equals(&quot;&quot;))</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">         return (Integer.parseInt(s) != 0);</span>
+      else
+<span class="nc" id="L366">         return false;</span>
+   }
+   
+   /**
+    * appends a new node to the parent with the given parameters (a non-array)
+    * 
+    * @param parent the parent of this node. if it is &lt;code&gt;null&lt;/code&gt; the 
+    *        document root element is used
+    * @param name the name of the node
+    * @param classname the classname for this node
+    * @param primitive whether it is a primitve data type or not (i.e. an object)
+    * @return the generated node 
+    */
+   protected Element addElement(Element parent, String name, String classname, boolean primitive) {
+<span class="nc" id="L380">     return addElement(parent, name, classname, primitive, 0);</span>
+   }
+   
+   /**
+    * appends a new node to the parent with the given parameters
+    * 
+    * @param parent the parent of this node. if it is &lt;code&gt;null&lt;/code&gt; the 
+    *        document root element is used
+    * @param name the name of the node
+    * @param classname the classname for this node
+    * @param primitive whether it is a primitve data type or not (i.e. an object)
+    * @param array the dimensions of the array (0 if not an array)
+    * @return the generated node 
+    */
+   protected Element addElement(Element parent, String name, String classname, boolean primitive, int array) {
+<span class="nc" id="L395">     return addElement(parent, name, classname, primitive, array, false);</span>
+   }
+   
+   /**
+    * appends a new node to the parent with the given parameters
+    * 
+    * @param parent the parent of this node. if it is &lt;code&gt;null&lt;/code&gt; the 
+    *        document root element is used
+    * @param name the name of the node
+    * @param classname the classname for this node
+    * @param primitive whether it is a primitve data type or not (i.e. an object)
+    * @param array the dimensions of the array (0 if not an array)
+    * @param isnull whether it is null
+    * @return the generated node 
+    */
+   protected Element addElement(Element parent, String name, String classname, boolean primitive, int array, boolean isnull) {
+      Element           result;
+
+<span class="nc bnc" id="L413" title="All 2 branches missed.">      if (parent == null)</span>
+<span class="nc" id="L414">         result = m_Document.getDocument().getDocumentElement();</span>
+      else
+<span class="nc" id="L416">         result = (Element) parent.appendChild(m_Document.getDocument().createElement(TAG_OBJECT));</span>
+      
+      // attributes
+      // mandatory attributes:
+<span class="nc" id="L420">      result.setAttribute(ATT_NAME, name);</span>
+<span class="nc" id="L421">      result.setAttribute(ATT_CLASS, classname);</span>
+      
+      // add following attributes only if necessary, i.e., different from default:
+<span class="nc bnc" id="L424" title="All 2 branches missed.">      if (!booleanToString(primitive).equals(ATT_PRIMITIVE_DEFAULT))</span>
+<span class="nc" id="L425">        result.setAttribute(ATT_PRIMITIVE, booleanToString(primitive));</span>
+
+      // multi-dimensional array?
+<span class="nc bnc" id="L428" title="All 2 branches missed.">      if (array &gt; 1) {</span>
+<span class="nc" id="L429">        result.setAttribute(ATT_ARRAY, Integer.toString(array));</span>
+      }
+      // backwards compatible: 0 -&gt; no array (&quot;no&quot;), 1 -&gt; 1-dim. array (&quot;yes&quot;)
+      else {
+<span class="nc bnc" id="L433" title="All 4 branches missed.">        if (!booleanToString(array == 1).equals(ATT_ARRAY_DEFAULT))</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">          result.setAttribute(ATT_ARRAY, booleanToString(array == 1));</span>
+      }
+      
+<span class="nc bnc" id="L437" title="All 2 branches missed.">      if (!booleanToString(isnull).equals(ATT_NULL_DEFAULT))</span>
+<span class="nc" id="L438">        result.setAttribute(ATT_NULL, booleanToString(isnull));</span>
+      
+<span class="nc" id="L440">      return result;</span>
+   }
+   
+   /**
+    * if the class of the given object (or one of its ancestors) is stored in 
+    * the classname override hashtable, then the override name is returned 
+    * otherwise the classname of the given object.
+    * 
+    * @param o          the object to check for overriding its classname
+    * @return           if overridden then the classname stored in the hashtable,
+    *                   otherwise the classname of the given object
+    * @see              #m_ClassnameOverride
+    */
+   protected String overrideClassname(Object o) {
+      Enumeration    enm;
+      String         result;
+      Class          currentCls;
+     
+<span class="nc" id="L458">      result = o.getClass().getName();</span>
+
+      // check overrides
+<span class="nc" id="L461">      enm    = m_ClassnameOverride.keys();</span>
+<span class="nc bnc" id="L462" title="All 2 branches missed.">      while (enm.hasMoreElements()) {</span>
+<span class="nc" id="L463">         currentCls = (Class) enm.nextElement();</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">         if (currentCls.isInstance(o)) {</span>
+<span class="nc" id="L465">           result = (String) m_ClassnameOverride.get(currentCls);</span>
+<span class="nc" id="L466">           break;</span>
+         }
+      }
+      
+<span class="nc" id="L470">      return result;</span>
+   }
+   
+   /**
+    * if the given classname is stored in the classname override hashtable, 
+    * then the override name is returned otherwise the given classname.
+    * &lt;b&gt;Note:&lt;/b&gt; in contrast to &lt;code&gt;overrideClassname(Object)&lt;/code&gt; does
+    * this method only look for exact name matches. The other method checks
+    * whether the class of the given object is a subclass of any of the stored
+    * overrides.  
+    * 
+    * @param classname  the classname to check for overriding
+    * @return           if overridden then the classname stored in the hashtable,
+    *                   otherwise the given classname
+    * @see              #m_ClassnameOverride
+    * @see              #overrideClassname(Object)
+    */
+   protected String overrideClassname(String classname) {
+      Enumeration    enm;
+      String         result;
+      Class          currentCls;
+     
+<span class="nc" id="L492">      result = classname;</span>
+
+      // check overrides
+<span class="nc" id="L495">      enm    = m_ClassnameOverride.keys();</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">      while (enm.hasMoreElements()) {</span>
+<span class="nc" id="L497">         currentCls = (Class) enm.nextElement();</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">         if (currentCls.getName().equals(classname)) {</span>
+<span class="nc" id="L499">           result = (String) m_ClassnameOverride.get(currentCls);</span>
+<span class="nc" id="L500">           break;</span>
+         }
+      }
+      
+<span class="nc" id="L504">      return result;</span>
+   }
+   
+   /**
+    * returns a property descriptor if possible, otherwise &lt;code&gt;null&lt;/code&gt;
+    * 
+    * @param className the name of the class to get the descriptor for
+    * @param displayName the name of the property
+    * @return the descriptor if available, otherwise &lt;code&gt;null&lt;/code&gt;
+    */
+   protected PropertyDescriptor determineDescriptor(String className, String displayName) {
+      PropertyDescriptor      result;
+      
+<span class="nc" id="L517">      result = null;</span>
+      
+      try {
+<span class="nc" id="L520">         result = new PropertyDescriptor(displayName, Class.forName(className));</span>
+      }
+<span class="nc" id="L522">      catch (Exception e) {</span>
+<span class="nc" id="L523">         result = null;</span>
+      }
+      
+<span class="nc" id="L526">      return result;</span>
+   }
+   
+   /**
+    * adds the given primitive to the DOM structure.
+    * @param parent the parent of this object, e.g. the class this object is a member of
+    * @param o the primitive to describe in XML
+    * @param name the name of the primitive
+    * @return the node that was created
+    * @throws Exception if the DOM creation fails
+    */
+   protected Element writeBooleanToXML(Element parent, boolean o, String name) throws Exception {
+     Element      node;
+
+     // for debugging only
+<span class="nc bnc" id="L541" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L542">        trace(new Throwable(), name);</span>
+     
+<span class="nc" id="L544">     m_CurrentNode = parent;</span>
+     
+<span class="nc" id="L546">     node = addElement(parent, name, Boolean.TYPE.getName(), true);</span>
+<span class="nc" id="L547">     node.appendChild(node.getOwnerDocument().createTextNode(new Boolean(o).toString()));</span>
+     
+<span class="nc" id="L549">     return node;</span>
+   }
+   
+   /**
+    * adds the given primitive to the DOM structure.
+    * @param parent the parent of this object, e.g. the class this object is a member of
+    * @param o the primitive to describe in XML
+    * @param name the name of the primitive
+    * @return the node that was created
+    * @throws Exception if the DOM creation fails
+    */
+   protected Element writeByteToXML(Element parent, byte o, String name) throws Exception {
+     Element      node;
+     
+     // for debugging only
+<span class="nc bnc" id="L564" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L565">        trace(new Throwable(), name);</span>
+     
+<span class="nc" id="L567">     m_CurrentNode = parent;</span>
+     
+<span class="nc" id="L569">     node = addElement(parent, name, Byte.TYPE.getName(), true);</span>
+<span class="nc" id="L570">     node.appendChild(node.getOwnerDocument().createTextNode(new Byte(o).toString()));</span>
+     
+<span class="nc" id="L572">     return node;</span>
+   }
+   
+   /**
+    * adds the given primitive to the DOM structure.
+    * @param parent the parent of this object, e.g. the class this object is a member of
+    * @param o the primitive to describe in XML
+    * @param name the name of the primitive
+    * @return the node that was created
+    * @throws Exception if the DOM creation fails
+    */
+   protected Element writeCharToXML(Element parent, char o, String name) throws Exception {
+     Element      node;
+     
+     // for debugging only
+<span class="nc bnc" id="L587" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L588">        trace(new Throwable(), name);</span>
+     
+<span class="nc" id="L590">     m_CurrentNode = parent;</span>
+     
+<span class="nc" id="L592">     node = addElement(parent, name, Character.TYPE.getName(), true);</span>
+<span class="nc" id="L593">     node.appendChild(node.getOwnerDocument().createTextNode(new Character(o).toString()));</span>
+     
+<span class="nc" id="L595">     return node;</span>
+   }
+   
+   /**
+    * adds the given primitive to the DOM structure.
+    * @param parent the parent of this object, e.g. the class this object is a member of
+    * @param o the primitive to describe in XML
+    * @param name the name of the primitive
+    * @return the node that was created
+    * @throws Exception if the DOM creation fails
+    */
+   protected Element writeDoubleToXML(Element parent, double o, String name) throws Exception {
+     Element      node;
+     
+     // for debugging only
+<span class="nc bnc" id="L610" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L611">        trace(new Throwable(), name);</span>
+     
+<span class="nc" id="L613">     m_CurrentNode = parent;</span>
+     
+<span class="nc" id="L615">     node = addElement(parent, name, Double.TYPE.getName(), true);</span>
+<span class="nc" id="L616">     node.appendChild(node.getOwnerDocument().createTextNode(new Double(o).toString()));</span>
+     
+<span class="nc" id="L618">     return node;</span>
+   }
+   
+   /**
+    * adds the given primitive to the DOM structure.
+    * @param parent the parent of this object, e.g. the class this object is a member of
+    * @param o the primitive to describe in XML
+    * @param name the name of the primitive
+    * @return the node that was created
+    * @throws Exception if the DOM creation fails
+    */
+   protected Element writeFloatToXML(Element parent, float o, String name) throws Exception {
+     Element      node;
+     
+     // for debugging only
+<span class="nc bnc" id="L633" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L634">        trace(new Throwable(), name);</span>
+     
+<span class="nc" id="L636">     m_CurrentNode = parent;</span>
+     
+<span class="nc" id="L638">     node = addElement(parent, name, Float.TYPE.getName(), true);</span>
+<span class="nc" id="L639">     node.appendChild(node.getOwnerDocument().createTextNode(new Float(o).toString()));</span>
+     
+<span class="nc" id="L641">     return node;</span>
+   }
+   
+   /**
+    * adds the given primitive to the DOM structure.
+    * @param parent the parent of this object, e.g. the class this object is a member of
+    * @param o the primitive to describe in XML
+    * @param name the name of the primitive
+    * @return the node that was created
+    * @throws Exception if the DOM creation fails
+    */
+   protected Element writeIntToXML(Element parent, int o, String name) throws Exception {
+     Element      node;
+     
+     // for debugging only
+<span class="nc bnc" id="L656" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L657">        trace(new Throwable(), name);</span>
+     
+<span class="nc" id="L659">     m_CurrentNode = parent;</span>
+     
+<span class="nc" id="L661">     node = addElement(parent, name, Integer.TYPE.getName(), true);</span>
+<span class="nc" id="L662">     node.appendChild(node.getOwnerDocument().createTextNode(new Integer(o).toString()));</span>
+     
+<span class="nc" id="L664">     return node;</span>
+   }
+   
+   /**
+    * adds the given primitive to the DOM structure.
+    * @param parent the parent of this object, e.g. the class this object is a member of
+    * @param o the primitive to describe in XML
+    * @param name the name of the primitive
+    * @return the node that was created
+    * @throws Exception if the DOM creation fails
+    */
+   protected Element writeLongToXML(Element parent, long o, String name) throws Exception {
+     Element      node;
+     
+     // for debugging only
+<span class="nc bnc" id="L679" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L680">        trace(new Throwable(), name);</span>
+     
+<span class="nc" id="L682">     m_CurrentNode = parent;</span>
+
+<span class="nc" id="L684">     node = addElement(parent, name, Long.TYPE.getName(), true);</span>
+<span class="nc" id="L685">     node.appendChild(node.getOwnerDocument().createTextNode(new Long(o).toString()));</span>
+     
+<span class="nc" id="L687">     return node;</span>
+   }
+   
+   /**
+    * adds the given primitive to the DOM structure.
+    * @param parent the parent of this object, e.g. the class this object is a member of
+    * @param o the primitive to describe in XML
+    * @param name the name of the primitive
+    * @return the node that was created
+    * @throws Exception if the DOM creation fails
+    */
+   protected Element writeShortToXML(Element parent, short o, String name) throws Exception {
+     Element      node;
+     
+     // for debugging only
+<span class="nc bnc" id="L702" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L703">        trace(new Throwable(), name);</span>
+     
+<span class="nc" id="L705">     m_CurrentNode = parent;</span>
+     
+<span class="nc" id="L707">     node = addElement(parent, name, Short.TYPE.getName(), true);</span>
+<span class="nc" id="L708">     node.appendChild(node.getOwnerDocument().createTextNode(new Short(o).toString()));</span>
+     
+<span class="nc" id="L710">     return node;</span>
+   }
+   
+   /**
+    * checks whether the innermost class is a primitive class (handles 
+    * multi-dimensional arrays)
+    * @param c        the array class to inspect
+    * @return         whether the array consists of primitive elements
+    */
+   protected boolean isPrimitiveArray(Class c) {
+<span class="nc bnc" id="L720" title="All 2 branches missed.">     if (c.getComponentType().isArray())</span>
+<span class="nc" id="L721">       return isPrimitiveArray(c.getComponentType());</span>
+    else
+<span class="nc" id="L723">       return c.getComponentType().isPrimitive();</span>
+   }
+   
+   /**
+    * adds the given Object to a DOM structure. 
+    * (only public due to reflection).&lt;br&gt;
+    * &lt;b&gt;Note:&lt;/b&gt; &lt;code&gt;overrideClassname(Object)&lt;/code&gt; is not invoked in case of
+    * arrays, since the array class could be a superclass, whereas the elements of
+    * the array can be specialized subclasses. In case of an array the method 
+    * &lt;code&gt;overrideClassname(String)&lt;/code&gt; is invoked, which searches for an 
+    * exact match of the classname in the override hashtable.
+    * 
+    * @param parent the parent of this object, e.g. the class this object is a member of
+    * @param o the Object to describe in XML
+    * @param name the name of the object
+    * @return the node that was created
+    * @throws Exception if the DOM creation fails
+    * @see #overrideClassname(Object)
+    * @see #overrideClassname(String)
+    * @see #m_ClassnameOverride
+    */
+   public Element writeToXML(Element parent, Object o, String name) throws Exception {
+      String               classname;
+      Element              node;
+      Hashtable            memberlist;
+      Enumeration          enm;
+      Object               member;
+      String               memberName;
+      Method               method;
+      PropertyDescriptor   desc;
+      boolean              primitive;
+      int                  array;
+      int                  i;
+      Object               obj;
+      String               tmpStr;
+
+<span class="nc" id="L759">      node = null;</span>
+      
+      // for debugging only
+<span class="nc bnc" id="L762" title="All 2 branches missed.">      if (DEBUG)</span>
+<span class="nc" id="L763">         trace(new Throwable(), name);</span>
+
+      // special handling of null-objects
+<span class="nc bnc" id="L766" title="All 2 branches missed.">      if (o == null) {</span>
+<span class="nc" id="L767">        node = addElement(parent, name, &quot;&quot; + null, false, 0, true);</span>
+<span class="nc" id="L768">        return node;</span>
+      }
+      
+      // used for overriding the classname
+<span class="nc" id="L772">      obj = null;</span>
+      
+      // get information about object
+<span class="nc" id="L775">      array = 0;</span>
+<span class="nc bnc" id="L776" title="All 2 branches missed.">      if (o.getClass().isArray())</span>
+<span class="nc" id="L777">        array = Utils.getArrayDimensions(o);</span>
+<span class="nc bnc" id="L778" title="All 2 branches missed.">      if (array &gt; 0) {</span>
+<span class="nc" id="L779">        classname = Utils.getArrayClass(o.getClass()).getName();</span>
+<span class="nc" id="L780">        primitive = isPrimitiveArray(o.getClass()); </span>
+      }
+      else {
+         // try to get property descriptor to determine real class
+         // (for primitives the getClass() method returns the corresponding Object-Class!)
+<span class="nc" id="L785">         desc = null;</span>
+<span class="nc bnc" id="L786" title="All 2 branches missed.">         if (parent != null)</span>
+<span class="nc" id="L787">            desc = determineDescriptor(parent.getAttribute(ATT_CLASS), name);</span>
+         
+<span class="nc bnc" id="L789" title="All 2 branches missed.">         if (desc != null)</span>
+<span class="nc" id="L790">            primitive = desc.getPropertyType().isPrimitive(); </span>
+         else
+<span class="nc" id="L792">            primitive = o.getClass().isPrimitive(); </span>
+
+         // for primitives: retrieve primitive type, otherwise the object's real 
+         // class. For non-primitives we can't use the descriptor, since that
+         // might only return an interface as class!
+<span class="nc bnc" id="L797" title="All 2 branches missed.">         if (primitive) {</span>
+<span class="nc" id="L798">            classname = desc.getPropertyType().getName();</span>
+         }
+         else {
+<span class="nc" id="L801">            obj       = o;</span>
+<span class="nc" id="L802">            classname = o.getClass().getName();</span>
+         }
+      }
+      
+      // fix class/primitive if parent is array of primitives, thanks to 
+      // reflection the elements of the array are objects and not primitives!
+<span class="nc bnc" id="L808" title="All 2 branches missed.">      if (    (parent != null) </span>
+<span class="nc bnc" id="L809" title="All 2 branches missed.">           &amp;&amp; (!parent.getAttribute(ATT_ARRAY).equals(&quot;&quot;))</span>
+<span class="nc bnc" id="L810" title="All 2 branches missed.">           &amp;&amp; (!parent.getAttribute(ATT_ARRAY).equals(VAL_NO))</span>
+<span class="nc bnc" id="L811" title="All 2 branches missed.">           &amp;&amp; (stringToBoolean(parent.getAttribute(ATT_PRIMITIVE))) ) {</span>
+<span class="nc" id="L812">         primitive = true;</span>
+<span class="nc" id="L813">         classname = parent.getAttribute(ATT_CLASS);</span>
+<span class="nc" id="L814">         obj       = null;</span>
+      }
+
+      // perhaps we need to override the classname
+<span class="nc bnc" id="L818" title="All 2 branches missed.">      if (obj != null)</span>
+<span class="nc" id="L819">        classname = overrideClassname(obj);         // for non-arrays</span>
+      else
+<span class="nc" id="L821">        classname = overrideClassname(classname);   // for arrays</span>
+      
+      // create node for current object
+<span class="nc" id="L824">      node = addElement(parent, name, classname, primitive, array);</span>
+      
+      // array? -&gt; save as child with 'name=&quot;&lt;index&gt;&quot;'
+<span class="nc bnc" id="L827" title="All 2 branches missed.">      if (array &gt; 0) {</span>
+<span class="nc bnc" id="L828" title="All 2 branches missed.">         for (i = 0; i &lt; Array.getLength(o); i++) {</span>
+<span class="nc" id="L829">            invokeWriteToXML(node, Array.get(o, i), Integer.toString(i));</span>
+         }
+      }
+      // non-array
+      else {
+         // primitive? -&gt; only toString()
+<span class="nc bnc" id="L835" title="All 2 branches missed.">         if (primitive) {</span>
+<span class="nc" id="L836">            node.appendChild(node.getOwnerDocument().createTextNode(o.toString()));</span>
+         }
+         // object
+         else {
+            // process recursively members of this object 
+<span class="nc" id="L841">            memberlist = getDescriptors(o);</span>
+            // if no get/set methods -&gt; we assume it has String-Constructor
+<span class="nc bnc" id="L843" title="All 2 branches missed.">            if (memberlist.size() == 0) {</span>
+<span class="nc bnc" id="L844" title="All 2 branches missed.">              if (!o.toString().equals(&quot;&quot;)) {</span>
+<span class="nc" id="L845">        	tmpStr = o.toString();</span>
+        	// these five entities are recognized by every XML processor
+        	// see http://www.xml.com/pub/a/2001/03/14/trxml10.html
+<span class="nc" id="L848">        	tmpStr = tmpStr.replaceAll(&quot;&amp;&quot;, &quot;&amp;amp;&quot;)</span>
+<span class="nc" id="L849">        	               .replaceAll(&quot;\&quot;&quot;, &quot;&amp;quot;&quot;)</span>
+<span class="nc" id="L850">        	               .replaceAll(&quot;'&quot;, &quot;&amp;apos;&quot;)</span>
+<span class="nc" id="L851">        	               .replaceAll(&quot;&lt;&quot;, &quot;&amp;lt;&quot;)</span>
+<span class="nc" id="L852">        	               .replaceAll(&quot;&gt;&quot;, &quot;&amp;gt;&quot;);</span>
+        	// in addition, replace some other entities as well
+<span class="nc" id="L854">        	tmpStr = tmpStr.replaceAll(&quot;\n&quot;, &quot;&amp;#10;&quot;)</span>
+<span class="nc" id="L855">        	               .replaceAll(&quot;\r&quot;, &quot;&amp;#13;&quot;)</span>
+<span class="nc" id="L856">        	               .replaceAll(&quot;\t&quot;, &quot;&amp;#9;&quot;);</span>
+<span class="nc bnc" id="L857" title="All 2 branches missed.">                if (o instanceof java.io.File) {</span>
+                  // hack to force separators to be always saved as /
+<span class="nc" id="L859">                  tmpStr = tmpStr.replace('\\', '/');</span>
+                }
+                
+<span class="nc" id="L862">        	node.appendChild(node.getOwnerDocument().createTextNode(tmpStr));</span>
+              }
+            }
+            else {
+<span class="nc" id="L866">               enm = memberlist.keys();</span>
+<span class="nc bnc" id="L867" title="All 2 branches missed.">               while (enm.hasMoreElements()) {</span>
+<span class="nc" id="L868">                  memberName = enm.nextElement().toString();</span>
+                  
+                  // in ignore list?
+<span class="nc bnc" id="L871" title="All 2 branches missed.">                  if (    (m_Properties.isIgnored(memberName))</span>
+<span class="nc bnc" id="L872" title="All 2 branches missed.">                       || (m_Properties.isIgnored(getPath(node) + &quot;.&quot; + memberName))</span>
+<span class="nc bnc" id="L873" title="All 2 branches missed.">                       || (m_Properties.isIgnored(o, getPath(node) + &quot;.&quot; + memberName)) )</span>
+<span class="nc" id="L874">                     continue;</span>
+
+                  // is it allowed?
+<span class="nc bnc" id="L877" title="All 2 branches missed.">                  if (!m_Properties.isAllowed(o, memberName))</span>
+<span class="nc" id="L878">                     continue;</span>
+                  
+<span class="nc" id="L880">                  desc   = (PropertyDescriptor) memberlist.get(memberName);</span>
+<span class="nc" id="L881">                  method = desc.getReadMethod();</span>
+<span class="nc" id="L882">                  member = method.invoke(o, (Object[]) null);</span>
+<span class="nc" id="L883">                  invokeWriteToXML(node, member, memberName);</span>
+               }
+            }
+         }
+      }
+      
+<span class="nc" id="L889">      return node;</span>
+   }
+   
+   /**
+    * either invokes a custom method to write a specific property/class or the standard
+    * method &lt;code&gt;writeToXML(Element,Object,String)&lt;/code&gt;
+    * 
+    * @param parent the parent XML node
+    * @param o the object's content will be added as children to the given parent node
+    * @param name the name of the object
+    * @return the node that was created
+    * @throws Exception if invocation or turning into XML fails
+    */
+   protected Element invokeWriteToXML(Element parent, Object o, String name) throws Exception {
+      Method         method;
+      Class[]        methodClasses;
+      Object[]       methodArgs;
+      boolean        array;
+      Element        node;
+      boolean        useDefault;
+      
+<span class="nc" id="L910">      node       = null;</span>
+<span class="nc" id="L911">      method     = null;</span>
+<span class="nc" id="L912">      useDefault = false;</span>
+
+<span class="nc" id="L914">      m_CurrentNode = parent;</span>
+      
+      // default, if null
+<span class="nc bnc" id="L917" title="All 2 branches missed.">      if (o == null)</span>
+<span class="nc" id="L918">         useDefault = true;</span>
+      
+      try {
+<span class="nc bnc" id="L921" title="All 2 branches missed.">         if (!useDefault) {</span>
+<span class="nc" id="L922">            array = o.getClass().isArray();</span>
+           
+            // display name?
+<span class="nc bnc" id="L925" title="All 2 branches missed.">            if (m_CustomMethods.write().contains(name))</span>
+<span class="nc" id="L926">               method = (Method) m_CustomMethods.write().get(o.getClass());</span>
+            else
+            // class?
+<span class="nc bnc" id="L929" title="All 4 branches missed.">            if ( (!array) &amp;&amp; (m_CustomMethods.write().contains(o.getClass())) )</span>
+<span class="nc" id="L930">               method = (Method) m_CustomMethods.write().get(o.getClass());</span>
+            else
+<span class="nc" id="L932">               method = null;</span>
+            
+<span class="nc bnc" id="L934" title="All 2 branches missed.">            useDefault = (method == null);</span>
+         }
+
+         // custom
+<span class="nc bnc" id="L938" title="All 2 branches missed.">         if (!useDefault) {</span>
+<span class="nc" id="L939">             methodClasses    = new Class[3];</span>
+<span class="nc" id="L940">             methodClasses[0] = Element.class;</span>
+<span class="nc" id="L941">             methodClasses[1] = Object.class;</span>
+<span class="nc" id="L942">             methodClasses[2] = String.class;</span>
+<span class="nc" id="L943">             methodArgs       = new Object[3];</span>
+<span class="nc" id="L944">             methodArgs[0]    = parent;</span>
+<span class="nc" id="L945">             methodArgs[1]    = o;</span>
+<span class="nc" id="L946">             methodArgs[2]    = name;</span>
+<span class="nc" id="L947">             node = (Element) method.invoke(this, methodArgs);</span>
+         }
+         // standard
+         else {
+<span class="nc" id="L951">            node = writeToXML(parent, o, name);</span>
+         }
+      }
+<span class="nc" id="L954">      catch (Exception e) {</span>
+<span class="nc bnc" id="L955" title="All 2 branches missed.">         if (DEBUG)</span>
+<span class="nc" id="L956">            e.printStackTrace();</span>
+         
+<span class="nc bnc" id="L958" title="All 2 branches missed.">         if (m_CurrentNode != null) {</span>
+<span class="nc" id="L959">           System.out.println(&quot;Happened near: &quot; + getPath(m_CurrentNode));</span>
+           // print it only once!
+<span class="nc" id="L961">           m_CurrentNode = null;</span>
+         }
+<span class="nc" id="L963">         System.out.println(&quot;PROBLEM (write): &quot; + name);</span>
+
+<span class="nc" id="L965">         throw (Exception) e.fillInStackTrace();</span>
+      }
+      
+<span class="nc" id="L968">      return node;</span>
+   }
+   
+   /**
+    * enables derived classes to due some pre-processing on the objects, that's
+    * about to be serialized. Right now it only returns the object.
+    * 
+    * @param o the object that is serialized into XML
+    * @return the possibly altered object
+    * @throws Exception if post-processing fails
+    */
+   protected Object writePreProcess(Object o) throws Exception {
+<span class="nc" id="L980">     return o;</span>
+   }
+   
+   /**
+    * enables derived classes to add other properties to the DOM tree, e.g.
+    * ones that do not apply to the get/set convention of beans. only implemented
+    * with empty method body.
+    * 
+    * @param o the object that is serialized into XML
+    * @throws Exception if post-processing fails
+    */
+   protected void writePostProcess(Object o) throws Exception {
+<span class="nc" id="L992">   }</span>
+   
+   /**
+    * extracts all accesible properties from the given object
+    * 
+    * @param o the object to turn into an XML representation
+    * @return the generated DOM document 
+    * @throws Exception if XML generation fails 
+    */
+   public XMLDocument toXML(Object o) throws Exception {
+<span class="nc" id="L1002">      clear();</span>
+<span class="nc" id="L1003">      invokeWriteToXML(null, writePreProcess(o), VAL_ROOT);</span>
+<span class="nc" id="L1004">      writePostProcess(o);</span>
+<span class="nc" id="L1005">      return m_Document;</span>
+   }
+   
+   /**
+    * returns a descriptor for a given objet by providing the name
+    * 
+    * @param o the object the get the descriptor for
+    * @param name the display name of the descriptor
+    * @return the Descriptor, if found, otherwise &lt;code&gt;null&lt;/code&gt;
+    * @throws Exception if introsepction fails 
+    */
+   protected PropertyDescriptor getDescriptorByName(Object o, String name) throws Exception {
+      PropertyDescriptor      result;
+      PropertyDescriptor[]    desc;
+      int                     i;
+      
+<span class="nc" id="L1021">      result = null;</span>
+      
+<span class="nc" id="L1023">      desc   = Introspector.getBeanInfo(o.getClass()).getPropertyDescriptors();</span>
+<span class="nc bnc" id="L1024" title="All 2 branches missed.">      for (i = 0; i &lt; desc.length; i++) {</span>
+<span class="nc bnc" id="L1025" title="All 2 branches missed.">         if (desc[i].getDisplayName().equals(name)) {</span>
+<span class="nc" id="L1026">            result = desc[i];</span>
+<span class="nc" id="L1027">            break;</span>
+         }
+      }
+      
+<span class="nc" id="L1031">      return result;</span>
+   }
+   
+   /**
+    * returns the associated class for the given name
+    * 
+    * @param name the name of the class to return a Class object for
+    * @return the class if  it could be retrieved
+    * @throws Exception if it class retrieval fails
+    */
+   protected Class determineClass(String name) throws Exception {
+      Class       result;
+      
+<span class="nc bnc" id="L1044" title="All 2 branches missed.">      if (name.equals(Boolean.TYPE.getName()))</span>
+<span class="nc" id="L1045">         result = Boolean.TYPE;</span>
+      else
+<span class="nc bnc" id="L1047" title="All 2 branches missed.">      if (name.equals(Byte.TYPE.getName()))</span>
+<span class="nc" id="L1048">         result = Byte.TYPE;</span>
+      else
+<span class="nc bnc" id="L1050" title="All 2 branches missed.">      if (name.equals(Character.TYPE.getName()))</span>
+<span class="nc" id="L1051">         result = Character.TYPE;</span>
+      else
+<span class="nc bnc" id="L1053" title="All 2 branches missed.">      if (name.equals(Double.TYPE.getName()))</span>
+<span class="nc" id="L1054">         result = Double.TYPE;</span>
+      else
+<span class="nc bnc" id="L1056" title="All 2 branches missed.">      if (name.equals(Float.TYPE.getName()))</span>
+<span class="nc" id="L1057">         result = Float.TYPE;</span>
+      else
+<span class="nc bnc" id="L1059" title="All 2 branches missed.">      if (name.equals(Integer.TYPE.getName()))</span>
+<span class="nc" id="L1060">         result = Integer.TYPE;</span>
+      else
+<span class="nc bnc" id="L1062" title="All 2 branches missed.">      if (name.equals(Long.TYPE.getName()))</span>
+<span class="nc" id="L1063">         result = Long.TYPE;</span>
+      else
+<span class="nc bnc" id="L1065" title="All 2 branches missed.">      if (name.equals(Short.TYPE.getName()))</span>
+<span class="nc" id="L1066">         result = Short.TYPE;</span>
+      else
+<span class="nc" id="L1068">         result = Class.forName(name);</span>
+      
+<span class="nc" id="L1070">      return result;</span>
+   }
+   
+   /**
+    * returns an Object representing the primitive described by the given node.
+    * Here we use a trick to return an object even though its a primitive: by 
+    * creating a primitive array with reflection of length 1, setting the 
+    * primtive value as real object and then returning the &quot;object&quot; at 
+    * position 1 of the array.
+    * 
+    * @param node the node to return the value as &quot;primitive&quot; object
+    * @return the primitive as &quot;pseudo&quot; object
+    * @throws Exception if the instantiation of the array fails or any of the
+    *         String conversions fails
+    */
+   protected Object getPrimitive(Element node) throws Exception {
+      Object            result;
+      Object            tmpResult;
+      Class             cls;
+      
+<span class="nc" id="L1090">      cls       = determineClass(node.getAttribute(ATT_CLASS));</span>
+<span class="nc" id="L1091">      tmpResult = Array.newInstance(cls, 1);</span>
+      
+<span class="nc bnc" id="L1093" title="All 2 branches missed.">      if (cls == Boolean.TYPE)</span>
+<span class="nc" id="L1094">         Array.set(tmpResult, 0, new Boolean(XMLDocument.getContent(node)));</span>
+      else
+<span class="nc bnc" id="L1096" title="All 2 branches missed.">      if (cls == Byte.TYPE)</span>
+<span class="nc" id="L1097">         Array.set(tmpResult, 0, new Byte(XMLDocument.getContent(node)));</span>
+      else
+<span class="nc bnc" id="L1099" title="All 2 branches missed.">      if (cls == Character.TYPE)</span>
+<span class="nc" id="L1100">         Array.set(tmpResult, 0, new Character(XMLDocument.getContent(node).charAt(0)));</span>
+      else
+<span class="nc bnc" id="L1102" title="All 2 branches missed.">      if (cls == Double.TYPE)</span>
+<span class="nc" id="L1103">         Array.set(tmpResult, 0, new Double(XMLDocument.getContent(node)));</span>
+      else
+<span class="nc bnc" id="L1105" title="All 2 branches missed.">      if (cls == Float.TYPE)</span>
+<span class="nc" id="L1106">         Array.set(tmpResult, 0, new Float(XMLDocument.getContent(node)));</span>
+      else
+<span class="nc bnc" id="L1108" title="All 2 branches missed.">      if (cls == Integer.TYPE)</span>
+<span class="nc" id="L1109">         Array.set(tmpResult, 0, new Integer(XMLDocument.getContent(node)));</span>
+      else
+<span class="nc bnc" id="L1111" title="All 2 branches missed.">      if (cls == Long.TYPE)</span>
+<span class="nc" id="L1112">         Array.set(tmpResult, 0, new Long(XMLDocument.getContent(node)));</span>
+      else
+<span class="nc bnc" id="L1114" title="All 2 branches missed.">      if (cls == Short.TYPE)</span>
+<span class="nc" id="L1115">         Array.set(tmpResult, 0, new Short(XMLDocument.getContent(node)));</span>
+      else
+<span class="nc" id="L1117">         throw new Exception(&quot;Cannot get primitive for class '&quot; + cls.getName() + &quot;'!&quot;);</span>
+      
+<span class="nc" id="L1119">      result = Array.get(tmpResult, 0);</span>
+      
+<span class="nc" id="L1121">      return result;</span>
+   }
+   
+   /**
+    * builds the primitive from the given DOM node. 
+    * 
+    * @param node the associated XML node
+    * @return the primitive created from the XML description
+    * @throws Exception if instantiation fails 
+    */
+   public boolean readBooleanFromXML(Element node) throws Exception {
+     // for debugging only
+<span class="nc bnc" id="L1133" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L1134">        trace(new Throwable(), node.getAttribute(ATT_NAME));</span>
+
+<span class="nc" id="L1136">     m_CurrentNode = node;</span>
+     
+<span class="nc" id="L1138">     return ((Boolean) getPrimitive(node)).booleanValue();</span>
+   }
+   
+   /**
+    * builds the primitive from the given DOM node. 
+    * 
+    * @param node the associated XML node
+    * @return the primitive created from the XML description
+    * @throws Exception if instantiation fails 
+    */
+   public byte readByteFromXML(Element node) throws Exception {
+     // for debugging only
+<span class="nc bnc" id="L1150" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L1151">        trace(new Throwable(), node.getAttribute(ATT_NAME));</span>
+
+<span class="nc" id="L1153">     m_CurrentNode = node;</span>
+     
+<span class="nc" id="L1155">     return ((Byte) getPrimitive(node)).byteValue();</span>
+   }
+   
+   /**
+    * builds the primitive from the given DOM node. 
+    * 
+    * @param node the associated XML node
+    * @return the primitive created from the XML description
+    * @throws Exception if instantiation fails 
+    */
+   public char readCharFromXML(Element node) throws Exception {
+     // for debugging only
+<span class="nc bnc" id="L1167" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L1168">        trace(new Throwable(), node.getAttribute(ATT_NAME));</span>
+
+<span class="nc" id="L1170">     m_CurrentNode = node;</span>
+     
+<span class="nc" id="L1172">     return ((Character) getPrimitive(node)).charValue();</span>
+   }
+   
+   /**
+    * builds the primitive from the given DOM node. 
+    * 
+    * @param node the associated XML node
+    * @return the primitive created from the XML description
+    * @throws Exception if instantiation fails 
+    */
+   public double readDoubleFromXML(Element node) throws Exception {
+     // for debugging only
+<span class="nc bnc" id="L1184" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L1185">        trace(new Throwable(), node.getAttribute(ATT_NAME));</span>
+
+<span class="nc" id="L1187">     m_CurrentNode = node;</span>
+     
+<span class="nc" id="L1189">     return ((Double) getPrimitive(node)).doubleValue();</span>
+   }
+   
+   /**
+    * builds the primitive from the given DOM node. 
+    * 
+    * @param node the associated XML node
+    * @return the primitive created from the XML description
+    * @throws Exception if instantiation fails 
+    */
+   public float readFloatFromXML(Element node) throws Exception {
+     // for debugging only
+<span class="nc bnc" id="L1201" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L1202">        trace(new Throwable(), node.getAttribute(ATT_NAME));</span>
+
+<span class="nc" id="L1204">     m_CurrentNode = node;</span>
+     
+<span class="nc" id="L1206">     return ((Float) getPrimitive(node)).floatValue();</span>
+   }
+   
+   /**
+    * builds the primitive from the given DOM node. 
+    * 
+    * @param node the associated XML node
+    * @return the primitive created from the XML description
+    * @throws Exception if instantiation fails 
+    */
+   public int readIntFromXML(Element node) throws Exception {
+     // for debugging only
+<span class="nc bnc" id="L1218" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L1219">        trace(new Throwable(), node.getAttribute(ATT_NAME));</span>
+
+<span class="nc" id="L1221">     m_CurrentNode = node;</span>
+     
+<span class="nc" id="L1223">     return ((Integer) getPrimitive(node)).intValue();</span>
+   }
+   
+   /**
+    * builds the primitive from the given DOM node. 
+    * 
+    * @param node the associated XML node
+    * @return the primitive created from the XML description
+    * @throws Exception if instantiation fails 
+    */
+   public long readLongFromXML(Element node) throws Exception {
+     // for debugging only
+<span class="nc bnc" id="L1235" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L1236">        trace(new Throwable(), node.getAttribute(ATT_NAME));</span>
+
+<span class="nc" id="L1238">     m_CurrentNode = node;</span>
+     
+<span class="nc" id="L1240">     return ((Long) getPrimitive(node)).longValue();</span>
+   }
+   
+   /**
+    * builds the primitive from the given DOM node. 
+    * 
+    * @param node the associated XML node
+    * @return the primitive created from the XML description
+    * @throws Exception if instantiation fails 
+    */
+   public short readShortFromXML(Element node) throws Exception {
+     // for debugging only
+<span class="nc bnc" id="L1252" title="All 2 branches missed.">     if (DEBUG)</span>
+<span class="nc" id="L1253">        trace(new Throwable(), node.getAttribute(ATT_NAME));</span>
+
+<span class="nc" id="L1255">     m_CurrentNode = node;</span>
+     
+<span class="nc" id="L1257">     return ((Short) getPrimitive(node)).shortValue();</span>
+   }
+   
+   /**
+    * adds the specific node to the object via a set method
+    * 
+    * @param o            the object to set a property
+    * @param name         the name of the object for which to set a property
+    *                     (only for information reasons)
+    * @param child        the value of the property to add
+    * @return             the provided object, but augmented by the child
+    * @throws Exception   if something goes wrong
+    */
+   public Object readFromXML(Object o, String name, Element child) throws Exception {
+      Object               result;
+      Hashtable            descriptors;
+      PropertyDescriptor   descriptor;
+      String               methodName;
+      Method               method;
+      Object[]             methodArgs;
+      Object               tmpResult;
+      Class                paramClass;
+     
+<span class="nc" id="L1280">      result      = o;</span>
+<span class="nc" id="L1281">      descriptors = getDescriptors(result);</span>
+<span class="nc" id="L1282">      methodName  = child.getAttribute(ATT_NAME);</span>
+
+      // in ignore list?
+<span class="nc bnc" id="L1285" title="All 2 branches missed.">      if (m_Properties.isIgnored(getPath(child)))</span>
+<span class="nc" id="L1286">         return result;</span>
+      
+      // in ignore list of class?
+<span class="nc bnc" id="L1289" title="All 2 branches missed.">      if (m_Properties.isIgnored(result, getPath(child)))</span>
+<span class="nc" id="L1290">        return result;</span>
+      
+      // is it allowed?
+<span class="nc bnc" id="L1293" title="All 2 branches missed.">      if (!m_Properties.isAllowed(result, methodName))</span>
+<span class="nc" id="L1294">        return result;</span>
+      
+<span class="nc" id="L1296">      descriptor = (PropertyDescriptor) descriptors.get(methodName);</span>
+
+      // unknown property?
+<span class="nc bnc" id="L1299" title="All 2 branches missed.">      if (descriptor == null) {</span>
+<span class="nc bnc" id="L1300" title="All 2 branches missed.">         if (!m_CustomMethods.read().contains(methodName))</span>
+<span class="nc" id="L1301">            System.out.println(&quot;WARNING: unknown property '&quot; + name + &quot;.&quot; + methodName + &quot;'!&quot;);</span>
+<span class="nc" id="L1302">         return result;</span>
+      }
+      
+<span class="nc" id="L1305">      method     = descriptor.getWriteMethod();</span>
+<span class="nc" id="L1306">      methodArgs = new Object[1];</span>
+<span class="nc" id="L1307">      tmpResult  = invokeReadFromXML(child);</span>
+<span class="nc" id="L1308">      paramClass = method.getParameterTypes()[0];</span>
+      
+      // array?
+<span class="nc bnc" id="L1311" title="All 2 branches missed.">      if (paramClass.isArray()) {</span>
+         // no data?
+<span class="nc bnc" id="L1313" title="All 2 branches missed.">         if (Array.getLength(tmpResult) == 0)</span>
+<span class="nc" id="L1314">           return result;</span>
+<span class="nc" id="L1315">         methodArgs[0] = (Object[]) tmpResult;</span>
+      }
+      // non-array
+      else {
+<span class="nc" id="L1319">         methodArgs[0] = tmpResult;</span>
+      }
+
+<span class="nc" id="L1322">      method.invoke(result, methodArgs);</span>
+     
+<span class="nc" id="L1324">      return result;</span>
+   }
+   
+   /**
+    * returns an array with the dimensions of the array stored in XML
+    * @param node the node to determine the dimensions for
+    * @return the dimensions of the array
+    */
+   protected int[] getArrayDimensions(Element node) {
+     Vector         children;
+     Vector         tmpVector;      
+     int[]          tmp;
+     int[]          result;
+     int            i;
+     
+     // have we reached the innermost dimension?
+<span class="nc bnc" id="L1340" title="All 2 branches missed.">     if (stringToBoolean(node.getAttribute(ATT_ARRAY)))</span>
+<span class="nc" id="L1341">       children = XMLDocument.getChildTags(node);</span>
+     else
+<span class="nc" id="L1343">       children = null;</span>
+     
+<span class="nc bnc" id="L1345" title="All 2 branches missed.">     if (children != null) {</span>
+<span class="nc" id="L1346">       tmpVector = new Vector();</span>
+
+<span class="nc bnc" id="L1348" title="All 2 branches missed.">       if (children.size() &gt; 0) {</span>
+         // are children also arrays?
+<span class="nc" id="L1350">         tmp = getArrayDimensions((Element) children.get(0));</span>
+         
+         // further dimensions
+<span class="nc bnc" id="L1353" title="All 2 branches missed.">         if (tmp != null) {</span>
+<span class="nc bnc" id="L1354" title="All 2 branches missed.">           for (i = tmp.length - 1; i &gt;= 0; i--)</span>
+<span class="nc" id="L1355">             tmpVector.add(new Integer(tmp[i]));</span>
+         }
+  
+         // add current dimension
+<span class="nc" id="L1359">         tmpVector.add(0, new Integer(children.size()));</span>
+       }
+       else {
+<span class="nc" id="L1362">         tmpVector.add(new Integer(0));</span>
+       }
+       
+       // generate result
+<span class="nc" id="L1366">       result = new int[tmpVector.size()];</span>
+<span class="nc bnc" id="L1367" title="All 2 branches missed.">       for (i = 0; i &lt; result.length; i++)</span>
+<span class="nc" id="L1368">         result[i] = ((Integer) tmpVector.get(tmpVector.size() - i - 1)).intValue();</span>
+     }
+     else {
+<span class="nc" id="L1371">       result = null;</span>
+     }
+     
+<span class="nc" id="L1374">     return result;</span>
+   }
+   
+   /**
+    * builds the object from the given DOM node. 
+    * (only public due to reflection) 
+    * 
+    * @param node the associated XML node
+    * @return the instance created from the XML description
+    * @throws Exception if instantiation fails 
+    */
+   public Object readFromXML(Element node) throws Exception {
+      String               classname;
+      String               name;
+      boolean              primitive;
+      boolean              array;
+      boolean              isnull;
+      Class                cls;
+      Vector               children;
+      Object               result;
+      int                  i;
+      Constructor          constructor;
+      Class[]              methodClasses;
+      Object[]             methodArgs;
+      Element              child;
+           
+      // for debugging only
+<span class="nc bnc" id="L1401" title="All 2 branches missed.">      if (DEBUG)</span>
+<span class="nc" id="L1402">         trace(new Throwable(), node.getAttribute(ATT_NAME));</span>
+
+<span class="nc" id="L1404">      m_CurrentNode = node;</span>
+      
+<span class="nc" id="L1406">      result    = null;</span>
+      
+<span class="nc" id="L1408">      name      = node.getAttribute(ATT_NAME);</span>
+<span class="nc" id="L1409">      classname = node.getAttribute(ATT_CLASS);</span>
+<span class="nc" id="L1410">      primitive = stringToBoolean(node.getAttribute(ATT_PRIMITIVE));</span>
+<span class="nc" id="L1411">      array     = stringToBoolean(node.getAttribute(ATT_ARRAY));</span>
+<span class="nc" id="L1412">      isnull    = stringToBoolean(node.getAttribute(ATT_NULL));</span>
+
+      // special handling of null
+<span class="nc bnc" id="L1415" title="All 2 branches missed.">      if (isnull)</span>
+<span class="nc" id="L1416">        return result;</span>
+
+<span class="nc" id="L1418">      children  = XMLDocument.getChildTags(node);</span>
+<span class="nc" id="L1419">      cls       = determineClass(classname);</span>
+      
+      // array
+<span class="nc bnc" id="L1422" title="All 2 branches missed.">      if (array) {</span>
+<span class="nc" id="L1423">         result = Array.newInstance(cls, getArrayDimensions(node));</span>
+<span class="nc bnc" id="L1424" title="All 2 branches missed.">         for (i = 0; i &lt; children.size(); i++) {</span>
+<span class="nc" id="L1425">            child = (Element) children.get(i);</span>
+<span class="nc" id="L1426">            Array.set(result, Integer.parseInt(child.getAttribute(ATT_NAME)), invokeReadFromXML(child));</span>
+         }
+      }
+      // non-array
+      else {
+         // primitive/String-constructor
+<span class="nc bnc" id="L1432" title="All 2 branches missed.">         if (children.size() == 0) {</span>
+            // primitive
+<span class="nc bnc" id="L1434" title="All 2 branches missed.">            if (primitive) {</span>
+<span class="nc" id="L1435">               result = getPrimitive(node);</span>
+            }
+            // assumed String-constructor
+            else {
+<span class="nc" id="L1439">               methodClasses    = new Class[1];</span>
+<span class="nc" id="L1440">               methodClasses[0] = String.class;</span>
+<span class="nc" id="L1441">               methodArgs       = new Object[1];</span>
+<span class="nc" id="L1442">               methodArgs[0]    = XMLDocument.getContent(node);</span>
+               try {
+<span class="nc" id="L1444">                  constructor   = cls.getConstructor(methodClasses);</span>
+<span class="nc" id="L1445">                  result        = constructor.newInstance(methodArgs);</span>
+               }
+<span class="nc" id="L1447">               catch (Exception e) {</span>
+                  // if it's not a class with String constructor, let's try standard constructor
+                  try {
+<span class="nc" id="L1450">                     result = cls.newInstance();</span>
+                  }
+<span class="nc" id="L1452">                  catch (Exception e2) {</span>
+                     // sorry, can't instantiate!
+<span class="nc" id="L1454">                     result = null;</span>
+<span class="nc" id="L1455">                     System.out.println(&quot;ERROR: Can't instantiate '&quot; + classname + &quot;'!&quot;);</span>
+                  }
+               }
+            }
+         }
+         // normal get/set methods
+         else {
+<span class="nc" id="L1462">            result = cls.newInstance();</span>
+<span class="nc bnc" id="L1463" title="All 2 branches missed.">            for (i = 0; i &lt; children.size(); i++)</span>
+<span class="nc" id="L1464">              result = readFromXML(result, name, (Element) children.get(i));</span>
+         }
+      }
+            
+<span class="nc" id="L1468">      return result;</span>
+   }
+   
+   /**
+    * either invokes a custom method to read a specific property/class or the standard
+    * method &lt;code&gt;readFromXML(Element)&lt;/code&gt;
+    * 
+    * @param node the associated XML node
+    * @return the instance created from the XML description
+    * @throws Exception if instantiation fails
+    */
+   protected Object invokeReadFromXML(Element node) throws Exception {
+      Method         method;
+      Class[]        methodClasses;
+      Object[]       methodArgs;
+      boolean        array;
+      boolean        useDefault;
+
+<span class="nc" id="L1486">      useDefault = false;</span>
+<span class="nc" id="L1487">      method     = null;</span>
+<span class="nc" id="L1488">      m_CurrentNode = node;</span>
+      
+      try {
+         // special handling of null values
+<span class="nc bnc" id="L1492" title="All 2 branches missed.">         if (stringToBoolean(node.getAttribute(ATT_NULL)))</span>
+<span class="nc" id="L1493">           useDefault = true;</span>
+        
+<span class="nc bnc" id="L1495" title="All 2 branches missed.">         if (!useDefault) {</span>
+<span class="nc" id="L1496">            array = stringToBoolean(node.getAttribute(ATT_ARRAY));</span>
+           
+            // display name?
+<span class="nc bnc" id="L1499" title="All 2 branches missed.">            if (m_CustomMethods.read().contains(node.getAttribute(ATT_NAME)))</span>
+<span class="nc" id="L1500">               method = (Method) m_CustomMethods.read().get(node.getAttribute(ATT_NAME));</span>
+            else
+            // class name?
+<span class="nc bnc" id="L1503" title="All 4 branches missed.">            if ( (!array) &amp;&amp; (m_CustomMethods.read().contains(determineClass(node.getAttribute(ATT_CLASS)))) )</span>
+<span class="nc" id="L1504">               method = (Method) m_CustomMethods.read().get(determineClass(node.getAttribute(ATT_CLASS)));</span>
+            else
+<span class="nc" id="L1506">               method = null;</span>
+            
+<span class="nc bnc" id="L1508" title="All 2 branches missed.">            useDefault = (method == null);</span>
+         }
+
+         // custom method
+<span class="nc bnc" id="L1512" title="All 2 branches missed.">         if (!useDefault) {</span>
+<span class="nc" id="L1513">            methodClasses    = new Class[1];</span>
+<span class="nc" id="L1514">            methodClasses[0] = Element.class;</span>
+<span class="nc" id="L1515">            methodArgs       = new Object[1];</span>
+<span class="nc" id="L1516">            methodArgs[0]    = node;</span>
+<span class="nc" id="L1517">            return method.invoke(this, methodArgs);</span>
+         }
+         // standard
+         else {
+<span class="nc" id="L1521">            return readFromXML(node);</span>
+         }
+      }
+<span class="nc" id="L1524">      catch (Exception e) {</span>
+<span class="nc bnc" id="L1525" title="All 2 branches missed.">         if (DEBUG)</span>
+<span class="nc" id="L1526">            e.printStackTrace();</span>
+         
+<span class="nc bnc" id="L1528" title="All 2 branches missed.">         if (m_CurrentNode != null) {</span>
+<span class="nc" id="L1529">           System.out.println(&quot;Happened near: &quot; + getPath(m_CurrentNode));</span>
+           // print it only once!
+<span class="nc" id="L1531">           m_CurrentNode = null;</span>
+         }
+<span class="nc" id="L1533">         System.out.println(&quot;PROBLEM (read): &quot; + node.getAttribute(&quot;name&quot;));</span>
+
+<span class="nc" id="L1535">         throw (Exception) e.fillInStackTrace();</span>
+      }
+   }
+   
+   /**
+    * additional pre-processing can happen in derived classes before the 
+    * actual reading from XML (working on the raw XML). right now it does 
+    * nothing with the document.
+    * 
+    * @param document 	the document to pre-process
+    * @return the processed object
+    * @throws Exception if post-processing fails
+    */
+   protected Document readPreProcess(Document document) throws Exception {
+<span class="nc" id="L1549">      return document;</span>
+   }
+   
+   /**
+    * additional post-processing can happen in derived classes after reading 
+    * from XML. right now it only returns the object as it is.
+    * 
+    * @param o the object to perform some additional processing on
+    * @return the processed object
+    * @throws Exception if post-processing fails
+    */
+   protected Object readPostProcess(Object o) throws Exception {
+<span class="nc" id="L1561">      return o;</span>
+   }
+
+   /**
+    * returns the given DOM document as an instance of the specified class
+    * 
+    * @param document the parsed DOM document representing the object
+    * @return the XML as object 
+    * @throws Exception if object instantiation fails
+    */
+   public Object fromXML(Document document) throws Exception {
+<span class="nc bnc" id="L1572" title="All 2 branches missed.">      if (!document.getDocumentElement().getNodeName().equals(ROOT_NODE))</span>
+<span class="nc" id="L1573">         throw new Exception(&quot;Expected '&quot; + ROOT_NODE + &quot;' as root element, but found '&quot; + document.getDocumentElement().getNodeName() + &quot;'!&quot;);</span>
+<span class="nc" id="L1574">      m_Document.setDocument(readPreProcess(document));</span>
+<span class="nc" id="L1575">      checkVersion();</span>
+<span class="nc" id="L1576">      return readPostProcess(invokeReadFromXML(m_Document.getDocument().getDocumentElement()));</span>
+   }
+   
+   /**
+    * parses the given XML string (can be XML or a filename) and returns an
+    * Object generated from the representation
+    * 
+    * @param xml the xml to parse (if &quot;&lt;?xml&quot; is not found then it is considered a file)
+    * @return the generated instance
+    * @throws Exception if something goes wrong with the parsing
+    */
+   public Object read(String xml) throws Exception {
+<span class="nc" id="L1588">      return fromXML(m_Document.read(xml));</span>
+   }
+   
+   /**
+    * parses the given file and returns a DOM document
+    * 
+    * @param file the XML file to parse
+    * @return the parsed DOM document
+    * @throws Exception if something goes wrong with the parsing
+    */
+   public Object read(File file) throws Exception {
+<span class="nc" id="L1599">      return fromXML(m_Document.read(file));</span>
+   }
+   
+   /**
+    * parses the given stream and returns a DOM document
+    * 
+    * @param stream the XML stream to parse
+    * @return the parsed DOM document
+    * @throws Exception if something goes wrong with the parsing
+    */
+   public Object read(InputStream stream) throws Exception {
+<span class="nc" id="L1610">      return fromXML(m_Document.read(stream));</span>
+   }
+   
+   /**
+    * parses the given reader and returns a DOM document
+    * 
+    * @param reader the XML reader to parse
+    * @return the parsed DOM document
+    * @throws Exception if something goes wrong with the parsing
+    */
+   public Object read(Reader reader) throws Exception {
+<span class="nc" id="L1621">      return fromXML(m_Document.read(reader));</span>
+   }
+   
+   
+   /**
+    * writes the given object into the file
+    * 
+    * @param file the filename to write to
+    * @param o the object to serialize as XML
+    * @throws Exception if something goes wrong with the parsing
+    */
+   public void write(String file, Object o) throws Exception {
+<span class="nc" id="L1633">      toXML(o).write(file);</span>
+<span class="nc" id="L1634">   }</span>
+   
+   /**
+    * writes the given object into the file
+    * 
+    * @param file the filename to write to
+    * @param o the object to serialize as XML
+    * @throws Exception if something goes wrong with the parsing
+    */
+   public void write(File file, Object o) throws Exception {
+<span class="nc" id="L1644">      toXML(o).write(file);</span>
+<span class="nc" id="L1645">   }</span>
+   
+   /**
+    * writes the given object into the stream
+    * 
+    * @param stream the filename to write to
+    * @param o the object to serialize as XML
+    * @throws Exception if something goes wrong with the parsing
+    */
+   public void write(OutputStream stream, Object o) throws Exception {
+<span class="nc" id="L1655">      toXML(o).write(stream);</span>
+<span class="nc" id="L1656">   }</span>
+   
+   /**
+    * writes the given object into the writer
+    * 
+    * @param writer the filename to write to
+    * @param o the object to serialize as XML
+    * @throws Exception if something goes wrong with the parsing
+    */
+   public void write(Writer writer, Object o) throws Exception {
+<span class="nc" id="L1666">      toXML(o).write(writer);</span>
+<span class="nc" id="L1667">   }</span>
+   
+   /**
+    * for testing only. if the first argument is a filename with &quot;.xml&quot;
+    * as extension it tries to generate an instance from the XML description
+    * and does a &lt;code&gt;toString()&lt;/code&gt; of the generated object.
+    */
+   public static void main(String[] args) throws Exception {
+<span class="nc bnc" id="L1675" title="All 2 branches missed.">      if (args.length &gt; 0) {</span>
+         // read xml and print
+<span class="nc bnc" id="L1677" title="All 2 branches missed.">         if (args[0].toLowerCase().endsWith(&quot;.xml&quot;)) {</span>
+<span class="nc" id="L1678">            System.out.println(new XMLSerialization().read(args[0]).toString());</span>
+         }
+         // read binary and print generated XML
+         else {
+            // read
+<span class="nc" id="L1683">            FileInputStream fi = new FileInputStream(args[0]);</span>
+<span class="nc" id="L1684">            ObjectInputStream oi = new ObjectInputStream(</span>
+<span class="nc" id="L1685">                                   new BufferedInputStream(fi));</span>
+<span class="nc" id="L1686">            Object o = oi.readObject();</span>
+<span class="nc" id="L1687">            oi.close();</span>
+            // print to stdout
+            //new XMLSerialization().write(System.out, o);
+<span class="nc" id="L1690">            new XMLSerialization().write(new BufferedOutputStream(new FileOutputStream(args[0] + &quot;.xml&quot;)), o);</span>
+            // print to binary file
+<span class="nc" id="L1692">            FileOutputStream fo = new FileOutputStream(args[0] + &quot;.exp&quot;);</span>
+<span class="nc" id="L1693">            ObjectOutputStream oo = new ObjectOutputStream(</span>
+<span class="nc" id="L1694">                                   new BufferedOutputStream(fo));</span>
+<span class="nc" id="L1695">            oo.writeObject(o);</span>
+<span class="nc" id="L1696">            oo.close();</span>
+         }
+      }
+<span class="nc" id="L1699">   }</span>
+   
+   /**
+    * Returns the revision string.
+    * 
+    * @return		the revision
+    */
+   public String getRevision() {
+<span class="nc" id="L1707">     return RevisionUtils.extract(&quot;$Revision: 1.16 $&quot;);</span>
+   }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

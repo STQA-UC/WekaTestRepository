@@ -1,0 +1,742 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>GeneticSearch.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.bayes.net.search.local</a> &gt; <span class="el_source">GeneticSearch.java</span></div><h1>GeneticSearch.java</h1><pre class="source lang-java linenums">/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * GeneticSearch.java
+ * Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ * 
+ */
+ 
+package weka.classifiers.bayes.net.search.local;
+
+import weka.classifiers.bayes.BayesNet;
+import weka.classifiers.bayes.net.ParentSet;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * This Bayes Network learning algorithm uses genetic search for finding a well scoring Bayes network structure. Genetic search works by having a population of Bayes network structures and allow them to mutate and apply cross over to get offspring. The best network structure found during the process is returned.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -L &amp;lt;integer&amp;gt;
+ *  Population size&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A &amp;lt;integer&amp;gt;
+ *  Descendant population size&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -U &amp;lt;integer&amp;gt;
+ *  Number of runs&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Use mutation.
+ *  (default true)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C
+ *  Use cross-over.
+ *  (default true)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -O
+ *  Use tournament selection (true) or maximum subpopulatin (false).
+ *  (default false)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;seed&amp;gt;
+ *  Random number seed&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -mbc
+ *  Applies a Markov Blanket correction to the network structure, 
+ *  after a network structure is learned. This ensures that all 
+ *  nodes in the network are part of the Markov blanket of the 
+ *  classifier node.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S [BAYES|MDL|ENTROPY|AIC|CROSS_CLASSIC|CROSS_BAYES]
+ *  Score type (BAYES, BDeu, MDL, ENTROPY and AIC)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ * 
+ * @author Remco Bouckaert (rrb@xm.co.nz)
+ * @version $Revision: 1.5 $
+ */
+<span class="nc" id="L84">public class GeneticSearch </span>
+    extends LocalScoreSearchAlgorithm {
+
+    /** for serialization */
+    static final long serialVersionUID = -7037070678911459757L;
+  
+    /** number of runs **/
+<span class="nc" id="L91">    int m_nRuns = 10;</span>
+
+	/** size of population **/
+<span class="nc" id="L94">	int m_nPopulationSize = 10;</span>
+
+	/** size of descendant population **/
+<span class="nc" id="L97">	int m_nDescendantPopulationSize = 100;</span>
+
+	/** use cross-over? **/
+<span class="nc" id="L100">	boolean m_bUseCrossOver = true;</span>
+
+	/** use mutation? **/
+<span class="nc" id="L103">	boolean m_bUseMutation = true;</span>
+	
+	/** use tournament selection or take best sub-population **/
+<span class="nc" id="L106">	boolean m_bUseTournamentSelection = false;	</span>
+	
+	/** random number seed **/
+<span class="nc" id="L109">	int m_nSeed = 1;</span>
+	
+	/** random number generator **/
+<span class="nc" id="L112">	Random m_random = null;</span>
+
+
+	/** used in BayesNetRepresentation for efficiently determining
+	 * whether a number is square  
+	 */
+	static boolean [] g_bIsSquare;
+	
+	class BayesNetRepresentation implements RevisionHandler {
+	  
+		/** number of nodes in network **/		
+<span class="nc" id="L123">		int m_nNodes = 0;</span>
+
+		/** bit representation of parent sets 
+		 * m_bits[iTail + iHead * m_nNodes] represents arc iTail-&gt;iHead
+		 */
+		boolean [] m_bits;
+		
+		/** score of represented network structure **/
+<span class="nc" id="L131">		double m_fScore = 0.0f;</span>
+		
+		/** 
+		 * return score of represented network structure
+		 * 
+		 * @return the score
+		 */
+		public double getScore() {
+<span class="nc" id="L139">			return m_fScore;</span>
+		} // getScore
+
+		/** 
+		 * c'tor
+		 * 
+		 * @param nNodes the number of nodes
+		 */
+<span class="nc" id="L147">		BayesNetRepresentation (int nNodes) {</span>
+<span class="nc" id="L148">			m_nNodes = nNodes;</span>
+<span class="nc" id="L149">		} // c'tor</span>
+		
+		/** initialize with a random structure by randomly placing
+		 * m_nNodes arcs.
+		 */
+		public void randomInit() {
+<span class="nc bnc" id="L155" title="All 2 branches missed.">			do {</span>
+<span class="nc" id="L156">				m_bits = new boolean [m_nNodes * m_nNodes];</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">				for (int i = 0; i &lt; m_nNodes; i++) {</span>
+					int iPos;
+<span class="nc bnc" id="L159" title="All 2 branches missed.">					do {</span>
+<span class="nc" id="L160">						iPos = m_random.nextInt(m_nNodes * m_nNodes);</span>
+<span class="nc" id="L161">					} while (isSquare(iPos));</span>
+<span class="nc" id="L162">					m_bits[iPos] = true;</span>
+				}
+<span class="nc" id="L164">			} while (hasCycles());</span>
+<span class="nc" id="L165">			calcScore();</span>
+<span class="nc" id="L166">		}</span>
+
+		/** calculate score of current network representation
+		 * As a side effect, the parent sets are set
+		 */
+		void calcScore() {
+			// clear current network
+<span class="nc bnc" id="L173" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; m_nNodes; iNode++) {</span>
+<span class="nc" id="L174">				ParentSet parentSet = m_BayesNet.getParentSet(iNode);</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">				while (parentSet.getNrOfParents() &gt; 0) {</span>
+<span class="nc" id="L176">					parentSet.deleteLastParent(m_BayesNet.m_Instances);</span>
+				}
+			}
+			// insert arrows
+<span class="nc bnc" id="L180" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; m_nNodes; iNode++) {</span>
+<span class="nc" id="L181">				ParentSet parentSet = m_BayesNet.getParentSet(iNode);</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">				for (int iNode2 = 0; iNode2 &lt; m_nNodes; iNode2++) {</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">					if (m_bits[iNode2 + iNode * m_nNodes]) {</span>
+<span class="nc" id="L184">						parentSet.addParent(iNode2, m_BayesNet.m_Instances);</span>
+					}
+				}
+			}
+			// calc score
+<span class="nc" id="L189">			m_fScore = 0.0;</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; m_nNodes; iNode++) {</span>
+<span class="nc" id="L191">				m_fScore += calcNodeScore(iNode);</span>
+			}
+<span class="nc" id="L193">		} // calcScore</span>
+
+		/** check whether there are cycles in the network
+ 		* 
+ 		* @return true if a cycle is found, false otherwise
+		 */
+		public boolean hasCycles() {
+			// check for cycles
+<span class="nc" id="L201">			boolean[] bDone = new boolean[m_nNodes];</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; m_nNodes; iNode++) {</span>
+
+				// find a node for which all parents are 'done'
+<span class="nc" id="L205">				boolean bFound = false;</span>
+
+<span class="nc bnc" id="L207" title="All 4 branches missed.">				for (int iNode2 = 0; !bFound &amp;&amp; iNode2 &lt; m_nNodes; iNode2++) {</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">					if (!bDone[iNode2]) {</span>
+<span class="nc" id="L209">						boolean bHasNoParents = true;</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">						for (int iParent = 0; iParent &lt; m_nNodes; iParent++) {</span>
+<span class="nc bnc" id="L211" title="All 4 branches missed.">							if (m_bits[iParent + iNode2 * m_nNodes] &amp;&amp; !bDone[iParent]) {</span>
+<span class="nc" id="L212">								bHasNoParents = false;</span>
+							}
+						}
+<span class="nc bnc" id="L215" title="All 2 branches missed.">						if (bHasNoParents) {</span>
+<span class="nc" id="L216">							bDone[iNode2] = true;</span>
+<span class="nc" id="L217">							bFound = true;</span>
+						}
+					}
+				}
+<span class="nc bnc" id="L221" title="All 2 branches missed.">				if (!bFound) {</span>
+<span class="nc" id="L222">					return true;</span>
+				}
+			}
+<span class="nc" id="L225">			return false;</span>
+		} // hasCycles
+
+		/** create clone of current object 
+		 * @return cloned object
+		 */
+		BayesNetRepresentation copy() {
+<span class="nc" id="L232">			BayesNetRepresentation b = new BayesNetRepresentation(m_nNodes);</span>
+<span class="nc" id="L233">			b.m_bits = new boolean [m_bits.length];</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">			for (int i = 0; i &lt; m_nNodes * m_nNodes; i++) {</span>
+<span class="nc" id="L235">				b.m_bits[i] = m_bits[i];</span>
+			}
+<span class="nc" id="L237">			b.m_fScore = m_fScore;</span>
+<span class="nc" id="L238">			return b;		</span>
+		} // copy
+
+		/** Apply mutation operation to BayesNet
+		 * Calculate score and as a side effect sets BayesNet parent sets.
+		 */
+		void mutate() {
+			// flip a bit
+<span class="nc bnc" id="L246" title="All 2 branches missed.">			do {				</span>
+				int iBit;
+<span class="nc bnc" id="L248" title="All 2 branches missed.">				do {</span>
+<span class="nc" id="L249">					iBit = m_random.nextInt(m_nNodes * m_nNodes);</span>
+<span class="nc" id="L250">				} while (isSquare(iBit));</span>
+				
+<span class="nc bnc" id="L252" title="All 2 branches missed.">				m_bits[iBit] = !m_bits[iBit];</span>
+<span class="nc" id="L253">			} while (hasCycles());</span>
+
+<span class="nc" id="L255">			calcScore();</span>
+<span class="nc" id="L256">		} // mutate</span>
+
+		/** Apply cross-over operation to BayesNet 
+		 * Calculate score and as a side effect sets BayesNet parent sets.
+		 * @param other BayesNetRepresentation to cross over with
+		 */
+		void crossOver(BayesNetRepresentation other) {
+<span class="nc" id="L263">			boolean [] bits = new boolean [m_bits.length];</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">			for (int i = 0; i &lt; m_bits.length; i++) {</span>
+<span class="nc" id="L265">				bits[i] = m_bits[i];</span>
+			}
+<span class="nc" id="L267">			int iCrossOverPoint = m_bits.length;</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">			do {</span>
+				// restore to original state
+<span class="nc bnc" id="L270" title="All 2 branches missed.">				for (int i = iCrossOverPoint; i &lt; m_bits.length; i++) {</span>
+<span class="nc" id="L271">					m_bits[i] = bits[i];</span>
+				}
+				// take all bits from cross-over points onwards
+<span class="nc" id="L274">				iCrossOverPoint = m_random.nextInt(m_bits.length);</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">				for (int i = iCrossOverPoint; i &lt; m_bits.length; i++) {</span>
+<span class="nc" id="L276">					m_bits[i] = other.m_bits[i];</span>
+				}
+<span class="nc" id="L278">			} while (hasCycles());</span>
+<span class="nc" id="L279">			calcScore();</span>
+<span class="nc" id="L280">		} // crossOver</span>
+				
+		/** check if number is square and initialize g_bIsSquare structure
+		 * if necessary
+		 * @param nNum number to check (should be below m_nNodes * m_nNodes)
+		 * @return true if number is square
+		 */
+		boolean isSquare(int nNum) {
+<span class="nc bnc" id="L288" title="All 4 branches missed.">			if (g_bIsSquare == null || g_bIsSquare.length &lt; nNum) {</span>
+<span class="nc" id="L289">				g_bIsSquare = new boolean [m_nNodes * m_nNodes];</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">				for (int i = 0; i &lt; m_nNodes; i++) {</span>
+<span class="nc" id="L291">					g_bIsSquare[i * m_nNodes + i] = true;</span>
+				}
+			}
+<span class="nc" id="L294">			return g_bIsSquare[nNum];</span>
+		} // isSquare
+
+		/**
+		 * Returns the revision string.
+		 * 
+		 * @return		the revision
+		 */
+		public String getRevision() {
+<span class="nc" id="L303">		  return RevisionUtils.extract(&quot;$Revision: 1.5 $&quot;);</span>
+		}
+	} // class BayesNetRepresentation 
+	    	
+	/**
+	 * search determines the network structure/graph of the network
+	 * with a genetic search algorithm.
+	 * 
+	 * @param bayesNet the network to use
+	 * @param instances the data to use
+	 * @throws Exception if population size doesn fit or neither cross-over or mutation was chosen
+	 */
+	protected void search(BayesNet bayesNet, Instances instances) throws Exception {
+		// sanity check
+<span class="nc bnc" id="L317" title="All 2 branches missed.">		if (getDescendantPopulationSize() &lt; getPopulationSize()) {</span>
+<span class="nc" id="L318">			throw new Exception (&quot;Descendant PopulationSize should be at least Population Size&quot;);</span>
+		}
+<span class="nc bnc" id="L320" title="All 4 branches missed.">		if (!getUseCrossOver() &amp;&amp; !getUseMutation()) {</span>
+<span class="nc" id="L321">			throw new Exception (&quot;At least one of mutation or cross-over should be used&quot;);</span>
+		}
+		
+<span class="nc" id="L324">		m_random = new Random(m_nSeed);</span>
+
+		// keeps track of best structure found so far 
+		BayesNet bestBayesNet;
+		// keeps track of score pf best structure found so far 
+<span class="nc" id="L329">		double fBestScore = 0.0;	</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">		for (int iAttribute = 0; iAttribute &lt; instances.numAttributes(); iAttribute++) {</span>
+<span class="nc" id="L331">			fBestScore += calcNodeScore(iAttribute);</span>
+		}
+
+		// initialize bestBayesNet
+<span class="nc" id="L335">		bestBayesNet = new BayesNet();</span>
+<span class="nc" id="L336">		bestBayesNet.m_Instances = instances;</span>
+<span class="nc" id="L337">		bestBayesNet.initStructure();</span>
+<span class="nc" id="L338">		copyParentSets(bestBayesNet, bayesNet);</span>
+		
+                
+        // initialize population        
+<span class="nc" id="L342">		BayesNetRepresentation  [] population = new BayesNetRepresentation [getPopulationSize()];</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">        for (int i = 0; i &lt; getPopulationSize(); i++) {</span>
+<span class="nc" id="L344">        	population[i] = new BayesNetRepresentation (instances.numAttributes());</span>
+<span class="nc" id="L345">			population[i].randomInit();</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">			if (population[i].getScore() &gt; fBestScore) {</span>
+<span class="nc" id="L347">				copyParentSets(bestBayesNet, bayesNet);</span>
+<span class="nc" id="L348">				fBestScore = population[i].getScore();</span>
+				
+			}
+        }
+        
+        // go do the search        
+<span class="nc bnc" id="L354" title="All 2 branches missed.">        for (int iRun = 0; iRun &lt; m_nRuns; iRun++) {</span>
+        	// create descendants
+<span class="nc" id="L356">			BayesNetRepresentation  [] descendantPopulation = new BayesNetRepresentation  [getDescendantPopulationSize()];</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">			for (int i = 0; i &lt; getDescendantPopulationSize(); i++) {</span>
+<span class="nc" id="L358">				descendantPopulation[i] = population[m_random.nextInt(getPopulationSize())].copy();</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">				if (getUseMutation()) {</span>
+<span class="nc bnc" id="L360" title="All 4 branches missed.">					if (getUseCrossOver() &amp;&amp; m_random.nextBoolean()) {</span>
+<span class="nc" id="L361">						descendantPopulation[i].crossOver(population[m_random.nextInt(getPopulationSize())]);						</span>
+					} else {
+<span class="nc" id="L363">						descendantPopulation[i].mutate();								</span>
+					}
+				} else {
+					// use crossover
+<span class="nc" id="L367">					descendantPopulation[i].crossOver(population[m_random.nextInt(getPopulationSize())]);</span>
+				}
+
+<span class="nc bnc" id="L370" title="All 2 branches missed.">				if (descendantPopulation[i].getScore() &gt; fBestScore) {</span>
+<span class="nc" id="L371">					copyParentSets(bestBayesNet, bayesNet);</span>
+<span class="nc" id="L372">					fBestScore = descendantPopulation[i].getScore();</span>
+				}
+			}
+			// select new population
+<span class="nc" id="L376">			boolean [] bSelected = new boolean [getDescendantPopulationSize()];</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">			for (int i = 0; i &lt; getPopulationSize(); i++) {</span>
+<span class="nc" id="L378">				int iSelected = 0;</span>
+<span class="nc bnc" id="L379" title="All 2 branches missed.">				if (m_bUseTournamentSelection) {</span>
+					// use tournament selection
+<span class="nc" id="L381">					iSelected = m_random.nextInt(getDescendantPopulationSize());</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">					while (bSelected[iSelected]) {</span>
+<span class="nc" id="L383">						iSelected = (iSelected + 1) % getDescendantPopulationSize();</span>
+					}
+<span class="nc" id="L385">					int iSelected2 =  m_random.nextInt(getDescendantPopulationSize());</span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">					while (bSelected[iSelected2]) {</span>
+<span class="nc" id="L387">						iSelected2 = (iSelected2 + 1) % getDescendantPopulationSize();</span>
+					}
+<span class="nc bnc" id="L389" title="All 2 branches missed.">					if (descendantPopulation[iSelected2].getScore() &gt; descendantPopulation[iSelected].getScore()) {</span>
+<span class="nc" id="L390">						iSelected = iSelected2;</span>
+					}
+				} else {
+					// find best scoring network in population
+<span class="nc bnc" id="L394" title="All 2 branches missed.">					while (bSelected[iSelected]) {</span>
+<span class="nc" id="L395">						iSelected++;</span>
+					}
+<span class="nc" id="L397">					double fScore = descendantPopulation[iSelected].getScore();</span>
+<span class="nc bnc" id="L398" title="All 2 branches missed.">					for (int j = 0; j &lt; getDescendantPopulationSize(); j++) {</span>
+<span class="nc bnc" id="L399" title="All 4 branches missed.">						if (!bSelected[j] &amp;&amp; descendantPopulation[j].getScore() &gt; fScore) {</span>
+<span class="nc" id="L400">							fScore = descendantPopulation[j].getScore();</span>
+<span class="nc" id="L401">							iSelected = j;</span>
+						}
+					}
+				}
+<span class="nc" id="L405">				population[i] = descendantPopulation[iSelected];</span>
+<span class="nc" id="L406">				bSelected[iSelected] = true;</span>
+			}
+        }
+        
+        // restore current network to best network
+<span class="nc" id="L411">		copyParentSets(bayesNet, bestBayesNet);</span>
+		
+		// free up memory
+<span class="nc" id="L414">		bestBayesNet = null;</span>
+<span class="nc" id="L415">    } // search</span>
+
+
+	/** copyParentSets copies parent sets of source to dest BayesNet
+	 * @param dest destination network
+	 * @param source source network
+	 */
+	void copyParentSets(BayesNet dest, BayesNet source) {
+<span class="nc" id="L423">		int nNodes = source.getNrOfNodes();</span>
+		// clear parent set first
+<span class="nc bnc" id="L425" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nNodes; iNode++) {</span>
+<span class="nc" id="L426">			dest.getParentSet(iNode).copy(source.getParentSet(iNode));</span>
+		}		
+<span class="nc" id="L428">	} // CopyParentSets</span>
+
+    /**
+    * @return number of runs
+    */
+    public int getRuns() {
+<span class="nc" id="L434">        return m_nRuns;</span>
+    } // getRuns
+
+    /**
+     * Sets the number of runs
+     * @param nRuns The number of runs to set
+     */
+    public void setRuns(int nRuns) {
+<span class="nc" id="L442">        m_nRuns = nRuns;</span>
+<span class="nc" id="L443">    } // setRuns</span>
+
+	/**
+	 * Returns an enumeration describing the available options.
+	 *
+	 * @return an enumeration of all the available options.
+	 */
+	public Enumeration listOptions() {
+<span class="nc" id="L451">		Vector newVector = new Vector(7);</span>
+
+<span class="nc" id="L453">		newVector.addElement(new Option(&quot;\tPopulation size&quot;, &quot;L&quot;, 1, &quot;-L &lt;integer&gt;&quot;));</span>
+<span class="nc" id="L454">		newVector.addElement(new Option(&quot;\tDescendant population size&quot;, &quot;A&quot;, 1, &quot;-A &lt;integer&gt;&quot;));</span>
+<span class="nc" id="L455">		newVector.addElement(new Option(&quot;\tNumber of runs&quot;, &quot;U&quot;, 1, &quot;-U &lt;integer&gt;&quot;));</span>
+<span class="nc" id="L456">		newVector.addElement(new Option(&quot;\tUse mutation.\n\t(default true)&quot;, &quot;M&quot;, 0, &quot;-M&quot;));</span>
+<span class="nc" id="L457">		newVector.addElement(new Option(&quot;\tUse cross-over.\n\t(default true)&quot;, &quot;C&quot;, 0, &quot;-C&quot;));</span>
+<span class="nc" id="L458">		newVector.addElement(new Option(&quot;\tUse tournament selection (true) or maximum subpopulatin (false).\n\t(default false)&quot;, &quot;O&quot;, 0, &quot;-O&quot;));</span>
+<span class="nc" id="L459">		newVector.addElement(new Option(&quot;\tRandom number seed&quot;, &quot;R&quot;, 1, &quot;-R &lt;seed&gt;&quot;));</span>
+
+<span class="nc" id="L461">		Enumeration enu = super.listOptions();</span>
+<span class="nc bnc" id="L462" title="All 2 branches missed.">		while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L463">			newVector.addElement(enu.nextElement());</span>
+		}
+<span class="nc" id="L465">		return newVector.elements();</span>
+	} // listOptions
+
+	/**
+	 * Parses a given list of options. &lt;p/&gt;
+	 *
+	 &lt;!-- options-start --&gt;
+	 * Valid options are: &lt;p/&gt;
+	 * 
+	 * &lt;pre&gt; -L &amp;lt;integer&amp;gt;
+	 *  Population size&lt;/pre&gt;
+	 * 
+	 * &lt;pre&gt; -A &amp;lt;integer&amp;gt;
+	 *  Descendant population size&lt;/pre&gt;
+	 * 
+	 * &lt;pre&gt; -U &amp;lt;integer&amp;gt;
+	 *  Number of runs&lt;/pre&gt;
+	 * 
+	 * &lt;pre&gt; -M
+	 *  Use mutation.
+	 *  (default true)&lt;/pre&gt;
+	 * 
+	 * &lt;pre&gt; -C
+	 *  Use cross-over.
+	 *  (default true)&lt;/pre&gt;
+	 * 
+	 * &lt;pre&gt; -O
+	 *  Use tournament selection (true) or maximum subpopulatin (false).
+	 *  (default false)&lt;/pre&gt;
+	 * 
+	 * &lt;pre&gt; -R &amp;lt;seed&amp;gt;
+	 *  Random number seed&lt;/pre&gt;
+	 * 
+	 * &lt;pre&gt; -mbc
+	 *  Applies a Markov Blanket correction to the network structure, 
+	 *  after a network structure is learned. This ensures that all 
+	 *  nodes in the network are part of the Markov blanket of the 
+	 *  classifier node.&lt;/pre&gt;
+	 * 
+	 * &lt;pre&gt; -S [BAYES|MDL|ENTROPY|AIC|CROSS_CLASSIC|CROSS_BAYES]
+	 *  Score type (BAYES, BDeu, MDL, ENTROPY and AIC)&lt;/pre&gt;
+	 * 
+	 &lt;!-- options-end --&gt;
+	 *
+	 * @param options the list of options as an array of strings
+	 * @throws Exception if an option is not supported
+	 */
+	public void setOptions(String[] options) throws Exception {
+<span class="nc" id="L513">		String sPopulationSize = Utils.getOption('L', options);</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">		if (sPopulationSize.length() != 0) {</span>
+<span class="nc" id="L515">			setPopulationSize(Integer.parseInt(sPopulationSize));</span>
+		}
+<span class="nc" id="L517">		String sDescendantPopulationSize = Utils.getOption('A', options);</span>
+<span class="nc bnc" id="L518" title="All 2 branches missed.">		if (sDescendantPopulationSize.length() != 0) {</span>
+<span class="nc" id="L519">			setDescendantPopulationSize(Integer.parseInt(sDescendantPopulationSize));</span>
+		}
+<span class="nc" id="L521">		String sRuns = Utils.getOption('U', options);</span>
+<span class="nc bnc" id="L522" title="All 2 branches missed.">		if (sRuns.length() != 0) {</span>
+<span class="nc" id="L523">			setRuns(Integer.parseInt(sRuns));</span>
+		}
+<span class="nc" id="L525">		String sSeed = Utils.getOption('R', options);</span>
+<span class="nc bnc" id="L526" title="All 2 branches missed.">		if (sSeed.length() != 0) {</span>
+<span class="nc" id="L527">			setSeed(Integer.parseInt(sSeed));</span>
+		}
+<span class="nc" id="L529">		setUseMutation(Utils.getFlag('M', options));</span>
+<span class="nc" id="L530">		setUseCrossOver(Utils.getFlag('C', options));</span>
+<span class="nc" id="L531">		setUseTournamentSelection(Utils.getFlag('O', options));</span>
+		
+<span class="nc" id="L533">		super.setOptions(options);</span>
+<span class="nc" id="L534">	} // setOptions</span>
+
+	/**
+	 * Gets the current settings of the search algorithm.
+	 *
+	 * @return an array of strings suitable for passing to setOptions
+	 */
+	public String[] getOptions() {
+<span class="nc" id="L542">		String[] superOptions = super.getOptions();</span>
+<span class="nc" id="L543">		String[] options = new String[11 + superOptions.length];</span>
+<span class="nc" id="L544">		int current = 0;</span>
+		
+<span class="nc" id="L546">		options[current++] = &quot;-L&quot;;</span>
+<span class="nc" id="L547">		options[current++] = &quot;&quot; + getPopulationSize();</span>
+
+<span class="nc" id="L549">		options[current++] = &quot;-A&quot;;</span>
+<span class="nc" id="L550">		options[current++] = &quot;&quot; + getDescendantPopulationSize();</span>
+
+<span class="nc" id="L552">		options[current++] = &quot;-U&quot;;</span>
+<span class="nc" id="L553">		options[current++] = &quot;&quot; + getRuns();</span>
+
+<span class="nc" id="L555">		options[current++] = &quot;-R&quot;;</span>
+<span class="nc" id="L556">		options[current++] = &quot;&quot; + getSeed();</span>
+
+<span class="nc bnc" id="L558" title="All 2 branches missed.">		if (getUseMutation()) {</span>
+<span class="nc" id="L559">		  options[current++] = &quot;-M&quot;;</span>
+		}
+<span class="nc bnc" id="L561" title="All 2 branches missed.">		if (getUseCrossOver()) {</span>
+<span class="nc" id="L562">		  options[current++] = &quot;-C&quot;;</span>
+		}
+<span class="nc bnc" id="L564" title="All 2 branches missed.">		if (getUseTournamentSelection()) {</span>
+<span class="nc" id="L565">		  options[current++] = &quot;-O&quot;;</span>
+		}
+
+		// insert options from parent class
+<span class="nc bnc" id="L569" title="All 2 branches missed.">		for (int iOption = 0; iOption &lt; superOptions.length; iOption++) {</span>
+<span class="nc" id="L570">			options[current++] = superOptions[iOption];</span>
+		}
+
+		// Fill up rest with empty strings, not nulls!
+<span class="nc bnc" id="L574" title="All 2 branches missed.">		while (current &lt; options.length) {</span>
+<span class="nc" id="L575">			options[current++] = &quot;&quot;;</span>
+		}
+<span class="nc" id="L577">		return options;</span>
+	} // getOptions
+
+	/**
+	 * @return whether cross-over is used
+	 */
+	public boolean getUseCrossOver() {
+<span class="nc" id="L584">		return m_bUseCrossOver;</span>
+	}
+
+	/**
+	 * @return whether mutation is used
+	 */
+	public boolean getUseMutation() {
+<span class="nc" id="L591">		return m_bUseMutation;</span>
+	}
+
+	/**
+	 * @return descendant population size
+	 */
+	public int getDescendantPopulationSize() {
+<span class="nc" id="L598">		return m_nDescendantPopulationSize;</span>
+	}
+
+	/**
+	 * @return population size
+	 */
+	public int getPopulationSize() {
+<span class="nc" id="L605">		return m_nPopulationSize;</span>
+	}
+
+	/**
+	 * @param bUseCrossOver sets whether cross-over is used
+	 */
+	public void setUseCrossOver(boolean bUseCrossOver) {
+<span class="nc" id="L612">		m_bUseCrossOver = bUseCrossOver;</span>
+<span class="nc" id="L613">	}</span>
+
+	/**
+	 * @param bUseMutation sets whether mutation is used
+	 */
+	public void setUseMutation(boolean bUseMutation) {
+<span class="nc" id="L619">		m_bUseMutation = bUseMutation;</span>
+<span class="nc" id="L620">	}</span>
+
+	/**
+	 * @return whether Tournament Selection (true) or Maximum Sub-Population (false) should be used
+	 */
+	public boolean getUseTournamentSelection() {
+<span class="nc" id="L626">		return m_bUseTournamentSelection;</span>
+	}
+
+	/**
+	 * @param bUseTournamentSelection sets whether Tournament Selection or Maximum Sub-Population should be used
+	 */
+	public void setUseTournamentSelection(boolean bUseTournamentSelection) {
+<span class="nc" id="L633">		m_bUseTournamentSelection = bUseTournamentSelection;</span>
+<span class="nc" id="L634">	}</span>
+
+	/**
+	 * @param iDescendantPopulationSize sets descendant population size
+	 */
+	public void setDescendantPopulationSize(int iDescendantPopulationSize) {
+<span class="nc" id="L640">		m_nDescendantPopulationSize = iDescendantPopulationSize;</span>
+<span class="nc" id="L641">	}</span>
+
+	/**
+	 * @param iPopulationSize sets population size
+	 */
+	public void setPopulationSize(int iPopulationSize) {
+<span class="nc" id="L647">		m_nPopulationSize = iPopulationSize;</span>
+<span class="nc" id="L648">	}</span>
+
+	/**
+	* @return random number seed
+	*/
+	public int getSeed() {
+<span class="nc" id="L654">		return m_nSeed;</span>
+	} // getSeed
+
+	/**
+	 * Sets the random number seed
+	 * @param nSeed The number of the seed to set
+	 */
+	public void setSeed(int nSeed) {
+<span class="nc" id="L662">		m_nSeed = nSeed;</span>
+<span class="nc" id="L663">	} // setSeed</span>
+
+	/**
+	 * This will return a string describing the classifier.
+	 * @return The string.
+	 */
+	public String globalInfo() {
+<span class="nc" id="L670">		return &quot;This Bayes Network learning algorithm uses genetic search for finding a well scoring &quot; +</span>
+		&quot;Bayes network structure. Genetic search works by having a population of Bayes network structures &quot; +
+		&quot;and allow them to mutate and apply cross over to get offspring. The best network structure &quot; +
+		&quot;found during the process is returned.&quot;;
+	} // globalInfo
+	
+	/**
+	 * @return a string to describe the Runs option.
+	 */
+	public String runsTipText() {
+<span class="nc" id="L680">	  return &quot;Sets the number of generations of Bayes network structure populations.&quot;;</span>
+	} // runsTipText
+	
+	/**
+	 * @return a string to describe the Seed option.
+	 */
+	public String seedTipText() {
+<span class="nc" id="L687">	  return &quot;Initialization value for random number generator.&quot; +</span>
+	  &quot; Setting the seed allows replicability of experiments.&quot;;
+	} // seedTipText
+
+	/**
+	 * @return a string to describe the Population Size option.
+	 */
+	public String populationSizeTipText() {
+<span class="nc" id="L695">	  return &quot;Sets the size of the population of network structures that is selected each generation.&quot;;</span>
+	} // populationSizeTipText
+
+	/**
+	 * @return a string to describe the Descendant Population Size option.
+	 */
+	public String descendantPopulationSizeTipText() {
+<span class="nc" id="L702">	  return &quot;Sets the size of the population of descendants that is created each generation.&quot;;</span>
+	} // descendantPopulationSizeTipText
+
+	/**
+	 * @return a string to describe the Use Mutation option.
+	 */
+	public String useMutationTipText() {
+<span class="nc" id="L709">		return &quot;Determines whether mutation is allowed. Mutation flips a bit in the bit &quot; +</span>
+			&quot;representation of the network structure. At least one of mutation or cross-over &quot; +
+			&quot;should be used.&quot;;
+	} // useMutationTipText
+
+	/**
+	 * @return a string to describe the Use Cross-Over option.
+	 */
+	public String useCrossOverTipText() {
+<span class="nc" id="L718">		return &quot;Determines whether cross-over is allowed. Cross over combined the bit &quot; +</span>
+			&quot;representations of network structure by taking a random first k bits of one&quot; +
+			&quot;and adding the remainder of the other. At least one of mutation or cross-over &quot; +
+			&quot;should be used.&quot;;
+	} // useCrossOverTipText
+
+	/**
+	 * @return a string to describe the Use Tournament Selection option.
+	 */
+	public String useTournamentSelectionTipText() {
+<span class="nc" id="L728">		return &quot;Determines the method of selecting a population. When set to true, tournament &quot; +</span>
+			&quot;selection is used (pick two at random and the highest is allowed to continue). &quot; +
+			&quot;When set to false, the top scoring network structures are selected.&quot;;
+	} // useTournamentSelectionTipText
+
+	/**
+	 * Returns the revision string.
+	 * 
+	 * @return		the revision
+	 */
+	public String getRevision() {
+<span class="nc" id="L739">	  return RevisionUtils.extract(&quot;$Revision: 1.5 $&quot;);</span>
+	}
+} // GeneticSearch
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

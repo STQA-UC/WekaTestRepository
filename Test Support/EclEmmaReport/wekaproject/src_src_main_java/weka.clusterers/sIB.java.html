@@ -1,0 +1,1244 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>sIB.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.clusterers</a> &gt; <span class="el_source">sIB.java</span></div><h1>sIB.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    sIB.java
+ *    Copyright (C) 2008 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.clusterers;
+
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.core.matrix.Matrix;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Cluster data using the sequential information bottleneck algorithm.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Note: only hard clustering scheme is supported. sIB assign for each instance the cluster that have the minimum cost/distance to the instance. The trade-off beta is set to infinite so 1/beta is zero.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Noam Slonim, Nir Friedman, Naftali Tishby: Unsupervised document classification using sequential information maximization. In: Proceedings of the 25th International ACM SIGIR Conference on Research and Development in Information Retrieval, 129-136, 2002.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Slonim2002,
+ *    author = {Noam Slonim and Nir Friedman and Naftali Tishby},
+ *    booktitle = {Proceedings of the 25th International ACM SIGIR Conference on Research and Development in Information Retrieval},
+ *    pages = {129-136},
+ *    title = {Unsupervised document classification using sequential information maximization},
+ *    year = {2002}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;num&amp;gt;
+ *  maximum number of iterations
+ *  (default 100).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;num&amp;gt;
+ *  minimum number of changes in a single iteration
+ *  (default 0).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+ *  number of clusters.
+ *  (default 2).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;num&amp;gt;
+ *  number of restarts.
+ *  (default 5).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -U
+ *  set not to normalize the data
+ *  (default true).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V
+ *  set to output debug info
+ *  (default false).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt; 
+ *
+ * @author Noam Slonim
+ * @author &lt;a href=&quot;mailto:lh92@cs.waikato.ac.nz&quot;&gt;Anna Huang&lt;/a&gt; 
+ * @version $Revision: 5538 $
+ */
+<span class="nc" id="L109">public class sIB</span>
+  extends RandomizableClusterer
+  implements TechnicalInformationHandler {
+  
+  /** for serialization. */
+  private static final long    serialVersionUID = -8652125897352654213L;
+  
+  /**
+   * Inner class handling status of the input data
+   * 
+   * @see Serializable
+   */
+<span class="nc" id="L121">  private class Input</span>
+    implements Serializable, RevisionHandler {
+    
+    /** for serialization */
+    static final long serialVersionUID = -2464453171263384037L;
+    
+    /** Prior probability of each instance */
+    private double[] Px;
+    
+    /** Prior probability of each attribute */
+    private double[] Py;
+    
+    /** Joint distribution of attribute and instance */
+    private Matrix Pyx;
+    
+    /** P[y|x] */
+    private Matrix Py_x;
+    
+    /** Mutual information between the instances and the attributes */
+    private double Ixy;
+    
+    /** Entropy of the attributes */ 
+    private double Hy;
+    
+    /** Entropy of the instances */
+    private double Hx;
+    
+    /** Sum values of the dataset */
+    private double sumVals;
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L157">      return RevisionUtils.extract(&quot;$Revision: 5538 $&quot;);</span>
+    }
+  }
+  
+  /**
+   * Internal class handling the whole partition
+   * 
+   * @see Serializable
+   */
+  private class Partition
+    implements Serializable, RevisionHandler {
+    
+    /** for serialization */
+    static final long serialVersionUID = 4957194978951259946L;
+    
+    /** Cluster assignment for each instance */
+    private int[]    Pt_x;
+    
+    /** Prior probability of each cluster */
+    private double[] Pt;
+    
+    /** sIB equation score, to evaluate the quality of the partition */
+    private double   L;
+    
+    /** Number of changes during the generation of this partition */
+    private int      counter;
+    
+    /** Attribute probablities for each cluster */
+    private Matrix   Py_t;
+
+    /** 
+     * Create a new empty &lt;code&gt;Partition&lt;/code&gt; instance.
+     */
+<span class="nc" id="L190">    public Partition() {</span>
+<span class="nc" id="L191">      Pt_x = new int[m_numInstances];</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="nc" id="L193">	Pt_x[i] = -1;</span>
+      }
+<span class="nc" id="L195">      Pt = new double[m_numCluster];</span>
+<span class="nc" id="L196">      Py_t = new Matrix(m_numAttributes, m_numCluster);</span>
+<span class="nc" id="L197">      counter = 0;</span>
+<span class="nc" id="L198">    }</span>
+
+    /**
+     * Find all the instances that have been assigned to cluster i
+     * @param i index of the cluster
+     * @return an arraylist of the instance ids that have been assigned to cluster i
+     */
+    private ArrayList&lt;Integer&gt; find(int i) {
+<span class="nc" id="L206">      ArrayList&lt;Integer&gt; indices = new ArrayList&lt;Integer&gt;();</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">      for (int x = 0; x &lt; Pt_x.length; x++) {</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">	if (Pt_x[x] == i) {</span>
+<span class="nc" id="L209">	  indices.add(x);</span>
+	}
+      }
+<span class="nc" id="L212">      return indices;</span>
+    }
+
+    /**
+     * Find the size of the cluster i
+     * @param i index of the cluster
+     * @return the size of cluster i
+     */
+    private int size(int i) {
+<span class="nc" id="L221">      int count = 0;</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">      for (int x = 0; x &lt; Pt_x.length; x++) {</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">	if (Pt_x[x] == i) {</span>
+<span class="nc" id="L224">	  count++;</span>
+	}
+      }
+<span class="nc" id="L227">      return count;</span>
+    }
+
+    /**
+     * Copy the current partition into T
+     * @param T the target partition object
+     */
+    private void copy(Partition T) {
+<span class="nc bnc" id="L235" title="All 2 branches missed.">      if (T == null) {</span>
+<span class="nc" id="L236">	T = new Partition();</span>
+      }
+<span class="nc" id="L238">      System.arraycopy(Pt_x, 0, T.Pt_x, 0, Pt_x.length);</span>
+<span class="nc" id="L239">      System.arraycopy(Pt, 0, T.Pt, 0, Pt.length);</span>
+<span class="nc" id="L240">      T.L = L;</span>
+<span class="nc" id="L241">      T.counter = counter;</span>
+
+<span class="nc" id="L243">      double[][] mArray = Py_t.getArray();</span>
+<span class="nc" id="L244">      double[][] tgtArray = T.Py_t.getArray();</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">      for (int i = 0; i &lt; mArray.length; i++) {</span>
+<span class="nc" id="L246">	System.arraycopy(mArray[i], 0, tgtArray[i], 0, mArray[0].length);</span>
+      }
+<span class="nc" id="L248">    }</span>
+
+    /**
+     * Output the current partition
+     * @param insts
+     * @return a string that describes the partition
+     */
+    public String toString() {
+<span class="nc" id="L256">      StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L257">      text.append(&quot;score (L) : &quot; + Utils.doubleToString(L, 4) + &quot;\n&quot;);</span>
+<span class="nc" id="L258">      text.append(&quot;number of changes : &quot; + counter +&quot;\n&quot;);</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numCluster; i++) {</span>
+<span class="nc" id="L260">	text.append(&quot;\nCluster &quot;+i+&quot;\n&quot;);</span>
+<span class="nc" id="L261">	text.append(&quot;size : &quot;+size(i)+&quot;\n&quot;);</span>
+<span class="nc" id="L262">	text.append(&quot;prior prob : &quot;+Utils.doubleToString(Pt[i], 4)+&quot;\n&quot;);</span>
+      }
+<span class="nc" id="L264">      return text.toString();</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L273">      return RevisionUtils.extract(&quot;$Revision: 5538 $&quot;);</span>
+    }
+  }
+
+  /** Training data */
+  private Instances m_data;
+
+  /** Number of clusters */
+<span class="nc" id="L281">  private int m_numCluster = 2;</span>
+
+  /** Number of restarts */
+<span class="nc" id="L284">  private int m_numRestarts = 5;</span>
+  
+  /** Verbose? */
+<span class="nc" id="L287">  private boolean m_verbose = false;</span>
+
+  /** Uniform prior probability of the documents */
+<span class="nc" id="L290">  private boolean m_uniformPrior = true;</span>
+
+  /** Max number of iterations during each restart */
+<span class="nc" id="L293">  private int m_maxLoop = 100;</span>
+
+  /** Minimum number of changes */
+<span class="nc" id="L296">  private int m_minChange = 0;</span>
+
+  /** Globally replace missing values */
+  private ReplaceMissingValues m_replaceMissing;
+
+  /** Number of instances */
+  private int m_numInstances;
+
+  /** Number of attributes */
+  private int m_numAttributes;
+  
+  /** Randomly generate initial partition */
+  private Random random;
+  
+  /** Holds the best partition built */
+  private Partition bestT;
+  
+  /** Holds the statistics about the input dataset */
+  private Input input;
+  
+  /**
+   * Generates a clusterer. 
+   *
+   * @param data the training instances 
+   * @throws Exception if something goes wrong
+   */
+  public void buildClusterer(Instances data) throws Exception {
+    // can clusterer handle the data ?
+<span class="nc" id="L324">    getCapabilities().testWithFail(data);</span>
+
+<span class="nc" id="L326">    m_replaceMissing = new ReplaceMissingValues();</span>
+<span class="nc" id="L327">    Instances instances = new Instances(data);</span>
+<span class="nc" id="L328">    instances.setClassIndex(-1);</span>
+<span class="nc" id="L329">    m_replaceMissing.setInputFormat(instances);</span>
+<span class="nc" id="L330">    data = weka.filters.Filter.useFilter(instances, m_replaceMissing);</span>
+<span class="nc" id="L331">    instances = null;</span>
+    
+    // initialize all fields that are not being set via options
+<span class="nc" id="L334">    m_data = data;</span>
+<span class="nc" id="L335">    m_numInstances = m_data.numInstances();</span>
+<span class="nc" id="L336">    m_numAttributes = m_data.numAttributes();</span>
+<span class="nc" id="L337">    random = new Random(getSeed()); </span>
+    
+    // initialize the statistics of the input training data
+<span class="nc" id="L340">    input = sIB_ProcessInput();</span>
+    
+    // object to hold the best partition
+<span class="nc" id="L343">    bestT = new Partition();</span>
+
+    // the real clustering
+<span class="nc" id="L346">    double bestL = Double.NEGATIVE_INFINITY;</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">    for (int k = 0; k &lt; m_numRestarts; k++) {   </span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">      if(m_verbose) {</span>
+<span class="nc" id="L349">	System.out.format(&quot;restart number %s...\n&quot;, k);</span>
+      }
+      
+      // initialize the partition and optimize it
+<span class="nc" id="L353">      Partition tmpT = sIB_InitT(input);      </span>
+<span class="nc" id="L354">      tmpT = sIB_OptimizeT(tmpT, input);</span>
+
+      // if a better partition is found, save it
+<span class="nc bnc" id="L357" title="All 2 branches missed.">      if (tmpT.L &gt; bestL) {</span>
+<span class="nc" id="L358">	tmpT.copy(bestT);</span>
+<span class="nc" id="L359">	bestL = bestT.L;</span>
+      }
+      
+<span class="nc bnc" id="L362" title="All 2 branches missed.">      if(m_verbose) {</span>
+<span class="nc" id="L363">	System.out.println(&quot;\nPartition status : &quot;);</span>
+<span class="nc" id="L364">	System.out.println(&quot;------------------&quot;);</span>
+<span class="nc" id="L365">	System.out.println(tmpT.toString()+&quot;\n&quot;);</span>
+      }
+    }
+    
+<span class="nc bnc" id="L369" title="All 2 branches missed.">    if(m_verbose){</span>
+<span class="nc" id="L370">      System.out.println(&quot;\nBest Partition&quot;);</span>
+<span class="nc" id="L371">      System.out.println(&quot;===============&quot;);      </span>
+<span class="nc" id="L372">      System.out.println(bestT.toString());</span>
+    }
+    
+    // save memory
+<span class="nc" id="L376">    m_data = new Instances(m_data, 0);</span>
+<span class="nc" id="L377">  }</span>
+  
+  /**
+   * Cluster a given instance, this is the method defined in Clusterer
+   * interface do nothing but just return the cluster assigned to it
+   */
+  public int clusterInstance(Instance instance) throws Exception {
+<span class="nc" id="L384">    double prior = (double) 1 / input.sumVals;</span>
+<span class="nc" id="L385">    double[] distances = new double[m_numCluster]; </span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">    for(int i = 0; i &lt; m_numCluster; i++){</span>
+<span class="nc" id="L387">      double Pnew = bestT.Pt[i] + prior;</span>
+<span class="nc" id="L388">      double pi1 = prior / Pnew;</span>
+<span class="nc" id="L389">      double pi2 = bestT.Pt[i] / Pnew;</span>
+<span class="nc" id="L390">      distances[i] = Pnew * JS(instance, i, pi1, pi2);</span>
+    }
+<span class="nc" id="L392">    return Utils.minIndex(distances);</span>
+  }
+
+  /**
+   * Process the input and compute the statistics of the training data
+   * @return an Input object which holds the statistics about the training data
+   */
+  private Input sIB_ProcessInput() {
+<span class="nc" id="L400">    double valSum = 0.0;</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="nc" id="L402">      valSum = 0.0;</span>
+<span class="nc bnc" id="L403" title="All 2 branches missed.">      for (int v = 0; v &lt; m_data.instance(i).numValues(); v++) {</span>
+<span class="nc" id="L404">	valSum += m_data.instance(i).valueSparse(v);</span>
+      }
+<span class="nc bnc" id="L406" title="All 2 branches missed.">      if (valSum &lt;= 0) {</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">	if(m_verbose){</span>
+<span class="nc" id="L408">	  System.out.format(&quot;Instance %s sum of value = %s &lt;= 0, removed.\n&quot;, i, valSum);</span>
+	}
+<span class="nc" id="L410">	m_data.delete(i);</span>
+<span class="nc" id="L411">	m_numInstances--;</span>
+      }
+    }
+
+    // get the term-document matrix
+<span class="nc" id="L416">    Input input = new Input();</span>
+<span class="nc" id="L417">    input.Py_x = getTransposedNormedMatrix(m_data);    </span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">    if (m_uniformPrior) {</span>
+<span class="nc" id="L419">      input.Pyx = input.Py_x.copy();  </span>
+<span class="nc" id="L420">      normalizePrior(m_data);</span>
+    } 
+    else {
+<span class="nc" id="L423">      input.Pyx = getTransposedMatrix(m_data);</span>
+    }
+<span class="nc" id="L425">    input.sumVals = getTotalSum(m_data);    </span>
+<span class="nc" id="L426">    input.Pyx.timesEquals((double) 1 / input.sumVals);</span>
+
+    // prior probability of documents, ie. sum the columns from the Pyx matrix
+<span class="nc" id="L429">    input.Px = new double[m_numInstances];</span>
+<span class="nc bnc" id="L430" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">      for (int j = 0; j &lt; m_numAttributes; j++) {</span>
+<span class="nc" id="L432">	input.Px[i] += input.Pyx.get(j, i);</span>
+      }           
+    }
+
+    // prior probability of terms, ie. sum the rows from the Pyx matrix
+<span class="nc" id="L437">    input.Py = new double[m_numAttributes];</span>
+<span class="nc bnc" id="L438" title="All 2 branches missed.">    for (int i = 0; i &lt; input.Pyx.getRowDimension(); i++) {</span>
+<span class="nc bnc" id="L439" title="All 2 branches missed.">      for (int j = 0; j &lt; input.Pyx.getColumnDimension(); j++) {</span>
+<span class="nc" id="L440">	input.Py[i] += input.Pyx.get(i, j);</span>
+      }
+    }
+    
+<span class="nc" id="L444">    MI(input.Pyx, input);</span>
+<span class="nc" id="L445">    return input;</span>
+  }
+
+  /**
+   * Initialize the partition
+   * @param input object holding the statistics of the training data
+   * @return the initialized partition
+   */
+  private Partition sIB_InitT(Input input) {
+<span class="nc" id="L454">    Partition T = new Partition();</span>
+<span class="nc" id="L455">    int avgSize = (int) Math.ceil((double) m_numInstances / m_numCluster);    </span>
+    
+<span class="nc" id="L457">    ArrayList&lt;Integer&gt; permInstsIdx = new ArrayList&lt;Integer&gt;();</span>
+<span class="nc" id="L458">    ArrayList&lt;Integer&gt; unassigned = new ArrayList&lt;Integer&gt;();</span>
+<span class="nc bnc" id="L459" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="nc" id="L460">      unassigned.add(i);</span>
+    }
+<span class="nc bnc" id="L462" title="All 2 branches missed.">    while (unassigned.size() != 0) {</span>
+<span class="nc" id="L463">      int t = random.nextInt(unassigned.size());</span>
+<span class="nc" id="L464">      permInstsIdx.add(unassigned.get(t));</span>
+<span class="nc" id="L465">      unassigned.remove(t);</span>
+    }
+
+<span class="nc bnc" id="L468" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numCluster; i++) {</span>
+<span class="nc bnc" id="L469" title="All 2 branches missed.">      int r2 = avgSize &gt; permInstsIdx.size() ? permInstsIdx.size() : avgSize;</span>
+<span class="nc bnc" id="L470" title="All 2 branches missed.">      for (int j = 0; j &lt; r2; j++) {</span>
+<span class="nc" id="L471">	T.Pt_x[permInstsIdx.get(j)] = i;</span>
+      }      
+<span class="nc bnc" id="L473" title="All 2 branches missed.">      for (int j = 0; j &lt; r2; j++) {	</span>
+<span class="nc" id="L474">	permInstsIdx.remove(0);</span>
+      }
+    }
+    
+    // initialize the prior prob of each cluster, and the probability 
+    // for each attribute within the cluster
+<span class="nc bnc" id="L480" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numCluster; i++) {</span>
+<span class="nc" id="L481">      ArrayList&lt;Integer&gt; indices = T.find(i);</span>
+<span class="nc bnc" id="L482" title="All 2 branches missed.">      for (int j = 0; j &lt; indices.size(); j++) {</span>
+<span class="nc" id="L483">	T.Pt[i] += input.Px[indices.get(j)];</span>
+      }
+<span class="nc" id="L485">      double[][] mArray = input.Pyx.getArray();</span>
+<span class="nc bnc" id="L486" title="All 2 branches missed.">      for (int j = 0; j &lt; m_numAttributes; j++) {</span>
+<span class="nc" id="L487">	double sum = 0.0;</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">	for (int k = 0; k &lt; indices.size(); k++) {</span>
+<span class="nc" id="L489">	  sum += mArray[j][indices.get(k)];</span>
+	}
+<span class="nc" id="L491">	sum /= T.Pt[i];</span>
+<span class="nc" id="L492">	T.Py_t.set(j, i, sum);</span>
+      }
+    }
+    
+<span class="nc bnc" id="L496" title="All 2 branches missed.">    if(m_verbose) {</span>
+<span class="nc" id="L497">      System.out.println(&quot;Initializing...&quot;);</span>
+    }
+<span class="nc" id="L499">    return T;</span>
+  }
+
+  /**
+   * Optimize the partition
+   * @param tmpT partition to be optimized
+   * @param input object describing the statistics of the training dataset
+   * @return the optimized partition
+   */
+  private Partition sIB_OptimizeT(Partition tmpT, Input input) {
+<span class="nc" id="L509">    boolean done = false;</span>
+<span class="nc" id="L510">    int change = 0, loopCounter = 0;</span>
+<span class="nc bnc" id="L511" title="All 2 branches missed.">    if(m_verbose) {</span>
+<span class="nc" id="L512">      System.out.println(&quot;Optimizing...&quot;);</span>
+<span class="nc" id="L513">      System.out.println(&quot;-------------&quot;);</span>
+    }
+<span class="nc bnc" id="L515" title="All 2 branches missed.">    while (!done) {</span>
+<span class="nc" id="L516">      change = 0;</span>
+<span class="nc bnc" id="L517" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="nc" id="L518">	int old_t = tmpT.Pt_x[i];</span>
+	// If the current cluster only has one instance left, leave it.
+<span class="nc bnc" id="L520" title="All 2 branches missed.">	if (tmpT.size(old_t) == 1) {</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">	  if(m_verbose){</span>
+<span class="nc" id="L522">	    System.out.format(&quot;cluster %s has only 1 doc remain\n&quot;, old_t);</span>
+	  }
+<span class="nc" id="L524">	  continue;</span>
+	}
+	// draw the instance out from its previous cluster
+<span class="nc" id="L527">	reduce_x(i, old_t, tmpT, input);</span>
+	
+	// re-cluster the instance
+<span class="nc" id="L530">	int new_t = clusterInstance(i, input, tmpT);	</span>
+<span class="nc bnc" id="L531" title="All 2 branches missed.">	if (new_t != old_t) {	  </span>
+<span class="nc" id="L532">	  change++;</span>
+<span class="nc" id="L533">	  updateAssignment(i, new_t, tmpT, input.Px[i], input.Py_x);</span>
+	}
+      }
+      
+<span class="nc" id="L537">      tmpT.counter += change;</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">      if(m_verbose){</span>
+<span class="nc" id="L539">	System.out.format(&quot;iteration %s , changes : %s\n&quot;, loopCounter, change);</span>
+      }
+<span class="nc" id="L541">      done = checkConvergence(change, loopCounter);</span>
+<span class="nc" id="L542">      loopCounter++;</span>
+    }
+
+    // compute the sIB score
+<span class="nc" id="L546">    tmpT.L = sIB_local_MI(tmpT.Py_t, tmpT.Pt);</span>
+<span class="nc bnc" id="L547" title="All 2 branches missed.">    if(m_verbose){</span>
+<span class="nc" id="L548">      System.out.format(&quot;score (L) : %s \n&quot;, Utils.doubleToString(tmpT.L, 4));</span>
+    }
+<span class="nc" id="L550">    return tmpT;</span>
+  }
+
+  /**
+   * Draw a instance out from a cluster. 
+   * @param instIdx index of the instance to be drawn out
+   * @param t index of the cluster which the instance previously belong to
+   * @param T the current working partition
+   * @param input the input statistics
+   */
+  private void reduce_x(int instIdx, int t, Partition T, Input input) {
+    // Update the prior probability of the cluster
+<span class="nc" id="L562">    ArrayList&lt;Integer&gt; indices = T.find(t);</span>
+<span class="nc" id="L563">    double sum = 0.0;</span>
+<span class="nc bnc" id="L564" title="All 2 branches missed.">    for (int i = 0; i &lt; indices.size(); i++) {</span>
+<span class="nc bnc" id="L565" title="All 2 branches missed.">      if (indices.get(i) == instIdx)</span>
+<span class="nc" id="L566">	continue;      </span>
+<span class="nc" id="L567">      sum += input.Px[indices.get(i)];</span>
+    }
+<span class="nc" id="L569">    T.Pt[t] = sum;</span>
+    
+<span class="nc bnc" id="L571" title="All 2 branches missed.">    if (T.Pt[t] &lt; 0) {</span>
+<span class="nc" id="L572">      System.out.format(&quot;Warning: probability &lt; 0 (%s)\n&quot;, T.Pt[t]);</span>
+<span class="nc" id="L573">      T.Pt[t] = 0;</span>
+    }
+    
+    // Update prob of each attribute in the cluster    
+<span class="nc" id="L577">    double[][] mArray = input.Pyx.getArray();</span>
+<span class="nc bnc" id="L578" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc" id="L579">      sum = 0.0;</span>
+<span class="nc bnc" id="L580" title="All 2 branches missed.">      for (int j = 0; j &lt; indices.size(); j++) {</span>
+<span class="nc bnc" id="L581" title="All 2 branches missed.">	if (indices.get(j) == instIdx)</span>
+<span class="nc" id="L582">	  continue;</span>
+<span class="nc" id="L583">	sum += mArray[i][indices.get(j)];</span>
+      }
+<span class="nc" id="L585">      T.Py_t.set(i, t, sum / T.Pt[t]);</span>
+    }    
+<span class="nc" id="L587">  }</span>
+
+  /**
+   * Put an instance into a new cluster and update.
+   * @param instIdx instance to be updated
+   * @param newt index of the new cluster this instance has been assigned to
+   * @param T the current working partition
+   * @param Px an array of prior probabilities of the instances
+   */
+  private void updateAssignment(int instIdx, int newt, Partition T, double Px, Matrix Py_x) {    
+<span class="nc" id="L597">    T.Pt_x[instIdx] = newt;</span>
+    
+    // update probability of attributes in the cluster 
+<span class="nc" id="L600">    double mass = Px + T.Pt[newt];</span>
+<span class="nc" id="L601">    double pi1 = Px / mass;</span>
+<span class="nc" id="L602">    double pi2 = T.Pt[newt] / mass;</span>
+<span class="nc bnc" id="L603" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc" id="L604">      T.Py_t.set(i, newt, pi1 * Py_x.get(i, instIdx) + pi2 * T.Py_t.get(i, newt));</span>
+    }
+
+<span class="nc" id="L607">    T.Pt[newt] = mass;</span>
+<span class="nc" id="L608">  }</span>
+  
+  /**
+   * Check whether the current iteration is converged
+   * @param change number of changes in current iteration
+   * @param loops number of iterations done
+   * @return true if the iteration is converged, false otherwise
+   */
+  private boolean checkConvergence(int change, int loops) {
+<span class="nc bnc" id="L617" title="All 4 branches missed.">    if (change &lt;= m_minChange || loops &gt;= m_maxLoop) {</span>
+<span class="nc bnc" id="L618" title="All 2 branches missed.">      if(m_verbose){</span>
+<span class="nc" id="L619">	System.out.format(&quot;\nsIB converged after %s iterations with %s changes\n&quot;, loops,</span>
+<span class="nc" id="L620">	  change);</span>
+      }
+<span class="nc" id="L622">      return true;</span>
+    }
+<span class="nc" id="L624">    return false;</span>
+  }
+
+  /**
+   * Cluster an instance into the nearest cluster. 
+   * @param instIdx Index of the instance to be clustered
+   * @param input Object which describe the statistics of the training dataset
+   * @param T Partition
+   * @return index of the cluster that has the minimum distance to the instance
+   */
+  private int clusterInstance(int instIdx, Input input, Partition T) {
+<span class="nc" id="L635">    double[] distances = new double[m_numCluster];</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numCluster; i++) {</span>
+<span class="nc" id="L637">      double Pnew = input.Px[instIdx] + T.Pt[i];</span>
+<span class="nc" id="L638">      double pi1 = input.Px[instIdx] / Pnew;</span>
+<span class="nc" id="L639">      double pi2 = T.Pt[i] / Pnew;</span>
+<span class="nc" id="L640">      distances[i] = Pnew * JS(instIdx, input, T, i, pi1, pi2);</span>
+    }
+<span class="nc" id="L642">    return Utils.minIndex(distances);    </span>
+  }
+
+  /**
+   * Compute the JS divergence between an instance and a cluster, used for training data
+   * @param instIdx index of the instance
+   * @param input statistics of the input data
+   * @param T the whole partition
+   * @param t index of the cluster 
+   * @param pi1
+   * @param pi2
+   * @return the JS divergence
+   */
+  private double JS(int instIdx, Input input, Partition T, int t, double pi1, double pi2) {
+<span class="nc bnc" id="L656" title="All 2 branches missed.">    if (Math.min(pi1, pi2) &lt;= 0) {</span>
+<span class="nc" id="L657">      System.out.format(&quot;Warning: zero or negative weights in JS calculation! (pi1 %s, pi2 %s)\n&quot;, pi1, pi2);</span>
+<span class="nc" id="L658">      return 0;</span>
+    }
+<span class="nc" id="L660">    Instance inst = m_data.instance(instIdx);</span>
+<span class="nc" id="L661">    double kl1 = 0.0, kl2 = 0.0, tmp = 0.0;    </span>
+<span class="nc bnc" id="L662" title="All 2 branches missed.">    for (int i = 0; i &lt; inst.numValues(); i++) {</span>
+<span class="nc" id="L663">      tmp = input.Py_x.get(inst.index(i), instIdx);      </span>
+<span class="nc bnc" id="L664" title="All 2 branches missed.">      if(tmp != 0) {</span>
+<span class="nc" id="L665">	kl1 += tmp * Math.log(tmp / (tmp * pi1 + pi2 * T.Py_t.get(inst.index(i), t)));</span>
+      }
+    }
+<span class="nc bnc" id="L668" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc bnc" id="L669" title="All 2 branches missed.">      if ((tmp = T.Py_t.get(i, t)) != 0) {</span>
+<span class="nc" id="L670">	kl2 += tmp * Math.log(tmp / (input.Py_x.get(i, instIdx) * pi1 + pi2 * tmp));</span>
+      }
+    }    
+<span class="nc" id="L673">    return pi1 * kl1 + pi2 * kl2;</span>
+  }
+  
+  /**
+   * Compute the JS divergence between an instance and a cluster, used for test data
+   * @param inst instance to be clustered
+   * @param t index of the cluster
+   * @param pi1
+   * @param pi2
+   * @return the JS divergence
+   */
+  private double JS(Instance inst, int t, double pi1, double pi2) {
+<span class="nc bnc" id="L685" title="All 2 branches missed.">    if (Math.min(pi1, pi2) &lt;= 0) {</span>
+<span class="nc" id="L686">      System.out.format(&quot;Warning: zero or negative weights in JS calculation! (pi1 %s, pi2 %s)\n&quot;, pi1, pi2);</span>
+<span class="nc" id="L687">      return 0;</span>
+    }
+<span class="nc" id="L689">    double sum = Utils.sum(inst.toDoubleArray());</span>
+<span class="nc" id="L690">    double kl1 = 0.0, kl2 = 0.0, tmp = 0.0;    </span>
+<span class="nc bnc" id="L691" title="All 2 branches missed.">    for (int i = 0; i &lt; inst.numValues(); i++) {</span>
+<span class="nc" id="L692">      tmp = inst.valueSparse(i) / sum;      </span>
+<span class="nc bnc" id="L693" title="All 2 branches missed.">      if(tmp != 0) {</span>
+<span class="nc" id="L694">	kl1 += tmp * Math.log(tmp / (tmp * pi1 + pi2 * bestT.Py_t.get(inst.index(i), t)));</span>
+      }
+    }
+<span class="nc bnc" id="L697" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc bnc" id="L698" title="All 2 branches missed.">      if ((tmp = bestT.Py_t.get(i, t)) != 0) {</span>
+<span class="nc" id="L699">	kl2 += tmp * Math.log(tmp / (inst.value(i) * pi1  / sum + pi2 * tmp));</span>
+      }
+    }    
+<span class="nc" id="L702">    return pi1 * kl1 + pi2 * kl2;</span>
+  }
+  
+  /**
+   * Compute the sIB score
+   * @param m a term-cluster matrix, with m[i, j] is the probability of term i given cluster j  
+   * @param Pt an array of cluster prior probabilities
+   * @return the sIB score which indicates the quality of the partition
+   */
+  private double sIB_local_MI(Matrix m, double[] Pt) {
+<span class="nc" id="L712">    double Hy = 0.0, Ht = 0.0;</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">    for (int i = 0; i &lt; Pt.length; i++) {</span>
+<span class="nc" id="L714">      Ht += Pt[i] * Math.log(Pt[i]);</span>
+    }
+<span class="nc" id="L716">    Ht = -Ht;</span>
+    
+<span class="nc bnc" id="L718" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc" id="L719">      double Py = 0.0;</span>
+<span class="nc bnc" id="L720" title="All 2 branches missed.">      for (int j = 0; j &lt; m_numCluster; j++) {</span>
+<span class="nc" id="L721">	Py += m.get(i, j) * Pt[j];	</span>
+      }     
+<span class="nc bnc" id="L723" title="All 2 branches missed.">      if(Py == 0) continue;</span>
+<span class="nc" id="L724">      Hy += Py * Math.log(Py);</span>
+    }
+<span class="nc" id="L726">    Hy = -Hy;</span>
+    
+<span class="nc" id="L728">    double Hyt = 0.0, tmp = 0.0;</span>
+<span class="nc bnc" id="L729" title="All 2 branches missed.">    for (int i = 0; i &lt; m.getRowDimension(); i++) {</span>
+<span class="nc bnc" id="L730" title="All 2 branches missed.">      for (int j = 0; j &lt; m.getColumnDimension(); j++) {</span>
+<span class="nc bnc" id="L731" title="All 4 branches missed.">	if ((tmp = m.get(i, j)) == 0 || Pt[j] == 0) {</span>
+<span class="nc" id="L732">	  continue;</span>
+	}
+<span class="nc" id="L734">	tmp *= Pt[j];</span>
+<span class="nc" id="L735">	Hyt += tmp * Math.log(tmp);</span>
+      }
+    }
+<span class="nc" id="L738">    return Hy + Ht + Hyt;</span>
+  }
+  
+  /**
+   * Get the sum of value of the dataset
+   * @param data set of instances to handle
+   * @return sum of all the attribute values for all the instances in the dataset
+   */
+  private double getTotalSum(Instances data) {
+<span class="nc" id="L747">    double sum = 0.0;</span>
+<span class="nc bnc" id="L748" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="nc bnc" id="L749" title="All 2 branches missed.">      for (int v = 0; v &lt; data.instance(i).numValues(); v++) {</span>
+<span class="nc" id="L750">	sum += data.instance(i).valueSparse(v);</span>
+      }
+    }
+<span class="nc" id="L753">    return sum;</span>
+  }
+
+  /**
+   * Transpose the document-term matrix to term-document matrix
+   * @param data instances with document-term info
+   * @return a term-document matrix transposed from the input dataset
+   */
+  private Matrix getTransposedMatrix(Instances data) {
+<span class="nc" id="L762">    double[][] temp = new double[data.numAttributes()][data.numInstances()];</span>
+<span class="nc bnc" id="L763" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="nc" id="L764">      Instance inst = data.instance(i);</span>
+<span class="nc bnc" id="L765" title="All 2 branches missed.">      for (int v = 0; v &lt; inst.numValues(); v++) {</span>
+<span class="nc" id="L766">	temp[inst.index(v)][i] = inst.valueSparse(v);</span>
+      }
+    }
+<span class="nc" id="L769">    Matrix My_x = new Matrix(temp);</span>
+<span class="nc" id="L770">    return My_x;</span>
+  }
+
+  /**
+   * Normalize the document vectors
+   * @param data instances to be normalized
+   */
+  private void normalizePrior(Instances data) {
+<span class="nc bnc" id="L778" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="nc" id="L779">      normalizeInstance(data.instance(i));</span>
+    }
+<span class="nc" id="L781">  }</span>
+  
+  /**
+   * Normalize the instance
+   * @param inst instance to be normalized
+   * @return a new Instance with normalized values
+   */
+  private Instance normalizeInstance(Instance inst) {
+<span class="nc" id="L789">    double[] vals = inst.toDoubleArray();</span>
+<span class="nc" id="L790">    double sum = Utils.sum(vals);</span>
+<span class="nc bnc" id="L791" title="All 2 branches missed.">    for(int i = 0; i &lt; vals.length; i++) {</span>
+<span class="nc" id="L792">      vals[i] /= sum;</span>
+    }
+<span class="nc" id="L794">    return new Instance(inst.weight(), vals);</span>
+  }
+  
+  private Matrix getTransposedNormedMatrix(Instances data) {
+<span class="nc" id="L798">    Matrix matrix = new Matrix(data.numAttributes(), data.numInstances());</span>
+<span class="nc bnc" id="L799" title="All 2 branches missed.">    for(int i = 0; i &lt; data.numInstances(); i++){</span>
+<span class="nc" id="L800">      double[] vals = data.instance(i).toDoubleArray();</span>
+<span class="nc" id="L801">      double sum = Utils.sum(vals);</span>
+<span class="nc bnc" id="L802" title="All 2 branches missed.">      for (int v = 0; v &lt; vals.length; v++) {</span>
+<span class="nc" id="L803">	vals[v] /= sum;</span>
+<span class="nc" id="L804">	matrix.set(v, i, vals[v]);</span>
+      }      
+    }
+<span class="nc" id="L807">    return matrix;</span>
+  }
+  
+  /**
+   * Compute the MI between instances and attributes
+   * @param m the term-document matrix
+   * @param input object that describes the statistics about the training data
+   */
+  private void MI(Matrix m, Input input){    
+<span class="nc bnc" id="L816" title="All 2 branches missed.">    int minDimSize = m.getColumnDimension() &lt; m.getRowDimension() ? m.getColumnDimension() : m.getRowDimension();</span>
+<span class="nc bnc" id="L817" title="All 2 branches missed.">    if(minDimSize &lt; 2){</span>
+<span class="nc" id="L818">      System.err.println(&quot;Warning : This is not a JOINT distribution&quot;);</span>
+<span class="nc" id="L819">      input.Hx = Entropy (m);</span>
+<span class="nc" id="L820">      input.Hy = 0;</span>
+<span class="nc" id="L821">      input.Ixy = 0;</span>
+<span class="nc" id="L822">      return;</span>
+    }
+    
+<span class="nc" id="L825">    input.Hx = Entropy(input.Px);</span>
+<span class="nc" id="L826">    input.Hy = Entropy(input.Py);</span>
+    
+<span class="nc" id="L828">    double entropy = input.Hx + input.Hy;    </span>
+<span class="nc bnc" id="L829" title="All 2 branches missed.">    for (int i=0; i &lt; m_numInstances; i++) {</span>
+<span class="nc" id="L830">      Instance inst = m_data.instance(i);</span>
+<span class="nc bnc" id="L831" title="All 2 branches missed.">      for (int v = 0; v &lt; inst.numValues(); v++) {</span>
+<span class="nc" id="L832">	double tmp = m.get(inst.index(v), i);</span>
+<span class="nc bnc" id="L833" title="All 2 branches missed.">	if(tmp &lt;= 0) continue;</span>
+<span class="nc" id="L834">	entropy += tmp * Math.log(tmp);</span>
+      }
+    }
+<span class="nc" id="L837">    input.Ixy = entropy;</span>
+<span class="nc bnc" id="L838" title="All 2 branches missed.">    if(m_verbose) {</span>
+<span class="nc" id="L839">      System.out.println(&quot;Ixy = &quot; + input.Ixy);</span>
+    }
+<span class="nc" id="L841">  }</span>
+  
+  /**
+   * Compute the entropy score based on an array of probabilities
+   * @param probs array of non-negative and normalized probabilities
+   * @return the entropy value
+   */
+  private double Entropy(double[] probs){
+<span class="nc bnc" id="L849" title="All 2 branches missed.">    for (int i = 0; i &lt; probs.length; i++){</span>
+<span class="nc bnc" id="L850" title="All 2 branches missed.">      if (probs[i] &lt;= 0) {</span>
+<span class="nc bnc" id="L851" title="All 2 branches missed.">	if(m_verbose) {</span>
+<span class="nc" id="L852">	  System.out.println(&quot;Warning: Negative probability.&quot;);</span>
+	}
+<span class="nc" id="L854">	return Double.NaN;</span>
+      }
+    }
+    // could be unormalized, when normalization is not specified 
+<span class="nc bnc" id="L858" title="All 2 branches missed.">    if(Math.abs(Utils.sum(probs)-1) &gt;= 1e-6) {</span>
+<span class="nc bnc" id="L859" title="All 2 branches missed.">      if(m_verbose) {</span>
+<span class="nc" id="L860">	System.out.println(&quot;Warning: Not normalized.&quot;);</span>
+      }
+<span class="nc" id="L862">      return Double.NaN;</span>
+    }
+    
+<span class="nc" id="L865">    double mi = 0.0;</span>
+<span class="nc bnc" id="L866" title="All 2 branches missed.">    for (int i = 0; i &lt; probs.length; i++) {</span>
+<span class="nc" id="L867">      mi += probs[i] * Math.log(probs[i]);</span>
+    }
+<span class="nc" id="L869">    mi = -mi;</span>
+<span class="nc" id="L870">    return mi;</span>
+  }
+  
+  /**
+   * Compute the entropy score based on a matrix
+   * @param p a matrix with non-negative and normalized probabilities
+   * @return the entropy value
+   */
+  private double Entropy(Matrix p) {
+<span class="nc" id="L879">    double mi = 0;</span>
+<span class="nc bnc" id="L880" title="All 2 branches missed.">    for (int i = 0; i &lt; p.getRowDimension(); i++) {</span>
+<span class="nc bnc" id="L881" title="All 2 branches missed.">      for (int j = 0; j &lt; p.getColumnDimension(); j++) {</span>
+<span class="nc bnc" id="L882" title="All 2 branches missed.">	if(p.get(i, j) == 0){</span>
+<span class="nc" id="L883">	  continue;</span>
+	}
+<span class="nc" id="L885">	mi += p.get(i, j) + Math.log(p.get(i, j)); </span>
+      }
+    }
+<span class="nc" id="L888">    mi = -mi;</span>
+<span class="nc" id="L889">    return mi;</span>
+  }
+  
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -I &amp;lt;num&amp;gt;
+   *  maximum number of iterations
+   *  (default 100).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;num&amp;gt;
+   *  minimum number of changes in a single iteration
+   *  (default 0).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+   *  number of clusters.
+   *  (default 2).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;num&amp;gt;
+   *  number of restarts.
+   *  (default 5).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -U
+   *  set not to normalize the data
+   *  (default true).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V
+   *  set to output debug info
+   *  (default false).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="nc" id="L932">    String optionString = Utils.getOption('I', options);</span>
+<span class="nc bnc" id="L933" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L934">      setMaxIterations(Integer.parseInt(optionString));</span>
+    }
+<span class="nc" id="L936">    optionString = Utils.getOption('M', options);</span>
+<span class="nc bnc" id="L937" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L938">      setMinChange((new Integer(optionString)).intValue());</span>
+    }
+<span class="nc" id="L940">    optionString = Utils.getOption('N', options);</span>
+<span class="nc bnc" id="L941" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L942">      setNumClusters(Integer.parseInt(optionString));</span>
+    } 
+<span class="nc" id="L944">    optionString = Utils.getOption('R', options);</span>
+<span class="nc bnc" id="L945" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L946">      setNumRestarts((new Integer(optionString)).intValue());</span>
+    }    
+<span class="nc" id="L948">    setNotUnifyNorm(Utils.getFlag('U', options));    </span>
+<span class="nc" id="L949">    setDebug(Utils.getFlag('V', options));</span>
+    
+<span class="nc" id="L951">    super.setOptions(options);</span>
+<span class="nc" id="L952">  }</span>
+
+  /**
+   * Returns an enumeration describing the available options.
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L959">    Vector&lt;Option&gt; result = new Vector&lt;Option&gt;();</span>
+<span class="nc" id="L960">    result.addElement(new Option(&quot;\tmaximum number of iterations\n&quot;</span>
+<span class="nc" id="L961">	+ &quot;\t(default 100).&quot;, &quot;I&quot;, 1, &quot;-I &lt;num&gt;&quot;));</span>
+<span class="nc" id="L962">    result.addElement(new Option(</span>
+<span class="nc" id="L963">	&quot;\tminimum number of changes in a single iteration\n&quot;</span>
+<span class="nc" id="L964">	+ &quot;\t(default 0).&quot;, &quot;M&quot;, 1, &quot;-M &lt;num&gt;&quot;));</span>
+<span class="nc" id="L965">    result.addElement(new Option(&quot;\tnumber of clusters.\n&quot; + &quot;\t(default 2).&quot;,</span>
+<span class="nc" id="L966">	&quot;N&quot;, 1, &quot;-N &lt;num&gt;&quot;));</span>
+<span class="nc" id="L967">    result.addElement(new Option(&quot;\tnumber of restarts.\n&quot; </span>
+<span class="nc" id="L968">	+ &quot;\t(default 5).&quot;, &quot;R&quot;, 1, &quot;-R &lt;num&gt;&quot;));</span>
+<span class="nc" id="L969">    result.addElement(new Option(&quot;\tset not to normalize the data\n&quot; </span>
+<span class="nc" id="L970">	+ &quot;\t(default true).&quot;, &quot;U&quot;, 0, &quot;-U&quot;));</span>
+<span class="nc" id="L971">    result.addElement(new Option(&quot;\tset to output debug info\n&quot; </span>
+<span class="nc" id="L972">	+ &quot;\t(default false).&quot;, &quot;V&quot;, 0, &quot;-V&quot;));</span>
+    
+<span class="nc" id="L974">    Enumeration en = super.listOptions();</span>
+<span class="nc bnc" id="L975" title="All 2 branches missed.">    while (en.hasMoreElements())</span>
+<span class="nc" id="L976">      result.addElement((Option) en.nextElement());</span>
+    
+<span class="nc" id="L978">    return result.elements();</span>
+  }
+  
+  /**
+   * Gets the current settings.
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions() {
+    Vector&lt;String&gt; result;
+<span class="nc" id="L987">    result = new Vector&lt;String&gt;();</span>
+<span class="nc" id="L988">    result.add(&quot;-I&quot;); </span>
+<span class="nc" id="L989">    result.add(&quot;&quot; + getMaxIterations());</span>
+<span class="nc" id="L990">    result.add(&quot;-M&quot;); </span>
+<span class="nc" id="L991">    result.add(&quot;&quot; + getMinChange());</span>
+<span class="nc" id="L992">    result.add(&quot;-N&quot;); </span>
+<span class="nc" id="L993">    result.add(&quot;&quot; + getNumClusters());</span>
+<span class="nc" id="L994">    result.add(&quot;-R&quot;); </span>
+<span class="nc" id="L995">    result.add(&quot;&quot; + getNumRestarts());</span>
+<span class="nc bnc" id="L996" title="All 2 branches missed.">    if(getNotUnifyNorm()) {</span>
+<span class="nc" id="L997">      result.add(&quot;-U&quot;);</span>
+    }
+<span class="nc bnc" id="L999" title="All 2 branches missed.">    if(getDebug()) {</span>
+<span class="nc" id="L1000">      result.add(&quot;-V&quot;);</span>
+    }
+    
+<span class="nc" id="L1003">    String[] options = super.getOptions();</span>
+<span class="nc bnc" id="L1004" title="All 2 branches missed.">    for (int i = 0; i &lt; options.length; i++){</span>
+<span class="nc" id="L1005">      result.add(options[i]);</span>
+    }
+<span class="nc" id="L1007">    return result.toArray(new String[result.size()]);	  </span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String debugTipText() {
+<span class="nc" id="L1016">    return &quot;If set to true, clusterer may output additional info to &quot; +</span>
+      &quot;the console.&quot;;
+  }
+  
+  /**
+   * Set debug mode - verbose output
+   * @param v true for verbose output
+   */
+  public void setDebug (boolean v) {
+<span class="nc" id="L1025">    m_verbose = v;</span>
+<span class="nc" id="L1026">  }</span>
+  
+  /**
+   * Get debug mode
+   * @return true if debug mode is set
+   */
+  public boolean getDebug () {
+<span class="nc" id="L1033">    return  m_verbose;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property.
+   * @return tip text for this property
+   */
+  public String maxIterationsTipText() {
+<span class="nc" id="L1041">    return &quot;set maximum number of iterations (default 100)&quot;;</span>
+  }
+
+  /**
+   * Set the max number of iterations
+   * @param i max number of iterations
+   */
+  public void setMaxIterations(int i) {
+<span class="nc" id="L1049">    m_maxLoop = i;</span>
+<span class="nc" id="L1050">  }</span>
+
+  /**
+   * Get the max number of iterations
+   * @return max number of iterations
+   */
+  public int getMaxIterations() {
+<span class="nc" id="L1057">    return m_maxLoop;</span>
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * @return tip text for this property
+   */
+  public String minChangeTipText() {
+<span class="nc" id="L1065">    return &quot;set minimum number of changes (default 0)&quot;;</span>
+  }
+  
+  /**
+   * set the minimum number of changes
+   * @param m the minimum number of changes
+   */
+  public void setMinChange(int m) {
+<span class="nc" id="L1073">    m_minChange = m;</span>
+<span class="nc" id="L1074">  }</span>
+  
+  /**
+   * get the minimum number of changes
+   * @return the minimum number of changes
+   */
+  public int getMinChange() {
+<span class="nc" id="L1081">    return m_minChange;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property.
+   * @return tip text for this property
+   */
+  public String numClustersTipText() {
+<span class="nc" id="L1089">    return &quot;set number of clusters (default 2)&quot;;</span>
+  }
+
+  /**
+   * Set the number of clusters
+   * @param n number of clusters
+   */
+  public void setNumClusters(int n) {
+<span class="nc" id="L1097">    m_numCluster = n;</span>
+<span class="nc" id="L1098">  }</span>
+  
+  /**
+   * Get the number of clusters
+   * @return the number of clusters
+   */
+  public int getNumClusters() {
+<span class="nc" id="L1105">    return m_numCluster;</span>
+  }
+  
+  /**
+   * Get the number of clusters
+   * @return the number of clusters
+   */
+  public int numberOfClusters() {
+<span class="nc" id="L1113">    return m_numCluster;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property.
+   * @return tip text for this property
+   */
+  public String numRestartsTipText() {    
+<span class="nc" id="L1121">    return &quot;set number of restarts (default 5)&quot;;</span>
+  }
+  
+  /**
+   * Set the number of restarts
+   * @param i number of restarts
+   */
+  public void setNumRestarts(int i) {
+<span class="nc" id="L1129">    m_numRestarts = i;</span>
+<span class="nc" id="L1130">  }</span>
+  
+  /**
+   * Get the number of restarts
+   * @return number of restarts
+   */
+  public int getNumRestarts(){
+<span class="nc" id="L1137">    return m_numRestarts;</span>
+  } 
+  
+  /**
+   * Returns the tip text for this property.
+   * @return tip text for this property
+   */
+  public String notUnifyNormTipText() {
+<span class="nc" id="L1145">    return &quot;set whether to normalize each instance to a unify prior probability (eg. 1).&quot;;</span>
+  }
+  
+  /**
+   * Set whether to normalize instances to unify prior probability 
+   * before building the clusterer
+   * @param b true to normalize, otherwise false
+   */
+  public void setNotUnifyNorm(boolean b){
+<span class="nc bnc" id="L1154" title="All 2 branches missed.">    m_uniformPrior = !b;</span>
+<span class="nc" id="L1155">  }</span>
+  
+  /**
+   * Get whether to normalize instances to unify prior probability 
+   * before building the clusterer
+   * @return true if set to normalize, false otherwise 
+   */
+  public boolean getNotUnifyNorm() {
+<span class="nc bnc" id="L1163" title="All 2 branches missed.">    return !m_uniformPrior;</span>
+  }
+  
+  /**
+   * Returns a string describing this clusterer
+   * @return a description of the clusterer suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L1172">    return &quot;Cluster data using the sequential information bottleneck algorithm.\n\n&quot; +</span>
+    		&quot;Note: only hard clustering scheme is supported. sIB assign for each &quot; +
+    		&quot;instance the cluster that have the minimum cost/distance to the instance. &quot; +
+    		&quot;The trade-off beta is set to infinite so 1/beta is zero.\n\n&quot; +
+    		&quot;For more information, see:\n\n&quot;
+<span class="nc" id="L1177">    		+getTechnicalInformation().toString();</span>
+  }
+  
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L1189">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L1190">    result.setValue(Field.AUTHOR, &quot;Noam Slonim and Nir Friedman and Naftali Tishby&quot;);</span>
+<span class="nc" id="L1191">    result.setValue(Field.YEAR, &quot;2002&quot;);</span>
+<span class="nc" id="L1192">    result.setValue(Field.TITLE, &quot;Unsupervised document classification using sequential information maximization&quot;);</span>
+<span class="nc" id="L1193">    result.setValue(Field.BOOKTITLE, &quot;Proceedings of the 25th International ACM SIGIR Conference on Research and Development in Information Retrieval&quot;);</span>
+<span class="nc" id="L1194">    result.setValue(Field.PAGES, &quot;129-136&quot;);</span>
+    
+<span class="nc" id="L1196">    return result;</span>
+  }
+  
+  /**
+   * Returns default capabilities of the clusterer.
+   * @return      the capabilities of this clusterer
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L1204">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L1205">    result.disableAll();</span>
+<span class="nc" id="L1206">    result.enable(Capability.NO_CLASS);</span>
+    
+    // attributes
+<span class="nc" id="L1209">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L1210">    return result;</span>
+  }
+  
+  public String toString(){
+<span class="nc" id="L1214">    StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L1215">    text.append(&quot;\nsIB\n===\n&quot;);</span>
+<span class="nc" id="L1216">    text.append(&quot;\nNumber of clusters: &quot; + m_numCluster + &quot;\n&quot;);</span>
+    
+<span class="nc bnc" id="L1218" title="All 2 branches missed.">    for (int j = 0; j &lt; m_numCluster; j++) {</span>
+<span class="nc" id="L1219">      text.append(&quot;\nCluster: &quot; + j + &quot; Size : &quot; + bestT.size(j) + &quot; Prior probability: &quot; </span>
+<span class="nc" id="L1220">		  + Utils.doubleToString(bestT.Pt[j], 4) + &quot;\n\n&quot;);</span>
+<span class="nc bnc" id="L1221" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc" id="L1222">	text.append(&quot;Attribute: &quot; + m_data.attribute(i).name() + &quot;\n&quot;);</span>
+<span class="nc" id="L1223">	text.append(&quot;Probability given the cluster = &quot; </span>
+<span class="nc" id="L1224">	      + Utils.doubleToString(bestT.Py_t.get(i, j), 4) </span>
+<span class="nc" id="L1225">	      + &quot;\n&quot;);</span>
+      }
+    }
+<span class="nc" id="L1228">    return text.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1237">    return RevisionUtils.extract(&quot;$Revision: 5538 $&quot;);</span>
+  }
+  
+  public static void main(String[] argv) {
+<span class="nc" id="L1241">    runClusterer(new sIB(), argv);  </span>
+<span class="nc" id="L1242">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

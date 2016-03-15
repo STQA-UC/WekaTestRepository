@@ -1,0 +1,549 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>ClassifierPerformanceEvaluator.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui.beans</a> &gt; <span class="el_source">ClassifierPerformanceEvaluator.java</span></div><h1>ClassifierPerformanceEvaluator.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    ClassifierPerformanceEvaluator.java
+ *    Copyright (C) 2002 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.gui.beans;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.Evaluation;
+import weka.classifiers.evaluation.ThresholdCurve;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.OptionHandler;
+import weka.core.Utils;
+import weka.gui.visualize.PlotData2D;
+
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ * A bean that evaluates the performance of batch trained classifiers
+ *
+ * @author &lt;a href=&quot;mailto:mhall@cs.waikato.ac.nz&quot;&gt;Mark Hall&lt;/a&gt;
+ * @version $Revision: 7059 $
+ */
+public class ClassifierPerformanceEvaluator 
+  extends AbstractEvaluator
+  implements BatchClassifierListener, 
+	     Serializable, UserRequestAcceptor, EventConstraints {
+
+  /** for serialization */
+  private static final long serialVersionUID = -3511801418192148690L;
+
+  /**
+   * Evaluation object used for evaluating a classifier
+   */
+  private transient Evaluation m_eval;
+
+<span class="nc" id="L58">  private transient Thread m_evaluateThread = null;</span>
+  
+  private transient long m_currentBatchIdentifier;
+  private transient int m_setsComplete;
+  
+<span class="nc" id="L63">  private Vector m_textListeners = new Vector();</span>
+<span class="nc" id="L64">  private Vector m_thresholdListeners = new Vector();</span>
+<span class="nc" id="L65">  private Vector m_visualizableErrorListeners = new Vector();</span>
+
+<span class="nc" id="L67">  public ClassifierPerformanceEvaluator() {</span>
+<span class="nc" id="L68">    m_visual.loadIcons(BeanVisual.ICON_PATH</span>
+		       +&quot;ClassifierPerformanceEvaluator.gif&quot;,
+<span class="nc" id="L70">		       BeanVisual.ICON_PATH</span>
+		       +&quot;ClassifierPerformanceEvaluator_animated.gif&quot;);
+<span class="nc" id="L72">    m_visual.setText(&quot;ClassifierPerformanceEvaluator&quot;);</span>
+<span class="nc" id="L73">  }</span>
+
+  /**
+   * Set a custom (descriptive) name for this bean
+   * 
+   * @param name the name to use
+   */
+  public void setCustomName(String name) {
+<span class="nc" id="L81">    m_visual.setText(name);</span>
+<span class="nc" id="L82">  }</span>
+
+  /**
+   * Get the custom (descriptive) name for this bean (if one has been set)
+   * 
+   * @return the custom name (or the default name)
+   */
+  public String getCustomName() {
+<span class="nc" id="L90">    return m_visual.getText();</span>
+  }
+  
+  /**
+   * Global info for this bean
+   *
+   * @return a &lt;code&gt;String&lt;/code&gt; value
+   */
+  public String globalInfo() {
+<span class="nc" id="L99">    return Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_GlobalInfo_Text&quot;);</span>
+  }
+
+  // ----- Stuff for ROC curves
+<span class="nc" id="L103">  private boolean m_rocListenersConnected = false;</span>
+  // Plottable Instances with predictions appended
+<span class="nc" id="L105">  private transient Instances m_predInstances = null;</span>
+  // Actual predictions
+<span class="nc" id="L107">  private transient FastVector m_plotShape = null;</span>
+<span class="nc" id="L108">  private transient FastVector m_plotSize = null;</span>
+
+  /**
+   * Accept a classifier to be evaluated
+   *
+   * @param ce a &lt;code&gt;BatchClassifierEvent&lt;/code&gt; value
+   */
+  public void acceptClassifier(final BatchClassifierEvent ce) {
+<span class="nc bnc" id="L116" title="All 4 branches missed.">    if (ce.getTestSet() == null || ce.getTestSet().isStructureOnly()) {</span>
+<span class="nc" id="L117">      return; // cant evaluate empty/non-existent test instances</span>
+    }
+    try {
+<span class="nc bnc" id="L120" title="All 2 branches missed.">      if (m_evaluateThread == null) {</span>
+<span class="nc" id="L121">	m_evaluateThread = new Thread() {</span>
+	    public void run() {
+<span class="nc" id="L123">	      boolean errorOccurred = false;</span>
+//	      final String oldText = m_visual.getText();
+<span class="nc" id="L125">	      Classifier classifier = ce.getClassifier();</span>
+	      try {
+		//if (ce.getSetNumber() == 1) {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">	        if (ce.getGroupIdentifier() != m_currentBatchIdentifier) {</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">                  if (ce.getTrainSet().getDataSet() == null ||</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">                      ce.getTrainSet().getDataSet().numInstances() == 0) {</span>
+                    // we have no training set to estimate majority class
+                    // or mean of target from
+<span class="nc" id="L133">                    m_eval = new Evaluation(ce.getTestSet().getDataSet());</span>
+<span class="nc" id="L134">                    m_eval.useNoPriors();</span>
+                  } else {
+<span class="nc" id="L136">                    m_eval = new Evaluation(ce.getTrainSet().getDataSet());</span>
+                  }
+
+//		  m_classifier = ce.getClassifier();
+<span class="nc bnc" id="L140" title="All 2 branches missed.">		  if (m_visualizableErrorListeners.size() &gt; 0) {</span>
+<span class="nc" id="L141">		    m_predInstances = </span>
+		      weka.gui.explorer.ClassifierPanel.
+<span class="nc" id="L143">		      setUpVisualizableInstances(new Instances(ce.getTestSet().getDataSet()));</span>
+<span class="nc" id="L144">		    m_plotShape = new FastVector();</span>
+<span class="nc" id="L145">		    m_plotSize = new FastVector();</span>
+		  }
+		  
+<span class="nc" id="L148">		  m_currentBatchIdentifier = ce.getGroupIdentifier();</span>
+<span class="nc" id="L149">                  m_setsComplete = 0;</span>
+		}
+//		if (ce.getSetNumber() &lt;= ce.getMaxSetNumber()) {
+<span class="nc bnc" id="L152" title="All 2 branches missed.">	        if (m_setsComplete &lt; ce.getMaxSetNumber()) {</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">		  if (ce.getTrainSet().getDataSet() != null &amp;&amp;</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">                      ce.getTrainSet().getDataSet().numInstances() &gt; 0) {</span>
+                    // set the priors
+<span class="nc" id="L156">                    m_eval.setPriors(ce.getTrainSet().getDataSet());</span>
+                  }
+		  
+//		  m_visual.setText(&quot;Evaluating (&quot;+ce.getSetNumber()+&quot;)...&quot;);
+<span class="nc bnc" id="L160" title="All 2 branches missed.">		  if (m_logger != null) {</span>
+<span class="nc" id="L161">		    m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L162">					   + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_Visual_SetText_Text_First&quot;) + ce.getSetNumber()</span>
+<span class="nc" id="L163">					   + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_Visual_SetText_Text_Second&quot;));</span>
+		  }
+<span class="nc" id="L165">		  m_visual.setAnimated();</span>
+		  /*
+		  m_eval.evaluateModel(ce.getClassifier(), 
+		  ce.getTestSet().getDataSet()); */
+<span class="nc bnc" id="L169" title="All 2 branches missed.">		  for (int i = 0; i &lt; ce.getTestSet().getDataSet().numInstances(); i++) {</span>
+<span class="nc" id="L170">		    Instance temp = ce.getTestSet().getDataSet().instance(i);</span>
+		    weka.gui.explorer.ClassifierPanel.
+<span class="nc" id="L172">		    processClassifierPrediction(temp, ce.getClassifier(),</span>
+<span class="nc" id="L173">						m_eval, m_predInstances, m_plotShape,</span>
+<span class="nc" id="L174">						m_plotSize);</span>
+		  }
+		  
+<span class="nc" id="L177">		  m_setsComplete++;</span>
+		}
+		
+<span class="nc bnc" id="L180" title="All 2 branches missed.">		if (ce.getSetNumber() == ce.getMaxSetNumber()) {</span>
+                  //		  System.err.println(m_eval.toSummaryString());
+		  // m_resultsString.append(m_eval.toSummaryString());
+		  // m_outText.setText(m_resultsString.toString());
+<span class="nc" id="L184">		  String textTitle = classifier.getClass().getName();</span>
+<span class="nc" id="L185">		  String textOptions = &quot;&quot;;</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">		  if (classifier instanceof OptionHandler) {</span>
+<span class="nc" id="L187">	             textOptions = </span>
+<span class="nc" id="L188">	               Utils.joinOptions(((OptionHandler)classifier).getOptions()); </span>
+		  }
+<span class="nc" id="L190">		  textTitle = </span>
+<span class="nc" id="L191">		    textTitle.substring(textTitle.lastIndexOf('.')+1,</span>
+<span class="nc" id="L192">					textTitle.length());</span>
+<span class="nc" id="L193">		  String resultT = Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_ResultT_Text_First&quot;) + textTitle + &quot;\n&quot;</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">		    + ((textOptions.length() &gt; 0) ? Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_ResultT_Text_Second&quot;) + textOptions + &quot;\n&quot;: &quot;&quot;)</span>
+<span class="nc" id="L195">		    + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_ResultT_Text_Third&quot;) + ce.getTestSet().getDataSet().relationName()</span>
+<span class="nc" id="L196">		    + &quot;\n\n&quot; + m_eval.toSummaryString();</span>
+                  
+<span class="nc" id="L198">                  if (ce.getTestSet().getDataSet().</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">                      classAttribute().isNominal()) {</span>
+<span class="nc" id="L200">                    resultT += &quot;\n&quot; + m_eval.toClassDetailsString()</span>
+<span class="nc" id="L201">                      + &quot;\n&quot; + m_eval.toMatrixString();</span>
+                  }
+                  
+<span class="nc" id="L204">		  TextEvent te = </span>
+<span class="nc" id="L205">		    new TextEvent(ClassifierPerformanceEvaluator.this, </span>
+<span class="nc" id="L206">				  resultT,</span>
+<span class="nc" id="L207">				  textTitle);</span>
+<span class="nc" id="L208">		  notifyTextListeners(te);</span>
+
+                  // set up visualizable errors
+<span class="nc bnc" id="L211" title="All 2 branches missed.">                  if (m_visualizableErrorListeners.size() &gt; 0) {</span>
+<span class="nc" id="L212">                    PlotData2D errorD = new PlotData2D(m_predInstances);</span>
+<span class="nc" id="L213">                    errorD.setShapeSize(m_plotSize);</span>
+<span class="nc" id="L214">                    errorD.setShapeType(m_plotShape);</span>
+<span class="nc" id="L215">                    errorD.setPlotName(textTitle + &quot; &quot; +textOptions + &quot; (&quot;</span>
+<span class="nc" id="L216">                                       +ce.getTestSet().getDataSet().relationName()</span>
+<span class="nc" id="L217">                                       +&quot;)&quot;);</span>
+<span class="nc" id="L218">                    errorD.addInstanceNumberAttribute();</span>
+<span class="nc" id="L219">                    VisualizableErrorEvent vel = </span>
+<span class="nc" id="L220">                      new VisualizableErrorEvent(ClassifierPerformanceEvaluator.this,</span>
+<span class="nc" id="L221">                                                 errorD);</span>
+<span class="nc" id="L222">                    notifyVisualizableErrorListeners(vel);</span>
+                  }
+                  
+
+<span class="nc bnc" id="L226" title="All 2 branches missed.">		  if (ce.getTestSet().getDataSet().classAttribute().isNominal() &amp;&amp;</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">		      m_thresholdListeners.size() &gt; 0) {</span>
+<span class="nc" id="L228">		    ThresholdCurve tc = new ThresholdCurve();</span>
+<span class="nc" id="L229">		    Instances result = tc.getCurve(m_eval.predictions(), 0);</span>
+<span class="nc" id="L230">		    result.</span>
+<span class="nc" id="L231">		      setRelationName(ce.getTestSet().getDataSet().relationName());</span>
+<span class="nc" id="L232">		    PlotData2D pd = new PlotData2D(result);</span>
+<span class="nc" id="L233">		    String htmlTitle = Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_HtmlTitle_Text_First&quot;)</span>
+<span class="nc" id="L234">		      + textTitle;</span>
+<span class="nc" id="L235">		    String newOptions = &quot;&quot;;</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">		    if (classifier instanceof OptionHandler) {</span>
+<span class="nc" id="L237">		      String[] options = </span>
+<span class="nc" id="L238">		        ((OptionHandler) classifier).getOptions();</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">		      if (options.length &gt; 0) {</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">		        for (int ii = 0; ii &lt; options.length; ii++) {</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">		          if (options[ii].length() == 0) {</span>
+<span class="nc" id="L242">		            continue;</span>
+		          }
+<span class="nc bnc" id="L244" title="All 2 branches missed.">		          if (options[ii].charAt(0) == '-' &amp;&amp; </span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">		              !(options[ii].charAt(1) &gt;= '0' &amp;&amp;</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">		                  options[ii].charAt(1)&lt;= '9')) {</span>
+<span class="nc" id="L247">		            newOptions += &quot;&lt;br&gt;&quot;;</span>
+		          }
+<span class="nc" id="L249">		          newOptions += options[ii];</span>
+		        }
+		      }
+		    }
+		    
+<span class="nc" id="L254">		   htmlTitle += &quot; &quot; + newOptions +  </span>
+<span class="nc" id="L255">		      Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_HtmlTitle_Text_Second&quot;)</span>
+<span class="nc" id="L256">                      +ce.getTestSet().getDataSet().</span>
+<span class="nc" id="L257">                        classAttribute().value(0) + &quot;)&quot; </span>
+<span class="nc" id="L258">                      + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_HtmlTitle_Text_Third&quot;);</span>
+<span class="nc" id="L259">		    pd.setPlotName(textTitle + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_HtmlTitle_Text_Fourth&quot;)</span>
+<span class="nc" id="L260">	                      +ce.getTestSet().getDataSet().</span>
+<span class="nc" id="L261">	                        classAttribute().value(0) + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_HtmlTitle_Text_Fifth&quot;));</span>
+<span class="nc" id="L262">		    pd.setPlotNameHTML(htmlTitle);</span>
+<span class="nc" id="L263">		    boolean [] connectPoints = </span>
+<span class="nc" id="L264">		      new boolean [result.numInstances()];</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">		    for (int jj = 1; jj &lt; connectPoints.length; jj++) {</span>
+<span class="nc" id="L266">		      connectPoints[jj] = true;</span>
+		    }
+<span class="nc" id="L268">		    pd.setConnectPoints(connectPoints);</span>
+<span class="nc" id="L269">		    ThresholdDataEvent rde = </span>
+<span class="nc" id="L270">		      new ThresholdDataEvent(ClassifierPerformanceEvaluator.this,</span>
+<span class="nc" id="L271">				       pd, ce.getTestSet().getDataSet().classAttribute());</span>
+<span class="nc" id="L272">		    notifyThresholdListeners(rde);</span>
+		    /*te = new TextEvent(ClassifierPerformanceEvaluator.this,
+				       result.toString(),
+				       &quot;ThresholdCurveInst&quot;);
+				       notifyTextListeners(te); */
+		  }
+<span class="nc bnc" id="L278" title="All 2 branches missed.">		  if (m_logger != null) {</span>
+<span class="nc" id="L279">		    m_logger.statusMessage(statusMessagePrefix() + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_StatusMessage_Text_Third&quot;));</span>
+		  }
+
+		  // save memory
+<span class="nc" id="L283">		  m_predInstances = null;</span>
+<span class="nc" id="L284">		  m_plotShape = null;</span>
+<span class="nc" id="L285">		  m_plotSize = null;</span>
+		}
+<span class="nc" id="L287">	      } catch (Exception ex) {</span>
+<span class="nc" id="L288">	        errorOccurred = true;</span>
+<span class="nc" id="L289">	        ClassifierPerformanceEvaluator.this.stop(); // stop all processing</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">	        if (m_logger != null) {</span>
+<span class="nc" id="L291">	          m_logger.logMessage(Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L292">	              + statusMessagePrefix() </span>
+<span class="nc" id="L293">	              + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_LogMessage_Text_Second&quot;) </span>
+<span class="nc" id="L294">	              + ex.getMessage());</span>
+	        }
+<span class="nc" id="L296">		ex.printStackTrace();</span>
+<span class="nc" id="L297">	      } finally {</span>
+//		m_visual.setText(oldText);
+<span class="nc" id="L299">		m_visual.setStatic();</span>
+<span class="nc" id="L300">		m_evaluateThread = null;</span>
+				
+<span class="nc bnc" id="L302" title="All 6 branches missed.">		if (m_logger != null) {</span>
+<span class="nc bnc" id="L303" title="All 6 branches missed.">		  if (errorOccurred) {</span>
+<span class="nc" id="L304">		    m_logger.statusMessage(statusMessagePrefix() </span>
+<span class="nc" id="L305">		        + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_StatusMessage_Text_Fourth&quot;));</span>
+<span class="nc bnc" id="L306" title="All 6 branches missed.">		  } else if (isInterrupted()) {</span>
+<span class="nc" id="L307">		    m_logger.logMessage(Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_LogMessage_Text_Third&quot;) + getCustomName() + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_LogMessage_Text_Fourth&quot;));</span>
+<span class="nc" id="L308">		    m_logger.statusMessage(statusMessagePrefix() </span>
+<span class="nc" id="L309">		        + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_AcceptClassifier_StatusMessage_Text_Fifth&quot;));</span>
+		  }
+		}
+<span class="nc" id="L312">		block(false);</span>
+<span class="nc" id="L313">	      }</span>
+<span class="nc" id="L314">	    }</span>
+	  };
+<span class="nc" id="L316">	m_evaluateThread.setPriority(Thread.MIN_PRIORITY);</span>
+<span class="nc" id="L317">	m_evaluateThread.start();</span>
+
+	// make sure the thread is still running before we block
+	//	if (m_evaluateThread.isAlive()) {
+<span class="nc" id="L321">	block(true);</span>
+	  //	}
+<span class="nc" id="L323">	m_evaluateThread = null;</span>
+      }
+<span class="nc" id="L325">    }  catch (Exception ex) {</span>
+<span class="nc" id="L326">      ex.printStackTrace();</span>
+    }
+<span class="nc" id="L328">  }</span>
+
+  /**
+   * Returns true if. at this time, the bean is busy with some
+   * (i.e. perhaps a worker thread is performing some calculation).
+   * 
+   * @return true if the bean is busy.
+   */
+  public boolean isBusy() {
+<span class="nc bnc" id="L337" title="All 2 branches missed.">    return (m_evaluateThread != null);</span>
+  }
+    
+  /**
+   * Try and stop any action
+   */
+  public void stop() {
+    // tell the listenee (upstream bean) to stop
+<span class="nc bnc" id="L345" title="All 2 branches missed.">    if (m_listenee instanceof BeanCommon) {</span>
+      //      System.err.println(&quot;Listener is BeanCommon&quot;);
+<span class="nc" id="L347">      ((BeanCommon)m_listenee).stop();</span>
+    }
+
+    // stop the evaluate thread
+<span class="nc bnc" id="L351" title="All 2 branches missed.">    if (m_evaluateThread != null) {</span>
+<span class="nc" id="L352">      m_evaluateThread.interrupt();</span>
+<span class="nc" id="L353">      m_evaluateThread.stop();</span>
+<span class="nc" id="L354">      m_evaluateThread = null;</span>
+<span class="nc" id="L355">      m_visual.setStatic();</span>
+    }
+<span class="nc" id="L357">  }</span>
+  
+  /**
+   * Function used to stop code that calls acceptClassifier. This is 
+   * needed as classifier evaluation is performed inside a separate
+   * thread of execution.
+   *
+   * @param tf a &lt;code&gt;boolean&lt;/code&gt; value
+   */
+  private synchronized void block(boolean tf) {
+<span class="nc bnc" id="L367" title="All 2 branches missed.">    if (tf) {</span>
+      try {
+	// only block if thread is still doing something useful!
+<span class="nc bnc" id="L370" title="All 4 branches missed.">	if (m_evaluateThread != null &amp;&amp; m_evaluateThread.isAlive()) {</span>
+<span class="nc" id="L371">	  wait();</span>
+	}
+<span class="nc" id="L373">      } catch (InterruptedException ex) {</span>
+      }
+    } else {
+<span class="nc" id="L376">      notifyAll();</span>
+    }
+<span class="nc" id="L378">  }</span>
+
+  /**
+   * Return an enumeration of user activated requests for this bean
+   *
+   * @return an &lt;code&gt;Enumeration&lt;/code&gt; value
+   */
+  public Enumeration enumerateRequests() {
+<span class="nc" id="L386">    Vector newVector = new Vector(0);</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">    if (m_evaluateThread != null) {</span>
+<span class="nc" id="L388">      newVector.addElement(&quot;Stop&quot;);</span>
+    }
+<span class="nc" id="L390">    return newVector.elements();</span>
+  }
+
+  /**
+   * Perform the named request
+   *
+   * @param request the request to perform
+   * @exception IllegalArgumentException if an error occurs
+   */
+  public void performRequest(String request) {
+<span class="nc bnc" id="L400" title="All 2 branches missed.">    if (request.compareTo(&quot;Stop&quot;) == 0) {</span>
+<span class="nc" id="L401">      stop();</span>
+    } else {
+<span class="nc" id="L403">      throw new </span>
+<span class="nc" id="L404">	IllegalArgumentException(request</span>
+
+<span class="nc" id="L406">		    + Messages.getInstance().getString(&quot;ClassifierPerformanceEvaluator_PerformRequest_IllegalArgumentException_Text&quot;));</span>
+    }
+<span class="nc" id="L408">  }</span>
+
+  /**
+   * Add a text listener
+   *
+   * @param cl a &lt;code&gt;TextListener&lt;/code&gt; value
+   */
+  public synchronized void addTextListener(TextListener cl) {
+<span class="nc" id="L416">    m_textListeners.addElement(cl);</span>
+<span class="nc" id="L417">  }</span>
+
+  /**
+   * Remove a text listener
+   *
+   * @param cl a &lt;code&gt;TextListener&lt;/code&gt; value
+   */
+  public synchronized void removeTextListener(TextListener cl) {
+<span class="nc" id="L425">    m_textListeners.remove(cl);</span>
+<span class="nc" id="L426">  }</span>
+  
+  /**
+   * Add a threshold data listener
+   *
+   * @param cl a &lt;code&gt;ThresholdDataListener&lt;/code&gt; value
+   */
+  public synchronized void addThresholdDataListener(ThresholdDataListener cl) {
+<span class="nc" id="L434">    m_thresholdListeners.addElement(cl);</span>
+<span class="nc" id="L435">  }</span>
+
+  /**
+   * Remove a Threshold data listener
+   *
+   * @param cl a &lt;code&gt;ThresholdDataListener&lt;/code&gt; value
+   */
+  public synchronized void removeThresholdDataListener(ThresholdDataListener cl) {
+<span class="nc" id="L443">    m_thresholdListeners.remove(cl);</span>
+<span class="nc" id="L444">  }</span>
+
+  /**
+   * Add a visualizable error listener
+   *
+   * @param vel a &lt;code&gt;VisualizableErrorListener&lt;/code&gt; value
+   */
+  public synchronized void addVisualizableErrorListener(VisualizableErrorListener vel) {
+<span class="nc" id="L452">    m_visualizableErrorListeners.add(vel);</span>
+<span class="nc" id="L453">  }</span>
+
+  /**
+   * Remove a visualizable error listener
+   *
+   * @param vel a &lt;code&gt;VisualizableErrorListener&lt;/code&gt; value
+   */
+  public synchronized void removeVisualizableErrorListener(VisualizableErrorListener vel) {
+<span class="nc" id="L461">    m_visualizableErrorListeners.remove(vel);</span>
+<span class="nc" id="L462">  }</span>
+
+  /**
+   * Notify all text listeners of a TextEvent
+   *
+   * @param te a &lt;code&gt;TextEvent&lt;/code&gt; value
+   */
+  private void notifyTextListeners(TextEvent te) {
+    Vector l;
+<span class="nc" id="L471">    synchronized (this) {</span>
+<span class="nc" id="L472">      l = (Vector)m_textListeners.clone();</span>
+    }
+<span class="nc bnc" id="L474" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L475" title="All 2 branches missed.">      for(int i = 0; i &lt; l.size(); i++) {</span>
+	//	System.err.println(&quot;Notifying text listeners &quot;
+	//			   +&quot;(ClassifierPerformanceEvaluator)&quot;);
+<span class="nc" id="L478">	((TextListener)l.elementAt(i)).acceptText(te);</span>
+      }
+    }
+<span class="nc" id="L481">  }</span>
+
+  /**
+   * Notify all ThresholdDataListeners of a ThresholdDataEvent
+   *
+   * @param te a &lt;code&gt;ThresholdDataEvent&lt;/code&gt; value
+   */
+  private void notifyThresholdListeners(ThresholdDataEvent re) {
+    Vector l;
+<span class="nc" id="L490">    synchronized (this) {</span>
+<span class="nc" id="L491">      l = (Vector)m_thresholdListeners.clone();</span>
+    }
+<span class="nc bnc" id="L493" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">      for(int i = 0; i &lt; l.size(); i++) {</span>
+	//	System.err.println(&quot;Notifying text listeners &quot;
+	//			   +&quot;(ClassifierPerformanceEvaluator)&quot;);
+<span class="nc" id="L497">	((ThresholdDataListener)l.elementAt(i)).acceptDataSet(re);</span>
+      }
+    }
+<span class="nc" id="L500">  }</span>
+
+  /**
+   * Notify all VisualizableErrorListeners of a VisualizableErrorEvent
+   *
+   * @param te a &lt;code&gt;VisualizableErrorEvent&lt;/code&gt; value
+   */
+  private void notifyVisualizableErrorListeners(VisualizableErrorEvent re) {
+    Vector l;
+<span class="nc" id="L509">    synchronized (this) {</span>
+<span class="nc" id="L510">      l = (Vector)m_visualizableErrorListeners.clone();</span>
+    }
+<span class="nc bnc" id="L512" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L513" title="All 2 branches missed.">      for(int i = 0; i &lt; l.size(); i++) {</span>
+	//	System.err.println(&quot;Notifying text listeners &quot;
+	//			   +&quot;(ClassifierPerformanceEvaluator)&quot;);
+<span class="nc" id="L516">	((VisualizableErrorListener)l.elementAt(i)).acceptDataSet(re);</span>
+      }
+    }
+<span class="nc" id="L519">  }</span>
+
+  /**
+   * Returns true, if at the current time, the named event could
+   * be generated. Assumes that supplied event names are names of
+   * events that could be generated by this bean.
+   *
+   * @param eventName the name of the event in question
+   * @return true if the named event could be generated at this point in
+   * time
+   */
+  public boolean eventGeneratable(String eventName) {
+<span class="nc bnc" id="L531" title="All 2 branches missed.">    if (m_listenee == null) {</span>
+<span class="nc" id="L532">      return false;</span>
+    }
+
+<span class="nc bnc" id="L535" title="All 2 branches missed.">    if (m_listenee instanceof EventConstraints) {</span>
+<span class="nc" id="L536">      if (!((EventConstraints)m_listenee).</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">	  eventGeneratable(&quot;batchClassifier&quot;)) {</span>
+<span class="nc" id="L538">	return false;</span>
+      }
+    }
+<span class="nc" id="L541">    return true;</span>
+  }
+  
+  private String statusMessagePrefix() {
+<span class="nc" id="L545">    return getCustomName() + &quot;$&quot; + hashCode() + &quot;|&quot;;</span>
+  }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

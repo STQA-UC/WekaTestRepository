@@ -1,0 +1,1594 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Apriori.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.associations</a> &gt; <span class="el_source">Apriori.java</span></div><h1>Apriori.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Apriori.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.associations;
+
+import java.util.Enumeration;
+import java.util.Hashtable;
+
+import weka.core.AttributeStats;
+import weka.core.Capabilities;
+import weka.core.Capabilities.Capability;
+import weka.core.FastVector;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Remove;
+
+/**
+ * &lt;!-- globalinfo-start --&gt; Class implementing an Apriori-type algorithm.
+ * Iteratively reduces the minimum support until it finds the required number of
+ * rules with the given minimum confidence.&lt;br/&gt;
+ * The algorithm has an option to mine class association rules. It is adapted as
+ * explained in the second reference.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * R. Agrawal, R. Srikant: Fast Algorithms for Mining Association Rules in Large
+ * Databases. In: 20th International Conference on Very Large Data Bases,
+ * 478-499, 1994.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Bing Liu, Wynne Hsu, Yiming Ma: Integrating Classification and Association
+ * Rule Mining. In: Fourth International Conference on Knowledge Discovery and
+ * Data Mining, 80-86, 1998.
+ * &lt;p/&gt;
+ * &lt;!-- globalinfo-end --&gt;
+ * 
+ * &lt;!-- technical-bibtex-start --&gt; BibTeX:
+ * 
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Agrawal1994,
+ *    author = {R. Agrawal and R. Srikant},
+ *    booktitle = {20th International Conference on Very Large Data Bases},
+ *    pages = {478-499},
+ *    publisher = {Morgan Kaufmann, Los Altos, CA},
+ *    title = {Fast Algorithms for Mining Association Rules in Large Databases},
+ *    year = {1994}
+ * }
+ * 
+ * &amp;#64;inproceedings{Liu1998,
+ *    author = {Bing Liu and Wynne Hsu and Yiming Ma},
+ *    booktitle = {Fourth International Conference on Knowledge Discovery and Data Mining},
+ *    pages = {80-86},
+ *    publisher = {AAAI Press},
+ *    title = {Integrating Classification and Association Rule Mining},
+ *    year = {1998}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ * &lt;!-- technical-bibtex-end --&gt;
+ * 
+ * &lt;!-- options-start --&gt; Valid options are:
+ * &lt;p/&gt;
+ * 
+ * &lt;pre&gt;
+ * -N &amp;lt;required number of rules output&amp;gt;
+ *  The required number of rules. (default = 10)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -T &amp;lt;0=confidence | 1=lift | 2=leverage | 3=Conviction&amp;gt;
+ *  The metric type by which to rank rules. (default = confidence)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -C &amp;lt;minimum metric score of a rule&amp;gt;
+ *  The minimum confidence of a rule. (default = 0.9)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -D &amp;lt;delta for minimum support&amp;gt;
+ *  The delta by which the minimum support is decreased in
+ *  each iteration. (default = 0.05)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -U &amp;lt;upper bound for minimum support&amp;gt;
+ *  Upper bound for minimum support. (default = 1.0)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -M &amp;lt;lower bound for minimum support&amp;gt;
+ *  The lower bound for the minimum support. (default = 0.1)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -S &amp;lt;significance level&amp;gt;
+ *  If used, rules are tested for significance at
+ *  the given level. Slower. (default = no significance testing)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -I
+ *  If set the itemsets found are also output. (default = no)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -R
+ *  Remove columns that contain all missing values (default = no)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -V
+ *  Report progress iteratively. (default = no)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -A
+ *  If set class association rules are mined. (default = no)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -c &amp;lt;the class index&amp;gt;
+ *  The class index. (default = last)
+ * &lt;/pre&gt;
+ * 
+ * &lt;!-- options-end --&gt;
+ * 
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @author Stefan Mutter (mutter@cs.waikato.ac.nz)
+ * @version $Revision: 9096 $
+ */
+<span class="fc" id="L161">public class Apriori extends AbstractAssociator implements OptionHandler,</span>
+    CARuleMiner, TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 3277498842319212687L;
+
+  /** The minimum support. */
+  protected double m_minSupport;
+
+  /** The upper bound on the support */
+  protected double m_upperBoundMinSupport;
+
+  /** The lower bound for the minimum support. */
+  protected double m_lowerBoundMinSupport;
+
+  /** Metric type: Confidence */
+  protected static final int CONFIDENCE = 0;
+  /** Metric type: Lift */
+  protected static final int LIFT = 1;
+  /** Metric type: Leverage */
+  protected static final int LEVERAGE = 2;
+  /** Metric type: Conviction */
+  protected static final int CONVICTION = 3;
+  /** Metric types. */
+<span class="fc" id="L185">  public static final Tag[] TAGS_SELECTION = {</span>
+<span class="fc" id="L186">      new Tag(CONFIDENCE, &quot;Confidence&quot;), new Tag(LIFT, &quot;Lift&quot;),</span>
+<span class="fc" id="L187">      new Tag(LEVERAGE, &quot;Leverage&quot;), new Tag(CONVICTION, &quot;Conviction&quot;) };</span>
+
+  /** The selected metric type. */
+<span class="nc" id="L190">  protected int m_metricType = CONFIDENCE;</span>
+
+  /** The minimum metric score. */
+  protected double m_minMetric;
+
+  /** The maximum number of rules that are output. */
+  protected int m_numRules;
+
+  /** Delta by which m_minSupport is decreased in each iteration. */
+  protected double m_delta;
+
+  /** Significance level for optional significance test. */
+  protected double m_significanceLevel;
+
+  /** Number of cycles used before required number of rules was one. */
+  protected int m_cycles;
+
+  /** The set of all sets of itemsets L. */
+  protected FastVector m_Ls;
+
+  /** The same information stored in hash tables. */
+  protected FastVector m_hashtables;
+
+  /** The list of all generated rules. */
+  protected FastVector[] m_allTheRules;
+
+  /**
+   * The instances (transactions) to be used for generating the association
+   * rules.
+   */
+  protected Instances m_instances;
+
+  /** Output itemsets found? */
+  protected boolean m_outputItemSets;
+
+  /** Remove columns with all missing values */
+  protected boolean m_removeMissingCols;
+
+  /** Report progress iteratively */
+  protected boolean m_verbose;
+
+  /** Only the class attribute of all Instances. */
+  protected Instances m_onlyClass;
+
+  /** The class index. */
+  protected int m_classIndex;
+
+  /** Flag indicating whether class association rules are mined. */
+  protected boolean m_car;
+
+  /**
+   * Returns a string describing this associator
+   * 
+   * @return a description of the evaluator suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L247">    return &quot;Class implementing an Apriori-type algorithm. Iteratively reduces &quot;</span>
+        + &quot;the minimum support until it finds the required number of rules with &quot;
+        + &quot;the given minimum confidence.\n&quot;
+        + &quot;The algorithm has an option to mine class association rules. It is &quot;
+        + &quot;adapted as explained in the second reference.\n\n&quot;
+        + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L253">        + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing detailed
+   * information about the technical background of this class, e.g., paper
+   * reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation result;
+    TechnicalInformation additional;
+
+<span class="nc" id="L267">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L268">    result.setValue(Field.AUTHOR,</span>
+<span class="nc" id="L269">        Messages.getInstance().getString(&quot;APRIORI_AUTHOR&quot;));</span>
+<span class="nc" id="L270">    result.setValue(Field.TITLE,</span>
+<span class="nc" id="L271">        &quot;Fast Algorithms for Mining Association Rules in Large Databases&quot;);</span>
+<span class="nc" id="L272">    result.setValue(Field.BOOKTITLE,</span>
+<span class="nc" id="L273">        &quot;20th International Conference on Very Large Data Bases&quot;);</span>
+<span class="nc" id="L274">    result.setValue(Field.YEAR, &quot;1994&quot;);</span>
+<span class="nc" id="L275">    result.setValue(Field.PAGES, &quot;478-499&quot;);</span>
+<span class="nc" id="L276">    result.setValue(Field.PUBLISHER, &quot;Morgan Kaufmann, Los Altos, CA&quot;);</span>
+
+<span class="nc" id="L278">    additional = result.add(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L279">    additional.setValue(Field.AUTHOR, &quot;Bing Liu and Wynne Hsu and Yiming Ma&quot;);</span>
+<span class="nc" id="L280">    additional.setValue(Field.TITLE,</span>
+<span class="nc" id="L281">        &quot;Integrating Classification and Association Rule Mining&quot;);</span>
+<span class="nc" id="L282">    additional</span>
+<span class="nc" id="L283">        .setValue(Field.BOOKTITLE,</span>
+<span class="nc" id="L284">            &quot;Fourth International Conference on Knowledge Discovery and Data Mining&quot;);</span>
+<span class="nc" id="L285">    additional.setValue(Field.YEAR, &quot;1998&quot;);</span>
+<span class="nc" id="L286">    additional.setValue(Field.PAGES, &quot;80-86&quot;);</span>
+<span class="nc" id="L287">    additional.setValue(Field.PUBLISHER, &quot;AAAI Press&quot;);</span>
+
+<span class="nc" id="L289">    return result;</span>
+  }
+
+  /**
+   * Constructor that allows to sets default values for the minimum confidence
+   * and the maximum number of rules the minimum confidence.
+   */
+<span class="nc" id="L296">  public Apriori() {</span>
+
+<span class="nc" id="L298">    resetOptions();</span>
+<span class="nc" id="L299">  }</span>
+
+  /**
+   * Resets the options to the default values.
+   */
+  public void resetOptions() {
+
+<span class="nc" id="L306">    m_removeMissingCols = false;</span>
+<span class="nc" id="L307">    m_verbose = false;</span>
+<span class="nc" id="L308">    m_delta = 0.05;</span>
+<span class="nc" id="L309">    m_minMetric = 0.90;</span>
+<span class="nc" id="L310">    m_numRules = 10;</span>
+<span class="nc" id="L311">    m_lowerBoundMinSupport = 0.1;</span>
+<span class="nc" id="L312">    m_upperBoundMinSupport = 1.0;</span>
+<span class="nc" id="L313">    m_significanceLevel = -1;</span>
+<span class="nc" id="L314">    m_outputItemSets = false;</span>
+<span class="nc" id="L315">    m_car = false;</span>
+<span class="nc" id="L316">    m_classIndex = -1;</span>
+<span class="nc" id="L317">  }</span>
+
+  /**
+   * Removes columns that are all missing from the data
+   * 
+   * @param instances the instances
+   * @return a new set of instances with all missing columns removed
+   * @throws Exception if something goes wrong
+   */
+  protected Instances removeMissingColumns(Instances instances)
+      throws Exception {
+
+<span class="nc" id="L329">    int numInstances = instances.numInstances();</span>
+<span class="nc" id="L330">    StringBuffer deleteString = new StringBuffer();</span>
+<span class="nc" id="L331">    int removeCount = 0;</span>
+<span class="nc" id="L332">    boolean first = true;</span>
+<span class="nc" id="L333">    int maxCount = 0;</span>
+
+<span class="nc bnc" id="L335" title="All 2 branches missed.">    for (int i = 0; i &lt; instances.numAttributes(); i++) {</span>
+<span class="nc" id="L336">      AttributeStats as = instances.attributeStats(i);</span>
+<span class="nc bnc" id="L337" title="All 4 branches missed.">      if (m_upperBoundMinSupport == 1.0 &amp;&amp; maxCount != numInstances) {</span>
+        // see if we can decrease this by looking for the most frequent value
+<span class="nc" id="L339">        int[] counts = as.nominalCounts;</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">        if (counts[Utils.maxIndex(counts)] &gt; maxCount) {</span>
+<span class="nc" id="L341">          maxCount = counts[Utils.maxIndex(counts)];</span>
+        }
+      }
+<span class="nc bnc" id="L344" title="All 2 branches missed.">      if (as.missingCount == numInstances) {</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">        if (first) {</span>
+<span class="nc" id="L346">          deleteString.append((i + 1));</span>
+<span class="nc" id="L347">          first = false;</span>
+        } else {
+<span class="nc" id="L349">          deleteString.append(&quot;,&quot; + (i + 1));</span>
+        }
+<span class="nc" id="L351">        removeCount++;</span>
+      }
+    }
+<span class="nc bnc" id="L354" title="All 2 branches missed.">    if (m_verbose) {</span>
+<span class="nc" id="L355">      System.err.println(&quot;Removed : &quot; + removeCount</span>
+<span class="nc" id="L356">          + &quot; columns with all missing &quot; + &quot;values.&quot;);</span>
+    }
+<span class="nc bnc" id="L358" title="All 4 branches missed.">    if (m_upperBoundMinSupport == 1.0 &amp;&amp; maxCount != numInstances) {</span>
+<span class="nc" id="L359">      m_upperBoundMinSupport = (double) maxCount / (double) numInstances;</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">      if (m_verbose) {</span>
+<span class="nc" id="L361">        System.err.println(&quot;Setting upper bound min support to : &quot;</span>
+<span class="nc" id="L362">            + m_upperBoundMinSupport);</span>
+      }
+    }
+
+<span class="nc bnc" id="L366" title="All 2 branches missed.">    if (deleteString.toString().length() &gt; 0) {</span>
+<span class="nc" id="L367">      Remove af = new Remove();</span>
+<span class="nc" id="L368">      af.setAttributeIndices(deleteString.toString());</span>
+<span class="nc" id="L369">      af.setInvertSelection(false);</span>
+<span class="nc" id="L370">      af.setInputFormat(instances);</span>
+<span class="nc" id="L371">      Instances newInst = Filter.useFilter(instances, af);</span>
+
+<span class="nc" id="L373">      return newInst;</span>
+    }
+<span class="nc" id="L375">    return instances;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   * 
+   * @return the capabilities of this classifier
+   */
+  @Override
+  public Capabilities getCapabilities() {
+<span class="nc" id="L385">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L386">    result.disableAll();</span>
+
+    // attributes
+<span class="nc" id="L389">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L390">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class (can handle a nominal class if CAR rules are selected). This
+<span class="nc" id="L393">    result.enable(Capability.NO_CLASS);</span>
+<span class="nc" id="L394">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="nc" id="L395">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+
+<span class="nc" id="L397">    return result;</span>
+  }
+
+  /**
+   * Method that generates all large itemsets with a minimum support, and from
+   * these all association rules with a minimum confidence.
+   * 
+   * @param instances the instances to be used for generating the associations
+   * @throws Exception if rules can't be built successfully
+   */
+  public void buildAssociations(Instances instances) throws Exception {
+
+    double[] confidences, supports;
+    int[] indices;
+    FastVector[] sortedRuleSet;
+<span class="nc" id="L412">    int necSupport = 0;</span>
+
+<span class="nc" id="L414">    instances = new Instances(instances);</span>
+
+<span class="nc bnc" id="L416" title="All 2 branches missed.">    if (m_removeMissingCols) {</span>
+<span class="nc" id="L417">      instances = removeMissingColumns(instances);</span>
+    }
+<span class="nc bnc" id="L419" title="All 4 branches missed.">    if (m_car &amp;&amp; m_metricType != CONFIDENCE)</span>
+<span class="nc" id="L420">      throw new Exception(&quot;For CAR-Mining metric type has to be confidence!&quot;);</span>
+
+    // only set class index if CAR is requested
+<span class="nc bnc" id="L423" title="All 2 branches missed.">    if (m_car) {</span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">      if (m_classIndex == -1) {</span>
+<span class="nc" id="L425">        instances.setClassIndex(instances.numAttributes() - 1);</span>
+<span class="nc bnc" id="L426" title="All 4 branches missed.">      } else if (m_classIndex &lt;= instances.numAttributes() &amp;&amp; m_classIndex &gt; 0) {</span>
+<span class="nc" id="L427">        instances.setClassIndex(m_classIndex - 1);</span>
+      } else {
+<span class="nc" id="L429">        throw new Exception(&quot;Invalid class index.&quot;);</span>
+      }
+    }
+
+    // can associator handle the data?
+<span class="nc" id="L434">    getCapabilities().testWithFail(instances);</span>
+
+<span class="nc" id="L436">    m_cycles = 0;</span>
+
+    // make sure that the lower bound is equal to at least one instance
+<span class="nc" id="L439">    double lowerBoundMinSupportToUse = (m_lowerBoundMinSupport</span>
+<span class="nc bnc" id="L440" title="All 2 branches missed.">        * instances.numInstances() &lt; 1.0) ? 1.0 / instances.numInstances()</span>
+<span class="nc" id="L441">        : m_lowerBoundMinSupport;</span>
+
+<span class="nc bnc" id="L443" title="All 2 branches missed.">    if (m_car) {</span>
+      // m_instances does not contain the class attribute
+<span class="nc" id="L445">      m_instances = LabeledItemSet.divide(instances, false);</span>
+
+      // m_onlyClass contains only the class attribute
+<span class="nc" id="L448">      m_onlyClass = LabeledItemSet.divide(instances, true);</span>
+    } else
+<span class="nc" id="L450">      m_instances = instances;</span>
+
+<span class="nc bnc" id="L452" title="All 4 branches missed.">    if (m_car &amp;&amp; m_numRules == Integer.MAX_VALUE) {</span>
+      // Set desired minimum support
+<span class="nc" id="L454">      m_minSupport = lowerBoundMinSupportToUse;</span>
+    } else {
+      // Decrease minimum support until desired number of rules found.
+<span class="nc" id="L457">      m_minSupport = m_upperBoundMinSupport - m_delta;</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">      m_minSupport = (m_minSupport &lt; lowerBoundMinSupportToUse) ? lowerBoundMinSupportToUse</span>
+<span class="nc" id="L459">          : m_minSupport;</span>
+    }
+
+    do {
+
+      // Reserve space for variables
+<span class="nc" id="L465">      m_Ls = new FastVector();</span>
+<span class="nc" id="L466">      m_hashtables = new FastVector();</span>
+<span class="nc" id="L467">      m_allTheRules = new FastVector[6];</span>
+<span class="nc" id="L468">      m_allTheRules[0] = new FastVector();</span>
+<span class="nc" id="L469">      m_allTheRules[1] = new FastVector();</span>
+<span class="nc" id="L470">      m_allTheRules[2] = new FastVector();</span>
+<span class="nc bnc" id="L471" title="All 4 branches missed.">      if (m_metricType != CONFIDENCE || m_significanceLevel != -1) {</span>
+<span class="nc" id="L472">        m_allTheRules[3] = new FastVector();</span>
+<span class="nc" id="L473">        m_allTheRules[4] = new FastVector();</span>
+<span class="nc" id="L474">        m_allTheRules[5] = new FastVector();</span>
+      }
+<span class="nc" id="L476">      sortedRuleSet = new FastVector[6];</span>
+<span class="nc" id="L477">      sortedRuleSet[0] = new FastVector();</span>
+<span class="nc" id="L478">      sortedRuleSet[1] = new FastVector();</span>
+<span class="nc" id="L479">      sortedRuleSet[2] = new FastVector();</span>
+<span class="nc bnc" id="L480" title="All 4 branches missed.">      if (m_metricType != CONFIDENCE || m_significanceLevel != -1) {</span>
+<span class="nc" id="L481">        sortedRuleSet[3] = new FastVector();</span>
+<span class="nc" id="L482">        sortedRuleSet[4] = new FastVector();</span>
+<span class="nc" id="L483">        sortedRuleSet[5] = new FastVector();</span>
+      }
+<span class="nc bnc" id="L485" title="All 2 branches missed.">      if (!m_car) {</span>
+        // Find large itemsets and rules
+<span class="nc" id="L487">        findLargeItemSets();</span>
+<span class="nc bnc" id="L488" title="All 4 branches missed.">        if (m_significanceLevel != -1 || m_metricType != CONFIDENCE)</span>
+<span class="nc" id="L489">          findRulesBruteForce();</span>
+        else
+<span class="nc" id="L491">          findRulesQuickly();</span>
+      } else {
+<span class="nc" id="L493">        findLargeCarItemSets();</span>
+<span class="nc" id="L494">        findCarRulesQuickly();</span>
+      }
+
+      // prune rules for upper bound min support
+<span class="nc bnc" id="L498" title="All 2 branches missed.">      if (m_upperBoundMinSupport &lt; 1.0) {</span>
+<span class="nc" id="L499">        pruneRulesForUpperBoundSupport();</span>
+      }
+
+      // Sort rules according to their support
+      /*
+       * supports = new double[m_allTheRules[2].size()]; for (int i = 0; i &lt;
+       * m_allTheRules[2].size(); i++) supports[i] =
+       * (double)((AprioriItemSet)m_allTheRules[1].elementAt(i)).support();
+       * indices = Utils.stableSort(supports); for (int i = 0; i &lt;
+       * m_allTheRules[2].size(); i++) {
+       * sortedRuleSet[0].addElement(m_allTheRules[0].elementAt(indices[i]));
+       * sortedRuleSet[1].addElement(m_allTheRules[1].elementAt(indices[i]));
+       * sortedRuleSet[2].addElement(m_allTheRules[2].elementAt(indices[i])); if
+       * (m_metricType != CONFIDENCE || m_significanceLevel != -1) {
+       * sortedRuleSet[3].addElement(m_allTheRules[3].elementAt(indices[i]));
+       * sortedRuleSet[4].addElement(m_allTheRules[4].elementAt(indices[i]));
+       * sortedRuleSet[5].addElement(m_allTheRules[5].elementAt(indices[i])); }
+       * }
+       */
+<span class="nc" id="L518">      int j = m_allTheRules[2].size() - 1;</span>
+<span class="nc" id="L519">      supports = new double[m_allTheRules[2].size()];</span>
+<span class="nc bnc" id="L520" title="All 2 branches missed.">      for (int i = 0; i &lt; (j + 1); i++)</span>
+<span class="nc" id="L521">        supports[j - i] = ((double) ((ItemSet) m_allTheRules[1]</span>
+<span class="nc" id="L522">            .elementAt(j - i)).support()) * (-1);</span>
+<span class="nc" id="L523">      indices = Utils.stableSort(supports);</span>
+<span class="nc bnc" id="L524" title="All 2 branches missed.">      for (int i = 0; i &lt; (j + 1); i++) {</span>
+<span class="nc" id="L525">        sortedRuleSet[0].addElement(m_allTheRules[0].elementAt(indices[j - i]));</span>
+<span class="nc" id="L526">        sortedRuleSet[1].addElement(m_allTheRules[1].elementAt(indices[j - i]));</span>
+<span class="nc" id="L527">        sortedRuleSet[2].addElement(m_allTheRules[2].elementAt(indices[j - i]));</span>
+<span class="nc bnc" id="L528" title="All 4 branches missed.">        if (m_metricType != CONFIDENCE || m_significanceLevel != -1) {</span>
+<span class="nc" id="L529">          sortedRuleSet[3].addElement(m_allTheRules[3]</span>
+<span class="nc" id="L530">              .elementAt(indices[j - i]));</span>
+<span class="nc" id="L531">          sortedRuleSet[4].addElement(m_allTheRules[4]</span>
+<span class="nc" id="L532">              .elementAt(indices[j - i]));</span>
+<span class="nc" id="L533">          sortedRuleSet[5].addElement(m_allTheRules[5]</span>
+<span class="nc" id="L534">              .elementAt(indices[j - i]));</span>
+        }
+      }
+
+      // Sort rules according to their confidence
+<span class="nc" id="L539">      m_allTheRules[0].removeAllElements();</span>
+<span class="nc" id="L540">      m_allTheRules[1].removeAllElements();</span>
+<span class="nc" id="L541">      m_allTheRules[2].removeAllElements();</span>
+<span class="nc bnc" id="L542" title="All 4 branches missed.">      if (m_metricType != CONFIDENCE || m_significanceLevel != -1) {</span>
+<span class="nc" id="L543">        m_allTheRules[3].removeAllElements();</span>
+<span class="nc" id="L544">        m_allTheRules[4].removeAllElements();</span>
+<span class="nc" id="L545">        m_allTheRules[5].removeAllElements();</span>
+      }
+<span class="nc" id="L547">      confidences = new double[sortedRuleSet[2].size()];</span>
+<span class="nc" id="L548">      int sortType = 2 + m_metricType;</span>
+
+<span class="nc bnc" id="L550" title="All 2 branches missed.">      for (int i = 0; i &lt; sortedRuleSet[2].size(); i++)</span>
+<span class="nc" id="L551">        confidences[i] = ((Double) sortedRuleSet[sortType].elementAt(i))</span>
+<span class="nc" id="L552">            .doubleValue();</span>
+<span class="nc" id="L553">      indices = Utils.stableSort(confidences);</span>
+<span class="nc bnc" id="L554" title="All 2 branches missed.">      for (int i = sortedRuleSet[0].size() - 1; (i &gt;= (sortedRuleSet[0].size() - m_numRules))</span>
+<span class="nc bnc" id="L555" title="All 2 branches missed.">          &amp;&amp; (i &gt;= 0); i--) {</span>
+<span class="nc" id="L556">        m_allTheRules[0].addElement(sortedRuleSet[0].elementAt(indices[i]));</span>
+<span class="nc" id="L557">        m_allTheRules[1].addElement(sortedRuleSet[1].elementAt(indices[i]));</span>
+<span class="nc" id="L558">        m_allTheRules[2].addElement(sortedRuleSet[2].elementAt(indices[i]));</span>
+<span class="nc bnc" id="L559" title="All 4 branches missed.">        if (m_metricType != CONFIDENCE || m_significanceLevel != -1) {</span>
+<span class="nc" id="L560">          m_allTheRules[3].addElement(sortedRuleSet[3].elementAt(indices[i]));</span>
+<span class="nc" id="L561">          m_allTheRules[4].addElement(sortedRuleSet[4].elementAt(indices[i]));</span>
+<span class="nc" id="L562">          m_allTheRules[5].addElement(sortedRuleSet[5].elementAt(indices[i]));</span>
+        }
+      }
+
+<span class="nc bnc" id="L566" title="All 2 branches missed.">      if (m_verbose) {</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">        if (m_Ls.size() &gt; 1) {</span>
+<span class="nc" id="L568">          System.out.println(toString());</span>
+        }
+      }
+
+<span class="nc bnc" id="L572" title="All 2 branches missed.">      if (m_minSupport == lowerBoundMinSupportToUse</span>
+<span class="nc bnc" id="L573" title="All 2 branches missed.">          || m_minSupport - m_delta &gt; lowerBoundMinSupportToUse)</span>
+<span class="nc" id="L574">        m_minSupport -= m_delta;</span>
+      else
+<span class="nc" id="L576">        m_minSupport = lowerBoundMinSupportToUse;</span>
+
+<span class="nc" id="L578">      necSupport = Math.round((float) ((m_minSupport * m_instances</span>
+<span class="nc" id="L579">          .numInstances()) + 0.5));</span>
+
+<span class="nc" id="L581">      m_cycles++;</span>
+<span class="nc bnc" id="L582" title="All 2 branches missed.">    } while ((m_allTheRules[0].size() &lt; m_numRules)</span>
+<span class="nc bnc" id="L583" title="All 2 branches missed.">        &amp;&amp; (Utils.grOrEq(m_minSupport, lowerBoundMinSupportToUse))</span>
+        /* (necSupport &gt;= lowerBoundNumInstancesSupport) */
+<span class="nc bnc" id="L585" title="All 2 branches missed.">        /* (Utils.grOrEq(m_minSupport, m_lowerBoundMinSupport)) */&amp;&amp; (necSupport &gt;= 1));</span>
+<span class="nc" id="L586">    m_minSupport += m_delta;</span>
+<span class="nc" id="L587">  }</span>
+
+  private void pruneRulesForUpperBoundSupport() {
+<span class="nc" id="L590">    int necMaxSupport = (int) (m_upperBoundMinSupport</span>
+<span class="nc" id="L591">        * m_instances.numInstances() + 0.5);</span>
+
+<span class="nc" id="L593">    FastVector[] prunedRules = new FastVector[6];</span>
+<span class="nc bnc" id="L594" title="All 2 branches missed.">    for (int i = 0; i &lt; 6; i++) {</span>
+<span class="nc" id="L595">      prunedRules[i] = new FastVector();</span>
+    }
+
+<span class="nc bnc" id="L598" title="All 2 branches missed.">    for (int i = 0; i &lt; m_allTheRules[0].size(); i++) {</span>
+<span class="nc bnc" id="L599" title="All 2 branches missed.">      if (((ItemSet) m_allTheRules[1].elementAt(i)).support() &lt;= necMaxSupport) {</span>
+<span class="nc" id="L600">        prunedRules[0].addElement(m_allTheRules[0].elementAt(i));</span>
+<span class="nc" id="L601">        prunedRules[1].addElement(m_allTheRules[1].elementAt(i));</span>
+<span class="nc" id="L602">        prunedRules[2].addElement(m_allTheRules[2].elementAt(i));</span>
+
+<span class="nc bnc" id="L604" title="All 2 branches missed.">        if (!m_car) {</span>
+<span class="nc" id="L605">          prunedRules[3].addElement(m_allTheRules[3].elementAt(i));</span>
+<span class="nc" id="L606">          prunedRules[4].addElement(m_allTheRules[4].elementAt(i));</span>
+<span class="nc" id="L607">          prunedRules[5].addElement(m_allTheRules[5].elementAt(i));</span>
+        }
+      }
+    }
+
+<span class="nc" id="L612">    m_allTheRules[0] = prunedRules[0];</span>
+<span class="nc" id="L613">    m_allTheRules[1] = prunedRules[1];</span>
+<span class="nc" id="L614">    m_allTheRules[2] = prunedRules[2];</span>
+<span class="nc" id="L615">    m_allTheRules[3] = prunedRules[3];</span>
+<span class="nc" id="L616">    m_allTheRules[4] = prunedRules[4];</span>
+<span class="nc" id="L617">    m_allTheRules[5] = prunedRules[5];</span>
+<span class="nc" id="L618">  }</span>
+
+  /**
+   * Method that mines all class association rules with minimum support and with
+   * a minimum confidence.
+   * 
+   * @return an sorted array of FastVector (confidence depended) containing the
+   *         rules and metric information
+   * @param data the instances for which class association rules should be mined
+   * @throws Exception if rules can't be built successfully
+   */
+  public FastVector[] mineCARs(Instances data) throws Exception {
+
+<span class="nc" id="L631">    m_car = true;</span>
+<span class="nc" id="L632">    buildAssociations(data);</span>
+<span class="nc" id="L633">    return m_allTheRules;</span>
+  }
+
+  /**
+   * Gets the instances without the class atrribute.
+   * 
+   * @return the instances without the class attribute.
+   */
+  public Instances getInstancesNoClass() {
+
+<span class="nc" id="L643">    return m_instances;</span>
+  }
+
+  /**
+   * Gets only the class attribute of the instances.
+   * 
+   * @return the class attribute of all instances.
+   */
+  public Instances getInstancesOnlyClass() {
+
+<span class="nc" id="L653">    return m_onlyClass;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   * 
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="nc" id="L663">    String string1 = &quot;\tThe required number of rules. (default = &quot; + m_numRules</span>
+<span class="nc" id="L664">        + &quot;)&quot;, string2 = &quot;\tThe minimum confidence of a rule. (default = &quot;</span>
+<span class="nc" id="L665">        + m_minMetric + &quot;)&quot;, string3 = &quot;\tThe delta by which the minimum support is decreased in\n&quot;, string4 = &quot;\teach iteration. (default = &quot;</span>
+<span class="nc" id="L666">        + m_delta + &quot;)&quot;, string5 = &quot;\tThe lower bound for the minimum support. (default = &quot;</span>
+<span class="nc" id="L667">        + m_lowerBoundMinSupport + &quot;)&quot;, string6 = &quot;\tIf used, rules are tested for significance at\n&quot;, string7 = &quot;\tthe given level. Slower. (default = no significance testing)&quot;, string8 = &quot;\tIf set the itemsets found are also output. (default = no)&quot;, string9 = &quot;\tIf set class association rules are mined. (default = no)&quot;, string10 = &quot;\tThe class index. (default = last)&quot;, stringType = &quot;\tThe metric type by which to rank rules. (default = &quot;</span>
+        + &quot;confidence)&quot;;
+
+<span class="nc" id="L670">    FastVector newVector = new FastVector(11);</span>
+
+<span class="nc" id="L672">    newVector.addElement(new Option(string1, &quot;N&quot;, 1,</span>
+<span class="nc" id="L673">        &quot;-N &lt;required number of rules output&gt;&quot;));</span>
+<span class="nc" id="L674">    newVector.addElement(new Option(stringType, &quot;T&quot;, 1,</span>
+<span class="nc" id="L675">        &quot;-T &lt;0=confidence | 1=lift | &quot; + &quot;2=leverage | 3=Conviction&gt;&quot;));</span>
+<span class="nc" id="L676">    newVector.addElement(new Option(string2, &quot;C&quot;, 1,</span>
+<span class="nc" id="L677">        &quot;-C &lt;minimum metric score of a rule&gt;&quot;));</span>
+<span class="nc" id="L678">    newVector.addElement(new Option(string3 + string4, &quot;D&quot;, 1,</span>
+<span class="nc" id="L679">        &quot;-D &lt;delta for minimum support&gt;&quot;));</span>
+<span class="nc" id="L680">    newVector.addElement(new Option(&quot;\tUpper bound for minimum support. &quot;</span>
+<span class="nc" id="L681">        + &quot;(default = 1.0)&quot;, &quot;U&quot;, 1, &quot;-U &lt;upper bound for minimum support&gt;&quot;));</span>
+<span class="nc" id="L682">    newVector.addElement(new Option(string5, &quot;M&quot;, 1,</span>
+<span class="nc" id="L683">        &quot;-M &lt;lower bound for minimum support&gt;&quot;));</span>
+<span class="nc" id="L684">    newVector.addElement(new Option(string6 + string7, &quot;S&quot;, 1,</span>
+<span class="nc" id="L685">        &quot;-S &lt;significance level&gt;&quot;));</span>
+<span class="nc" id="L686">    newVector.addElement(new Option(string8, &quot;I&quot;, 0, &quot;-I&quot;));</span>
+<span class="nc" id="L687">    newVector.addElement(new Option(&quot;\tRemove columns that contain &quot;</span>
+<span class="nc" id="L688">        + &quot;all missing values (default = no)&quot;, &quot;R&quot;, 0, &quot;-R&quot;));</span>
+<span class="nc" id="L689">    newVector.addElement(new Option(&quot;\tReport progress iteratively. (default &quot;</span>
+<span class="nc" id="L690">        + &quot;= no)&quot;, &quot;V&quot;, 0, &quot;-V&quot;));</span>
+<span class="nc" id="L691">    newVector.addElement(new Option(string9, &quot;A&quot;, 0, &quot;-A&quot;));</span>
+<span class="nc" id="L692">    newVector.addElement(new Option(string10, &quot;c&quot;, 1, &quot;-c &lt;the class index&gt;&quot;));</span>
+
+<span class="nc" id="L694">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options.
+   * &lt;p/&gt;
+   * 
+   * &lt;!-- options-start --&gt; Valid options are:
+   * &lt;p/&gt;
+   * 
+   * &lt;pre&gt;
+   * -N &amp;lt;required number of rules output&amp;gt;
+   *  The required number of rules. (default = 10)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -T &amp;lt;0=confidence | 1=lift | 2=leverage | 3=Conviction&amp;gt;
+   *  The metric type by which to rank rules. (default = confidence)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -C &amp;lt;minimum metric score of a rule&amp;gt;
+   *  The minimum confidence of a rule. (default = 0.9)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -D &amp;lt;delta for minimum support&amp;gt;
+   *  The delta by which the minimum support is decreased in
+   *  each iteration. (default = 0.05)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -U &amp;lt;upper bound for minimum support&amp;gt;
+   *  Upper bound for minimum support. (default = 1.0)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -M &amp;lt;lower bound for minimum support&amp;gt;
+   *  The lower bound for the minimum support. (default = 0.1)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -S &amp;lt;significance level&amp;gt;
+   *  If used, rules are tested for significance at
+   *  the given level. Slower. (default = no significance testing)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -I
+   *  If set the itemsets found are also output. (default = no)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -R
+   *  Remove columns that contain all missing values (default = no)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -V
+   *  Report progress iteratively. (default = no)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -A
+   *  If set class association rules are mined. (default = no)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -c &amp;lt;the class index&amp;gt;
+   *  The class index. (default = last)
+   * &lt;/pre&gt;
+   * 
+   * &lt;!-- options-end --&gt;
+   * 
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="nc" id="L773">    resetOptions();</span>
+<span class="nc" id="L774">    String numRulesString = Utils.getOption('N', options), minConfidenceString = Utils</span>
+<span class="nc" id="L775">        .getOption('C', options), deltaString = Utils.getOption('D', options), maxSupportString = Utils</span>
+<span class="nc" id="L776">        .getOption('U', options), minSupportString = Utils.getOption('M',</span>
+<span class="nc" id="L777">        options), significanceLevelString = Utils.getOption('S', options), classIndexString = Utils</span>
+<span class="nc" id="L778">        .getOption('c', options);</span>
+<span class="nc" id="L779">    String metricTypeString = Utils.getOption('T', options);</span>
+<span class="nc bnc" id="L780" title="All 2 branches missed.">    if (metricTypeString.length() != 0) {</span>
+<span class="nc" id="L781">      setMetricType(new SelectedTag(Integer.parseInt(metricTypeString),</span>
+<span class="nc" id="L782">          TAGS_SELECTION));</span>
+    }
+
+<span class="nc bnc" id="L785" title="All 2 branches missed.">    if (numRulesString.length() != 0) {</span>
+<span class="nc" id="L786">      m_numRules = Integer.parseInt(numRulesString);</span>
+    }
+<span class="nc bnc" id="L788" title="All 2 branches missed.">    if (classIndexString.length() != 0) {</span>
+<span class="nc bnc" id="L789" title="All 2 branches missed.">      if (classIndexString.equalsIgnoreCase(&quot;last&quot;)) {</span>
+<span class="nc" id="L790">        m_classIndex = -1;</span>
+<span class="nc bnc" id="L791" title="All 2 branches missed.">      } else if (classIndexString.equalsIgnoreCase(&quot;first&quot;)) {</span>
+<span class="nc" id="L792">        m_classIndex = 0;</span>
+      } else {
+<span class="nc" id="L794">        m_classIndex = Integer.parseInt(classIndexString);</span>
+      }
+    }
+<span class="nc bnc" id="L797" title="All 2 branches missed.">    if (minConfidenceString.length() != 0) {</span>
+<span class="nc" id="L798">      m_minMetric = (new Double(minConfidenceString)).doubleValue();</span>
+    }
+<span class="nc bnc" id="L800" title="All 2 branches missed.">    if (deltaString.length() != 0) {</span>
+<span class="nc" id="L801">      m_delta = (new Double(deltaString)).doubleValue();</span>
+    }
+<span class="nc bnc" id="L803" title="All 2 branches missed.">    if (maxSupportString.length() != 0) {</span>
+<span class="nc" id="L804">      setUpperBoundMinSupport((new Double(maxSupportString)).doubleValue());</span>
+    }
+<span class="nc bnc" id="L806" title="All 2 branches missed.">    if (minSupportString.length() != 0) {</span>
+<span class="nc" id="L807">      m_lowerBoundMinSupport = (new Double(minSupportString)).doubleValue();</span>
+    }
+<span class="nc bnc" id="L809" title="All 2 branches missed.">    if (significanceLevelString.length() != 0) {</span>
+<span class="nc" id="L810">      m_significanceLevel = (new Double(significanceLevelString)).doubleValue();</span>
+    }
+<span class="nc" id="L812">    m_outputItemSets = Utils.getFlag('I', options);</span>
+<span class="nc" id="L813">    m_car = Utils.getFlag('A', options);</span>
+<span class="nc" id="L814">    m_verbose = Utils.getFlag('V', options);</span>
+<span class="nc" id="L815">    setRemoveAllMissingCols(Utils.getFlag('R', options));</span>
+<span class="nc" id="L816">  }</span>
+
+  /**
+   * Gets the current settings of the Apriori object.
+   * 
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+
+<span class="nc" id="L825">    String[] options = new String[20];</span>
+<span class="nc" id="L826">    int current = 0;</span>
+
+<span class="nc bnc" id="L828" title="All 2 branches missed.">    if (m_outputItemSets) {</span>
+<span class="nc" id="L829">      options[current++] = &quot;-I&quot;;</span>
+    }
+
+<span class="nc bnc" id="L832" title="All 2 branches missed.">    if (getRemoveAllMissingCols()) {</span>
+<span class="nc" id="L833">      options[current++] = &quot;-R&quot;;</span>
+    }
+
+<span class="nc" id="L836">    options[current++] = &quot;-N&quot;;</span>
+<span class="nc" id="L837">    options[current++] = &quot;&quot; + m_numRules;</span>
+<span class="nc" id="L838">    options[current++] = &quot;-T&quot;;</span>
+<span class="nc" id="L839">    options[current++] = &quot;&quot; + m_metricType;</span>
+<span class="nc" id="L840">    options[current++] = &quot;-C&quot;;</span>
+<span class="nc" id="L841">    options[current++] = &quot;&quot; + m_minMetric;</span>
+<span class="nc" id="L842">    options[current++] = &quot;-D&quot;;</span>
+<span class="nc" id="L843">    options[current++] = &quot;&quot; + m_delta;</span>
+<span class="nc" id="L844">    options[current++] = &quot;-U&quot;;</span>
+<span class="nc" id="L845">    options[current++] = &quot;&quot; + m_upperBoundMinSupport;</span>
+<span class="nc" id="L846">    options[current++] = &quot;-M&quot;;</span>
+<span class="nc" id="L847">    options[current++] = &quot;&quot; + m_lowerBoundMinSupport;</span>
+<span class="nc" id="L848">    options[current++] = &quot;-S&quot;;</span>
+<span class="nc" id="L849">    options[current++] = &quot;&quot; + m_significanceLevel;</span>
+<span class="nc bnc" id="L850" title="All 2 branches missed.">    if (m_car)</span>
+<span class="nc" id="L851">      options[current++] = &quot;-A&quot;;</span>
+<span class="nc bnc" id="L852" title="All 2 branches missed.">    if (m_verbose)</span>
+<span class="nc" id="L853">      options[current++] = &quot;-V&quot;;</span>
+<span class="nc" id="L854">    options[current++] = &quot;-c&quot;;</span>
+<span class="nc" id="L855">    options[current++] = &quot;&quot; + m_classIndex;</span>
+
+<span class="nc bnc" id="L857" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L858">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="nc" id="L860">    return options;</span>
+  }
+
+  /**
+   * Outputs the size of all the generated sets of itemsets and the rules.
+   * 
+   * @return a string representation of the model
+   */
+  @Override
+  public String toString() {
+
+<span class="nc" id="L871">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc bnc" id="L873" title="All 2 branches missed.">    if (m_Ls.size() &lt;= 1)</span>
+<span class="nc" id="L874">      return &quot;\nNo large itemsets and rules found!\n&quot;;</span>
+<span class="nc" id="L875">    text.append(&quot;\nApriori\n=======\n\n&quot;);</span>
+<span class="nc" id="L876">    text.append(&quot;Minimum support: &quot; + Utils.doubleToString(m_minSupport, 2)</span>
+<span class="nc" id="L877">        + &quot; (&quot; + ((int) (m_minSupport * m_instances.numInstances() + 0.5))</span>
+<span class="nc" id="L878">        + &quot; instances)&quot; + '\n');</span>
+<span class="nc" id="L879">    text.append(&quot;Minimum metric &lt;&quot;);</span>
+<span class="nc bnc" id="L880" title="All 5 branches missed.">    switch (m_metricType) {</span>
+    case CONFIDENCE:
+<span class="nc" id="L882">      text.append(&quot;confidence&gt;: &quot;);</span>
+<span class="nc" id="L883">      break;</span>
+    case LIFT:
+<span class="nc" id="L885">      text.append(&quot;lift&gt;: &quot;);</span>
+<span class="nc" id="L886">      break;</span>
+    case LEVERAGE:
+<span class="nc" id="L888">      text.append(&quot;leverage&gt;: &quot;);</span>
+<span class="nc" id="L889">      break;</span>
+    case CONVICTION:
+<span class="nc" id="L891">      text.append(&quot;conviction&gt;: &quot;);</span>
+      break;
+    }
+<span class="nc" id="L894">    text.append(Utils.doubleToString(m_minMetric, 2) + '\n');</span>
+
+<span class="nc bnc" id="L896" title="All 2 branches missed.">    if (m_significanceLevel != -1)</span>
+<span class="nc" id="L897">      text.append(&quot;Significance level: &quot;</span>
+<span class="nc" id="L898">          + Utils.doubleToString(m_significanceLevel, 2) + '\n');</span>
+<span class="nc" id="L899">    text.append(&quot;Number of cycles performed: &quot; + m_cycles + '\n');</span>
+<span class="nc" id="L900">    text.append(&quot;\nGenerated sets of large itemsets:\n&quot;);</span>
+<span class="nc bnc" id="L901" title="All 2 branches missed.">    if (!m_car) {</span>
+<span class="nc bnc" id="L902" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Ls.size(); i++) {</span>
+<span class="nc" id="L903">        text.append(&quot;\nSize of set of large itemsets L(&quot; + (i + 1) + &quot;): &quot;</span>
+<span class="nc" id="L904">            + ((FastVector) m_Ls.elementAt(i)).size() + '\n');</span>
+<span class="nc bnc" id="L905" title="All 2 branches missed.">        if (m_outputItemSets) {</span>
+<span class="nc" id="L906">          text.append(&quot;\nLarge Itemsets L(&quot; + (i + 1) + &quot;):\n&quot;);</span>
+<span class="nc bnc" id="L907" title="All 2 branches missed.">          for (int j = 0; j &lt; ((FastVector) m_Ls.elementAt(i)).size(); j++)</span>
+<span class="nc" id="L908">            text.append(((AprioriItemSet) ((FastVector) m_Ls.elementAt(i))</span>
+<span class="nc" id="L909">                .elementAt(j)).toString(m_instances) + &quot;\n&quot;);</span>
+        }
+      }
+<span class="nc" id="L912">      text.append(&quot;\nBest rules found:\n\n&quot;);</span>
+<span class="nc bnc" id="L913" title="All 2 branches missed.">      for (int i = 0; i &lt; m_allTheRules[0].size(); i++) {</span>
+<span class="nc" id="L914">        text.append(Utils.doubleToString((double) i + 1,</span>
+<span class="nc" id="L915">            (int) (Math.log(m_numRules) / Math.log(10) + 1), 0)</span>
+<span class="nc" id="L916">            + &quot;. &quot;</span>
+<span class="nc" id="L917">            + ((AprioriItemSet) m_allTheRules[0].elementAt(i))</span>
+<span class="nc" id="L918">                .toString(m_instances)</span>
+<span class="nc" id="L919">            + &quot; ==&gt; &quot;</span>
+<span class="nc" id="L920">            + ((AprioriItemSet) m_allTheRules[1].elementAt(i))</span>
+<span class="nc" id="L921">                .toString(m_instances)</span>
+<span class="nc" id="L922">            + &quot;    conf:(&quot;</span>
+<span class="nc" id="L923">            + Utils.doubleToString(</span>
+<span class="nc" id="L924">                ((Double) m_allTheRules[2].elementAt(i)).doubleValue(), 2)</span>
+<span class="nc" id="L925">            + &quot;)&quot;);</span>
+<span class="nc bnc" id="L926" title="All 4 branches missed.">        if (m_metricType != CONFIDENCE || m_significanceLevel != -1) {</span>
+<span class="nc bnc" id="L927" title="All 2 branches missed.">          text.append((m_metricType == LIFT ? &quot; &lt;&quot; : &quot;&quot;)</span>
+<span class="nc" id="L928">              + &quot; lift:(&quot;</span>
+<span class="nc" id="L929">              + Utils.doubleToString(</span>
+<span class="nc" id="L930">                  ((Double) m_allTheRules[3].elementAt(i)).doubleValue(), 2)</span>
+<span class="nc bnc" id="L931" title="All 2 branches missed.">              + &quot;)&quot; + (m_metricType == LIFT ? &quot;&gt;&quot; : &quot;&quot;));</span>
+<span class="nc bnc" id="L932" title="All 2 branches missed.">          text.append((m_metricType == LEVERAGE ? &quot; &lt;&quot; : &quot;&quot;)</span>
+<span class="nc" id="L933">              + &quot; lev:(&quot;</span>
+<span class="nc" id="L934">              + Utils.doubleToString(</span>
+<span class="nc" id="L935">                  ((Double) m_allTheRules[4].elementAt(i)).doubleValue(), 2)</span>
+<span class="nc" id="L936">              + &quot;)&quot;);</span>
+<span class="nc" id="L937">          text.append(&quot; [&quot;</span>
+<span class="nc" id="L938">              + (int) (((Double) m_allTheRules[4].elementAt(i)).doubleValue() * m_instances</span>
+<span class="nc" id="L939">                  .numInstances()) + &quot;]&quot;</span>
+<span class="nc bnc" id="L940" title="All 2 branches missed.">              + (m_metricType == LEVERAGE ? &quot;&gt;&quot; : &quot;&quot;));</span>
+<span class="nc bnc" id="L941" title="All 2 branches missed.">          text.append((m_metricType == CONVICTION ? &quot; &lt;&quot; : &quot;&quot;)</span>
+<span class="nc" id="L942">              + &quot; conv:(&quot;</span>
+<span class="nc" id="L943">              + Utils.doubleToString(</span>
+<span class="nc" id="L944">                  ((Double) m_allTheRules[5].elementAt(i)).doubleValue(), 2)</span>
+<span class="nc bnc" id="L945" title="All 2 branches missed.">              + &quot;)&quot; + (m_metricType == CONVICTION ? &quot;&gt;&quot; : &quot;&quot;));</span>
+        }
+<span class="nc" id="L947">        text.append('\n');</span>
+      }
+    } else {
+<span class="nc bnc" id="L950" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Ls.size(); i++) {</span>
+<span class="nc" id="L951">        text.append(&quot;\nSize of set of large itemsets L(&quot; + (i + 1) + &quot;): &quot;</span>
+<span class="nc" id="L952">            + ((FastVector) m_Ls.elementAt(i)).size() + '\n');</span>
+<span class="nc bnc" id="L953" title="All 2 branches missed.">        if (m_outputItemSets) {</span>
+<span class="nc" id="L954">          text.append(&quot;\nLarge Itemsets L(&quot; + (i + 1) + &quot;):\n&quot;);</span>
+<span class="nc bnc" id="L955" title="All 2 branches missed.">          for (int j = 0; j &lt; ((FastVector) m_Ls.elementAt(i)).size(); j++) {</span>
+<span class="nc" id="L956">            text.append(((ItemSet) ((FastVector) m_Ls.elementAt(i))</span>
+<span class="nc" id="L957">                .elementAt(j)).toString(m_instances) + &quot;\n&quot;);</span>
+<span class="nc" id="L958">            text.append(((LabeledItemSet) ((FastVector) m_Ls.elementAt(i))</span>
+<span class="nc" id="L959">                .elementAt(j)).m_classLabel + &quot;  &quot;);</span>
+<span class="nc" id="L960">            text.append(((LabeledItemSet) ((FastVector) m_Ls.elementAt(i))</span>
+<span class="nc" id="L961">                .elementAt(j)).support() + &quot;\n&quot;);</span>
+          }
+        }
+      }
+<span class="nc" id="L965">      text.append(&quot;\nBest rules found:\n\n&quot;);</span>
+<span class="nc bnc" id="L966" title="All 2 branches missed.">      for (int i = 0; i &lt; m_allTheRules[0].size(); i++) {</span>
+<span class="nc" id="L967">        text.append(Utils.doubleToString((double) i + 1,</span>
+<span class="nc" id="L968">            (int) (Math.log(m_numRules) / Math.log(10) + 1), 0)</span>
+<span class="nc" id="L969">            + &quot;. &quot;</span>
+<span class="nc" id="L970">            + ((ItemSet) m_allTheRules[0].elementAt(i)).toString(m_instances)</span>
+<span class="nc" id="L971">            + &quot; ==&gt; &quot;</span>
+<span class="nc" id="L972">            + ((ItemSet) m_allTheRules[1].elementAt(i)).toString(m_onlyClass)</span>
+<span class="nc" id="L973">            + &quot;    conf:(&quot;</span>
+<span class="nc" id="L974">            + Utils.doubleToString(</span>
+<span class="nc" id="L975">                ((Double) m_allTheRules[2].elementAt(i)).doubleValue(), 2)</span>
+<span class="nc" id="L976">            + &quot;)&quot;);</span>
+
+<span class="nc" id="L978">        text.append('\n');</span>
+      }
+    }
+<span class="nc" id="L981">    return text.toString();</span>
+  }
+
+  /**
+   * Returns the metric string for the chosen metric type
+   * 
+   * @return a string describing the used metric for the interestingness of a
+   *         class association rule
+   */
+  public String metricString() {
+
+<span class="nc bnc" id="L992" title="All 4 branches missed.">    switch (m_metricType) {</span>
+    case LIFT:
+<span class="nc" id="L994">      return &quot;lif&quot;;</span>
+    case LEVERAGE:
+<span class="nc" id="L996">      return &quot;leverage&quot;;</span>
+    case CONVICTION:
+<span class="nc" id="L998">      return &quot;conviction&quot;;</span>
+    default:
+<span class="nc" id="L1000">      return &quot;conf&quot;;</span>
+    }
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String removeAllMissingColsTipText() {
+<span class="nc" id="L1011">    return &quot;Remove columns with all missing values.&quot;;</span>
+  }
+
+  /**
+   * Remove columns containing all missing values.
+   * 
+   * @param r true if cols are to be removed.
+   */
+  public void setRemoveAllMissingCols(boolean r) {
+<span class="nc" id="L1020">    m_removeMissingCols = r;</span>
+<span class="nc" id="L1021">  }</span>
+
+  /**
+   * Returns whether columns containing all missing values are to be removed
+   * 
+   * @return true if columns are to be removed.
+   */
+  public boolean getRemoveAllMissingCols() {
+<span class="nc" id="L1029">    return m_removeMissingCols;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String upperBoundMinSupportTipText() {
+<span class="nc" id="L1039">    return &quot;Upper bound for minimum support. Start iteratively decreasing &quot;</span>
+        + &quot;minimum support from this value.&quot;;
+  }
+
+  /**
+   * Get the value of upperBoundMinSupport.
+   * 
+   * @return Value of upperBoundMinSupport.
+   */
+  public double getUpperBoundMinSupport() {
+
+<span class="nc" id="L1050">    return m_upperBoundMinSupport;</span>
+  }
+
+  /**
+   * Set the value of upperBoundMinSupport.
+   * 
+   * @param v Value to assign to upperBoundMinSupport.
+   */
+  public void setUpperBoundMinSupport(double v) {
+
+<span class="nc" id="L1060">    m_upperBoundMinSupport = v;</span>
+<span class="nc" id="L1061">  }</span>
+
+  /**
+   * Sets the class index
+   * 
+   * @param index the class index
+   */
+  public void setClassIndex(int index) {
+
+<span class="nc" id="L1070">    m_classIndex = index;</span>
+<span class="nc" id="L1071">  }</span>
+
+  /**
+   * Gets the class index
+   * 
+   * @return the index of the class attribute
+   */
+  public int getClassIndex() {
+
+<span class="nc" id="L1080">    return m_classIndex;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String classIndexTipText() {
+<span class="nc" id="L1090">    return &quot;Index of the class attribute. If set to -1, the last attribute is taken as class attribute.&quot;;</span>
+
+  }
+
+  /**
+   * Sets class association rule mining
+   * 
+   * @param flag if class association rules are mined, false otherwise
+   */
+  public void setCar(boolean flag) {
+<span class="nc" id="L1100">    m_car = flag;</span>
+<span class="nc" id="L1101">  }</span>
+
+  /**
+   * Gets whether class association ruels are mined
+   * 
+   * @return true if class association rules are mined, false otherwise
+   */
+  public boolean getCar() {
+<span class="nc" id="L1109">    return m_car;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String carTipText() {
+<span class="nc" id="L1119">    return &quot;If enabled class association rules are mined instead of (general) association rules.&quot;;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String lowerBoundMinSupportTipText() {
+<span class="nc" id="L1129">    return &quot;Lower bound for minimum support.&quot;;</span>
+  }
+
+  /**
+   * Get the value of lowerBoundMinSupport.
+   * 
+   * @return Value of lowerBoundMinSupport.
+   */
+  public double getLowerBoundMinSupport() {
+
+<span class="nc" id="L1139">    return m_lowerBoundMinSupport;</span>
+  }
+
+  /**
+   * Set the value of lowerBoundMinSupport.
+   * 
+   * @param v Value to assign to lowerBoundMinSupport.
+   */
+  public void setLowerBoundMinSupport(double v) {
+
+<span class="nc" id="L1149">    m_lowerBoundMinSupport = v;</span>
+<span class="nc" id="L1150">  }</span>
+
+  /**
+   * Get the metric type
+   * 
+   * @return the type of metric to use for ranking rules
+   */
+  public SelectedTag getMetricType() {
+<span class="nc" id="L1158">    return new SelectedTag(m_metricType, TAGS_SELECTION);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String metricTypeTipText() {
+<span class="nc" id="L1168">    return &quot;Set the type of metric by which to rank rules. Confidence is &quot;</span>
+        + &quot;the proportion of the examples covered by the premise that are also &quot;
+        + &quot;covered by the consequence(Class association rules can only be mined using confidence). Lift is confidence divided by the &quot;
+        + &quot;proportion of all examples that are covered by the consequence. This &quot;
+        + &quot;is a measure of the importance of the association that is independent &quot;
+        + &quot;of support. Leverage is the proportion of additional examples covered &quot;
+        + &quot;by both the premise and consequence above those expected if the &quot;
+        + &quot;premise and consequence were independent of each other. The total &quot;
+        + &quot;number of examples that this represents is presented in brackets &quot;
+        + &quot;following the leverage. Conviction is &quot;
+        + &quot;another measure of departure from independence. Conviction is given &quot;
+        + &quot;by P(premise)P(!consequence) / P(premise, !consequence).&quot;;
+  }
+
+  /**
+   * Set the metric type for ranking rules
+   * 
+   * @param d the type of metric
+   */
+  public void setMetricType(SelectedTag d) {
+
+<span class="nc bnc" id="L1189" title="All 2 branches missed.">    if (d.getTags() == TAGS_SELECTION) {</span>
+<span class="nc" id="L1190">      m_metricType = d.getSelectedTag().getID();</span>
+    }
+
+<span class="nc bnc" id="L1193" title="All 2 branches missed.">    if (m_metricType == CONFIDENCE) {</span>
+<span class="nc" id="L1194">      setMinMetric(0.9);</span>
+    }
+
+<span class="nc bnc" id="L1197" title="All 4 branches missed.">    if (m_metricType == LIFT || m_metricType == CONVICTION) {</span>
+<span class="nc" id="L1198">      setMinMetric(1.1);</span>
+    }
+
+<span class="nc bnc" id="L1201" title="All 2 branches missed.">    if (m_metricType == LEVERAGE) {</span>
+<span class="nc" id="L1202">      setMinMetric(0.1);</span>
+    }
+<span class="nc" id="L1204">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String minMetricTipText() {
+<span class="nc" id="L1213">    return &quot;Minimum metric score. Consider only rules with scores higher than &quot;</span>
+        + &quot;this value.&quot;;
+  }
+
+  /**
+   * Get the value of minConfidence.
+   * 
+   * @return Value of minConfidence.
+   */
+  public double getMinMetric() {
+
+<span class="nc" id="L1224">    return m_minMetric;</span>
+  }
+
+  /**
+   * Set the value of minConfidence.
+   * 
+   * @param v Value to assign to minConfidence.
+   */
+  public void setMinMetric(double v) {
+
+<span class="nc" id="L1234">    m_minMetric = v;</span>
+<span class="nc" id="L1235">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String numRulesTipText() {
+<span class="nc" id="L1244">    return &quot;Number of rules to find.&quot;;</span>
+  }
+
+  /**
+   * Get the value of numRules.
+   * 
+   * @return Value of numRules.
+   */
+  public int getNumRules() {
+
+<span class="nc" id="L1254">    return m_numRules;</span>
+  }
+
+  /**
+   * Set the value of numRules.
+   * 
+   * @param v Value to assign to numRules.
+   */
+  public void setNumRules(int v) {
+
+<span class="nc" id="L1264">    m_numRules = v;</span>
+<span class="nc" id="L1265">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String deltaTipText() {
+<span class="nc" id="L1274">    return &quot;Iteratively decrease support by this factor. Reduces support &quot;</span>
+        + &quot;until min support is reached or required number of rules has been &quot;
+        + &quot;generated.&quot;;
+  }
+
+  /**
+   * Get the value of delta.
+   * 
+   * @return Value of delta.
+   */
+  public double getDelta() {
+
+<span class="nc" id="L1286">    return m_delta;</span>
+  }
+
+  /**
+   * Set the value of delta.
+   * 
+   * @param v Value to assign to delta.
+   */
+  public void setDelta(double v) {
+
+<span class="nc" id="L1296">    m_delta = v;</span>
+<span class="nc" id="L1297">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String significanceLevelTipText() {
+<span class="nc" id="L1306">    return &quot;Significance level. Significance test (confidence metric only).&quot;;</span>
+  }
+
+  /**
+   * Get the value of significanceLevel.
+   * 
+   * @return Value of significanceLevel.
+   */
+  public double getSignificanceLevel() {
+
+<span class="nc" id="L1316">    return m_significanceLevel;</span>
+  }
+
+  /**
+   * Set the value of significanceLevel.
+   * 
+   * @param v Value to assign to significanceLevel.
+   */
+  public void setSignificanceLevel(double v) {
+
+<span class="nc" id="L1326">    m_significanceLevel = v;</span>
+<span class="nc" id="L1327">  }</span>
+
+  /**
+   * Sets whether itemsets are output as well
+   * 
+   * @param flag true if itemsets are to be output as well
+   */
+  public void setOutputItemSets(boolean flag) {
+<span class="nc" id="L1335">    m_outputItemSets = flag;</span>
+<span class="nc" id="L1336">  }</span>
+
+  /**
+   * Gets whether itemsets are output as well
+   * 
+   * @return true if itemsets are output as well
+   */
+  public boolean getOutputItemSets() {
+<span class="nc" id="L1344">    return m_outputItemSets;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String outputItemSetsTipText() {
+<span class="nc" id="L1354">    return &quot;If enabled the itemsets are output as well.&quot;;</span>
+  }
+
+  /**
+   * Sets verbose mode
+   * 
+   * @param flag true if algorithm should be run in verbose mode
+   */
+  public void setVerbose(boolean flag) {
+<span class="nc" id="L1363">    m_verbose = flag;</span>
+<span class="nc" id="L1364">  }</span>
+
+  /**
+   * Gets whether algorithm is run in verbose mode
+   * 
+   * @return true if algorithm is run in verbose mode
+   */
+  public boolean getVerbose() {
+<span class="nc" id="L1372">    return m_verbose;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String verboseTipText() {
+<span class="nc" id="L1382">    return &quot;If enabled the algorithm will be run in verbose mode.&quot;;</span>
+  }
+
+  /**
+   * Method that finds all large itemsets for the given set of instances.
+   * 
+   * @throws Exception if an attribute is numeric
+   */
+  private void findLargeItemSets() throws Exception {
+
+    FastVector kMinusOneSets, kSets;
+    Hashtable hashtable;
+<span class="nc" id="L1394">    int necSupport, necMaxSupport, i = 0;</span>
+
+    // Find large itemsets
+
+    // minimum support
+<span class="nc" id="L1399">    necSupport = (int) (m_minSupport * m_instances.numInstances() + 0.5);</span>
+<span class="nc" id="L1400">    necMaxSupport = (int) (m_upperBoundMinSupport * m_instances.numInstances() + 0.5);</span>
+
+<span class="nc" id="L1402">    kSets = AprioriItemSet.singletons(m_instances);</span>
+<span class="nc" id="L1403">    AprioriItemSet.upDateCounters(kSets, m_instances);</span>
+<span class="nc" id="L1404">    kSets = AprioriItemSet.deleteItemSets(kSets, necSupport,</span>
+<span class="nc" id="L1405">        m_instances.numInstances());</span>
+<span class="nc bnc" id="L1406" title="All 2 branches missed.">    if (kSets.size() == 0)</span>
+<span class="nc" id="L1407">      return;</span>
+    do {
+<span class="nc" id="L1409">      m_Ls.addElement(kSets);</span>
+<span class="nc" id="L1410">      kMinusOneSets = kSets;</span>
+<span class="nc" id="L1411">      kSets = AprioriItemSet.mergeAllItemSets(kMinusOneSets, i,</span>
+<span class="nc" id="L1412">          m_instances.numInstances());</span>
+<span class="nc" id="L1413">      hashtable = AprioriItemSet.getHashtable(kMinusOneSets,</span>
+<span class="nc" id="L1414">          kMinusOneSets.size());</span>
+<span class="nc" id="L1415">      m_hashtables.addElement(hashtable);</span>
+<span class="nc" id="L1416">      kSets = AprioriItemSet.pruneItemSets(kSets, hashtable);</span>
+<span class="nc" id="L1417">      AprioriItemSet.upDateCounters(kSets, m_instances);</span>
+<span class="nc" id="L1418">      kSets = AprioriItemSet.deleteItemSets(kSets, necSupport,</span>
+<span class="nc" id="L1419">          m_instances.numInstances());</span>
+<span class="nc" id="L1420">      i++;</span>
+<span class="nc bnc" id="L1421" title="All 2 branches missed.">    } while (kSets.size() &gt; 0);</span>
+<span class="nc" id="L1422">  }</span>
+
+  /**
+   * Method that finds all association rules and performs significance test.
+   * 
+   * @throws Exception if an attribute is numeric
+   */
+  private void findRulesBruteForce() throws Exception {
+
+    FastVector[] rules;
+
+    // Build rules
+<span class="nc bnc" id="L1434" title="All 2 branches missed.">    for (int j = 1; j &lt; m_Ls.size(); j++) {</span>
+<span class="nc" id="L1435">      FastVector currentItemSets = (FastVector) m_Ls.elementAt(j);</span>
+<span class="nc" id="L1436">      Enumeration enumItemSets = currentItemSets.elements();</span>
+<span class="nc bnc" id="L1437" title="All 2 branches missed.">      while (enumItemSets.hasMoreElements()) {</span>
+<span class="nc" id="L1438">        AprioriItemSet currentItemSet = (AprioriItemSet) enumItemSets</span>
+<span class="nc" id="L1439">            .nextElement();</span>
+        // AprioriItemSet currentItemSet = new
+        // AprioriItemSet((ItemSet)enumItemSets.nextElement());
+<span class="nc" id="L1442">        rules = currentItemSet.generateRulesBruteForce(m_minMetric,</span>
+<span class="nc" id="L1443">            m_metricType, m_hashtables, j + 1, m_instances.numInstances(),</span>
+<span class="nc" id="L1444">            m_significanceLevel);</span>
+<span class="nc bnc" id="L1445" title="All 2 branches missed.">        for (int k = 0; k &lt; rules[0].size(); k++) {</span>
+<span class="nc" id="L1446">          m_allTheRules[0].addElement(rules[0].elementAt(k));</span>
+<span class="nc" id="L1447">          m_allTheRules[1].addElement(rules[1].elementAt(k));</span>
+<span class="nc" id="L1448">          m_allTheRules[2].addElement(rules[2].elementAt(k));</span>
+
+<span class="nc" id="L1450">          m_allTheRules[3].addElement(rules[3].elementAt(k));</span>
+<span class="nc" id="L1451">          m_allTheRules[4].addElement(rules[4].elementAt(k));</span>
+<span class="nc" id="L1452">          m_allTheRules[5].addElement(rules[5].elementAt(k));</span>
+        }
+      }
+    }
+<span class="nc" id="L1456">  }</span>
+
+  /**
+   * Method that finds all association rules.
+   * 
+   * @throws Exception if an attribute is numeric
+   */
+  private void findRulesQuickly() throws Exception {
+
+    FastVector[] rules;
+
+    // Build rules
+<span class="nc bnc" id="L1468" title="All 2 branches missed.">    for (int j = 1; j &lt; m_Ls.size(); j++) {</span>
+<span class="nc" id="L1469">      FastVector currentItemSets = (FastVector) m_Ls.elementAt(j);</span>
+<span class="nc" id="L1470">      Enumeration enumItemSets = currentItemSets.elements();</span>
+<span class="nc bnc" id="L1471" title="All 2 branches missed.">      while (enumItemSets.hasMoreElements()) {</span>
+<span class="nc" id="L1472">        AprioriItemSet currentItemSet = (AprioriItemSet) enumItemSets</span>
+<span class="nc" id="L1473">            .nextElement();</span>
+        // AprioriItemSet currentItemSet = new
+        // AprioriItemSet((ItemSet)enumItemSets.nextElement());
+<span class="nc" id="L1476">        rules = currentItemSet.generateRules(m_minMetric, m_hashtables, j + 1);</span>
+<span class="nc bnc" id="L1477" title="All 2 branches missed.">        for (int k = 0; k &lt; rules[0].size(); k++) {</span>
+<span class="nc" id="L1478">          m_allTheRules[0].addElement(rules[0].elementAt(k));</span>
+<span class="nc" id="L1479">          m_allTheRules[1].addElement(rules[1].elementAt(k));</span>
+<span class="nc" id="L1480">          m_allTheRules[2].addElement(rules[2].elementAt(k));</span>
+        }
+      }
+    }
+<span class="nc" id="L1484">  }</span>
+
+  /**
+   * 
+   * Method that finds all large itemsets for class association rules for the
+   * given set of instances.
+   * 
+   * @throws Exception if an attribute is numeric
+   */
+  private void findLargeCarItemSets() throws Exception {
+
+    FastVector kMinusOneSets, kSets;
+    Hashtable hashtable;
+<span class="nc" id="L1497">    int necSupport, necMaxSupport, i = 0;</span>
+
+    // Find large itemsets
+
+    // minimum support
+<span class="nc" id="L1502">    double nextMinSupport = m_minSupport * m_instances.numInstances();</span>
+<span class="nc" id="L1503">    double nextMaxSupport = m_upperBoundMinSupport * m_instances.numInstances();</span>
+<span class="nc bnc" id="L1504" title="All 2 branches missed.">    if (Math.rint(nextMinSupport) == nextMinSupport) {</span>
+<span class="nc" id="L1505">      necSupport = (int) nextMinSupport;</span>
+    } else {
+<span class="nc" id="L1507">      necSupport = Math.round((float) (nextMinSupport + 0.5));</span>
+    }
+<span class="nc bnc" id="L1509" title="All 2 branches missed.">    if (Math.rint(nextMaxSupport) == nextMaxSupport) {</span>
+<span class="nc" id="L1510">      necMaxSupport = (int) nextMaxSupport;</span>
+    } else {
+<span class="nc" id="L1512">      necMaxSupport = Math.round((float) (nextMaxSupport + 0.5));</span>
+    }
+
+    // find item sets of length one
+<span class="nc" id="L1516">    kSets = LabeledItemSet.singletons(m_instances, m_onlyClass);</span>
+<span class="nc" id="L1517">    LabeledItemSet.upDateCounters(kSets, m_instances, m_onlyClass);</span>
+
+    // check if a item set of lentgh one is frequent, if not delete it
+<span class="nc" id="L1520">    kSets = LabeledItemSet.deleteItemSets(kSets, necSupport,</span>
+<span class="nc" id="L1521">        m_instances.numInstances());</span>
+<span class="nc bnc" id="L1522" title="All 2 branches missed.">    if (kSets.size() == 0)</span>
+<span class="nc" id="L1523">      return;</span>
+    do {
+<span class="nc" id="L1525">      m_Ls.addElement(kSets);</span>
+<span class="nc" id="L1526">      kMinusOneSets = kSets;</span>
+<span class="nc" id="L1527">      kSets = LabeledItemSet.mergeAllItemSets(kMinusOneSets, i,</span>
+<span class="nc" id="L1528">          m_instances.numInstances());</span>
+<span class="nc" id="L1529">      hashtable = LabeledItemSet.getHashtable(kMinusOneSets,</span>
+<span class="nc" id="L1530">          kMinusOneSets.size());</span>
+<span class="nc" id="L1531">      kSets = LabeledItemSet.pruneItemSets(kSets, hashtable);</span>
+<span class="nc" id="L1532">      LabeledItemSet.upDateCounters(kSets, m_instances, m_onlyClass);</span>
+<span class="nc" id="L1533">      kSets = LabeledItemSet.deleteItemSets(kSets, necSupport,</span>
+<span class="nc" id="L1534">          m_instances.numInstances());</span>
+<span class="nc" id="L1535">      i++;</span>
+<span class="nc bnc" id="L1536" title="All 2 branches missed.">    } while (kSets.size() &gt; 0);</span>
+<span class="nc" id="L1537">  }</span>
+
+  /**
+   * Method that finds all class association rules.
+   * 
+   * @throws Exception if an attribute is numeric
+   */
+  private void findCarRulesQuickly() throws Exception {
+
+    FastVector[] rules;
+
+    // Build rules
+<span class="nc bnc" id="L1549" title="All 2 branches missed.">    for (int j = 0; j &lt; m_Ls.size(); j++) {</span>
+<span class="nc" id="L1550">      FastVector currentLabeledItemSets = (FastVector) m_Ls.elementAt(j);</span>
+<span class="nc" id="L1551">      Enumeration enumLabeledItemSets = currentLabeledItemSets.elements();</span>
+<span class="nc bnc" id="L1552" title="All 2 branches missed.">      while (enumLabeledItemSets.hasMoreElements()) {</span>
+<span class="nc" id="L1553">        LabeledItemSet currentLabeledItemSet = (LabeledItemSet) enumLabeledItemSets</span>
+<span class="nc" id="L1554">            .nextElement();</span>
+<span class="nc" id="L1555">        rules = currentLabeledItemSet.generateRules(m_minMetric, false);</span>
+<span class="nc bnc" id="L1556" title="All 2 branches missed.">        for (int k = 0; k &lt; rules[0].size(); k++) {</span>
+<span class="nc" id="L1557">          m_allTheRules[0].addElement(rules[0].elementAt(k));</span>
+<span class="nc" id="L1558">          m_allTheRules[1].addElement(rules[1].elementAt(k));</span>
+<span class="nc" id="L1559">          m_allTheRules[2].addElement(rules[2].elementAt(k));</span>
+        }
+      }
+    }
+<span class="nc" id="L1563">  }</span>
+
+  /**
+   * returns all the rules
+   * 
+   * @return all the rules
+   * @see #m_allTheRules
+   */
+  public FastVector[] getAllTheRules() {
+<span class="nc" id="L1572">    return m_allTheRules;</span>
+  }
+
+  /**
+   * Returns the revision string.
+   * 
+   * @return the revision
+   */
+  @Override
+  public String getRevision() {
+<span class="nc" id="L1582">    return RevisionUtils.extract(&quot;$Revision: 9096 $&quot;);</span>
+  }
+
+  /**
+   * Main method.
+   * 
+   * @param args the commandline options
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L1591">    runAssociator(new Apriori(), args);</span>
+<span class="nc" id="L1592">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

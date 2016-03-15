@@ -1,0 +1,772 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>DecisionStump.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees</a> &gt; <span class="el_source">DecisionStump.java</span></div><h1>DecisionStump.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    DecisionStump.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.trees;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.Sourcable;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.ContingencyTables;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class for building and using a decision stump. Usually used in conjunction with a boosting algorithm. Does regression (based on mean-squared error) or classification (based on entropy). Missing is treated as a separate value.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ * Typical usage: &lt;p&gt;
+ * &lt;code&gt;java weka.classifiers.meta.LogitBoost -I 100 -W weka.classifiers.trees.DecisionStump 
+ * -t training_data &lt;/code&gt;&lt;p&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ * 
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @version $Revision: 5535 $
+ */
+<span class="fc" id="L59">public class DecisionStump </span>
+  extends Classifier 
+  implements WeightedInstancesHandler, Sourcable {
+
+  /** for serialization */
+  static final long serialVersionUID = 1618384535950391L;
+  
+  /** The attribute used for classification. */
+  private int m_AttIndex;
+
+  /** The split point (index respectively). */
+  private double m_SplitPoint;
+
+  /** The distribution of class values or the means in each subset. */
+  private double[][] m_Distribution;
+
+  /** The instances used for training. */
+  private Instances m_Instances;
+
+  /** a ZeroR model in case no model can be built from the data */
+  private Classifier m_ZeroR;
+    
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L88">    return  &quot;Class for building and using a decision stump. Usually used in &quot;</span>
+      + &quot;conjunction with a boosting algorithm. Does regression (based on &quot;
+      + &quot;mean-squared error) or classification (based on entropy). Missing &quot;
+      + &quot;is treated as a separate value.&quot;;
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L100">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L101">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L104">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L105">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L106">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L107">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L110">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L111">    result.enable(Capability.NUMERIC_CLASS);</span>
+<span class="fc" id="L112">    result.enable(Capability.DATE_CLASS);</span>
+<span class="fc" id="L113">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="fc" id="L115">    return result;</span>
+  }
+
+  /**
+   * Generates the classifier.
+   *
+   * @param instances set of instances serving as training data 
+   * @throws Exception if the classifier has not been generated successfully
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+    
+<span class="fc" id="L126">    double bestVal = Double.MAX_VALUE, currVal;</span>
+<span class="fc" id="L127">    double bestPoint = -Double.MAX_VALUE;</span>
+<span class="fc" id="L128">    int bestAtt = -1, numClasses;</span>
+
+    // can classifier handle the data?
+<span class="fc" id="L131">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L134">    instances = new Instances(instances);</span>
+<span class="fc" id="L135">    instances.deleteWithMissingClass();</span>
+    
+    // only class? -&gt; build ZeroR model
+<span class="fc bfc" id="L138" title="All 2 branches covered.">    if (instances.numAttributes() == 1) {</span>
+<span class="fc" id="L139">      System.err.println(</span>
+<span class="fc" id="L140">	  &quot;Cannot build model (only class attribute present in data!), &quot;</span>
+	  + &quot;using ZeroR model instead!&quot;);
+<span class="fc" id="L142">      m_ZeroR = new weka.classifiers.rules.ZeroR();</span>
+<span class="fc" id="L143">      m_ZeroR.buildClassifier(instances);</span>
+<span class="fc" id="L144">      return;</span>
+    }
+    else {
+<span class="fc" id="L147">      m_ZeroR = null;</span>
+    }
+    
+<span class="fc" id="L150">    double[][] bestDist = new double[3][instances.numClasses()];</span>
+
+<span class="fc" id="L152">    m_Instances = new Instances(instances);</span>
+
+<span class="fc bfc" id="L154" title="All 2 branches covered.">    if (m_Instances.classAttribute().isNominal()) {</span>
+<span class="fc" id="L155">      numClasses = m_Instances.numClasses();</span>
+    } else {
+<span class="fc" id="L157">      numClasses = 1;</span>
+    }
+
+    // For each attribute
+<span class="fc" id="L161">    boolean first = true;</span>
+<span class="fc bfc" id="L162" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.numAttributes(); i++) {</span>
+<span class="fc bfc" id="L163" title="All 2 branches covered.">      if (i != m_Instances.classIndex()) {</span>
+
+	// Reserve space for distribution.
+<span class="fc" id="L166">	m_Distribution = new double[3][numClasses];</span>
+
+	// Compute value of criterion for best split on attribute
+<span class="fc bfc" id="L169" title="All 2 branches covered.">	if (m_Instances.attribute(i).isNominal()) {</span>
+<span class="fc" id="L170">	  currVal = findSplitNominal(i);</span>
+	} else {
+<span class="fc" id="L172">	  currVal = findSplitNumeric(i);</span>
+	}
+<span class="fc bfc" id="L174" title="All 4 branches covered.">	if ((first) || (currVal &lt; bestVal)) {</span>
+<span class="fc" id="L175">	  bestVal = currVal;</span>
+<span class="fc" id="L176">	  bestAtt = i;</span>
+<span class="fc" id="L177">	  bestPoint = m_SplitPoint;</span>
+<span class="fc bfc" id="L178" title="All 2 branches covered.">	  for (int j = 0; j &lt; 3; j++) {</span>
+<span class="fc" id="L179">	    System.arraycopy(m_Distribution[j], 0, bestDist[j], 0, </span>
+<span class="fc" id="L180">			     numClasses);</span>
+	  }
+	}
+	
+	// First attribute has been investigated
+<span class="fc" id="L185">	first = false;</span>
+      }
+    }
+    
+    // Set attribute, split point and distribution.
+<span class="fc" id="L190">    m_AttIndex = bestAtt;</span>
+<span class="fc" id="L191">    m_SplitPoint = bestPoint;</span>
+<span class="fc" id="L192">    m_Distribution = bestDist;</span>
+<span class="fc bfc" id="L193" title="All 2 branches covered.">    if (m_Instances.classAttribute().isNominal()) {</span>
+<span class="fc bfc" id="L194" title="All 2 branches covered.">      for (int i = 0; i &lt; m_Distribution.length; i++) {</span>
+<span class="fc" id="L195">	double sumCounts = Utils.sum(m_Distribution[i]);</span>
+<span class="fc bfc" id="L196" title="All 2 branches covered.">	if (sumCounts == 0) { // This means there were only missing attribute values</span>
+<span class="fc" id="L197">	  System.arraycopy(m_Distribution[2], 0, m_Distribution[i], 0, </span>
+<span class="fc" id="L198">			   m_Distribution[2].length);</span>
+<span class="fc" id="L199">	  Utils.normalize(m_Distribution[i]);</span>
+	} else {
+<span class="fc" id="L201">	  Utils.normalize(m_Distribution[i], sumCounts); </span>
+	}
+      }
+    }
+    
+    // Save memory
+<span class="fc" id="L207">    m_Instances = new Instances(m_Instances, 0);</span>
+<span class="fc" id="L208">  }</span>
+
+  /**
+   * Calculates the class membership probabilities for the given test instance.
+   *
+   * @param instance the instance to be classified
+   * @return predicted class probability distribution
+   * @throws Exception if distribution can't be computed
+   */
+  public double[] distributionForInstance(Instance instance) throws Exception {
+
+    // default model?
+<span class="fc bfc" id="L220" title="All 2 branches covered.">    if (m_ZeroR != null) {</span>
+<span class="fc" id="L221">      return m_ZeroR.distributionForInstance(instance);</span>
+    }
+    
+<span class="fc" id="L224">    return m_Distribution[whichSubset(instance)];</span>
+  }
+
+  /**
+   * Returns the decision tree as Java source code.
+   *
+   * @param className the classname of the generated code
+   * @return the tree as Java source code
+   * @throws Exception if something goes wrong
+   */
+  public String toSource(String className) throws Exception {
+
+<span class="nc" id="L236">    StringBuffer text = new StringBuffer(&quot;class &quot;);</span>
+<span class="nc" id="L237">    Attribute c = m_Instances.classAttribute();</span>
+<span class="nc" id="L238">    text.append(className)</span>
+<span class="nc" id="L239">      .append(&quot; {\n&quot;</span>
+	      +&quot;  public static double classify(Object[] i) {\n&quot;);
+<span class="nc" id="L241">    text.append(&quot;    /* &quot; + m_Instances.attribute(m_AttIndex).name() + &quot; */\n&quot;);</span>
+<span class="nc" id="L242">    text.append(&quot;    if (i[&quot;).append(m_AttIndex);</span>
+<span class="nc" id="L243">    text.append(&quot;] == null) { return &quot;);</span>
+<span class="nc" id="L244">    text.append(sourceClass(c, m_Distribution[2])).append(&quot;;&quot;);</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">    if (m_Instances.attribute(m_AttIndex).isNominal()) {</span>
+<span class="nc" id="L246">      text.append(&quot; } else if (((String)i[&quot;).append(m_AttIndex);</span>
+<span class="nc" id="L247">      text.append(&quot;]).equals(\&quot;&quot;);</span>
+<span class="nc" id="L248">      text.append(m_Instances.attribute(m_AttIndex).value((int)m_SplitPoint));</span>
+<span class="nc" id="L249">      text.append(&quot;\&quot;)&quot;);</span>
+    } else {
+<span class="nc" id="L251">      text.append(&quot; } else if (((Double)i[&quot;).append(m_AttIndex);</span>
+<span class="nc" id="L252">      text.append(&quot;]).doubleValue() &lt;= &quot;).append(m_SplitPoint);</span>
+    }
+<span class="nc" id="L254">    text.append(&quot;) { return &quot;);</span>
+<span class="nc" id="L255">    text.append(sourceClass(c, m_Distribution[0])).append(&quot;;&quot;);</span>
+<span class="nc" id="L256">    text.append(&quot; } else { return &quot;);</span>
+<span class="nc" id="L257">    text.append(sourceClass(c, m_Distribution[1])).append(&quot;;&quot;);</span>
+<span class="nc" id="L258">    text.append(&quot; }\n  }\n}\n&quot;);</span>
+<span class="nc" id="L259">    return text.toString();</span>
+  }
+
+  /**
+   * Returns the value as string out of the given distribution
+   * 
+   * @param c the attribute to get the value for
+   * @param dist the distribution to extract the value
+   * @return the value
+   */
+  private String sourceClass(Attribute c, double []dist) {
+
+<span class="nc bnc" id="L271" title="All 2 branches missed.">    if (c.isNominal()) {</span>
+<span class="nc" id="L272">      return Integer.toString(Utils.maxIndex(dist));</span>
+    } else {
+<span class="nc" id="L274">      return Double.toString(dist[0]);</span>
+    }
+  }
+
+  /**
+   * Returns a description of the classifier.
+   *
+   * @return a description of the classifier as a string.
+   */
+  public String toString(){
+
+    // only ZeroR model?
+<span class="pc bpc" id="L286" title="1 of 2 branches missed.">    if (m_ZeroR != null) {</span>
+<span class="nc" id="L287">      StringBuffer buf = new StringBuffer();</span>
+<span class="nc" id="L288">      buf.append(this.getClass().getName().replaceAll(&quot;.*\\.&quot;, &quot;&quot;) + &quot;\n&quot;);</span>
+<span class="nc" id="L289">      buf.append(this.getClass().getName().replaceAll(&quot;.*\\.&quot;, &quot;&quot;).replaceAll(&quot;.&quot;, &quot;=&quot;) + &quot;\n\n&quot;);</span>
+<span class="nc" id="L290">      buf.append(&quot;Warning: No model could be built, hence ZeroR model is used:\n\n&quot;);</span>
+<span class="nc" id="L291">      buf.append(m_ZeroR.toString());</span>
+<span class="nc" id="L292">      return buf.toString();</span>
+    }
+    
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="fc" id="L296">      return &quot;Decision Stump: No model built yet.&quot;;</span>
+    }
+    try {
+<span class="nc" id="L299">      StringBuffer text = new StringBuffer();</span>
+      
+<span class="nc" id="L301">      text.append(&quot;Decision Stump\n\n&quot;);</span>
+<span class="nc" id="L302">      text.append(&quot;Classifications\n\n&quot;);</span>
+<span class="nc" id="L303">      Attribute att = m_Instances.attribute(m_AttIndex);</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">      if (att.isNominal()) {</span>
+<span class="nc" id="L305">	text.append(att.name() + &quot; = &quot; + att.value((int)m_SplitPoint) + </span>
+<span class="nc" id="L306">		    &quot; : &quot;);</span>
+<span class="nc" id="L307">	text.append(printClass(m_Distribution[0]));</span>
+<span class="nc" id="L308">	text.append(att.name() + &quot; != &quot; + att.value((int)m_SplitPoint) + </span>
+<span class="nc" id="L309">		    &quot; : &quot;);</span>
+<span class="nc" id="L310">	text.append(printClass(m_Distribution[1]));</span>
+      } else {
+<span class="nc" id="L312">	text.append(att.name() + &quot; &lt;= &quot; + m_SplitPoint + &quot; : &quot;);</span>
+<span class="nc" id="L313">	text.append(printClass(m_Distribution[0]));</span>
+<span class="nc" id="L314">	text.append(att.name() + &quot; &gt; &quot; + m_SplitPoint + &quot; : &quot;);</span>
+<span class="nc" id="L315">	text.append(printClass(m_Distribution[1]));</span>
+      }
+<span class="nc" id="L317">      text.append(att.name() + &quot; is missing : &quot;);</span>
+<span class="nc" id="L318">      text.append(printClass(m_Distribution[2]));</span>
+
+<span class="nc bnc" id="L320" title="All 2 branches missed.">      if (m_Instances.classAttribute().isNominal()) {</span>
+<span class="nc" id="L321">	text.append(&quot;\nClass distributions\n\n&quot;);</span>
+<span class="nc bnc" id="L322" title="All 2 branches missed.">	if (att.isNominal()) {</span>
+<span class="nc" id="L323">	  text.append(att.name() + &quot; = &quot; + att.value((int)m_SplitPoint) + </span>
+<span class="nc" id="L324">		      &quot;\n&quot;);</span>
+<span class="nc" id="L325">	  text.append(printDist(m_Distribution[0]));</span>
+<span class="nc" id="L326">	  text.append(att.name() + &quot; != &quot; + att.value((int)m_SplitPoint) + </span>
+<span class="nc" id="L327">		      &quot;\n&quot;);</span>
+<span class="nc" id="L328">	  text.append(printDist(m_Distribution[1]));</span>
+	} else {
+<span class="nc" id="L330">	  text.append(att.name() + &quot; &lt;= &quot; + m_SplitPoint + &quot;\n&quot;);</span>
+<span class="nc" id="L331">	  text.append(printDist(m_Distribution[0]));</span>
+<span class="nc" id="L332">	  text.append(att.name() + &quot; &gt; &quot; + m_SplitPoint + &quot;\n&quot;);</span>
+<span class="nc" id="L333">	  text.append(printDist(m_Distribution[1]));</span>
+	}
+<span class="nc" id="L335">	text.append(att.name() + &quot; is missing\n&quot;);</span>
+<span class="nc" id="L336">	text.append(printDist(m_Distribution[2]));</span>
+      }
+
+<span class="nc" id="L339">      return text.toString();</span>
+<span class="nc" id="L340">    } catch (Exception e) {</span>
+<span class="nc" id="L341">      return &quot;Can't print decision stump classifier!&quot;;</span>
+    }
+  }
+
+  /** 
+   * Prints a class distribution.
+   *
+   * @param dist the class distribution to print
+   * @return the distribution as a string
+   * @throws Exception if distribution can't be printed
+   */
+  private String printDist(double[] dist) throws Exception {
+
+<span class="nc" id="L354">    StringBuffer text = new StringBuffer();</span>
+    
+<span class="nc bnc" id="L356" title="All 2 branches missed.">    if (m_Instances.classAttribute().isNominal()) {</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Instances.numClasses(); i++) {</span>
+<span class="nc" id="L358">	text.append(m_Instances.classAttribute().value(i) + &quot;\t&quot;);</span>
+      }
+<span class="nc" id="L360">      text.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">      for (int i = 0; i &lt; m_Instances.numClasses(); i++) {</span>
+<span class="nc" id="L362">	text.append(dist[i] + &quot;\t&quot;);</span>
+      }
+<span class="nc" id="L364">      text.append(&quot;\n&quot;);</span>
+    }
+    
+<span class="nc" id="L367">    return text.toString();</span>
+  }
+
+  /** 
+   * Prints a classification.
+   *
+   * @param dist the class distribution
+   * @return the classificationn as a string
+   * @throws Exception if the classification can't be printed
+   */
+  private String printClass(double[] dist) throws Exception {
+
+<span class="nc" id="L379">    StringBuffer text = new StringBuffer();</span>
+    
+<span class="nc bnc" id="L381" title="All 2 branches missed.">    if (m_Instances.classAttribute().isNominal()) {</span>
+<span class="nc" id="L382">      text.append(m_Instances.classAttribute().value(Utils.maxIndex(dist)));</span>
+    } else {
+<span class="nc" id="L384">      text.append(dist[0]);</span>
+    }
+    
+<span class="nc" id="L387">    return text.toString() + &quot;\n&quot;;</span>
+  }
+
+  /**
+   * Finds best split for nominal attribute and returns value.
+   *
+   * @param index attribute index
+   * @return value of criterion for the best split
+   * @throws Exception if something goes wrong
+   */
+  private double findSplitNominal(int index) throws Exception {
+
+<span class="fc bfc" id="L399" title="All 2 branches covered.">    if (m_Instances.classAttribute().isNominal()) {</span>
+<span class="fc" id="L400">      return findSplitNominalNominal(index);</span>
+    } else {
+<span class="fc" id="L402">      return findSplitNominalNumeric(index);</span>
+    }
+  }
+
+  /**
+   * Finds best split for nominal attribute and nominal class
+   * and returns value.
+   *
+   * @param index attribute index
+   * @return value of criterion for the best split
+   * @throws Exception if something goes wrong
+   */
+  private double findSplitNominalNominal(int index) throws Exception {
+
+<span class="fc" id="L416">    double bestVal = Double.MAX_VALUE, currVal;</span>
+<span class="fc" id="L417">    double[][] counts = new double[m_Instances.attribute(index).numValues() </span>
+<span class="fc" id="L418">				  + 1][m_Instances.numClasses()];</span>
+<span class="fc" id="L419">    double[] sumCounts = new double[m_Instances.numClasses()];</span>
+<span class="fc" id="L420">    double[][] bestDist = new double[3][m_Instances.numClasses()];</span>
+<span class="fc" id="L421">    int numMissing = 0;</span>
+
+    // Compute counts for all the values
+<span class="fc bfc" id="L424" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.numInstances(); i++) {</span>
+<span class="fc" id="L425">      Instance inst = m_Instances.instance(i);</span>
+<span class="fc bfc" id="L426" title="All 2 branches covered.">      if (inst.isMissing(index)) {</span>
+<span class="fc" id="L427">	numMissing++;</span>
+<span class="fc" id="L428">	counts[m_Instances.attribute(index).numValues()]</span>
+<span class="fc" id="L429">	  [(int)inst.classValue()] += inst.weight();</span>
+      } else {
+<span class="fc" id="L431">	counts[(int)inst.value(index)][(int)inst.classValue()] += inst</span>
+<span class="fc" id="L432">	  .weight();</span>
+      }
+    }
+
+    // Compute sum of counts
+<span class="fc bfc" id="L437" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.attribute(index).numValues(); i++) {</span>
+<span class="fc bfc" id="L438" title="All 2 branches covered.">      for (int j = 0; j &lt; m_Instances.numClasses(); j++) {</span>
+<span class="fc" id="L439">	sumCounts[j] += counts[i][j];</span>
+      }
+    }
+    
+    // Make split counts for each possible split and evaluate
+<span class="fc" id="L444">    System.arraycopy(counts[m_Instances.attribute(index).numValues()], 0,</span>
+<span class="fc" id="L445">		     m_Distribution[2], 0, m_Instances.numClasses());</span>
+<span class="fc bfc" id="L446" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.attribute(index).numValues(); i++) {</span>
+<span class="fc bfc" id="L447" title="All 2 branches covered.">      for (int j = 0; j &lt; m_Instances.numClasses(); j++) {</span>
+<span class="fc" id="L448">	m_Distribution[0][j] = counts[i][j];</span>
+<span class="fc" id="L449">	m_Distribution[1][j] = sumCounts[j] - counts[i][j];</span>
+      }
+<span class="fc" id="L451">      currVal = ContingencyTables.entropyConditionedOnRows(m_Distribution);</span>
+<span class="fc bfc" id="L452" title="All 2 branches covered.">      if (currVal &lt; bestVal) {</span>
+<span class="fc" id="L453">	bestVal = currVal;</span>
+<span class="fc" id="L454">	m_SplitPoint = (double)i;</span>
+<span class="fc bfc" id="L455" title="All 2 branches covered.">	for (int j = 0; j &lt; 3; j++) {</span>
+<span class="fc" id="L456">	  System.arraycopy(m_Distribution[j], 0, bestDist[j], 0, </span>
+<span class="fc" id="L457">			   m_Instances.numClasses());</span>
+	}
+      }
+    }
+
+    // No missing values in training data.
+<span class="fc bfc" id="L463" title="All 2 branches covered.">    if (numMissing == 0) {</span>
+<span class="fc" id="L464">      System.arraycopy(sumCounts, 0, bestDist[2], 0, </span>
+<span class="fc" id="L465">		       m_Instances.numClasses());</span>
+    }
+   
+<span class="fc" id="L468">    m_Distribution = bestDist;</span>
+<span class="fc" id="L469">    return bestVal;</span>
+  }
+
+  /**
+   * Finds best split for nominal attribute and numeric class
+   * and returns value.
+   *
+   * @param index attribute index
+   * @return value of criterion for the best split
+   * @throws Exception if something goes wrong
+   */
+  private double findSplitNominalNumeric(int index) throws Exception {
+
+<span class="fc" id="L482">    double bestVal = Double.MAX_VALUE, currVal;</span>
+<span class="fc" id="L483">    double[] sumsSquaresPerValue = </span>
+<span class="fc" id="L484">      new double[m_Instances.attribute(index).numValues()], </span>
+<span class="fc" id="L485">      sumsPerValue = new double[m_Instances.attribute(index).numValues()], </span>
+<span class="fc" id="L486">      weightsPerValue = new double[m_Instances.attribute(index).numValues()];</span>
+<span class="fc" id="L487">    double totalSumSquaresW = 0, totalSumW = 0, totalSumOfWeightsW = 0,</span>
+<span class="fc" id="L488">      totalSumOfWeights = 0, totalSum = 0;</span>
+<span class="fc" id="L489">    double[] sumsSquares = new double[3], sumOfWeights = new double[3];</span>
+<span class="fc" id="L490">    double[][] bestDist = new double[3][1];</span>
+
+    // Compute counts for all the values
+<span class="fc bfc" id="L493" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.numInstances(); i++) {</span>
+<span class="fc" id="L494">      Instance inst = m_Instances.instance(i);</span>
+<span class="fc bfc" id="L495" title="All 2 branches covered.">      if (inst.isMissing(index)) {</span>
+<span class="fc" id="L496">	m_Distribution[2][0] += inst.classValue() * inst.weight();</span>
+<span class="fc" id="L497">	sumsSquares[2] += inst.classValue() * inst.classValue() </span>
+<span class="fc" id="L498">	  * inst.weight();</span>
+<span class="fc" id="L499">	sumOfWeights[2] += inst.weight();</span>
+      } else {
+<span class="fc" id="L501">	weightsPerValue[(int)inst.value(index)] += inst.weight();</span>
+<span class="fc" id="L502">	sumsPerValue[(int)inst.value(index)] += inst.classValue() </span>
+<span class="fc" id="L503">	  * inst.weight();</span>
+<span class="fc" id="L504">	sumsSquaresPerValue[(int)inst.value(index)] += </span>
+<span class="fc" id="L505">	  inst.classValue() * inst.classValue() * inst.weight();</span>
+      }
+<span class="fc" id="L507">      totalSumOfWeights += inst.weight();</span>
+<span class="fc" id="L508">      totalSum += inst.classValue() * inst.weight();</span>
+    }
+
+    // Check if the total weight is zero
+<span class="pc bpc" id="L512" title="1 of 2 branches missed.">    if (totalSumOfWeights &lt;= 0) {</span>
+<span class="nc" id="L513">      return bestVal;</span>
+    }
+
+    // Compute sum of counts without missing ones
+<span class="fc bfc" id="L517" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.attribute(index).numValues(); i++) {</span>
+<span class="fc" id="L518">      totalSumOfWeightsW += weightsPerValue[i];</span>
+<span class="fc" id="L519">      totalSumSquaresW += sumsSquaresPerValue[i];</span>
+<span class="fc" id="L520">      totalSumW += sumsPerValue[i];</span>
+    }
+    
+    // Make split counts for each possible split and evaluate
+<span class="fc bfc" id="L524" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.attribute(index).numValues(); i++) {</span>
+      
+<span class="fc" id="L526">      m_Distribution[0][0] = sumsPerValue[i];</span>
+<span class="fc" id="L527">      sumsSquares[0] = sumsSquaresPerValue[i];</span>
+<span class="fc" id="L528">      sumOfWeights[0] = weightsPerValue[i];</span>
+<span class="fc" id="L529">      m_Distribution[1][0] = totalSumW - sumsPerValue[i];</span>
+<span class="fc" id="L530">      sumsSquares[1] = totalSumSquaresW - sumsSquaresPerValue[i];</span>
+<span class="fc" id="L531">      sumOfWeights[1] = totalSumOfWeightsW - weightsPerValue[i];</span>
+
+<span class="fc" id="L533">      currVal = variance(m_Distribution, sumsSquares, sumOfWeights);</span>
+      
+<span class="fc bfc" id="L535" title="All 2 branches covered.">      if (currVal &lt; bestVal) {</span>
+<span class="fc" id="L536">	bestVal = currVal;</span>
+<span class="fc" id="L537">	m_SplitPoint = (double)i;</span>
+<span class="fc bfc" id="L538" title="All 2 branches covered.">	for (int j = 0; j &lt; 3; j++) {</span>
+<span class="fc bfc" id="L539" title="All 2 branches covered.">	  if (sumOfWeights[j] &gt; 0) {</span>
+<span class="fc" id="L540">	    bestDist[j][0] = m_Distribution[j][0] / sumOfWeights[j];</span>
+	  } else {
+<span class="fc" id="L542">	    bestDist[j][0] = totalSum / totalSumOfWeights;</span>
+	  }
+	}
+      }
+    }
+
+<span class="fc" id="L548">    m_Distribution = bestDist;</span>
+<span class="fc" id="L549">    return bestVal;</span>
+  }
+
+  /**
+   * Finds best split for numeric attribute and returns value.
+   *
+   * @param index attribute index
+   * @return value of criterion for the best split
+   * @throws Exception if something goes wrong
+   */
+  private double findSplitNumeric(int index) throws Exception {
+
+<span class="fc bfc" id="L561" title="All 2 branches covered.">    if (m_Instances.classAttribute().isNominal()) {</span>
+<span class="fc" id="L562">      return findSplitNumericNominal(index);</span>
+    } else {
+<span class="fc" id="L564">      return findSplitNumericNumeric(index);</span>
+    }
+  }
+
+  /**
+   * Finds best split for numeric attribute and nominal class
+   * and returns value.
+   *
+   * @param index attribute index
+   * @return value of criterion for the best split
+   * @throws Exception if something goes wrong
+   */
+  private double findSplitNumericNominal(int index) throws Exception {
+
+<span class="fc" id="L578">    double bestVal = Double.MAX_VALUE, currVal, currCutPoint;</span>
+<span class="fc" id="L579">    int numMissing = 0;</span>
+<span class="fc" id="L580">    double[] sum = new double[m_Instances.numClasses()];</span>
+<span class="fc" id="L581">    double[][] bestDist = new double[3][m_Instances.numClasses()];</span>
+
+    // Compute counts for all the values
+<span class="fc bfc" id="L584" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.numInstances(); i++) {</span>
+<span class="fc" id="L585">      Instance inst = m_Instances.instance(i);</span>
+<span class="fc bfc" id="L586" title="All 2 branches covered.">      if (!inst.isMissing(index)) {</span>
+<span class="fc" id="L587">	m_Distribution[1][(int)inst.classValue()] += inst.weight();</span>
+      } else {
+<span class="fc" id="L589">	m_Distribution[2][(int)inst.classValue()] += inst.weight();</span>
+<span class="fc" id="L590">	numMissing++;</span>
+      }
+    }
+<span class="fc" id="L593">    System.arraycopy(m_Distribution[1], 0, sum, 0, m_Instances.numClasses());</span>
+
+    // Save current distribution as best distribution
+<span class="fc bfc" id="L596" title="All 2 branches covered.">    for (int j = 0; j &lt; 3; j++) {</span>
+<span class="fc" id="L597">      System.arraycopy(m_Distribution[j], 0, bestDist[j], 0, </span>
+<span class="fc" id="L598">		       m_Instances.numClasses());</span>
+    }
+
+    // Sort instances
+<span class="fc" id="L602">    m_Instances.sort(index);</span>
+    
+    // Make split counts for each possible split and evaluate
+<span class="fc bfc" id="L605" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.numInstances() - (numMissing + 1); i++) {</span>
+<span class="fc" id="L606">      Instance inst = m_Instances.instance(i);</span>
+<span class="fc" id="L607">      Instance instPlusOne = m_Instances.instance(i + 1);</span>
+<span class="fc" id="L608">      m_Distribution[0][(int)inst.classValue()] += inst.weight();</span>
+<span class="fc" id="L609">      m_Distribution[1][(int)inst.classValue()] -= inst.weight();</span>
+<span class="fc bfc" id="L610" title="All 2 branches covered.">      if (inst.value(index) &lt; instPlusOne.value(index)) {</span>
+<span class="fc" id="L611">	currCutPoint = (inst.value(index) + instPlusOne.value(index)) / 2.0;</span>
+<span class="fc" id="L612">	currVal = ContingencyTables.entropyConditionedOnRows(m_Distribution);</span>
+<span class="fc bfc" id="L613" title="All 2 branches covered.">	if (currVal &lt; bestVal) {</span>
+<span class="fc" id="L614">	  m_SplitPoint = currCutPoint;</span>
+<span class="fc" id="L615">	  bestVal = currVal;</span>
+<span class="fc bfc" id="L616" title="All 2 branches covered.">	  for (int j = 0; j &lt; 3; j++) {</span>
+<span class="fc" id="L617">	    System.arraycopy(m_Distribution[j], 0, bestDist[j], 0, </span>
+<span class="fc" id="L618">			     m_Instances.numClasses());</span>
+	  }
+	}
+      }
+    }
+
+    // No missing values in training data.
+<span class="fc bfc" id="L625" title="All 2 branches covered.">    if (numMissing == 0) {</span>
+<span class="fc" id="L626">      System.arraycopy(sum, 0, bestDist[2], 0, m_Instances.numClasses());</span>
+    }
+ 
+<span class="fc" id="L629">    m_Distribution = bestDist;</span>
+<span class="fc" id="L630">    return bestVal;</span>
+  }
+
+  /**
+   * Finds best split for numeric attribute and numeric class
+   * and returns value.
+   *
+   * @param index attribute index
+   * @return value of criterion for the best split
+   * @throws Exception if something goes wrong
+   */
+  private double findSplitNumericNumeric(int index) throws Exception {
+
+<span class="fc" id="L643">    double bestVal = Double.MAX_VALUE, currVal, currCutPoint;</span>
+<span class="fc" id="L644">    int numMissing = 0;</span>
+<span class="fc" id="L645">    double[] sumsSquares = new double[3], sumOfWeights = new double[3];</span>
+<span class="fc" id="L646">    double[][] bestDist = new double[3][1];</span>
+<span class="fc" id="L647">    double totalSum = 0, totalSumOfWeights = 0;</span>
+
+    // Compute counts for all the values
+<span class="fc bfc" id="L650" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.numInstances(); i++) {</span>
+<span class="fc" id="L651">      Instance inst = m_Instances.instance(i);</span>
+<span class="fc bfc" id="L652" title="All 2 branches covered.">      if (!inst.isMissing(index)) {</span>
+<span class="fc" id="L653">	m_Distribution[1][0] += inst.classValue() * inst.weight();</span>
+<span class="fc" id="L654">	sumsSquares[1] += inst.classValue() * inst.classValue() </span>
+<span class="fc" id="L655">	  * inst.weight();</span>
+<span class="fc" id="L656">	sumOfWeights[1] += inst.weight();</span>
+      } else {
+<span class="fc" id="L658">	m_Distribution[2][0] += inst.classValue() * inst.weight();</span>
+<span class="fc" id="L659">	sumsSquares[2] += inst.classValue() * inst.classValue() </span>
+<span class="fc" id="L660">	  * inst.weight();</span>
+<span class="fc" id="L661">	sumOfWeights[2] += inst.weight();</span>
+<span class="fc" id="L662">	numMissing++;</span>
+      }
+<span class="fc" id="L664">      totalSumOfWeights += inst.weight();</span>
+<span class="fc" id="L665">      totalSum += inst.classValue() * inst.weight();</span>
+    }
+
+    // Check if the total weight is zero
+<span class="pc bpc" id="L669" title="1 of 2 branches missed.">    if (totalSumOfWeights &lt;= 0) {</span>
+<span class="nc" id="L670">      return bestVal;</span>
+    }
+
+    // Sort instances
+<span class="fc" id="L674">    m_Instances.sort(index);</span>
+    
+    // Make split counts for each possible split and evaluate
+<span class="fc bfc" id="L677" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Instances.numInstances() - (numMissing + 1); i++) {</span>
+<span class="fc" id="L678">      Instance inst = m_Instances.instance(i);</span>
+<span class="fc" id="L679">      Instance instPlusOne = m_Instances.instance(i + 1);</span>
+<span class="fc" id="L680">      m_Distribution[0][0] += inst.classValue() * inst.weight();</span>
+<span class="fc" id="L681">      sumsSquares[0] += inst.classValue() * inst.classValue() * inst.weight();</span>
+<span class="fc" id="L682">      sumOfWeights[0] += inst.weight();</span>
+<span class="fc" id="L683">      m_Distribution[1][0] -= inst.classValue() * inst.weight();</span>
+<span class="fc" id="L684">      sumsSquares[1] -= inst.classValue() * inst.classValue() * inst.weight();</span>
+<span class="fc" id="L685">      sumOfWeights[1] -= inst.weight();</span>
+<span class="fc bfc" id="L686" title="All 2 branches covered.">      if (inst.value(index) &lt; instPlusOne.value(index)) {</span>
+<span class="fc" id="L687">	currCutPoint = (inst.value(index) + instPlusOne.value(index)) / 2.0;</span>
+<span class="fc" id="L688">	currVal = variance(m_Distribution, sumsSquares, sumOfWeights);</span>
+<span class="fc bfc" id="L689" title="All 2 branches covered.">	if (currVal &lt; bestVal) {</span>
+<span class="fc" id="L690">	  m_SplitPoint = currCutPoint;</span>
+<span class="fc" id="L691">	  bestVal = currVal;</span>
+<span class="fc bfc" id="L692" title="All 2 branches covered.">	  for (int j = 0; j &lt; 3; j++) {</span>
+<span class="fc bfc" id="L693" title="All 2 branches covered.">	    if (sumOfWeights[j] &gt; 0) {</span>
+<span class="fc" id="L694">	      bestDist[j][0] = m_Distribution[j][0] / sumOfWeights[j];</span>
+	    } else {
+<span class="fc" id="L696">	      bestDist[j][0] = totalSum / totalSumOfWeights;</span>
+	    }
+	  }
+	}
+      }
+    }
+
+<span class="fc" id="L703">    m_Distribution = bestDist;</span>
+<span class="fc" id="L704">    return bestVal;</span>
+  }
+
+  /**
+   * Computes variance for subsets.
+   * 
+   * @param s
+   * @param sS
+   * @param sumOfWeights
+   * @return the variance
+   */
+  private double variance(double[][] s,double[] sS,double[] sumOfWeights) {
+
+<span class="fc" id="L717">    double var = 0;</span>
+
+<span class="fc bfc" id="L719" title="All 2 branches covered.">    for (int i = 0; i &lt; s.length; i++) {</span>
+<span class="fc bfc" id="L720" title="All 2 branches covered.">      if (sumOfWeights[i] &gt; 0) {</span>
+<span class="fc" id="L721">	var += sS[i] - ((s[i][0] * s[i][0]) / (double) sumOfWeights[i]);</span>
+      }
+    }
+    
+<span class="fc" id="L725">    return var;</span>
+  }
+
+  /**
+   * Returns the subset an instance falls into.
+   * 
+   * @param instance the instance to check
+   * @return the subset the instance falls into
+   * @throws Exception if something goes wrong
+   */
+  private int whichSubset(Instance instance) throws Exception {
+
+<span class="fc bfc" id="L737" title="All 2 branches covered.">    if (instance.isMissing(m_AttIndex)) {</span>
+<span class="fc" id="L738">      return 2;</span>
+<span class="fc bfc" id="L739" title="All 2 branches covered.">    } else if (instance.attribute(m_AttIndex).isNominal()) {</span>
+<span class="fc bfc" id="L740" title="All 2 branches covered.">      if ((int)instance.value(m_AttIndex) == m_SplitPoint) {</span>
+<span class="fc" id="L741">	return 0;</span>
+      } else {
+<span class="fc" id="L743">	return 1;</span>
+      }
+    } else {
+<span class="fc bfc" id="L746" title="All 2 branches covered.">      if (instance.value(m_AttIndex) &lt;= m_SplitPoint) {</span>
+<span class="fc" id="L747">	return 0;</span>
+      } else {
+<span class="fc" id="L749">	return 1;</span>
+      }
+    }
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L760">    return RevisionUtils.extract(&quot;$Revision: 5535 $&quot;);</span>
+  }
+ 
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L769">    runClassifier(new DecisionStump(), argv);</span>
+<span class="nc" id="L770">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

@@ -1,0 +1,646 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>DBSCAN.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.clusterers</a> &gt; <span class="el_source">DBSCAN.java</span></div><h1>DBSCAN.java</h1><pre class="source lang-java linenums">/*
+ *   This program is free software: you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation, either version 3 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+
+/*
+ *    Copyright (C) 2004
+ *    &amp; Matthias Schubert (schubert@dbs.ifi.lmu.de)
+ *    &amp; Zhanna Melnikova-Albrecht (melnikov@cip.ifi.lmu.de)
+ *    &amp; Rainer Holzmann (holzmann@cip.ifi.lmu.de)
+ */
+
+package weka.clusterers;
+
+import weka.clusterers.forOPTICSAndDBScan.DataObjects.DataObject;
+import weka.clusterers.forOPTICSAndDBScan.Databases.Database;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.text.DecimalFormat;
+import java.util.Enumeration;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Basic implementation of DBSCAN clustering algorithm that should *not* be used as a reference for runtime benchmarks: more sophisticated implementations exist! Clustering of new instances is not supported. More info:&lt;br/&gt;
+ * &lt;br/&gt;
+ *  Martin Ester, Hans-Peter Kriegel, Joerg Sander, Xiaowei Xu: A Density-Based Algorithm for Discovering Clusters in Large Spatial Databases with Noise. In: Second International Conference on Knowledge Discovery and Data Mining, 226-231, 1996.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Ester1996,
+ *    author = {Martin Ester and Hans-Peter Kriegel and Joerg Sander and Xiaowei Xu},
+ *    booktitle = {Second International Conference on Knowledge Discovery and Data Mining},
+ *    editor = {Evangelos Simoudis and Jiawei Han and Usama M. Fayyad},
+ *    pages = {226-231},
+ *    publisher = {AAAI Press},
+ *    title = {A Density-Based Algorithm for Discovering Clusters in Large Spatial Databases with Noise},
+ *    year = {1996}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -E &amp;lt;double&amp;gt;
+ *  epsilon (default = 0.9)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;int&amp;gt;
+ *  minPoints (default = 6)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;String&amp;gt;
+ *  index (database) used for DBSCAN (default = weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D &amp;lt;String&amp;gt;
+ *  distance-type (default = weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Matthias Schubert (schubert@dbs.ifi.lmu.de)
+ * @author Zhanna Melnikova-Albrecht (melnikov@cip.ifi.lmu.de)
+ * @author Rainer Holzmann (holzmann@cip.ifi.lmu.de)
+ * @version $Revision: 9434 $
+ */
+<span class="nc" id="L96">public class DBSCAN </span>
+    extends AbstractClusterer 
+    implements OptionHandler, TechnicalInformationHandler {
+
+    /** for serialization */
+    static final long serialVersionUID = -1666498248451219728L;
+  
+    /**
+     * Specifies the radius for a range-query
+     */
+<span class="nc" id="L106">    private double epsilon = 0.9;</span>
+
+    /**
+     * Specifies the density (the range-query must contain at least minPoints DataObjects)
+     */
+<span class="nc" id="L111">    private int minPoints = 6;</span>
+
+    /**
+     * Replace missing values in training instances
+     */
+    private ReplaceMissingValues replaceMissingValues_Filter;
+
+    /**
+     * Holds the number of clusters generated
+     */
+    private int numberOfGeneratedClusters;
+
+    /**
+     * Holds the distance-type that is used
+     * (default = weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject)
+     */
+<span class="nc" id="L127">    private String database_distanceType = &quot;weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject&quot;;</span>
+
+    /**
+     * Holds the type of the used database
+     * (default = weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase)
+     */
+<span class="nc" id="L133">    private String database_Type = &quot;weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase&quot;;</span>
+
+    /**
+     * The database that is used for DBSCAN
+     */
+    private Database database;
+
+    /**
+     * Holds the current clusterID
+     */
+    private int clusterID;
+
+    /**
+     * Counter for the processed instances
+     */
+    private int processed_InstanceID;
+
+    /**
+     * Holds the time-value (seconds) for the duration of the clustering-process
+     */
+    private double elapsedTime;
+
+    /**
+     * Returns default capabilities of the clusterer.
+     *
+     * @return      the capabilities of this clusterer
+     */
+    public Capabilities getCapabilities() {
+<span class="nc" id="L161">      Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L162">      result.disableAll();</span>
+<span class="nc" id="L163">      result.enable(Capability.NO_CLASS);</span>
+
+      // attributes
+<span class="nc" id="L166">      result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L167">      result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L168">      result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="nc" id="L169">      result.enable(Capability.MISSING_VALUES);</span>
+
+<span class="nc" id="L171">      return result;</span>
+    }
+
+    // *****************************************************************************************************************
+    // constructors
+    // *****************************************************************************************************************
+
+    // *****************************************************************************************************************
+    // methods
+    // *****************************************************************************************************************
+
+    /**
+     * Generate Clustering via DBSCAN
+     * @param instances The instances that need to be clustered
+     * @throws java.lang.Exception If clustering was not successful
+     */
+    public void buildClusterer(Instances instances) throws Exception {
+        // can clusterer handle the data?
+<span class="nc" id="L189">        getCapabilities().testWithFail(instances);</span>
+
+<span class="nc" id="L191">        long time_1 = System.currentTimeMillis();</span>
+
+<span class="nc" id="L193">        processed_InstanceID = 0;</span>
+<span class="nc" id="L194">        numberOfGeneratedClusters = 0;</span>
+<span class="nc" id="L195">        clusterID = 0;</span>
+
+<span class="nc" id="L197">        replaceMissingValues_Filter = new ReplaceMissingValues();</span>
+<span class="nc" id="L198">        replaceMissingValues_Filter.setInputFormat(instances);</span>
+<span class="nc" id="L199">        Instances filteredInstances = Filter.useFilter(instances, replaceMissingValues_Filter);</span>
+
+<span class="nc" id="L201">        database = databaseForName(getDatabase_Type(), filteredInstances);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        for (int i = 0; i &lt; database.getInstances().numInstances(); i++) {</span>
+<span class="nc" id="L203">            DataObject dataObject = dataObjectForName(getDatabase_distanceType(),</span>
+<span class="nc" id="L204">                    database.getInstances().instance(i),</span>
+<span class="nc" id="L205">                    Integer.toString(i),</span>
+<span class="nc" id="L206">                    database);</span>
+<span class="nc" id="L207">            database.insert(dataObject);</span>
+        }
+<span class="nc" id="L209">        database.setMinMaxValues();</span>
+
+<span class="nc" id="L211">        Iterator iterator = database.dataObjectIterator();</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">        while (iterator.hasNext()) {</span>
+<span class="nc" id="L213">            DataObject dataObject = (DataObject) iterator.next();</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">            if (dataObject.getClusterLabel() == DataObject.UNCLASSIFIED) {</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">                if (expandCluster(dataObject)) {</span>
+<span class="nc" id="L216">                    clusterID++;</span>
+<span class="nc" id="L217">                    numberOfGeneratedClusters++;</span>
+                }
+            }
+        }
+
+<span class="nc" id="L222">        long time_2 = System.currentTimeMillis();</span>
+<span class="nc" id="L223">        elapsedTime = (double) (time_2 - time_1) / 1000.0;</span>
+<span class="nc" id="L224">    }</span>
+
+    /**
+     * Assigns this dataObject to a cluster or remains it as NOISE
+     * @param dataObject The DataObject that needs to be assigned
+     * @return true, if the DataObject could be assigned, else false
+     */
+    private boolean expandCluster(DataObject dataObject) {
+<span class="nc" id="L232">        List seedList = database.epsilonRangeQuery(getEpsilon(), dataObject);</span>
+        /** dataObject is NO coreObject */
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if (seedList.size() &lt; getMinPoints()) {</span>
+<span class="nc" id="L235">            dataObject.setClusterLabel(DataObject.NOISE);</span>
+<span class="nc" id="L236">            return false;</span>
+        }
+
+        /** dataObject is coreObject */
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        for (int i = 0; i &lt; seedList.size(); i++) {</span>
+<span class="nc" id="L241">            DataObject seedListDataObject = (DataObject) seedList.get(i);</span>
+            /** label this seedListDataObject with the current clusterID, because it is in epsilon-range */
+<span class="nc" id="L243">            seedListDataObject.setClusterLabel(clusterID);</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            if (seedListDataObject.equals(dataObject)) {</span>
+<span class="nc" id="L245">                seedList.remove(i);</span>
+<span class="nc" id="L246">                i--;</span>
+            }
+        }
+
+        /** Iterate the seedList of the startDataObject */
+<span class="nc bnc" id="L251" title="All 2 branches missed.">        for (int j = 0; j &lt; seedList.size(); j++) {</span>
+<span class="nc" id="L252">            DataObject seedListDataObject = (DataObject) seedList.get(j);</span>
+<span class="nc" id="L253">            List seedListDataObject_Neighbourhood = database.epsilonRangeQuery(getEpsilon(), seedListDataObject);</span>
+
+            /** seedListDataObject is coreObject */
+<span class="nc bnc" id="L256" title="All 2 branches missed.">            if (seedListDataObject_Neighbourhood.size() &gt;= getMinPoints()) {</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">                for (int i = 0; i &lt; seedListDataObject_Neighbourhood.size(); i++) {</span>
+<span class="nc" id="L258">                    DataObject p = (DataObject) seedListDataObject_Neighbourhood.get(i);</span>
+<span class="nc bnc" id="L259" title="All 4 branches missed.">                    if (p.getClusterLabel() == DataObject.UNCLASSIFIED || p.getClusterLabel() == DataObject.NOISE) {</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">                        if (p.getClusterLabel() == DataObject.UNCLASSIFIED) {</span>
+<span class="nc" id="L261">                            seedList.add(p);</span>
+                        }
+<span class="nc" id="L263">                        p.setClusterLabel(clusterID);</span>
+                    }
+                }
+            }
+<span class="nc" id="L267">            seedList.remove(j);</span>
+<span class="nc" id="L268">            j--;</span>
+        }
+
+<span class="nc" id="L271">        return true;</span>
+    }
+
+    /**
+     * Classifies a given instance.
+     *
+     * @param instance The instance to be assigned to a cluster
+     * @return int The number of the assigned cluster as an integer
+     * @throws java.lang.Exception If instance could not be clustered
+     * successfully
+     */
+    public int clusterInstance(Instance instance) throws Exception {
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        if (processed_InstanceID &gt;= database.size()) processed_InstanceID = 0;</span>
+<span class="nc" id="L284">        int cnum = (database.getDataObject(Integer.toString(processed_InstanceID++))).getClusterLabel();</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">        if (cnum == DataObject.NOISE)</span>
+<span class="nc" id="L286">            throw new Exception();</span>
+        else
+<span class="nc" id="L288">            return cnum;</span>
+    }
+
+    /**
+     * Returns the number of clusters.
+     *
+     * @return int The number of clusters generated for a training dataset.
+     * @throws java.lang.Exception if number of clusters could not be returned
+     * successfully
+     */
+    public int numberOfClusters() throws Exception {
+<span class="nc" id="L299">        return numberOfGeneratedClusters;</span>
+    }
+
+    /**
+     * Returns an enumeration of all the available options..
+     *
+     * @return Enumeration An enumeration of all available options.
+     */
+    public Enumeration listOptions() {
+<span class="nc" id="L308">        Vector vector = new Vector();</span>
+
+<span class="nc" id="L310">        vector.addElement(</span>
+<span class="nc" id="L311">                new Option(&quot;\tepsilon (default = 0.9)&quot;,</span>
+<span class="nc" id="L312">                        &quot;E&quot;,</span>
+<span class="nc" id="L313">                        1,</span>
+<span class="nc" id="L314">                        &quot;-E &lt;double&gt;&quot;));</span>
+<span class="nc" id="L315">        vector.addElement(</span>
+<span class="nc" id="L316">                new Option(&quot;\tminPoints (default = 6)&quot;,</span>
+<span class="nc" id="L317">                        &quot;M&quot;,</span>
+<span class="nc" id="L318">                        1,</span>
+<span class="nc" id="L319">                        &quot;-M &lt;int&gt;&quot;));</span>
+<span class="nc" id="L320">        vector.addElement(</span>
+<span class="nc" id="L321">                new Option(&quot;\tindex (database) used for DBSCAN (default = weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase)&quot;,</span>
+<span class="nc" id="L322">                        &quot;I&quot;,</span>
+<span class="nc" id="L323">                        1,</span>
+<span class="nc" id="L324">                        &quot;-I &lt;String&gt;&quot;));</span>
+<span class="nc" id="L325">        vector.addElement(</span>
+<span class="nc" id="L326">                new Option(&quot;\tdistance-type (default = weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject)&quot;,</span>
+<span class="nc" id="L327">                        &quot;D&quot;,</span>
+<span class="nc" id="L328">                        1,</span>
+<span class="nc" id="L329">                        &quot;-D &lt;String&gt;&quot;));</span>
+<span class="nc" id="L330">        return vector.elements();</span>
+    }
+
+    /**
+     * Sets the OptionHandler's options using the given list. All options
+     * will be set (or reset) during this call (i.e. incremental setting
+     * of options is not possible). &lt;p/&gt;
+     *
+     &lt;!-- options-start --&gt;
+     * Valid options are: &lt;p/&gt;
+     * 
+     * &lt;pre&gt; -E &amp;lt;double&amp;gt;
+     *  epsilon (default = 0.9)&lt;/pre&gt;
+     * 
+     * &lt;pre&gt; -M &amp;lt;int&amp;gt;
+     *  minPoints (default = 6)&lt;/pre&gt;
+     * 
+     * &lt;pre&gt; -I &amp;lt;String&amp;gt;
+     *  index (database) used for DBSCAN (default = weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase)&lt;/pre&gt;
+     * 
+     * &lt;pre&gt; -D &amp;lt;String&amp;gt;
+     *  distance-type (default = weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject)&lt;/pre&gt;
+     * 
+     &lt;!-- options-end --&gt;
+     *
+     * @param options The list of options as an array of strings
+     * @throws java.lang.Exception If an option is not supported
+     */
+    public void setOptions(String[] options) throws Exception {
+<span class="nc" id="L359">        String optionString = Utils.getOption('E', options);</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">        if (optionString.length() != 0) {</span>
+<span class="nc" id="L361">            setEpsilon(Double.parseDouble(optionString));</span>
+        }
+
+<span class="nc" id="L364">        optionString = Utils.getOption('M', options);</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">        if (optionString.length() != 0) {</span>
+<span class="nc" id="L366">            setMinPoints(Integer.parseInt(optionString));</span>
+        }
+
+<span class="nc" id="L369">        optionString = Utils.getOption('I', options);</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">        if (optionString.length() != 0) {</span>
+<span class="nc" id="L371">            setDatabase_Type(optionString);</span>
+        }
+
+<span class="nc" id="L374">        optionString = Utils.getOption('D', options);</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">        if (optionString.length() != 0) {</span>
+<span class="nc" id="L376">            setDatabase_distanceType(optionString);</span>
+        }
+<span class="nc" id="L378">    }</span>
+
+    /**
+     * Gets the current option settings for the OptionHandler.
+     *
+     * @return String[] The list of current option settings as an array of strings
+     */
+    public String[] getOptions() {
+<span class="nc" id="L386">        String[] options = new String[8];</span>
+<span class="nc" id="L387">        int current = 0;</span>
+
+<span class="nc" id="L389">        options[current++] = &quot;-E&quot;;</span>
+<span class="nc" id="L390">        options[current++] = &quot;&quot; + getEpsilon();</span>
+<span class="nc" id="L391">        options[current++] = &quot;-M&quot;;</span>
+<span class="nc" id="L392">        options[current++] = &quot;&quot; + getMinPoints();</span>
+<span class="nc" id="L393">        options[current++] = &quot;-I&quot;;</span>
+<span class="nc" id="L394">        options[current++] = &quot;&quot; + getDatabase_Type();</span>
+<span class="nc" id="L395">        options[current++] = &quot;-D&quot;;</span>
+<span class="nc" id="L396">        options[current++] = &quot;&quot; + getDatabase_distanceType();</span>
+
+<span class="nc" id="L398">        return options;</span>
+    }
+
+    /**
+     * Returns a new Class-Instance of the specified database
+     * @param database_Type String of the specified database
+     * @param instances Instances that were delivered from WEKA
+     * @return Database New constructed Database
+     */
+    public Database databaseForName(String database_Type, Instances instances) {
+<span class="nc" id="L408">        Object o = null;</span>
+
+<span class="nc" id="L410">        Constructor co = null;</span>
+        try {
+<span class="nc" id="L412">            co = (Class.forName(database_Type)).getConstructor(new Class[]{Instances.class});</span>
+<span class="nc" id="L413">            o = co.newInstance(new Object[]{instances});</span>
+<span class="nc" id="L414">        } catch (NoSuchMethodException e) {</span>
+<span class="nc" id="L415">            e.printStackTrace();</span>
+<span class="nc" id="L416">        } catch (SecurityException e) {</span>
+<span class="nc" id="L417">            e.printStackTrace();</span>
+<span class="nc" id="L418">        } catch (ClassNotFoundException e) {</span>
+<span class="nc" id="L419">            e.printStackTrace();</span>
+<span class="nc" id="L420">        } catch (InstantiationException e) {</span>
+<span class="nc" id="L421">            e.printStackTrace();</span>
+<span class="nc" id="L422">        } catch (IllegalAccessException e) {</span>
+<span class="nc" id="L423">            e.printStackTrace();</span>
+<span class="nc" id="L424">        } catch (InvocationTargetException e) {</span>
+<span class="nc" id="L425">            e.printStackTrace();</span>
+        }
+
+<span class="nc" id="L428">        return (Database) o;</span>
+    }
+
+    /**
+     * Returns a new Class-Instance of the specified database
+     * @param database_distanceType String of the specified distance-type
+     * @param instance The original instance that needs to hold by this DataObject
+     * @param key Key for this DataObject
+     * @param database Link to the database
+     * @return DataObject New constructed DataObject
+     */
+    public DataObject dataObjectForName(String database_distanceType, Instance instance, String key, Database database) {
+<span class="nc" id="L440">        Object o = null;</span>
+
+<span class="nc" id="L442">        Constructor co = null;</span>
+        try {
+<span class="nc" id="L444">            co = (Class.forName(database_distanceType)).</span>
+<span class="nc" id="L445">                    getConstructor(new Class[]{Instance.class, String.class, Database.class});</span>
+<span class="nc" id="L446">            o = co.newInstance(new Object[]{instance, key, database});</span>
+<span class="nc" id="L447">        } catch (NoSuchMethodException e) {</span>
+<span class="nc" id="L448">            e.printStackTrace();</span>
+<span class="nc" id="L449">        } catch (SecurityException e) {</span>
+<span class="nc" id="L450">            e.printStackTrace();</span>
+<span class="nc" id="L451">        } catch (ClassNotFoundException e) {</span>
+<span class="nc" id="L452">            e.printStackTrace();</span>
+<span class="nc" id="L453">        } catch (InstantiationException e) {</span>
+<span class="nc" id="L454">            e.printStackTrace();</span>
+<span class="nc" id="L455">        } catch (IllegalAccessException e) {</span>
+<span class="nc" id="L456">            e.printStackTrace();</span>
+<span class="nc" id="L457">        } catch (InvocationTargetException e) {</span>
+<span class="nc" id="L458">            e.printStackTrace();</span>
+        }
+
+<span class="nc" id="L461">        return (DataObject) o;</span>
+    }
+
+    /**
+     * Sets a new value for minPoints
+     * @param minPoints MinPoints
+     */
+    public void setMinPoints(int minPoints) {
+<span class="nc" id="L469">        this.minPoints = minPoints;</span>
+<span class="nc" id="L470">    }</span>
+
+    /**
+     * Sets a new value for epsilon
+     * @param epsilon Epsilon
+     */
+    public void setEpsilon(double epsilon) {
+<span class="nc" id="L477">        this.epsilon = epsilon;</span>
+<span class="nc" id="L478">    }</span>
+
+    /**
+     * Returns the value of epsilon
+     * @return double Epsilon
+     */
+    public double getEpsilon() {
+<span class="nc" id="L485">        return epsilon;</span>
+    }
+
+    /**
+     * Returns the value of minPoints
+     * @return int MinPoints
+     */
+    public int getMinPoints() {
+<span class="nc" id="L493">        return minPoints;</span>
+    }
+
+    /**
+     * Returns the distance-type
+     * @return String Distance-type
+     */
+    public String getDatabase_distanceType() {
+<span class="nc" id="L501">        return database_distanceType;</span>
+    }
+
+    /**
+     * Returns the type of the used index (database)
+     * @return String Index-type
+     */
+    public String getDatabase_Type() {
+<span class="nc" id="L509">        return database_Type;</span>
+    }
+
+    /**
+     * Sets a new distance-type
+     * @param database_distanceType The new distance-type
+     */
+    public void setDatabase_distanceType(String database_distanceType) {
+<span class="nc" id="L517">        this.database_distanceType = database_distanceType;</span>
+<span class="nc" id="L518">    }</span>
+
+    /**
+     * Sets a new database-type
+     * @param database_Type The new database-type
+     */
+    public void setDatabase_Type(String database_Type) {
+<span class="nc" id="L525">        this.database_Type = database_Type;</span>
+<span class="nc" id="L526">    }</span>
+
+    /**
+     * Returns the tip text for this property
+     * @return tip text for this property suitable for
+     * displaying in the explorer/experimenter gui
+     */
+    public String epsilonTipText() {
+<span class="nc" id="L534">        return &quot;radius of the epsilon-range-queries&quot;;</span>
+    }
+
+    /**
+     * Returns the tip text for this property
+     * @return tip text for this property suitable for
+     * displaying in the explorer/experimenter gui
+     */
+    public String minPointsTipText() {
+<span class="nc" id="L543">        return &quot;minimun number of DataObjects required in an epsilon-range-query&quot;;</span>
+    }
+
+    /**
+     * Returns the tip text for this property
+     * @return tip text for this property suitable for
+     * displaying in the explorer/experimenter gui
+     */
+    public String database_TypeTipText() {
+<span class="nc" id="L552">        return &quot;used database&quot;;</span>
+    }
+
+    /**
+     * Returns the tip text for this property
+     * @return tip text for this property suitable for
+     * displaying in the explorer/experimenter gui
+     */
+    public String database_distanceTypeTipText() {
+<span class="nc" id="L561">        return &quot;used distance-type&quot;;</span>
+    }
+
+    /**
+     * Returns a string describing this DataMining-Algorithm
+     * @return String Information for the gui-explorer
+     */
+    public String globalInfo() {
+<span class="nc" id="L569">        return &quot;Basic implementation of DBSCAN clustering algorithm that should &quot;</span>
+          + &quot;*not* be used as a reference for runtime benchmarks: more sophisticated &quot;
+          + &quot;implementations exist! Clustering of new instances is not supported. More info:\n\n &quot;
+<span class="nc" id="L572">          + getTechnicalInformation().toString();</span>
+    }
+
+    /**
+     * Returns an instance of a TechnicalInformation object, containing 
+     * detailed information about the technical background of this class,
+     * e.g., paper reference or book this class is based on.
+     * 
+     * @return the technical information about this class
+     */
+    public TechnicalInformation getTechnicalInformation() {
+      TechnicalInformation 	result;
+      
+<span class="nc" id="L585">      result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L586">      result.setValue(Field.AUTHOR, &quot;Martin Ester and Hans-Peter Kriegel and Joerg Sander and Xiaowei Xu&quot;);</span>
+<span class="nc" id="L587">      result.setValue(Field.TITLE, &quot;A Density-Based Algorithm for Discovering Clusters in Large Spatial Databases with Noise&quot;);</span>
+<span class="nc" id="L588">      result.setValue(Field.BOOKTITLE, &quot;Second International Conference on Knowledge Discovery and Data Mining&quot;);</span>
+<span class="nc" id="L589">      result.setValue(Field.EDITOR, &quot;Evangelos Simoudis and Jiawei Han and Usama M. Fayyad&quot;);</span>
+<span class="nc" id="L590">      result.setValue(Field.YEAR, &quot;1996&quot;);</span>
+<span class="nc" id="L591">      result.setValue(Field.PAGES, &quot;226-231&quot;);</span>
+<span class="nc" id="L592">      result.setValue(Field.PUBLISHER, &quot;AAAI Press&quot;);</span>
+      
+<span class="nc" id="L594">      return result;</span>
+    }
+
+    /**
+     * Returns a description of the clusterer
+     * 
+     * @return a string representation of the clusterer
+     */
+    public String toString() {
+<span class="nc" id="L603">        StringBuffer stringBuffer = new StringBuffer();</span>
+<span class="nc" id="L604">        stringBuffer.append(&quot;DBSCAN clustering results\n&quot; +</span>
+                &quot;========================================================================================\n\n&quot;);
+<span class="nc" id="L606">        stringBuffer.append(&quot;Clustered DataObjects: &quot; + database.size() + &quot;\n&quot;);</span>
+<span class="nc" id="L607">        stringBuffer.append(&quot;Number of attributes: &quot; + database.getInstances().numAttributes() + &quot;\n&quot;);</span>
+<span class="nc" id="L608">        stringBuffer.append(&quot;Epsilon: &quot; + getEpsilon() + &quot;; minPoints: &quot; + getMinPoints() + &quot;\n&quot;);</span>
+<span class="nc" id="L609">        stringBuffer.append(&quot;Index: &quot; + getDatabase_Type() + &quot;\n&quot;);</span>
+<span class="nc" id="L610">        stringBuffer.append(&quot;Distance-type: &quot; + getDatabase_distanceType() + &quot;\n&quot;);</span>
+<span class="nc" id="L611">        stringBuffer.append(&quot;Number of generated clusters: &quot; + numberOfGeneratedClusters + &quot;\n&quot;);</span>
+<span class="nc" id="L612">        DecimalFormat decimalFormat = new DecimalFormat(&quot;.##&quot;);</span>
+<span class="nc" id="L613">        stringBuffer.append(&quot;Elapsed time: &quot; + decimalFormat.format(elapsedTime) + &quot;\n\n&quot;);</span>
+
+<span class="nc bnc" id="L615" title="All 2 branches missed.">        for (int i = 0; i &lt; database.size(); i++) {</span>
+<span class="nc" id="L616">            DataObject dataObject = database.getDataObject(Integer.toString(i));</span>
+<span class="nc" id="L617">            stringBuffer.append(&quot;(&quot; + Utils.doubleToString(Double.parseDouble(dataObject.getKey()),</span>
+<span class="nc" id="L618">                    (Integer.toString(database.size()).length()), 0) + &quot;.) &quot;</span>
+<span class="nc" id="L619">                    + Utils.padRight(dataObject.toString(), 69) + &quot;  --&gt;  &quot; +</span>
+<span class="nc bnc" id="L620" title="All 2 branches missed.">                    ((dataObject.getClusterLabel() == DataObject.NOISE) ?</span>
+<span class="nc" id="L621">                    &quot;NOISE\n&quot; : dataObject.getClusterLabel() + &quot;\n&quot;));</span>
+        }
+<span class="nc" id="L623">        return stringBuffer.toString() + &quot;\n&quot;;</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L632">      return RevisionUtils.extract(&quot;$Revision: 9434 $&quot;);</span>
+    }
+
+    /**
+     * Main Method for testing DBSCAN
+     * @param args Valid parameters are: 'E' epsilon (default = 0.9); 'M' minPoints (default = 6);
+     *                                   'I' index-type (default = weka.clusterers.forOPTICSAndDBScan.Databases.SequentialDatabase);
+     *                                   'D' distance-type (default = weka.clusterers.forOPTICSAndDBScan.DataObjects.EuclideanDataObject);
+     */
+    public static void main(String[] args) {
+<span class="nc" id="L642">        runClusterer(new DBSCAN(), args);</span>
+<span class="nc" id="L643">    }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

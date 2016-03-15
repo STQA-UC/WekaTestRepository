@@ -1,0 +1,593 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RELAGGS.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.filters.unsupervised.attribute</a> &gt; <span class="el_source">RELAGGS.java</span></div><h1>RELAGGS.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * RELAGGS.java
+ * Copyright (C) 2007 University of Waikato, Hamilton, New Zealand
+ */
+
+package weka.filters.unsupervised.attribute;
+
+import weka.core.Attribute;
+import weka.core.AttributeStats;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.Range;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.SimpleBatchFilter;
+
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * A propositionalization filter inspired by the RELAGGS algorithm.&lt;br/&gt;
+ * It processes all relational attributes that fall into the user defined range (all others are skipped, i.e., not added to the output). Currently, the filter only processes one level of nesting.&lt;br/&gt;
+ * The class attribute is not touched.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * M.-A. Krogel, S. Wrobel: Facets of Aggregation Approaches to Propositionalization. In: Work-in-Progress Track at the Thirteenth International Conference on Inductive Logic Programming (ILP), 2003.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Krogel2003,
+ *    author = {M.-A. Krogel and S. Wrobel},
+ *    booktitle = {Work-in-Progress Track at the Thirteenth International Conference on Inductive Logic Programming (ILP)},
+ *    editor = {T. Horvath and A. Yamamoto},
+ *    title = {Facets of Aggregation Approaches to Propositionalization},
+ *    year = {2003},
+ *    PDF = {http://kd.cs.uni-magdeburg.de/\~krogel/papers/aggs.pdf}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Turns on output of debugging information.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;index1,index2-index4,...&amp;gt;
+ *  Specify list of string attributes to convert to words.
+ *  (default: select all relational attributes)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V
+ *  Inverts the matching sense of the selection.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+ *  Max. cardinality of nominal attributes. If a nominal attribute
+ *  has more values than this upper limit, then it will be skipped.
+ *  (default: 20)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author  fracpete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 5547 $
+ */
+<span class="nc" id="L95">public class RELAGGS</span>
+  extends SimpleBatchFilter
+  implements TechnicalInformationHandler {
+
+  /** for serialization */
+  private static final long serialVersionUID = -3333791375278589231L;
+  
+  /** the max. cardinality for nominal attributes */
+<span class="nc" id="L103">  protected int m_MaxCardinality = 20;</span>
+
+  /** the range of attributes to process (only relational ones will be processed) */
+<span class="nc" id="L106">  protected Range m_SelectedRange = new Range(&quot;first-last&quot;);</span>
+  
+  /** stores the attribute statistics 
+   * &lt;code&gt;att_index-att_index_in_rel_att &amp;lt;-&amp;gt; AttributeStats&lt;/code&gt; */
+<span class="nc" id="L110">  protected Hashtable&lt;String,AttributeStats&gt; m_AttStats = new Hashtable&lt;String,AttributeStats&gt;();</span>
+  
+  /**
+   * Returns a string describing this filter
+   *
+   * @return 		a description of the filter suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L119">    return </span>
+<span class="nc" id="L120">        &quot;A propositionalization filter inspired by the RELAGGS algorithm.\n&quot;</span>
+      + &quot;It processes all relational attributes that fall into the user defined &quot;
+      + &quot;range (all others are skipped, i.e., not added to the output). &quot;
+      + &quot;Currently, the filter only processes one level of nesting.\n&quot;
+      + &quot;The class attribute is not touched.\n&quot;
+      + &quot;\n&quot;
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L127">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return 		the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L140">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L141">    result.setValue(Field.AUTHOR, &quot;M.-A. Krogel and S. Wrobel&quot;);</span>
+<span class="nc" id="L142">    result.setValue(Field.TITLE, &quot;Facets of Aggregation Approaches to Propositionalization&quot;);</span>
+<span class="nc" id="L143">    result.setValue(Field.BOOKTITLE, &quot;Work-in-Progress Track at the Thirteenth International Conference on Inductive Logic Programming (ILP)&quot;);</span>
+<span class="nc" id="L144">    result.setValue(Field.EDITOR, &quot;T. Horvath and A. Yamamoto&quot;);</span>
+<span class="nc" id="L145">    result.setValue(Field.YEAR, &quot;2003&quot;);</span>
+<span class="nc" id="L146">    result.setValue(Field.PDF, &quot;http://kd.cs.uni-magdeburg.de/~krogel/papers/aggs.pdf&quot;);</span>
+    
+<span class="nc" id="L148">    return result;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return 		an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+    Vector        	result;
+    Enumeration   	en;
+
+<span class="nc" id="L160">    result = new Vector();</span>
+
+<span class="nc" id="L162">    en = super.listOptions();</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">    while (en.hasMoreElements())</span>
+<span class="nc" id="L164">      result.addElement(en.nextElement());</span>
+
+<span class="nc" id="L166">    result.addElement(new Option(</span>
+<span class="nc" id="L167">	&quot;\tSpecify list of string attributes to convert to words.\n&quot;</span>
+	+ &quot;\t(default: select all relational attributes)&quot;,
+<span class="nc" id="L169">	&quot;R&quot;, 1, &quot;-R &lt;index1,index2-index4,...&gt;&quot;));</span>
+
+<span class="nc" id="L171">    result.addElement(new Option(</span>
+<span class="nc" id="L172">	&quot;\tInverts the matching sense of the selection.&quot;,</span>
+<span class="nc" id="L173">	&quot;V&quot;, 0, &quot;-V&quot;));</span>
+
+<span class="nc" id="L175">    result.addElement(new Option(</span>
+<span class="nc" id="L176">	&quot;\tMax. cardinality of nominal attributes. If a nominal attribute\n&quot;</span>
+	+ &quot;\thas more values than this upper limit, then it will be skipped.\n&quot;
+	+ &quot;\t(default: 20)&quot;,
+<span class="nc" id="L179">	&quot;C&quot;, 1, &quot;-C &lt;num&gt;&quot;));</span>
+
+<span class="nc" id="L181">    return result.elements();</span>
+  }
+
+  /**
+   * Parses the options for this object. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Turns on output of debugging information.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;index1,index2-index4,...&amp;gt;
+   *  Specify list of string attributes to convert to words.
+   *  (default: select all relational attributes)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V
+   *  Inverts the matching sense of the selection.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+   *  Max. cardinality of nominal attributes. If a nominal attribute
+   *  has more values than this upper limit, then it will be skipped.
+   *  (default: 20)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options	the options to use
+   * @throws Exception	if setting of options fails
+   */
+  public void setOptions(String[] options) throws Exception {
+    String	tmpStr;
+
+<span class="nc" id="L213">    tmpStr = Utils.getOption('R', options);</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L215">      setSelectedRange(tmpStr);</span>
+    else
+<span class="nc" id="L217">      setSelectedRange(&quot;first-last&quot;);</span>
+
+<span class="nc" id="L219">    setInvertSelection(Utils.getFlag('V', options));</span>
+    
+<span class="nc" id="L221">    tmpStr = Utils.getOption('C', options);</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L223">      setMaxCardinality(Integer.parseInt(tmpStr));</span>
+    else
+<span class="nc" id="L225">      setMaxCardinality(20);</span>
+
+<span class="nc" id="L227">    super.setOptions(options);</span>
+<span class="nc" id="L228">  }</span>
+
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return 		an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    int			i;
+    Vector&lt;String&gt;	result;
+    String[]		options;
+
+<span class="nc" id="L240">    result = new Vector&lt;String&gt;();</span>
+
+<span class="nc" id="L242">    options = super.getOptions();</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L244">      result.add(options[i]);</span>
+
+<span class="nc" id="L246">    result.add(&quot;-R&quot;); </span>
+<span class="nc" id="L247">    result.add(getSelectedRange().getRanges());</span>
+
+<span class="nc bnc" id="L249" title="All 2 branches missed.">    if (getInvertSelection())</span>
+<span class="nc" id="L250">      result.add(&quot;-V&quot;);</span>
+    
+<span class="nc" id="L252">    result.add(&quot;-C&quot;);</span>
+<span class="nc" id="L253">    result.add(&quot;&quot; + getMaxCardinality());</span>
+    
+<span class="nc" id="L255">    return result.toArray(new String[result.size()]);	  </span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String maxCardinalityTipText() {
+<span class="nc" id="L265">    return &quot;The maximum number of values a nominal attribute can have before it's skipped.&quot;;</span>
+  }
+
+  /**
+   * Sets the maximum number of values allowed for nominal attributes, before
+   * they're skipped.
+   *
+   * @param value 	the maximum value.
+   */
+  public void setMaxCardinality(int value) {
+<span class="nc" id="L275">    m_MaxCardinality = value;</span>
+<span class="nc" id="L276">  }</span>
+  
+  /**
+   * Gets the maximum number of values allowed for nominal attributes, before
+   * they're skipped.
+   *
+   * @return 		the maximum number.
+   */
+  public int getMaxCardinality() {
+<span class="nc" id="L285">    return m_MaxCardinality;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String attributeIndicesTipText() {
+<span class="nc" id="L295">    return </span>
+<span class="nc" id="L296">        &quot;Specify range of attributes to act on; &quot;</span>
+      + &quot;this is a comma separated list of attribute indices, with &quot;
+      + &quot;\&quot;first\&quot; and \&quot;last\&quot; valid values; Specify an inclusive &quot;
+      + &quot;range with \&quot;-\&quot;; eg: \&quot;first-3,5,6-10,last\&quot;.&quot;;
+  }
+  
+  /**
+   * Set the range of attributes to process.
+   *
+   * @param value 	the new range.
+   */
+  public void setSelectedRange(String value) {
+<span class="nc" id="L308">    m_SelectedRange = new Range(value);</span>
+<span class="nc" id="L309">  }</span>
+
+  /**
+   * Gets the current range selection.
+   *
+   * @return 		current selection.
+   */
+  public Range getSelectedRange() {
+<span class="nc" id="L317">    return m_SelectedRange;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String invertSelectionTipText() {
+<span class="nc" id="L327">    return </span>
+<span class="nc" id="L328">        &quot;Set attribute selection mode. If false, only selected &quot;</span>
+      + &quot;attributes in the range will be worked on; if &quot;
+      + &quot;true, only non-selected attributes will be processed.&quot;;
+  }
+
+  /**
+   * Sets whether selected columns should be processed or skipped.
+   *
+   * @param value 	the new invert setting
+   */
+  public void setInvertSelection(boolean value) {
+<span class="nc" id="L339">    m_SelectedRange.setInvert(value);</span>
+<span class="nc" id="L340">  }</span>
+
+  /**
+   * Gets whether the supplied columns are to be processed or skipped
+   *
+   * @return 		true if the supplied columns will be kept
+   */
+  public boolean getInvertSelection() {
+<span class="nc" id="L348">    return m_SelectedRange.getInvert();</span>
+  }
+
+  /** 
+   * Returns the Capabilities of this filter.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L358">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L359">    result.disableAll();</span>
+
+    // attributes
+<span class="nc" id="L362">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L363">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L364">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="nc" id="L365">    result.enable(Capability.RELATIONAL_ATTRIBUTES);</span>
+<span class="nc" id="L366">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="nc" id="L369">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="nc" id="L370">    result.enable(Capability.NUMERIC_CLASS);</span>
+<span class="nc" id="L371">    result.enable(Capability.DATE_CLASS);</span>
+<span class="nc" id="L372">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+<span class="nc" id="L373">    result.enable(Capability.NO_CLASS);</span>
+    
+<span class="nc" id="L375">    return result;</span>
+  }
+
+  /**
+   * Determines the output format based on the input format and returns 
+   * this. In case the output format cannot be returned immediately, i.e.,
+   * immediateOutputFormat() returns false, then this method will be called
+   * from batchFinished().
+   *
+   * @param inputFormat     the input format to base the output format on
+   * @return                the output format
+   * @throws Exception      in case the determination goes wrong
+   * @see   #hasImmediateOutputFormat()
+   * @see   #batchFinished()
+   */
+  protected Instances determineOutputFormat(Instances inputFormat)
+      throws Exception {
+
+    Instances 	result;
+    Instances	relFormat;
+    FastVector	atts;
+    int		i;
+    int		n;
+    int		m;
+    int		clsIndex;
+    Attribute	att;
+    String	prefix;
+
+<span class="nc" id="L403">    m_SelectedRange.setUpper(inputFormat.numAttributes() - 1);</span>
+    
+<span class="nc" id="L405">    atts     = new FastVector();</span>
+<span class="nc" id="L406">    clsIndex = -1;</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">    for (i = 0; i &lt; inputFormat.numAttributes(); i++) {</span>
+      // we don't process the class
+<span class="nc bnc" id="L409" title="All 2 branches missed.">      if (i == inputFormat.classIndex()) {</span>
+<span class="nc" id="L410">	clsIndex = atts.size();</span>
+<span class="nc" id="L411">	atts.addElement(inputFormat.attribute(i).copy());</span>
+<span class="nc" id="L412">	continue;</span>
+      }
+      
+<span class="nc bnc" id="L415" title="All 2 branches missed.">      if (!inputFormat.attribute(i).isRelationValued()) {</span>
+<span class="nc" id="L416">	atts.addElement(inputFormat.attribute(i).copy());</span>
+<span class="nc" id="L417">	continue;</span>
+      }
+      
+<span class="nc bnc" id="L420" title="All 2 branches missed.">      if (!m_SelectedRange.isInRange(i)) {</span>
+<span class="nc bnc" id="L421" title="All 2 branches missed.">	if (getDebug())</span>
+<span class="nc" id="L422">	  System.out.println(</span>
+<span class="nc" id="L423">	      &quot;Attribute &quot; + (i+1) + &quot; (&quot; + inputFormat.attribute(i).name() </span>
+<span class="nc" id="L424">	      + &quot;) skipped.&quot;);</span>
+<span class="nc" id="L425">	continue;</span>
+      }
+
+      // process relational attribute
+<span class="nc" id="L429">      prefix    = inputFormat.attribute(i).name() + &quot;_&quot;;</span>
+<span class="nc" id="L430">      relFormat = inputFormat.attribute(i).relation();</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">      for (n = 0; n &lt; relFormat.numAttributes(); n++) {</span>
+<span class="nc" id="L432">	att = relFormat.attribute(n);</span>
+	
+<span class="nc bnc" id="L434" title="All 2 branches missed.">	if (att.isNumeric()) {</span>
+<span class="nc" id="L435">	  atts.addElement(new Attribute(prefix + att.name() + &quot;_MIN&quot;));</span>
+<span class="nc" id="L436">	  atts.addElement(new Attribute(prefix + att.name() + &quot;_MAX&quot;));</span>
+<span class="nc" id="L437">	  atts.addElement(new Attribute(prefix + att.name() + &quot;_AVG&quot;));</span>
+<span class="nc" id="L438">	  atts.addElement(new Attribute(prefix + att.name() + &quot;_STDEV&quot;));</span>
+<span class="nc" id="L439">	  atts.addElement(new Attribute(prefix + att.name() + &quot;_SUM&quot;));</span>
+	}
+<span class="nc bnc" id="L441" title="All 2 branches missed.">	else if (att.isNominal()) {</span>
+<span class="nc bnc" id="L442" title="All 2 branches missed.">	  if (att.numValues() &lt;= m_MaxCardinality) {</span>
+<span class="nc bnc" id="L443" title="All 2 branches missed.">	    for (m = 0; m &lt; att.numValues(); m++)</span>
+<span class="nc" id="L444">	      atts.addElement(new Attribute(prefix + att.name() + &quot;_&quot; + att.value(m) + &quot;_CNT&quot;));</span>
+	  }
+	  else {
+<span class="nc bnc" id="L447" title="All 2 branches missed.">	    if (getDebug())</span>
+<span class="nc" id="L448">	      System.out.println(</span>
+<span class="nc" id="L449">		  &quot;Attribute &quot; + (i+1) + &quot;/&quot; + (n+1) </span>
+<span class="nc" id="L450">		  + &quot; (&quot; + inputFormat.attribute(i).name() + &quot;/&quot; + att.name()</span>
+<span class="nc" id="L451">		  + &quot;) skipped, &quot; + att.numValues() + &quot; &gt; &quot; + m_MaxCardinality + &quot;.&quot;);</span>
+	  }
+	}
+	else {
+<span class="nc bnc" id="L455" title="All 2 branches missed.">	  if (getDebug())</span>
+<span class="nc" id="L456">	    System.out.println(</span>
+<span class="nc" id="L457">		&quot;Attribute &quot; + (i+1) + &quot;/&quot; + (n+1) </span>
+<span class="nc" id="L458">		+ &quot; (&quot; + inputFormat.attribute(i).name() + &quot;/&quot; + att.name()</span>
+<span class="nc" id="L459">		+ &quot;) skipped.&quot;);</span>
+	}
+      }
+    }
+    
+    // generate new format
+<span class="nc" id="L465">    result = new Instances(inputFormat.relationName(), atts, 0);</span>
+<span class="nc" id="L466">    result.setClassIndex(clsIndex);</span>
+    
+    // neither string nor relational attributes need to be copied to the 
+    // output:
+<span class="nc" id="L470">    initOutputLocators(result, new int[0]);</span>
+    
+<span class="nc" id="L472">    return result;</span>
+  }
+
+  /**
+   * Processes the given data (may change the provided dataset) and returns
+   * the modified version. This method is called in batchFinished().
+   *
+   * @param instances   the data to process
+   * @return            the modified data
+   * @throws Exception  in case the processing goes wrong
+   * @see               #batchFinished()
+   */
+  protected Instances process(Instances instances) throws Exception {
+    Instances		result;
+    Instance		inst;
+    Instance		newInst;
+    Instances		relInstances;
+    int			k;
+    int			l;
+    int			i;
+    int			n;
+    int			m;
+    AttributeStats	stats;
+    Attribute		att;
+    
+<span class="nc" id="L497">    result = getOutputFormat();</span>
+
+    // initialize attribute statistics
+<span class="nc" id="L500">    m_AttStats.clear();</span>
+
+    // collect data for all relational attributes
+<span class="nc bnc" id="L503" title="All 2 branches missed.">    for (i = 0; i &lt; instances.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">      if (i == instances.classIndex())</span>
+<span class="nc" id="L505">	continue;</span>
+
+<span class="nc bnc" id="L507" title="All 2 branches missed.">      if (!instances.attribute(i).isRelationValued())</span>
+<span class="nc" id="L508">	continue;</span>
+
+<span class="nc bnc" id="L510" title="All 2 branches missed.">      if (!m_SelectedRange.isInRange(i))</span>
+<span class="nc" id="L511">	continue;</span>
+
+      // compute statistics
+<span class="nc bnc" id="L514" title="All 2 branches missed.">      for (k = 0; k &lt; instances.numInstances(); k++) {</span>
+<span class="nc" id="L515">	relInstances = instances.instance(k).relationalValue(i);</span>
+
+<span class="nc bnc" id="L517" title="All 2 branches missed.">	for (n = 0; n &lt; relInstances.numAttributes(); n++) {</span>
+<span class="nc" id="L518">	  att   = relInstances.attribute(n);</span>
+<span class="nc" id="L519">	  stats = null;</span>
+
+<span class="nc bnc" id="L521" title="All 2 branches missed.">	  if (    att.isNumeric() </span>
+<span class="nc bnc" id="L522" title="All 4 branches missed.">	      || (att.isNominal() &amp;&amp; att.numValues() &lt;= m_MaxCardinality) ) {</span>
+<span class="nc" id="L523">	    stats = relInstances.attributeStats(n);</span>
+<span class="nc" id="L524">	    m_AttStats.put(k + &quot;-&quot; + i + &quot;-&quot; + n, stats);</span>
+	  }
+	}
+      }
+    }
+    
+    // convert data
+<span class="nc bnc" id="L531" title="All 2 branches missed.">    for (k = 0; k &lt; instances.numInstances(); k++) {</span>
+<span class="nc" id="L532">      inst    = instances.instance(k);</span>
+<span class="nc" id="L533">      newInst = new Instance(result.numAttributes());</span>
+<span class="nc" id="L534">      newInst.setWeight(inst.weight());</span>
+
+<span class="nc" id="L536">      l = 0;</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">      for (i = 0; i &lt; instances.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">	if (!instances.attribute(i).isRelationValued()) {</span>
+<span class="nc" id="L539">	  newInst.setValue(l, inst.value(i));</span>
+<span class="nc" id="L540">	  l++;</span>
+	}
+	else {
+<span class="nc bnc" id="L543" title="All 2 branches missed.">	  if (!m_SelectedRange.isInRange(i))</span>
+<span class="nc" id="L544">	    continue;</span>
+	  
+	  // replace relational data with statistics
+<span class="nc" id="L547">	  relInstances = inst.relationalValue(i);</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">	  for (n = 0; n &lt; relInstances.numAttributes(); n++) {</span>
+<span class="nc" id="L549">	    att   = relInstances.attribute(n);</span>
+<span class="nc" id="L550">	    stats = (AttributeStats) m_AttStats.get(k + &quot;-&quot; + i + &quot;-&quot; + n);</span>
+	    
+<span class="nc bnc" id="L552" title="All 2 branches missed.">	    if (att.isNumeric()) {</span>
+<span class="nc" id="L553">	      newInst.setValue(l, stats.numericStats.min); l++;</span>
+<span class="nc" id="L554">	      newInst.setValue(l, stats.numericStats.max); l++;</span>
+<span class="nc" id="L555">	      newInst.setValue(l, stats.numericStats.mean); l++;</span>
+<span class="nc" id="L556">	      newInst.setValue(l, stats.numericStats.stdDev); l++;</span>
+<span class="nc" id="L557">	      newInst.setValue(l, stats.numericStats.sum); l++;</span>
+	    }
+<span class="nc bnc" id="L559" title="All 4 branches missed.">	    else if (att.isNominal() &amp;&amp; att.numValues() &lt;= m_MaxCardinality) {</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">	      for (m = 0; m &lt; att.numValues(); m++) {</span>
+<span class="nc" id="L561">		newInst.setValue(l, stats.nominalCounts[m]);</span>
+<span class="nc" id="L562">		l++;</span>
+	      }
+	    }
+	  }
+	}
+      }
+      
+<span class="nc" id="L569">      result.add(newInst);</span>
+    }
+    
+<span class="nc" id="L572">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L581">    return RevisionUtils.extract(&quot;$Revision: 5547 $&quot;);</span>
+  }
+
+  /**
+   * runs the filter with the given arguments
+   *
+   * @param args      the commandline arguments
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L590">    runFilter(new RELAGGS(), args);</span>
+<span class="nc" id="L591">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

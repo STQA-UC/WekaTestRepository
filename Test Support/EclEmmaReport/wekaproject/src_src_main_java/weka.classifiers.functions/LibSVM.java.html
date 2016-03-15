@@ -1,0 +1,1662 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>LibSVM.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.functions</a> &gt; <span class="el_source">LibSVM.java</span></div><h1>LibSVM.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * LibSVM.java
+ * Copyright (C) 2005 Yasser EL-Manzalawy (original code)
+ * Copyright (C) 2005 University of Waikato, Hamilton, NZ (adapted code)
+ * 
+ */
+
+package weka.classifiers.functions;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.RandomizableClassifier;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Normalize;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.lang.reflect.Array;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.StringTokenizer;
+import java.util.Vector;
+
+/*
+ * Modifications by FracPete:
+ * - complete overhaul to make it useable in Weka
+ * - accesses libsvm classes only via Reflection to make Weka compile without
+ *   the libsvm classes
+ * - uses more efficient code to transfer the data into the libsvm sparse format
+ */
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * A wrapper class for the libsvm tools (the libsvm classes, typically the jar file, need to be in the classpath to use this classifier).&lt;br/&gt;
+ * LibSVM runs faster than SMO since it uses LibSVM to build the SVM classifier.&lt;br/&gt;
+ * LibSVM allows users to experiment with One-class SVM, Regressing SVM, and nu-SVM supported by LibSVM tool. LibSVM reports many useful statistics about LibSVM classifier (e.g., confusion matrix,precision, recall, ROC score, etc.).&lt;br/&gt;
+ * &lt;br/&gt;
+ * Yasser EL-Manzalawy (2005). WLSVM. URL http://www.cs.iastate.edu/~yasser/wlsvm/.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Chih-Chung Chang, Chih-Jen Lin (2001). LIBSVM - A Library for Support Vector Machines. URL http://www.csie.ntu.edu.tw/~cjlin/libsvm/.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;misc{EL-Manzalawy2005,
+ *    author = {Yasser EL-Manzalawy},
+ *    note = {You don't need to include the WLSVM package in the CLASSPATH},
+ *    title = {WLSVM},
+ *    year = {2005},
+ *    URL = {http://www.cs.iastate.edu/\~yasser/wlsvm/}
+ * }
+ * 
+ * &amp;#64;misc{Chang2001,
+ *    author = {Chih-Chung Chang and Chih-Jen Lin},
+ *    note = {The Weka classifier works with version 2.82 of LIBSVM},
+ *    title = {LIBSVM - A Library for Support Vector Machines},
+ *    year = {2001},
+ *    URL = {http://www.csie.ntu.edu.tw/\~cjlin/libsvm/}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;int&amp;gt;
+ *  Set type of SVM (default: 0)
+ *    0 = C-SVC
+ *    1 = nu-SVC
+ *    2 = one-class SVM
+ *    3 = epsilon-SVR
+ *    4 = nu-SVR&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -K &amp;lt;int&amp;gt;
+ *  Set type of kernel function (default: 2)
+ *    0 = linear: u'*v
+ *    1 = polynomial: (gamma*u'*v + coef0)^degree
+ *    2 = radial basis function: exp(-gamma*|u-v|^2)
+ *    3 = sigmoid: tanh(gamma*u'*v + coef0)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D &amp;lt;int&amp;gt;
+ *  Set degree in kernel function (default: 3)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -G &amp;lt;double&amp;gt;
+ *  Set gamma in kernel function (default: 1/k)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;double&amp;gt;
+ *  Set coef0 in kernel function (default: 0)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;double&amp;gt;
+ *  Set the parameter C of C-SVC, epsilon-SVR, and nu-SVR
+ *   (default: 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;double&amp;gt;
+ *  Set the parameter nu of nu-SVC, one-class SVM, and nu-SVR
+ *   (default: 0.5)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Z
+ *  Turns on normalization of input data (default: off)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -J
+ *  Turn off nominal to binary conversion.
+ *  WARNING: use only if your data is all numeric!&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V
+ *  Turn off missing value replacement.
+ *  WARNING: use only if your data has no missing values.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;double&amp;gt;
+ *  Set the epsilon in loss function of epsilon-SVR (default: 0.1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;double&amp;gt;
+ *  Set cache memory size in MB (default: 40)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -E &amp;lt;double&amp;gt;
+ *  Set tolerance of termination criterion (default: 0.001)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -H
+ *  Turns the shrinking heuristics off (default: on)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;double&amp;gt;
+ *  Set the parameters C of class i to weight[i]*C, for C-SVC
+ *  E.g., for a 3-class problem, you could use &quot;1 1 1&quot; for equally
+ *  weighted classes.
+ *  (default: 1 for all classes)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -B
+ *  Generate probability estimates for classification&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -seed &amp;lt;num&amp;gt;
+ *  Random seed
+ *  (default = 1)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author  Yasser EL-Manzalawy
+ * @author  FracPete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 8940 $
+ * @see     weka.core.converters.LibSVMLoader
+ * @see     weka.core.converters.LibSVMSaver
+ */
+<span class="fc" id="L173">public class LibSVM </span>
+  extends RandomizableClassifier
+  implements TechnicalInformationHandler {
+  
+  /** the svm classname */
+  protected final static String CLASS_SVM = &quot;libsvm.svm&quot;;
+  
+  /** the svm_model classname */
+  protected final static String CLASS_SVMMODEL = &quot;libsvm.svm_model&quot;;
+  
+  /** the svm_problem classname */
+  protected final static String CLASS_SVMPROBLEM = &quot;libsvm.svm_problem&quot;;
+  
+  /** the svm_parameter classname */
+  protected final static String CLASS_SVMPARAMETER = &quot;libsvm.svm_parameter&quot;;
+  
+  /** the svm_node classname */
+  protected final static String CLASS_SVMNODE = &quot;libsvm.svm_node&quot;;
+  
+  /** serial UID */
+  protected static final long serialVersionUID = 14172;
+  
+  /** LibSVM Model */
+  protected Object m_Model;
+  
+  /** for normalizing the data */
+<span class="fc" id="L199">  protected Filter m_Filter = null;</span>
+    
+  /** The filter used to get rid of missing values. */
+  protected ReplaceMissingValues m_ReplaceMissingValues;
+  
+  /** normalize input data */
+<span class="fc" id="L205">  protected boolean m_Normalize = false;</span>
+  
+  /** If true, the replace missing values filter is not applied */
+  private boolean m_noReplaceMissingValues;
+  
+  /** SVM type C-SVC (classification) */
+  public static final int SVMTYPE_C_SVC = 0;
+  /** SVM type nu-SVC (classification) */
+  public static final int SVMTYPE_NU_SVC = 1;
+  /** SVM type one-class SVM (classification) */
+  public static final int SVMTYPE_ONE_CLASS_SVM = 2;
+  /** SVM type epsilon-SVR (regression) */
+  public static final int SVMTYPE_EPSILON_SVR = 3;
+  /** SVM type nu-SVR (regression) */
+  public static final int SVMTYPE_NU_SVR = 4;
+  /** SVM types */
+<span class="fc" id="L221">  public static final Tag[] TAGS_SVMTYPE = {</span>
+<span class="fc" id="L222">    new Tag(SVMTYPE_C_SVC, &quot;C-SVC (classification)&quot;),</span>
+<span class="fc" id="L223">    new Tag(SVMTYPE_NU_SVC, &quot;nu-SVC (classification)&quot;),</span>
+<span class="fc" id="L224">    new Tag(SVMTYPE_ONE_CLASS_SVM, &quot;one-class SVM (classification)&quot;),</span>
+<span class="fc" id="L225">    new Tag(SVMTYPE_EPSILON_SVR, &quot;epsilon-SVR (regression)&quot;),</span>
+<span class="fc" id="L226">    new Tag(SVMTYPE_NU_SVR, &quot;nu-SVR (regression)&quot;)</span>
+  };
+  
+  /** the SVM type */
+<span class="fc" id="L230">  protected int m_SVMType = SVMTYPE_C_SVC;</span>
+  
+  /** kernel type linear: u'*v */
+  public static final int KERNELTYPE_LINEAR = 0;
+  /** kernel type polynomial: (gamma*u'*v + coef0)^degree */
+  public static final int KERNELTYPE_POLYNOMIAL = 1;
+  /** kernel type radial basis function: exp(-gamma*|u-v|^2) */
+  public static final int KERNELTYPE_RBF = 2;
+  /** kernel type sigmoid: tanh(gamma*u'*v + coef0) */
+  public static final int KERNELTYPE_SIGMOID = 3;
+  /** the different kernel types */
+<span class="fc" id="L241">  public static final Tag[] TAGS_KERNELTYPE = {</span>
+<span class="fc" id="L242">    new Tag(KERNELTYPE_LINEAR, &quot;linear: u'*v&quot;),</span>
+<span class="fc" id="L243">    new Tag(KERNELTYPE_POLYNOMIAL, &quot;polynomial: (gamma*u'*v + coef0)^degree&quot;),</span>
+<span class="fc" id="L244">    new Tag(KERNELTYPE_RBF, &quot;radial basis function: exp(-gamma*|u-v|^2)&quot;),</span>
+<span class="fc" id="L245">    new Tag(KERNELTYPE_SIGMOID, &quot;sigmoid: tanh(gamma*u'*v + coef0)&quot;)</span>
+  };
+  
+  /** the kernel type */
+<span class="fc" id="L249">  protected int m_KernelType = KERNELTYPE_RBF;</span>
+  
+  /** for poly - in older versions of libsvm declared as a double.
+   * At least since 2.82 it is an int. */
+<span class="fc" id="L253">  protected int m_Degree = 3;</span>
+  
+  /** for poly/rbf/sigmoid */
+<span class="fc" id="L256">  protected double m_Gamma = 0;</span>
+  
+  /** for poly/rbf/sigmoid (the actual gamma) */
+<span class="fc" id="L259">  protected double m_GammaActual = 0;</span>
+  
+  /** for poly/sigmoid */
+<span class="fc" id="L262">  protected double m_Coef0 = 0;</span>
+  
+  /** in MB */
+<span class="fc" id="L265">  protected double m_CacheSize = 40;</span>
+  
+  /** stopping criteria */
+<span class="fc" id="L268">  protected double m_eps = 1e-3;</span>
+  
+  /** cost, for C_SVC, EPSILON_SVR and NU_SVR */
+<span class="fc" id="L271">  protected double m_Cost = 1;</span>
+  
+  /** for C_SVC */
+<span class="fc" id="L274">  protected int[] m_WeightLabel = new int[0];</span>
+  
+  /** for C_SVC */
+<span class="fc" id="L277">  protected double[] m_Weight = new double[0];</span>
+  
+  /** for NU_SVC, ONE_CLASS, and NU_SVR */
+<span class="fc" id="L280">  protected double m_nu = 0.5;</span>
+  
+  /** loss, for EPSILON_SVR */
+<span class="fc" id="L283">  protected double m_Loss = 0.1;</span>
+  
+  /** use the shrinking heuristics */
+<span class="fc" id="L286">  protected boolean m_Shrinking = true;	</span>
+  
+  /** whether to generate probability estimates instead of +1/-1 in case of 
+   * classification problems */
+<span class="fc" id="L290">  protected boolean m_ProbabilityEstimates = false;</span>
+    
+  /** whether the libsvm classes are in the Classpath */
+<span class="fc" id="L293">  protected static boolean m_Present = false;</span>
+  static {
+    try {
+<span class="nc" id="L296">      Class.forName(CLASS_SVM);</span>
+<span class="nc" id="L297">      m_Present = true;</span>
+    }
+<span class="fc" id="L299">    catch (Exception e) {</span>
+<span class="fc" id="L300">      m_Present = false;</span>
+    }
+  }
+  
+  /**
+   * Returns a string describing classifier
+   * 
+   * @return a description suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L311">    return </span>
+<span class="nc" id="L312">      &quot;A wrapper class for the libsvm tools (the libsvm classes, typically &quot;</span>
+    + &quot;the jar file, need to be in the classpath to use this classifier).\n&quot;
+    + &quot;LibSVM runs faster than SMO since it uses LibSVM to build the SVM &quot;
+    + &quot;classifier.\n&quot;
+    + &quot;LibSVM allows users to experiment with One-class SVM, Regressing SVM, &quot;
+    + &quot;and nu-SVM supported by LibSVM tool. LibSVM reports many useful &quot;
+    + &quot;statistics about LibSVM classifier (e.g., confusion matrix,&quot;
+    + &quot;precision, recall, ROC score, etc.).\n&quot;
+    + &quot;\n&quot;
+<span class="nc" id="L321">    + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    TechnicalInformation 	additional;
+    
+<span class="nc" id="L335">    result = new TechnicalInformation(Type.MISC);</span>
+<span class="nc" id="L336">    result.setValue(TechnicalInformation.Field.AUTHOR, &quot;Yasser EL-Manzalawy&quot;);</span>
+<span class="nc" id="L337">    result.setValue(TechnicalInformation.Field.YEAR, &quot;2005&quot;);</span>
+<span class="nc" id="L338">    result.setValue(TechnicalInformation.Field.TITLE, &quot;WLSVM&quot;);</span>
+<span class="nc" id="L339">    result.setValue(TechnicalInformation.Field.NOTE, &quot;LibSVM was originally developed as 'WLSVM'&quot;);</span>
+<span class="nc" id="L340">    result.setValue(TechnicalInformation.Field.URL, &quot;http://www.cs.iastate.edu/~yasser/wlsvm/&quot;);</span>
+<span class="nc" id="L341">    result.setValue(TechnicalInformation.Field.NOTE, &quot;You don't need to include the WLSVM package in the CLASSPATH&quot;);</span>
+    
+<span class="nc" id="L343">    additional = result.add(Type.MISC);</span>
+<span class="nc" id="L344">    additional.setValue(TechnicalInformation.Field.AUTHOR, &quot;Chih-Chung Chang and Chih-Jen Lin&quot;);</span>
+<span class="nc" id="L345">    additional.setValue(TechnicalInformation.Field.TITLE, &quot;LIBSVM - A Library for Support Vector Machines&quot;);</span>
+<span class="nc" id="L346">    additional.setValue(TechnicalInformation.Field.YEAR, &quot;2001&quot;);</span>
+<span class="nc" id="L347">    additional.setValue(TechnicalInformation.Field.URL, &quot;http://www.csie.ntu.edu.tw/~cjlin/libsvm/&quot;);</span>
+<span class="nc" id="L348">    additional.setValue(TechnicalInformation.Field.NOTE, &quot;The Weka classifier works with version 2.82 of LIBSVM&quot;);</span>
+    
+<span class="nc" id="L350">    return result;</span>
+  }
+  
+  /**
+   * Returns an enumeration describing the available options.
+   * 
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+    Vector      result;
+    
+<span class="fc" id="L361">    result = new Vector();</span>
+    
+<span class="fc" id="L363">    result.addElement(</span>
+<span class="fc" id="L364">        new Option(</span>
+<span class="fc" id="L365">            &quot;\tSet type of SVM (default: 0)\n&quot;</span>
+            + &quot;\t\t 0 = C-SVC\n&quot; 
+            + &quot;\t\t 1 = nu-SVC\n&quot;
+            + &quot;\t\t 2 = one-class SVM\n&quot; 
+            + &quot;\t\t 3 = epsilon-SVR\n&quot;
+            + &quot;\t\t 4 = nu-SVR&quot;, 
+<span class="fc" id="L371">            &quot;S&quot;, 1, &quot;-S &lt;int&gt;&quot;));</span>
+    
+<span class="fc" id="L373">    result.addElement(</span>
+<span class="fc" id="L374">        new Option(</span>
+<span class="fc" id="L375">            &quot;\tSet type of kernel function (default: 2)\n&quot;</span>
+            + &quot;\t\t 0 = linear: u'*v\n&quot;
+            + &quot;\t\t 1 = polynomial: (gamma*u'*v + coef0)^degree\n&quot;
+            + &quot;\t\t 2 = radial basis function: exp(-gamma*|u-v|^2)\n&quot;
+            + &quot;\t\t 3 = sigmoid: tanh(gamma*u'*v + coef0)&quot;,
+<span class="fc" id="L380">            &quot;K&quot;, 1, &quot;-K &lt;int&gt;&quot;));</span>
+    
+<span class="fc" id="L382">    result.addElement(</span>
+<span class="fc" id="L383">        new Option(</span>
+<span class="fc" id="L384">            &quot;\tSet degree in kernel function (default: 3)&quot;, </span>
+<span class="fc" id="L385">            &quot;D&quot;, 1, &quot;-D &lt;int&gt;&quot;));</span>
+    
+<span class="fc" id="L387">    result.addElement(</span>
+<span class="fc" id="L388">        new Option(</span>
+<span class="fc" id="L389">            &quot;\tSet gamma in kernel function (default: 1/k)&quot;, </span>
+<span class="fc" id="L390">            &quot;G&quot;, 1, &quot;-G &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L392">    result.addElement(</span>
+<span class="fc" id="L393">        new Option(</span>
+<span class="fc" id="L394">            &quot;\tSet coef0 in kernel function (default: 0)&quot;, </span>
+<span class="fc" id="L395">            &quot;R&quot;, 1, &quot;-R &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L397">    result.addElement(</span>
+<span class="fc" id="L398">        new Option(</span>
+<span class="fc" id="L399">            &quot;\tSet the parameter C of C-SVC, epsilon-SVR, and nu-SVR\n&quot;</span>
+            + &quot;\t (default: 1)&quot;,
+<span class="fc" id="L401">            &quot;C&quot;, 1, &quot;-C &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L403">    result.addElement(</span>
+<span class="fc" id="L404">        new Option(</span>
+<span class="fc" id="L405">            &quot;\tSet the parameter nu of nu-SVC, one-class SVM, and nu-SVR\n&quot;</span>
+            + &quot;\t (default: 0.5)&quot;,
+<span class="fc" id="L407">            &quot;N&quot;, 1, &quot;-N &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L409">    result.addElement(</span>
+<span class="fc" id="L410">        new Option(</span>
+<span class="fc" id="L411">            &quot;\tTurns on normalization of input data (default: off)&quot;, </span>
+<span class="fc" id="L412">            &quot;Z&quot;, 0, &quot;-Z&quot;));</span>
+    
+<span class="fc" id="L414">    result.addElement(</span>
+<span class="fc" id="L415">        new Option(&quot;\tTurn off nominal to binary conversion.&quot;</span>
+            + &quot;\n\tWARNING: use only if your data is all numeric!&quot;,
+<span class="fc" id="L417">            &quot;J&quot;, 0, &quot;-J&quot;));</span>
+    
+<span class="fc" id="L419">    result.addElement(</span>
+<span class="fc" id="L420">        new Option(&quot;\tTurn off missing value replacement.&quot;</span>
+            + &quot;\n\tWARNING: use only if your data has no missing &quot;
+<span class="fc" id="L422">            + &quot;values.&quot;, &quot;V&quot;, 0, &quot;-V&quot;));</span>
+    
+<span class="fc" id="L424">    result.addElement(</span>
+<span class="fc" id="L425">        new Option(</span>
+<span class="fc" id="L426">            &quot;\tSet the epsilon in loss function of epsilon-SVR (default: 0.1)&quot;,</span>
+<span class="fc" id="L427">            &quot;P&quot;, 1, &quot;-P &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L429">    result.addElement(</span>
+<span class="fc" id="L430">        new Option(</span>
+<span class="fc" id="L431">            &quot;\tSet cache memory size in MB (default: 40)&quot;, </span>
+<span class="fc" id="L432">            &quot;M&quot;, 1, &quot;-M &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L434">    result.addElement(</span>
+<span class="fc" id="L435">        new Option(</span>
+<span class="fc" id="L436">            &quot;\tSet tolerance of termination criterion (default: 0.001)&quot;,</span>
+<span class="fc" id="L437">            &quot;E&quot;, 1, &quot;-E &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L439">    result.addElement(</span>
+<span class="fc" id="L440">        new Option(</span>
+<span class="fc" id="L441">            &quot;\tTurns the shrinking heuristics off (default: on)&quot;,</span>
+<span class="fc" id="L442">            &quot;H&quot;, 0, &quot;-H&quot;));</span>
+    
+<span class="fc" id="L444">    result.addElement(</span>
+<span class="fc" id="L445">        new Option(</span>
+<span class="fc" id="L446">            &quot;\tSet the parameters C of class i to weight[i]*C, for C-SVC\n&quot; </span>
+            + &quot;\tE.g., for a 3-class problem, you could use \&quot;1 1 1\&quot; for equally\n&quot;
+            + &quot;\tweighted classes.\n&quot;
+            + &quot;\t(default: 1 for all classes)&quot;,
+<span class="fc" id="L450">            &quot;W&quot;, 1, &quot;-W &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L452">    result.addElement(</span>
+<span class="fc" id="L453">        new Option(</span>
+<span class="fc" id="L454">            &quot;\tGenerate probability estimates for classification&quot;,</span>
+<span class="fc" id="L455">            &quot;B&quot;, 0, &quot;-B&quot;));</span>
+
+<span class="fc" id="L457">    result.addElement(</span>
+<span class="fc" id="L458">        new Option(&quot;\tRandom seed\n\t(default = 1)&quot;, &quot;seed&quot;, 1, &quot;-seed &lt;num&gt;&quot;));</span>
+    
+<span class="fc" id="L460">    return result.elements();</span>
+  }
+  
+  /**
+   * Sets the classifier options &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;int&amp;gt;
+   *  Set type of SVM (default: 0)
+   *    0 = C-SVC
+   *    1 = nu-SVC
+   *    2 = one-class SVM
+   *    3 = epsilon-SVR
+   *    4 = nu-SVR&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -K &amp;lt;int&amp;gt;
+   *  Set type of kernel function (default: 2)
+   *    0 = linear: u'*v
+   *    1 = polynomial: (gamma*u'*v + coef0)^degree
+   *    2 = radial basis function: exp(-gamma*|u-v|^2)
+   *    3 = sigmoid: tanh(gamma*u'*v + coef0)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D &amp;lt;int&amp;gt;
+   *  Set degree in kernel function (default: 3)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -G &amp;lt;double&amp;gt;
+   *  Set gamma in kernel function (default: 1/k)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;double&amp;gt;
+   *  Set coef0 in kernel function (default: 0)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;double&amp;gt;
+   *  Set the parameter C of C-SVC, epsilon-SVR, and nu-SVR
+   *   (default: 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;double&amp;gt;
+   *  Set the parameter nu of nu-SVC, one-class SVM, and nu-SVR
+   *   (default: 0.5)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -Z
+   *  Turns on normalization of input data (default: off)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -J
+   *  Turn off nominal to binary conversion.
+   *  WARNING: use only if your data is all numeric!&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V
+   *  Turn off missing value replacement.
+   *  WARNING: use only if your data has no missing values.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;double&amp;gt;
+   *  Set the epsilon in loss function of epsilon-SVR (default: 0.1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;double&amp;gt;
+   *  Set cache memory size in MB (default: 40)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -E &amp;lt;double&amp;gt;
+   *  Set tolerance of termination criterion (default: 0.001)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -H
+   *  Turns the shrinking heuristics off (default: on)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;double&amp;gt;
+   *  Set the parameters C of class i to weight[i]*C, for C-SVC
+   *  E.g., for a 3-class problem, you could use &quot;1 1 1&quot; for equally
+   *  weighted classes.
+   *  (default: 1 for all classes)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -B
+   *  Generate probability estimates for classification&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -seed &amp;lt;num&amp;gt;
+   *  Random seed
+   *  (default = 1)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options     the options to parse
+   * @throws Exception  if parsing fails
+   */
+  public void setOptions(String[] options) throws Exception {
+    String      tmpStr;
+    
+<span class="fc" id="L545">    tmpStr = Utils.getOption('S', options);</span>
+<span class="fc bfc" id="L546" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L547">      setSVMType(</span>
+<span class="fc" id="L548">          new SelectedTag(Integer.parseInt(tmpStr), TAGS_SVMTYPE));</span>
+    else
+<span class="fc" id="L550">      setSVMType(</span>
+<span class="fc" id="L551">          new SelectedTag(SVMTYPE_C_SVC, TAGS_SVMTYPE));</span>
+    
+<span class="fc" id="L553">    tmpStr = Utils.getOption('K', options);</span>
+<span class="fc bfc" id="L554" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L555">      setKernelType(</span>
+<span class="fc" id="L556">          new SelectedTag(Integer.parseInt(tmpStr), TAGS_KERNELTYPE));</span>
+    else
+<span class="fc" id="L558">      setKernelType(</span>
+<span class="fc" id="L559">          new SelectedTag(KERNELTYPE_RBF, TAGS_KERNELTYPE));</span>
+    
+<span class="fc" id="L561">    tmpStr = Utils.getOption('D', options);</span>
+<span class="fc bfc" id="L562" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L563">      setDegree(Integer.parseInt(tmpStr));</span>
+    else
+<span class="fc" id="L565">      setDegree(3);</span>
+    
+<span class="fc" id="L567">    tmpStr = Utils.getOption('G', options);</span>
+<span class="fc bfc" id="L568" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L569">      setGamma(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L571">      setGamma(0);</span>
+    
+<span class="fc" id="L573">    tmpStr = Utils.getOption('R', options);</span>
+<span class="fc bfc" id="L574" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L575">      setCoef0(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L577">      setCoef0(0);</span>
+    
+<span class="fc" id="L579">    tmpStr = Utils.getOption('N', options);</span>
+<span class="fc bfc" id="L580" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L581">      setNu(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L583">      setNu(0.5);</span>
+    
+<span class="fc" id="L585">    tmpStr = Utils.getOption('M', options);</span>
+<span class="fc bfc" id="L586" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L587">      setCacheSize(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L589">      setCacheSize(40);</span>
+    
+<span class="fc" id="L591">    tmpStr = Utils.getOption('C', options);</span>
+<span class="fc bfc" id="L592" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L593">      setCost(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L595">      setCost(1);</span>
+    
+<span class="fc" id="L597">    tmpStr = Utils.getOption('E', options);</span>
+<span class="fc bfc" id="L598" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L599">      setEps(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L601">      setEps(1e-3);</span>
+    
+<span class="fc" id="L603">    setNormalize(Utils.getFlag('Z', options));</span>
+    
+<span class="fc" id="L605">    setDoNotReplaceMissingValues(Utils.getFlag(&quot;V&quot;, options));</span>
+    
+<span class="fc" id="L607">    tmpStr = Utils.getOption('P', options);</span>
+<span class="fc bfc" id="L608" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L609">      setLoss(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L611">      setLoss(0.1);</span>
+    
+<span class="pc bpc" id="L613" title="1 of 2 branches missed.">    setShrinking(!Utils.getFlag('H', options));</span>
+    
+<span class="fc" id="L615">    setWeights(Utils.getOption('W', options));</span>
+    
+<span class="fc" id="L617">    setProbabilityEstimates(Utils.getFlag('B', options));</span>
+    
+<span class="fc" id="L619">    String seedString = Utils.getOption(&quot;seed&quot;, options);</span>
+<span class="fc bfc" id="L620" title="All 2 branches covered.">    if (seedString.length() &gt; 0) {</span>
+<span class="fc" id="L621">      setSeed(Integer.parseInt(seedString.trim()));</span>
+    }
+<span class="fc" id="L623">  }</span>
+  
+  /**
+   * Returns the current options
+   * 
+   * @return            the current setup
+   */
+  public String[] getOptions() {
+    
+    Vector        result;
+    
+<span class="fc" id="L634">    result  = new Vector();</span>
+    
+<span class="fc" id="L636">    result.add(&quot;-S&quot;);</span>
+<span class="fc" id="L637">    result.add(&quot;&quot; + m_SVMType);</span>
+    
+<span class="fc" id="L639">    result.add(&quot;-K&quot;);</span>
+<span class="fc" id="L640">    result.add(&quot;&quot; + m_KernelType);</span>
+    
+<span class="fc" id="L642">    result.add(&quot;-D&quot;);</span>
+<span class="fc" id="L643">    result.add(&quot;&quot; + getDegree());</span>
+    
+<span class="fc" id="L645">    result.add(&quot;-G&quot;);</span>
+<span class="fc" id="L646">    result.add(&quot;&quot; + getGamma());</span>
+    
+<span class="fc" id="L648">    result.add(&quot;-R&quot;);</span>
+<span class="fc" id="L649">    result.add(&quot;&quot; + getCoef0());</span>
+    
+<span class="fc" id="L651">    result.add(&quot;-N&quot;);</span>
+<span class="fc" id="L652">    result.add(&quot;&quot; + getNu());</span>
+    
+<span class="fc" id="L654">    result.add(&quot;-M&quot;);</span>
+<span class="fc" id="L655">    result.add(&quot;&quot; + getCacheSize());</span>
+    
+<span class="fc" id="L657">    result.add(&quot;-C&quot;);</span>
+<span class="fc" id="L658">    result.add(&quot;&quot; + getCost());</span>
+    
+<span class="fc" id="L660">    result.add(&quot;-E&quot;);</span>
+<span class="fc" id="L661">    result.add(&quot;&quot; + getEps());</span>
+    
+<span class="fc" id="L663">    result.add(&quot;-P&quot;);</span>
+<span class="fc" id="L664">    result.add(&quot;&quot; + getLoss());</span>
+    
+<span class="pc bpc" id="L666" title="1 of 2 branches missed.">    if (!getShrinking())</span>
+<span class="nc" id="L667">      result.add(&quot;-H&quot;);</span>
+    
+<span class="pc bpc" id="L669" title="1 of 2 branches missed.">    if (getNormalize())</span>
+<span class="nc" id="L670">      result.add(&quot;-Z&quot;);</span>
+        
+<span class="pc bpc" id="L672" title="1 of 2 branches missed.">    if (getDoNotReplaceMissingValues())</span>
+<span class="nc" id="L673">      result.add(&quot;-V&quot;);</span>
+    
+<span class="pc bpc" id="L675" title="1 of 2 branches missed.">    if (getWeights().length() != 0) {</span>
+<span class="nc" id="L676">      result.add(&quot;-W&quot;);</span>
+<span class="nc" id="L677">      result.add(&quot;&quot; + getWeights());</span>
+    }
+    
+<span class="pc bpc" id="L680" title="1 of 2 branches missed.">    if (getProbabilityEstimates())</span>
+<span class="nc" id="L681">      result.add(&quot;-B&quot;);</span>
+    
+<span class="fc" id="L683">    result.add(&quot;-seed&quot;); result.add(&quot;&quot; + getSeed());</span>
+    
+<span class="fc" id="L685">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+  
+  /**
+   * returns whether the libsvm classes are present or not, i.e. whether the 
+   * classes are in the classpath or not
+   *
+   * @return whether the libsvm classes are available
+   */
+  public static boolean isPresent() {
+<span class="fc" id="L695">    return m_Present;</span>
+  }
+  
+  /**
+   * Sets type of SVM (default SVMTYPE_C_SVC)
+   * 
+   * @param value       the type of the SVM
+   */
+  public void setSVMType(SelectedTag value) {
+<span class="pc bpc" id="L704" title="1 of 2 branches missed.">    if (value.getTags() == TAGS_SVMTYPE)</span>
+<span class="fc" id="L705">      m_SVMType = value.getSelectedTag().getID();</span>
+<span class="fc" id="L706">  }</span>
+  
+  /**
+   * Gets type of SVM
+   * 
+   * @return            the type of the SVM
+   */
+  public SelectedTag getSVMType() {
+<span class="nc" id="L714">    return new SelectedTag(m_SVMType, TAGS_SVMTYPE);</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String SVMTypeTipText() {
+<span class="nc" id="L724">    return &quot;The type of SVM to use.&quot;;</span>
+  }
+  
+  /**
+   * Sets type of kernel function (default KERNELTYPE_RBF)
+   * 
+   * @param value       the kernel type
+   */
+  public void setKernelType(SelectedTag value) {
+<span class="pc bpc" id="L733" title="1 of 2 branches missed.">    if (value.getTags() == TAGS_KERNELTYPE)</span>
+<span class="fc" id="L734">      m_KernelType = value.getSelectedTag().getID();</span>
+<span class="fc" id="L735">  }</span>
+  
+  /**
+   * Gets type of kernel function
+   * 
+   * @return            the kernel type
+   */
+  public SelectedTag getKernelType() {
+<span class="nc" id="L743">    return new SelectedTag(m_KernelType, TAGS_KERNELTYPE);</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String kernelTypeTipText() {
+<span class="nc" id="L753">    return &quot;The type of kernel to use&quot;;</span>
+  }
+  
+  /**
+   * Sets the degree of the kernel
+   * 
+   * @param value       the degree of the kernel
+   */
+  public void setDegree(int value) {
+<span class="fc" id="L762">    m_Degree = value;</span>
+<span class="fc" id="L763">  }</span>
+  
+  /**
+   * Gets the degree of the kernel
+   * 
+   * @return            the degree of the kernel
+   */
+  public int getDegree() {
+<span class="fc" id="L771">    return m_Degree;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String degreeTipText() {
+<span class="nc" id="L781">    return &quot;The degree of the kernel.&quot;;</span>
+  }
+  
+  /**
+   * Sets gamma (default = 1/no of attributes)
+   * 
+   * @param value       the gamma value
+   */
+  public void setGamma(double value) {
+<span class="fc" id="L790">    m_Gamma = value;</span>
+<span class="fc" id="L791">  }</span>
+  
+  /**
+   * Gets gamma
+   * 
+   * @return            the current gamma
+   */
+  public double getGamma() {
+<span class="fc" id="L799">    return m_Gamma;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String gammaTipText() {
+<span class="nc" id="L809">    return &quot;The gamma to use, if 0 then 1/max_index is used.&quot;;</span>
+  }
+  
+  /**
+   * Sets coef (default 0)
+   * 
+   * @param value       the coef
+   */
+  public void setCoef0(double value) {
+<span class="fc" id="L818">    m_Coef0 = value;</span>
+<span class="fc" id="L819">  }</span>
+  
+  /**
+   * Gets coef
+   * 
+   * @return            the coef
+   */
+  public double getCoef0() {
+<span class="fc" id="L827">    return m_Coef0;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String coef0TipText() {
+<span class="nc" id="L837">    return &quot;The coefficient to use.&quot;;</span>
+  }
+  
+  /**
+   * Sets nu of nu-SVC, one-class SVM, and nu-SVR (default 0.5)
+   * 
+   * @param value       the new nu value
+   */
+  public void setNu(double value) {
+<span class="fc" id="L846">    m_nu = value;</span>
+<span class="fc" id="L847">  }</span>
+  
+  /**
+   * Gets nu of nu-SVC, one-class SVM, and nu-SVR (default 0.5)
+   * 
+   * @return            the current nu value
+   */
+  public double getNu() {
+<span class="fc" id="L855">    return m_nu;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String nuTipText() {
+<span class="nc" id="L865">    return &quot;The value of nu for nu-SVC, one-class SVM and nu-SVR.&quot;;</span>
+  }
+  
+  /**
+   * Sets cache memory size in MB (default 40)
+   * 
+   * @param value       the memory size in MB
+   */
+  public void setCacheSize(double value) {
+<span class="fc" id="L874">    m_CacheSize = value;</span>
+<span class="fc" id="L875">  }</span>
+  
+  /**
+   * Gets cache memory size in MB
+   * 
+   * @return            the memory size in MB
+   */
+  public double getCacheSize() {
+<span class="fc" id="L883">    return m_CacheSize;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String cacheSizeTipText() {
+<span class="nc" id="L893">    return &quot;The cache size in MB.&quot;;</span>
+  }
+  
+  /**
+   * Sets the parameter C of C-SVC, epsilon-SVR, and nu-SVR (default 1)
+   * 
+   * @param value       the cost value
+   */
+  public void setCost(double value) {
+<span class="fc" id="L902">    m_Cost = value;</span>
+<span class="fc" id="L903">  }</span>
+  
+  /**
+   * Sets the parameter C of C-SVC, epsilon-SVR, and nu-SVR
+   * 
+   * @return            the cost value
+   */
+  public double getCost() {
+<span class="fc" id="L911">    return m_Cost;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String costTipText() {
+<span class="nc" id="L921">    return &quot;The cost parameter C for C-SVC, epsilon-SVR and nu-SVR.&quot;;</span>
+  }
+  
+  /**
+   * Sets tolerance of termination criterion (default 0.001)
+   * 
+   * @param value       the tolerance
+   */
+  public void setEps(double value) {
+<span class="fc" id="L930">    m_eps = value;</span>
+<span class="fc" id="L931">  }</span>
+  
+  /**
+   * Gets tolerance of termination criterion
+   * 
+   * @return            the current tolerance
+   */
+  public double getEps() {
+<span class="fc" id="L939">    return m_eps;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String epsTipText() {
+<span class="nc" id="L949">    return &quot;The tolerance of the termination criterion.&quot;;</span>
+  }
+  
+  /**
+   * Sets the epsilon in loss function of epsilon-SVR (default 0.1)
+   * 
+   * @param value       the loss epsilon
+   */
+  public void setLoss(double value) {
+<span class="fc" id="L958">    m_Loss = value;</span>
+<span class="fc" id="L959">  }</span>
+  
+  /**
+   * Gets the epsilon in loss function of epsilon-SVR
+   * 
+   * @return            the loss epsilon
+   */
+  public double getLoss() {
+<span class="fc" id="L967">    return m_Loss;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String lossTipText() {
+<span class="nc" id="L977">    return &quot;The epsilon for the loss function in epsilon-SVR.&quot;;</span>
+  }
+  
+  /**
+   * whether to use the shrinking heuristics
+   * 
+   * @param value       true uses shrinking
+   */
+  public void setShrinking(boolean value) {
+<span class="fc" id="L986">    m_Shrinking = value;</span>
+<span class="fc" id="L987">  }</span>
+  
+  /**
+   * whether to use the shrinking heuristics
+   * 
+   * @return            true, if shrinking is used
+   */
+  public boolean getShrinking() {
+<span class="fc" id="L995">    return m_Shrinking;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String shrinkingTipText() {
+<span class="nc" id="L1005">    return &quot;Whether to use the shrinking heuristic.&quot;;</span>
+  }
+  
+  /**
+   * whether to normalize input data
+   * 
+   * @param value       whether to normalize the data
+   */
+  public void setNormalize(boolean value) {
+<span class="fc" id="L1014">    m_Normalize = value;</span>
+<span class="fc" id="L1015">  }</span>
+  
+  /**
+   * whether to normalize input data
+   * 
+   * @return            true, if the data is normalized
+   */
+  public boolean getNormalize() {
+<span class="fc" id="L1023">    return m_Normalize;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String normalizeTipText() {
+<span class="nc" id="L1033">    return &quot;Whether to normalize the data.&quot;;</span>
+  }
+    
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String doNotReplaceMissingValuesTipText() {
+<span class="nc" id="L1043">    return &quot;Whether to turn off automatic replacement of missing &quot;</span>
+      + &quot;values. WARNING: set to true only if the data does not &quot;
+      + &quot;contain missing values.&quot;;
+  }
+  
+  /**
+   * Whether to turn off automatic replacement of missing values.
+   * Set to true only if the data does not contain missing values.
+   * 
+   * @param b true if automatic missing values replacement is
+   * to be disabled.
+   */
+  public void setDoNotReplaceMissingValues(boolean b) {
+<span class="fc" id="L1056">    m_noReplaceMissingValues = b;</span>
+<span class="fc" id="L1057">  }</span>
+  
+  /**
+   * Gets whether automatic replacement of missing values is
+   * disabled.
+   * 
+   * @return true if automatic replacement of missing values
+   * is disabled.
+   */
+  public boolean getDoNotReplaceMissingValues() {
+<span class="fc" id="L1067">    return m_noReplaceMissingValues;</span>
+  }
+  
+  /**
+   * Sets the parameters C of class i to weight[i]*C, for C-SVC (default 1).
+   * Blank separated list of doubles.
+   * 
+   * @param weightsStr          the weights (doubles, separated by blanks)
+   */
+  public void setWeights(String weightsStr) {
+    StringTokenizer       tok;
+    int                   i;
+    
+<span class="fc" id="L1080">    tok           = new StringTokenizer(weightsStr, &quot; &quot;);</span>
+<span class="fc" id="L1081">    m_Weight      = new double[tok.countTokens()];</span>
+<span class="fc" id="L1082">    m_WeightLabel = new int[tok.countTokens()];</span>
+    
+<span class="pc bpc" id="L1084" title="1 of 2 branches missed.">    if (m_Weight.length == 0)</span>
+<span class="fc" id="L1085">      System.out.println(</span>
+<span class="fc" id="L1086">          &quot;Zero Weights processed. Default weights will be used&quot;);</span>
+    
+<span class="pc bpc" id="L1088" title="1 of 2 branches missed.">    for (i = 0; i &lt; m_Weight.length; i++) {</span>
+<span class="nc" id="L1089">      m_Weight[i]      = Double.parseDouble(tok.nextToken());</span>
+<span class="nc" id="L1090">      m_WeightLabel[i] = i;</span>
+    }
+<span class="fc" id="L1092">  }</span>
+  
+  /**
+   * Gets the parameters C of class i to weight[i]*C, for C-SVC (default 1).
+   * Blank separated doubles.
+   * 
+   * @return            the weights (doubles separated by blanks)
+   */
+  public String getWeights() {
+    String      result;
+    int         i;
+    
+<span class="fc" id="L1104">    result = &quot;&quot;;</span>
+<span class="pc bpc" id="L1105" title="1 of 2 branches missed.">    for (i = 0; i &lt; m_Weight.length; i++) {</span>
+<span class="nc bnc" id="L1106" title="All 2 branches missed.">      if (i &gt; 0)</span>
+<span class="nc" id="L1107">        result += &quot; &quot;;</span>
+<span class="nc" id="L1108">      result += Double.toString(m_Weight[i]);</span>
+    }
+    
+<span class="fc" id="L1111">    return result;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String weightsTipText() {
+<span class="nc" id="L1121">    return &quot;The weights to use for the classes (blank-separated list, eg, \&quot;1 1 1\&quot; for a 3-class problem), if empty 1 is used by default.&quot;;</span>
+  }
+  
+  /**
+   * Returns whether probability estimates are generated instead of -1/+1 for 
+   * classification problems.
+   * 
+   * @param value       whether to predict probabilities
+   */
+  public void setProbabilityEstimates(boolean value) {
+<span class="fc" id="L1131">    m_ProbabilityEstimates = value;</span>
+<span class="fc" id="L1132">  }</span>
+  
+  /**
+   * Sets whether to generate probability estimates instead of -1/+1 for 
+   * classification problems.
+   * 
+   * @return            true, if probability estimates should be returned
+   */
+  public boolean getProbabilityEstimates() {
+<span class="fc" id="L1141">    return m_ProbabilityEstimates;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   *         displaying in the explorer/experimenter gui
+   */
+  public String probabilityEstimatesTipText() {
+<span class="nc" id="L1151">    return &quot;Whether to generate probability estimates instead of -1/+1 for classification problems.&quot;;</span>
+  }
+  
+  /**
+   * sets the specified field
+   * 
+   * @param o           the object to set the field for
+   * @param name        the name of the field
+   * @param value       the new value of the field
+   */
+  protected void setField(Object o, String name, Object value) {
+    Field       f;
+    
+    try {
+<span class="nc" id="L1165">      f = o.getClass().getField(name);</span>
+<span class="nc" id="L1166">      f.set(o, value);</span>
+    }
+<span class="nc" id="L1168">    catch (Exception e) {</span>
+<span class="nc" id="L1169">      e.printStackTrace();</span>
+    }
+<span class="nc" id="L1171">  }</span>
+  
+  /**
+   * sets the specified field in an array
+   * 
+   * @param o           the object to set the field for
+   * @param name        the name of the field
+   * @param index       the index in the array
+   * @param value       the new value of the field
+   */
+  protected void setField(Object o, String name, int index, Object value) {
+    Field       f;
+    
+    try {
+<span class="nc" id="L1185">      f = o.getClass().getField(name);</span>
+<span class="nc" id="L1186">      Array.set(f.get(o), index, value);</span>
+    }
+<span class="nc" id="L1188">    catch (Exception e) {</span>
+<span class="nc" id="L1189">      e.printStackTrace();</span>
+    }
+<span class="nc" id="L1191">  }</span>
+  
+  /**
+   * returns the current value of the specified field
+   * 
+   * @param o           the object the field is member of
+   * @param name        the name of the field
+   * @return            the value
+   */
+  protected Object getField(Object o, String name) {
+    Field       f;
+    Object      result;
+    
+    try {
+<span class="nc" id="L1205">      f      = o.getClass().getField(name);</span>
+<span class="nc" id="L1206">      result = f.get(o);</span>
+    }
+<span class="nc" id="L1208">    catch (Exception e) {</span>
+<span class="nc" id="L1209">      e.printStackTrace();</span>
+<span class="nc" id="L1210">      result = null;</span>
+    }
+    
+<span class="nc" id="L1213">    return result;</span>
+  }
+  
+  /**
+   * sets a new array for the field
+   * 
+   * @param o           the object to set the array for
+   * @param name        the name of the field
+   * @param type        the type of the array
+   * @param length      the length of the one-dimensional array
+   */
+  protected void newArray(Object o, String name, Class type, int length) {
+<span class="nc" id="L1225">    newArray(o, name, type, new int[]{length});</span>
+<span class="nc" id="L1226">  }</span>
+  
+  /**
+   * sets a new array for the field
+   * 
+   * @param o           the object to set the array for
+   * @param name        the name of the field
+   * @param type        the type of the array
+   * @param dimensions  the dimensions of the array
+   */
+  protected void newArray(Object o, String name, Class type, int[] dimensions) {
+    Field       f;
+    
+    try {
+<span class="nc" id="L1240">      f = o.getClass().getField(name);</span>
+<span class="nc" id="L1241">      f.set(o, Array.newInstance(type, dimensions));</span>
+    }
+<span class="nc" id="L1243">    catch (Exception e) {</span>
+<span class="nc" id="L1244">      e.printStackTrace();</span>
+    }
+<span class="nc" id="L1246">  }</span>
+  
+  /**
+   * executes the specified method and returns the result, if any
+   * 
+   * @param o                   the object the method should be called from
+   * @param name                the name of the method
+   * @param paramClasses        the classes of the parameters
+   * @param paramValues         the values of the parameters
+   * @return                    the return value of the method, if any (in that case null)
+   */
+  protected Object invokeMethod(Object o, String name, Class[] paramClasses, Object[] paramValues) {
+    Method      m;
+    Object      result;
+    
+<span class="nc" id="L1261">    result = null;</span>
+    
+    try {
+<span class="nc" id="L1264">      m      = o.getClass().getMethod(name, paramClasses);</span>
+<span class="nc" id="L1265">      result = m.invoke(o, paramValues);</span>
+    }
+<span class="nc" id="L1267">    catch (Exception e) {</span>
+<span class="nc" id="L1268">      e.printStackTrace();</span>
+<span class="nc" id="L1269">      result = null;</span>
+    }
+    
+<span class="nc" id="L1272">    return result;</span>
+  }
+  
+  /**
+   * transfers the local variables into a svm_parameter object
+   * 
+   * @return the configured svm_parameter object
+   */
+  protected Object getParameters() {
+    Object      result;
+    int         i;
+    
+    try {
+<span class="nc" id="L1285">      result = Class.forName(CLASS_SVMPARAMETER).newInstance();</span>
+      
+<span class="nc" id="L1287">      setField(result, &quot;svm_type&quot;, new Integer(m_SVMType));</span>
+<span class="nc" id="L1288">      setField(result, &quot;kernel_type&quot;, new Integer(m_KernelType));</span>
+<span class="nc" id="L1289">      setField(result, &quot;degree&quot;, new Integer(m_Degree));</span>
+<span class="nc" id="L1290">      setField(result, &quot;gamma&quot;, new Double(m_GammaActual));</span>
+<span class="nc" id="L1291">      setField(result, &quot;coef0&quot;, new Double(m_Coef0));</span>
+<span class="nc" id="L1292">      setField(result, &quot;nu&quot;, new Double(m_nu));</span>
+<span class="nc" id="L1293">      setField(result, &quot;cache_size&quot;, new Double(m_CacheSize));</span>
+<span class="nc" id="L1294">      setField(result, &quot;C&quot;, new Double(m_Cost));</span>
+<span class="nc" id="L1295">      setField(result, &quot;eps&quot;, new Double(m_eps));</span>
+<span class="nc" id="L1296">      setField(result, &quot;p&quot;, new Double(m_Loss));</span>
+<span class="nc bnc" id="L1297" title="All 2 branches missed.">      setField(result, &quot;shrinking&quot;, new Integer(m_Shrinking ? 1 : 0));</span>
+<span class="nc" id="L1298">      setField(result, &quot;nr_weight&quot;, new Integer(m_Weight.length));</span>
+<span class="nc bnc" id="L1299" title="All 2 branches missed.">      setField(result, &quot;probability&quot;, new Integer(m_ProbabilityEstimates ? 1 : 0));</span>
+      
+<span class="nc" id="L1301">      newArray(result, &quot;weight&quot;, Double.TYPE, m_Weight.length);</span>
+<span class="nc" id="L1302">      newArray(result, &quot;weight_label&quot;, Integer.TYPE, m_Weight.length);</span>
+<span class="nc bnc" id="L1303" title="All 2 branches missed.">      for (i = 0; i &lt; m_Weight.length; i++) {</span>
+<span class="nc" id="L1304">        setField(result, &quot;weight&quot;, i, new Double(m_Weight[i]));</span>
+<span class="nc" id="L1305">        setField(result, &quot;weight_label&quot;, i, new Integer(m_WeightLabel[i]));</span>
+      }
+    }
+<span class="nc" id="L1308">    catch (Exception e) {</span>
+<span class="nc" id="L1309">      e.printStackTrace();</span>
+<span class="nc" id="L1310">      result = null;</span>
+    }
+    
+<span class="nc" id="L1313">    return result;</span>
+  }
+  
+  /**
+   * returns the svm_problem
+   * 
+   * @param vx the x values
+   * @param vy the y values
+   * @return the svm_problem object
+   */
+  protected Object getProblem(Vector vx, Vector vy) {
+    Object      result;
+    
+    try {
+<span class="nc" id="L1327">      result = Class.forName(CLASS_SVMPROBLEM).newInstance();</span>
+      
+<span class="nc" id="L1329">      setField(result, &quot;l&quot;, new Integer(vy.size()));</span>
+      
+<span class="nc" id="L1331">      newArray(result, &quot;x&quot;, Class.forName(CLASS_SVMNODE), new int[]{vy.size(), 0});</span>
+<span class="nc bnc" id="L1332" title="All 2 branches missed.">      for (int i = 0; i &lt; vy.size(); i++)</span>
+<span class="nc" id="L1333">        setField(result, &quot;x&quot;, i, vx.elementAt(i));</span>
+      
+<span class="nc" id="L1335">      newArray(result, &quot;y&quot;, Double.TYPE, vy.size());</span>
+<span class="nc bnc" id="L1336" title="All 2 branches missed.">      for (int i = 0; i &lt; vy.size(); i++)</span>
+<span class="nc" id="L1337">        setField(result, &quot;y&quot;, i, vy.elementAt(i));</span>
+    }
+<span class="nc" id="L1339">    catch (Exception e) {</span>
+<span class="nc" id="L1340">      e.printStackTrace();</span>
+<span class="nc" id="L1341">      result = null;</span>
+    }
+    
+<span class="nc" id="L1344">    return result;</span>
+  }
+  
+  /**
+   * returns an instance into a sparse libsvm array
+   * 
+   * @param instance	the instance to work on
+   * @return		the libsvm array
+   * @throws Exception	if setup of array fails
+   */
+  protected Object instanceToArray(Instance instance) throws Exception {
+    int		index;
+    int		count;
+    int 	i;
+    Object 	result;
+    
+    // determine number of non-zero attributes
+    /*for (i = 0; i &lt; instance.numAttributes(); i++) {
+      if (i == instance.classIndex())
+	continue;
+      if (instance.value(i) != 0)
+	count++;
+    } */
+<span class="nc" id="L1367">    count = 0;</span>
+<span class="nc bnc" id="L1368" title="All 2 branches missed.">    for (i = 0; i &lt; instance.numValues(); i++) {</span>
+<span class="nc bnc" id="L1369" title="All 2 branches missed.">      if (instance.index(i) == instance.classIndex())</span>
+<span class="nc" id="L1370">        continue;</span>
+<span class="nc bnc" id="L1371" title="All 2 branches missed.">      if (instance.valueSparse(i) != 0)</span>
+<span class="nc" id="L1372">        count++;</span>
+    }
+
+    // fill array
+    /* result = Array.newInstance(Class.forName(CLASS_SVMNODE), count);
+    index  = 0;
+    for (i = 0; i &lt; instance.numAttributes(); i++) {
+      if (i == instance.classIndex())
+	continue;
+      if (instance.value(i) == 0)
+	continue;
+
+      Array.set(result, index, Class.forName(CLASS_SVMNODE).newInstance());
+      setField(Array.get(result, index), &quot;index&quot;, new Integer(i + 1));
+      setField(Array.get(result, index), &quot;value&quot;, new Double(instance.value(i)));
+      index++;
+    } */
+    
+<span class="nc" id="L1390">    result = Array.newInstance(Class.forName(CLASS_SVMNODE), count);</span>
+<span class="nc" id="L1391">    index  = 0;</span>
+<span class="nc bnc" id="L1392" title="All 2 branches missed.">    for (i = 0; i &lt; instance.numValues(); i++) {</span>
+      
+<span class="nc" id="L1394">      int idx = instance.index(i);</span>
+<span class="nc bnc" id="L1395" title="All 2 branches missed.">      if (idx == instance.classIndex())</span>
+<span class="nc" id="L1396">        continue;</span>
+<span class="nc bnc" id="L1397" title="All 2 branches missed.">      if (instance.valueSparse(i) == 0)</span>
+<span class="nc" id="L1398">        continue;</span>
+
+<span class="nc" id="L1400">      Array.set(result, index, Class.forName(CLASS_SVMNODE).newInstance());</span>
+<span class="nc" id="L1401">      setField(Array.get(result, index), &quot;index&quot;, new Integer(idx + 1));</span>
+<span class="nc" id="L1402">      setField(Array.get(result, index), &quot;value&quot;, new Double(instance.valueSparse(i)));</span>
+<span class="nc" id="L1403">      index++;</span>
+    }
+    
+<span class="nc" id="L1406">    return result;</span>
+  }
+  
+  /**
+   * Computes the distribution for a given instance. 
+   * In case of 1-class classification, 1 is returned at index 0 if libsvm 
+   * returns 1 and NaN (= missing) if libsvm returns -1.
+   *
+   * @param instance 		the instance for which distribution is computed
+   * @return 			the distribution
+   * @throws Exception 		if the distribution can't be computed successfully
+   */
+  public double[] distributionForInstance (Instance instance) throws Exception {	
+<span class="nc" id="L1419">    int[] labels = new int[instance.numClasses()];</span>
+<span class="nc" id="L1420">    double[] prob_estimates = null;</span>
+
+<span class="nc bnc" id="L1422" title="All 2 branches missed.">    if (m_ProbabilityEstimates) {</span>
+<span class="nc" id="L1423">      invokeMethod(</span>
+<span class="nc" id="L1424">	  Class.forName(CLASS_SVM).newInstance(),</span>
+<span class="nc" id="L1425">	  &quot;svm_get_labels&quot;,</span>
+<span class="nc" id="L1426">	  new Class[]{</span>
+<span class="nc" id="L1427">	    Class.forName(CLASS_SVMMODEL), </span>
+<span class="nc" id="L1428">	    Array.newInstance(Integer.TYPE, instance.numClasses()).getClass()},</span>
+<span class="nc" id="L1429">	    new Object[]{</span>
+<span class="nc" id="L1430">	    m_Model, </span>
+<span class="nc" id="L1431">	    labels});</span>
+
+<span class="nc" id="L1433">      prob_estimates = new double[instance.numClasses()];</span>
+    }
+    
+<span class="nc bnc" id="L1436" title="All 2 branches missed.">    if (!getDoNotReplaceMissingValues()) {</span>
+<span class="nc" id="L1437">      m_ReplaceMissingValues.input(instance);</span>
+<span class="nc" id="L1438">      m_ReplaceMissingValues.batchFinished();</span>
+<span class="nc" id="L1439">      instance = m_ReplaceMissingValues.output();</span>
+    }
+    
+<span class="nc bnc" id="L1442" title="All 2 branches missed.">    if (m_Filter != null) {</span>
+<span class="nc" id="L1443">      m_Filter.input(instance);</span>
+<span class="nc" id="L1444">      m_Filter.batchFinished();</span>
+<span class="nc" id="L1445">      instance = m_Filter.output();</span>
+    }
+
+<span class="nc" id="L1448">    Object x = instanceToArray(instance);</span>
+    double v;
+<span class="nc" id="L1450">    double[] result = new double[instance.numClasses()];</span>
+<span class="nc bnc" id="L1451" title="All 2 branches missed.">    if (    m_ProbabilityEstimates </span>
+<span class="nc bnc" id="L1452" title="All 4 branches missed.">	 &amp;&amp; ((m_SVMType == SVMTYPE_C_SVC) || (m_SVMType == SVMTYPE_NU_SVC)) ) {</span>
+<span class="nc" id="L1453">      v = ((Double) invokeMethod(</span>
+<span class="nc" id="L1454">          Class.forName(CLASS_SVM).newInstance(),</span>
+<span class="nc" id="L1455">          &quot;svm_predict_probability&quot;,</span>
+<span class="nc" id="L1456">          new Class[]{</span>
+<span class="nc" id="L1457">            Class.forName(CLASS_SVMMODEL), </span>
+<span class="nc" id="L1458">            Array.newInstance(Class.forName(CLASS_SVMNODE), Array.getLength(x)).getClass(),</span>
+<span class="nc" id="L1459">            Array.newInstance(Double.TYPE, prob_estimates.length).getClass()},</span>
+<span class="nc" id="L1460">          new Object[]{</span>
+<span class="nc" id="L1461">            m_Model, </span>
+<span class="nc" id="L1462">            x,</span>
+<span class="nc" id="L1463">            prob_estimates})).doubleValue();</span>
+
+      // Return order of probabilities to canonical weka attribute order
+<span class="nc bnc" id="L1466" title="All 2 branches missed.">      for (int k = 0; k &lt; prob_estimates.length; k++) {</span>
+<span class="nc" id="L1467">        result[labels[k]] = prob_estimates[k];</span>
+      }
+    }
+    else {
+<span class="nc" id="L1471">      v = ((Double) invokeMethod(</span>
+<span class="nc" id="L1472">          Class.forName(CLASS_SVM).newInstance(),</span>
+<span class="nc" id="L1473">          &quot;svm_predict&quot;,</span>
+<span class="nc" id="L1474">          new Class[]{</span>
+<span class="nc" id="L1475">            Class.forName(CLASS_SVMMODEL), </span>
+<span class="nc" id="L1476">            Array.newInstance(Class.forName(CLASS_SVMNODE), Array.getLength(x)).getClass()},</span>
+<span class="nc" id="L1477">          new Object[]{</span>
+<span class="nc" id="L1478">            m_Model, </span>
+<span class="nc" id="L1479">            x})).doubleValue();</span>
+      
+<span class="nc bnc" id="L1481" title="All 2 branches missed.">      if (instance.classAttribute().isNominal()) {</span>
+<span class="nc bnc" id="L1482" title="All 2 branches missed.">	if (m_SVMType == SVMTYPE_ONE_CLASS_SVM) {</span>
+<span class="nc bnc" id="L1483" title="All 2 branches missed.">	  if (v &gt; 0)</span>
+<span class="nc" id="L1484">	    result[0] = 1;</span>
+	  else
+	    // outlier (interface for Classifier specifies that unclassified instances                                       
+            // should return a distribution of all zeros)
+<span class="nc" id="L1488">	    result[0] = 0;</span>
+	}
+	else {
+<span class="nc" id="L1491">	  result[(int) v] = 1;</span>
+	}
+      }
+      else {
+<span class="nc" id="L1495">	result[0] = v;</span>
+      }
+    }
+
+<span class="nc" id="L1499">    return result;                </span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L1508">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L1509">    result.disableAll();</span>
+
+    // attributes
+<span class="nc" id="L1512">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L1513">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L1514">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+
+    // class
+<span class="nc" id="L1517">    result.enableDependency(Capability.UNARY_CLASS);</span>
+<span class="nc" id="L1518">    result.enableDependency(Capability.NOMINAL_CLASS);</span>
+<span class="nc" id="L1519">    result.enableDependency(Capability.NUMERIC_CLASS);</span>
+<span class="nc" id="L1520">    result.enableDependency(Capability.DATE_CLASS);</span>
+
+<span class="nc bnc" id="L1522" title="All 4 branches missed.">    switch (m_SVMType) {</span>
+      case SVMTYPE_C_SVC:
+      case SVMTYPE_NU_SVC:
+<span class="nc" id="L1525">	result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="nc" id="L1526">	break;</span>
+	
+      case SVMTYPE_ONE_CLASS_SVM:
+<span class="nc" id="L1529">	result.enable(Capability.UNARY_CLASS);</span>
+<span class="nc" id="L1530">	break;</span>
+	
+      case SVMTYPE_EPSILON_SVR:
+      case SVMTYPE_NU_SVR:
+<span class="nc" id="L1534">	result.enable(Capability.NUMERIC_CLASS);</span>
+<span class="nc" id="L1535">	result.enable(Capability.DATE_CLASS);</span>
+<span class="nc" id="L1536">	break;</span>
+	
+      default:
+<span class="nc" id="L1539">	throw new IllegalArgumentException(&quot;SVMType &quot; + m_SVMType + &quot; is not supported!&quot;);</span>
+    }
+<span class="nc" id="L1541">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="nc" id="L1543">    return result;</span>
+  }
+  
+  /**
+   * builds the classifier
+   * 
+   * @param insts       the training instances
+   * @throws Exception  if libsvm classes not in classpath or libsvm
+   *                    encountered a problem
+   */
+  public void buildClassifier(Instances insts) throws Exception {
+<span class="fc" id="L1554">    m_Filter = null;</span>
+    
+<span class="pc bpc" id="L1556" title="1 of 2 branches missed.">    if (!isPresent())</span>
+<span class="fc" id="L1557">      throw new Exception(&quot;libsvm classes not in CLASSPATH!&quot;);</span>
+
+    // remove instances with missing class
+<span class="nc" id="L1560">    insts = new Instances(insts);</span>
+<span class="nc" id="L1561">    insts.deleteWithMissingClass();</span>
+    
+<span class="nc bnc" id="L1563" title="All 2 branches missed.">    if (!getDoNotReplaceMissingValues()) {</span>
+<span class="nc" id="L1564">      m_ReplaceMissingValues = new ReplaceMissingValues();</span>
+<span class="nc" id="L1565">      m_ReplaceMissingValues.setInputFormat(insts);</span>
+<span class="nc" id="L1566">      insts = Filter.useFilter(insts, m_ReplaceMissingValues);</span>
+    }
+    
+    // can classifier handle the data?
+    // we check this here so that if the user turns off
+    // replace missing values filtering, it will fail
+    // if the data actually does have missing values
+<span class="nc" id="L1573">    getCapabilities().testWithFail(insts);</span>
+        
+<span class="nc bnc" id="L1575" title="All 2 branches missed.">    if (getNormalize()) {</span>
+<span class="nc" id="L1576">      m_Filter = new Normalize();</span>
+<span class="nc" id="L1577">      m_Filter.setInputFormat(insts);</span>
+<span class="nc" id="L1578">      insts = Filter.useFilter(insts, m_Filter);</span>
+    }
+    
+<span class="nc" id="L1581">    Vector vy = new Vector();</span>
+<span class="nc" id="L1582">    Vector vx = new Vector();</span>
+<span class="nc" id="L1583">    int max_index = 0;</span>
+    
+<span class="nc bnc" id="L1585" title="All 2 branches missed.">    for (int d = 0; d &lt; insts.numInstances(); d++) {</span>
+<span class="nc" id="L1586">      Instance inst = insts.instance(d);</span>
+<span class="nc" id="L1587">      Object x = instanceToArray(inst);</span>
+<span class="nc" id="L1588">      int m = Array.getLength(x);</span>
+      
+<span class="nc bnc" id="L1590" title="All 2 branches missed.">      if (m &gt; 0)</span>
+<span class="nc" id="L1591">        max_index = Math.max(max_index, ((Integer) getField(Array.get(x, m - 1), &quot;index&quot;)).intValue());</span>
+<span class="nc" id="L1592">      vx.addElement(x);</span>
+<span class="nc" id="L1593">      vy.addElement(new Double(inst.classValue()));</span>
+    }
+    
+    // calculate actual gamma
+<span class="nc bnc" id="L1597" title="All 2 branches missed.">    if (getGamma() == 0)</span>
+<span class="nc" id="L1598">      m_GammaActual = 1.0 / max_index;</span>
+    else
+<span class="nc" id="L1600">      m_GammaActual = m_Gamma;</span>
+
+    // check parameter
+<span class="nc" id="L1603">    String error_msg = (String) invokeMethod(</span>
+<span class="nc" id="L1604">        Class.forName(CLASS_SVM).newInstance(), </span>
+<span class="nc" id="L1605">        &quot;svm_check_parameter&quot;, </span>
+<span class="nc" id="L1606">        new Class[]{</span>
+<span class="nc" id="L1607">          Class.forName(CLASS_SVMPROBLEM), </span>
+<span class="nc" id="L1608">          Class.forName(CLASS_SVMPARAMETER)},</span>
+<span class="nc" id="L1609">        new Object[]{</span>
+<span class="nc" id="L1610">          getProblem(vx, vy), </span>
+<span class="nc" id="L1611">          getParameters()});</span>
+    
+<span class="nc bnc" id="L1613" title="All 2 branches missed.">    if (error_msg != null)</span>
+<span class="nc" id="L1614">      throw new Exception(&quot;Error: &quot; + error_msg);</span>
+    
+    // make probability estimates deterministic from run to run
+<span class="nc" id="L1617">    Class svmClass = Class.forName(CLASS_SVM);</span>
+<span class="nc" id="L1618">    Field randF = svmClass.getField(&quot;rand&quot;);</span>
+<span class="nc" id="L1619">    Random rand = (Random)randF.get(null); // static field</span>
+<span class="nc" id="L1620">    rand.setSeed(m_Seed);</span>
+    
+    // train model
+<span class="nc" id="L1623">    m_Model = invokeMethod(</span>
+<span class="nc" id="L1624">        Class.forName(CLASS_SVM).newInstance(), </span>
+<span class="nc" id="L1625">        &quot;svm_train&quot;, </span>
+<span class="nc" id="L1626">        new Class[]{</span>
+<span class="nc" id="L1627">          Class.forName(CLASS_SVMPROBLEM), </span>
+<span class="nc" id="L1628">          Class.forName(CLASS_SVMPARAMETER)},</span>
+<span class="nc" id="L1629">        new Object[]{</span>
+<span class="nc" id="L1630">          getProblem(vx, vy), </span>
+<span class="nc" id="L1631">          getParameters()});</span>
+<span class="nc" id="L1632">  }</span>
+    
+  /**
+   * returns a string representation
+   * 
+   * @return            a string representation
+   */
+  public String toString() {
+<span class="fc" id="L1640">    return &quot;LibSVM wrapper, original code by Yasser EL-Manzalawy (= WLSVM)&quot;;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1649">    return RevisionUtils.extract(&quot;$Revision: 8940 $&quot;);</span>
+  }
+  
+  /**
+   * Main method for testing this class.
+   * 
+   * @param args the options
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L1658">    runClassifier(new LibSVM(), args);</span>
+<span class="nc" id="L1659">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

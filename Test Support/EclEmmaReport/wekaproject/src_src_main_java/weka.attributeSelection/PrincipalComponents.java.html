@@ -1,0 +1,1058 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>PrincipalComponents.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">PrincipalComponents.java</span></div><h1>PrincipalComponents.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    PrincipalComponents.java
+ *    Copyright (C) 2000 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.attributeSelection;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Matrix;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SparseInstance;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Center;
+import weka.filters.unsupervised.attribute.NominalToBinary;
+import weka.filters.unsupervised.attribute.Remove;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+import weka.filters.unsupervised.attribute.Standardize;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Performs a principal components analysis and transformation of the data. Use in conjunction with a Ranker search. Dimensionality reduction is accomplished by choosing enough eigenvectors to account for some percentage of the variance in the original data---default 0.95 (95%). Attribute noise can be filtered by transforming to the PC space, eliminating some of the worst eigenvectors, and then transforming back to the original space.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Don't normalize input data.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R
+ *  Retain enough PC attributes to account 
+ *  for this proportion of variance in the original data.
+ *  (default = 0.95)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -O
+ *  Transform through the PC space and 
+ *  back to the original space.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A
+ *  Maximum number of attributes to include in 
+ *  transformed attribute names. (-1 = include all)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @author Gabi Schmidberger (gabi@cs.waikato.ac.nz)
+ * @version $Revision: 6690 $
+ */
+<span class="nc" id="L78">public class PrincipalComponents </span>
+  extends UnsupervisedAttributeEvaluator 
+  implements AttributeTransformer, OptionHandler {
+  
+  /** for serialization */
+  private static final long serialVersionUID = -3675307197777734007L;
+
+  /** The data to transform analyse/transform */
+  private Instances m_trainInstances;
+
+  /** Keep a copy for the class attribute (if set) */
+  private Instances m_trainHeader;
+
+  /** The header for the transformed data format */
+  private Instances m_transformedFormat;
+
+  /** The header for data transformed back to the original space */
+  private Instances m_originalSpaceFormat;
+
+  /** Data has a class set */
+  private boolean m_hasClass;
+
+  /** Class index */
+  private int m_classIndex;
+
+  /** Number of attributes */
+  private int m_numAttribs;
+
+  /** Number of instances */
+  private int m_numInstances;
+
+  /** Correlation/covariance matrix for the original data */
+  private double [][] m_correlation;
+  
+  private double[] m_means;
+  private double[] m_stdDevs;
+  
+  /** 
+   * If true, center (rather than standardize) the data and
+   * compute PCA from covariance (rather than correlation)
+   * matrix.
+   */
+<span class="nc" id="L120">  private boolean m_center = false;</span>
+
+  /** Will hold the unordered linear transformations of the (normalized)
+      original data */
+  private double [][] m_eigenvectors;
+  
+  /** Eigenvalues for the corresponding eigenvectors */
+<span class="nc" id="L127">  private double [] m_eigenvalues = null;</span>
+
+  /** Sorted eigenvalues */
+  private int [] m_sortedEigens;
+
+  /** sum of the eigenvalues */
+<span class="nc" id="L133">  private double m_sumOfEigenValues = 0.0;</span>
+  
+  /** Filters for original data */
+  private ReplaceMissingValues m_replaceMissingFilter;
+  private NominalToBinary m_nominalToBinFilter;
+  private Remove m_attributeFilter;
+  private Center m_centerFilter;
+  private Standardize m_standardizeFilter;
+
+  /** The number of attributes in the pc transformed data */
+<span class="nc" id="L143">  private int m_outputNumAtts = -1;</span>
+  
+  /** normalize the input data? */
+  //private boolean m_normalize = true;
+
+  /** the amount of variance to cover in the original data when
+      retaining the best n PC's */
+<span class="nc" id="L150">  private double m_coverVariance = 0.95;</span>
+
+  /** transform the data through the pc space and back to the original
+      space ? */
+<span class="nc" id="L154">  private boolean m_transBackToOriginal = false;</span>
+  
+  /** maximum number of attributes in the transformed attribute name */
+<span class="nc" id="L157">  private int m_maxAttrsInName = 5;</span>
+
+  /** holds the transposed eigenvectors for converting back to the
+      original space */
+  private double [][] m_eTranspose;
+
+  /**
+   * Returns a string describing this attribute transformer
+   * @return a description of the evaluator suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L169">    return &quot;Performs a principal components analysis and transformation of &quot;</span>
+      +&quot;the data. Use in conjunction with a Ranker search. Dimensionality &quot;
+      +&quot;reduction is accomplished by choosing enough eigenvectors to &quot;
+      +&quot;account for some percentage of the variance in the original data---&quot;
+      +&quot;default 0.95 (95%). Attribute noise can be filtered by transforming &quot;
+      +&quot;to the PC space, eliminating some of the worst eigenvectors, and &quot;
+      +&quot;then transforming back to the original space.&quot;;
+  }
+
+  /**
+   * Returns an enumeration describing the available options. &lt;p&gt;
+   *
+   * @return an enumeration of all the available options.
+   **/
+  public Enumeration listOptions () {
+<span class="nc" id="L184">    Vector newVector = new Vector(3);</span>
+    
+<span class="nc" id="L186">    newVector.addElement(new Option(&quot;\tCenter (rather than standardize) the&quot; +</span>
+    		&quot;\n\tdata and compute PCA using the covariance (rather&quot; +
+    		&quot;\n\t than the correlation) matrix.&quot;,
+<span class="nc" id="L189">    		&quot;C&quot;, 0, &quot;-C&quot;));</span>
+
+<span class="nc" id="L191">    newVector.addElement(new Option(&quot;\tRetain enough PC attributes to account &quot;</span>
+                                    +&quot;\n\tfor this proportion of variance in &quot;
+                                    +&quot;the original data.\n&quot;
+                                    + &quot;\t(default = 0.95)&quot;,
+<span class="nc" id="L195">                                    &quot;R&quot;,1,&quot;-R&quot;));</span>
+    
+<span class="nc" id="L197">    newVector.addElement(new Option(&quot;\tTransform through the PC space and &quot;</span>
+                                    +&quot;\n\tback to the original space.&quot;
+<span class="nc" id="L199">                                    , &quot;O&quot;, 0, &quot;-O&quot;));</span>
+                                    
+<span class="nc" id="L201">    newVector.addElement(new Option(&quot;\tMaximum number of attributes to include in &quot;</span>
+                                    + &quot;\n\ttransformed attribute names. (-1 = include all)&quot;
+<span class="nc" id="L203">                                    , &quot;A&quot;, 1, &quot;-A&quot;));</span>
+<span class="nc" id="L204">    return  newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Don't normalize input data.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R
+   *  Retain enough PC attributes to account 
+   *  for this proportion of variance in the original data.
+   *  (default = 0.95)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -O
+   *  Transform through the PC space and 
+   *  back to the original space.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -A
+   *  Maximum number of attributes to include in 
+   *  transformed attribute names. (-1 = include all)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions (String[] options)
+    throws Exception {
+<span class="nc" id="L236">    resetOptions();</span>
+    String optionString;
+
+<span class="nc" id="L239">    optionString = Utils.getOption('R', options);</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+      Double temp;
+<span class="nc" id="L242">      temp = Double.valueOf(optionString);</span>
+<span class="nc" id="L243">      setVarianceCovered(temp.doubleValue());</span>
+    }
+<span class="nc" id="L245">    optionString = Utils.getOption('A', options);</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L247">      setMaximumAttributeNames(Integer.parseInt(optionString));</span>
+    }
+
+<span class="nc" id="L250">    setTransformBackToOriginal(Utils.getFlag('O', options));</span>
+<span class="nc" id="L251">    setCenterData(Utils.getFlag('C', options));</span>
+<span class="nc" id="L252">  }</span>
+
+  /**
+   * Reset to defaults
+   */
+  private void resetOptions() {
+<span class="nc" id="L258">    m_coverVariance = 0.95;</span>
+<span class="nc" id="L259">    m_sumOfEigenValues = 0.0;</span>
+<span class="nc" id="L260">    m_transBackToOriginal = false;</span>
+<span class="nc" id="L261">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String centerDataTipText() {
+<span class="nc" id="L269">    return &quot;Center (rather than standardize) the data. PCA will &quot;</span>
+      + &quot;be computed from the covariance (rather than correlation) &quot;
+      + &quot;matrix&quot;;
+  }
+  
+  /**
+   * Set whether to center (rather than standardize)
+   * the data. If set to true then PCA is computed
+   * from the covariance rather than correlation matrix.
+   * 
+   * @param center true if the data is to be
+   * centered rather than standardized
+   */
+  public void setCenterData(boolean center) {
+<span class="nc" id="L283">    m_center = center;</span>
+<span class="nc" id="L284">  }</span>
+  
+  /**
+   * Get whether to center (rather than standardize)
+   * the data. If true then PCA is computed
+   * from the covariance rather than correlation matrix. 
+   * 
+   * @return true if the data is to be centered rather
+   * than standardized.
+   */
+  public boolean getCenterData() {
+<span class="nc" id="L295">    return m_center;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String varianceCoveredTipText() {
+<span class="nc" id="L304">    return &quot;Retain enough PC attributes to account for this proportion of &quot;</span>
+      +&quot;variance.&quot;;
+  }
+
+  /**
+   * Sets the amount of variance to account for when retaining
+   * principal components
+   * @param vc the proportion of total variance to account for
+   */
+  public void setVarianceCovered(double vc) {
+<span class="nc" id="L314">    m_coverVariance = vc;</span>
+<span class="nc" id="L315">  }</span>
+
+  /**
+   * Gets the proportion of total variance to account for when
+   * retaining principal components
+   * @return the proportion of variance to account for
+   */
+  public double getVarianceCovered() {
+<span class="nc" id="L323">    return m_coverVariance;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String maximumAttributeNamesTipText() {
+<span class="nc" id="L332">    return &quot;The maximum number of attributes to include in transformed attribute names.&quot;;</span>
+  }
+
+  /**
+   * Sets maximum number of attributes to include in
+   * transformed attribute names.
+   * @param m the maximum number of attributes
+   */
+  public void setMaximumAttributeNames(int m) {
+<span class="nc" id="L341">    m_maxAttrsInName = m;</span>
+<span class="nc" id="L342">  }</span>
+
+  /**
+   * Gets maximum number of attributes to include in
+   * transformed attribute names.
+   * @return the maximum number of attributes
+   */
+  public int getMaximumAttributeNames() {
+<span class="nc" id="L350">    return m_maxAttrsInName;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String transformBackToOriginalTipText() {
+<span class="nc" id="L359">    return &quot;Transform through the PC space and back to the original space. &quot;</span>
+      +&quot;If only the best n PCs are retained (by setting varianceCovered &lt; 1) &quot;
+      +&quot;then this option will give a dataset in the original space but with &quot;
+      +&quot;less attribute noise.&quot;;
+  }
+
+  /**
+   * Sets whether the data should be transformed back to the original
+   * space
+   * @param b true if the data should be transformed back to the
+   * original space
+   */
+  public void setTransformBackToOriginal(boolean b) {
+<span class="nc" id="L372">    m_transBackToOriginal = b;</span>
+<span class="nc" id="L373">  }</span>
+  
+  /**
+   * Gets whether the data is to be transformed back to the original
+   * space.
+   * @return true if the data is to be transformed back to the original space
+   */
+  public boolean getTransformBackToOriginal() {
+<span class="nc" id="L381">    return m_transBackToOriginal;</span>
+  }
+
+  /**
+   * Gets the current settings of PrincipalComponents
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions () {
+
+<span class="nc" id="L391">    String[] options = new String[6];</span>
+<span class="nc" id="L392">    int current = 0;</span>
+    
+<span class="nc bnc" id="L394" title="All 2 branches missed.">    if (getCenterData()) {</span>
+<span class="nc" id="L395">      options[current++] = &quot;-C&quot;;</span>
+    }
+
+<span class="nc" id="L398">    options[current++] = &quot;-R&quot;;</span>
+<span class="nc" id="L399">    options[current++] = &quot;&quot;+getVarianceCovered();</span>
+
+<span class="nc" id="L401">    options[current++] = &quot;-A&quot;;</span>
+<span class="nc" id="L402">    options[current++] = &quot;&quot;+getMaximumAttributeNames();</span>
+
+<span class="nc bnc" id="L404" title="All 2 branches missed.">    if (getTransformBackToOriginal()) {</span>
+<span class="nc" id="L405">      options[current++] = &quot;-O&quot;;</span>
+    }
+    
+<span class="nc bnc" id="L408" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L409">      options[current++] = &quot;&quot;;</span>
+    }
+    
+<span class="nc" id="L412">    return  options;</span>
+  }
+
+  /**
+   * Returns the capabilities of this evaluator.
+   *
+   * @return            the capabilities of this evaluator
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L422">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L423">    result.disableAll();</span>
+    
+    // attributes
+<span class="nc" id="L426">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L427">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L428">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="nc" id="L429">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="nc" id="L432">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="nc" id="L433">    result.enable(Capability.NUMERIC_CLASS);</span>
+<span class="nc" id="L434">    result.enable(Capability.DATE_CLASS);</span>
+<span class="nc" id="L435">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+<span class="nc" id="L436">    result.enable(Capability.NO_CLASS);</span>
+    
+<span class="nc" id="L438">    return result;</span>
+  }
+
+  /**
+   * Initializes principal components and performs the analysis
+   * @param data the instances to analyse/transform
+   * @throws Exception if analysis fails
+   */
+  public void buildEvaluator(Instances data) throws Exception {
+    // can evaluator handle data?
+<span class="nc" id="L448">    getCapabilities().testWithFail(data);</span>
+
+<span class="nc" id="L450">    buildAttributeConstructor(data);</span>
+<span class="nc" id="L451">  }</span>
+
+  private void buildAttributeConstructor (Instances data) throws Exception {
+<span class="nc" id="L454">    m_eigenvalues = null;</span>
+<span class="nc" id="L455">    m_outputNumAtts = -1;</span>
+<span class="nc" id="L456">    m_attributeFilter = null;</span>
+<span class="nc" id="L457">    m_nominalToBinFilter = null;</span>
+<span class="nc" id="L458">    m_sumOfEigenValues = 0.0;</span>
+<span class="nc" id="L459">    m_trainInstances = new Instances(data);</span>
+
+    // make a copy of the training data so that we can get the class
+    // column to append to the transformed data (if necessary)
+<span class="nc" id="L463">    m_trainHeader = new Instances(m_trainInstances, 0);</span>
+    
+<span class="nc" id="L465">    m_replaceMissingFilter = new ReplaceMissingValues();</span>
+<span class="nc" id="L466">    m_replaceMissingFilter.setInputFormat(m_trainInstances);</span>
+<span class="nc" id="L467">    m_trainInstances = Filter.useFilter(m_trainInstances, </span>
+<span class="nc" id="L468">                                        m_replaceMissingFilter);</span>
+
+    /*if (m_normalize) {
+      m_normalizeFilter = new Normalize();
+      m_normalizeFilter.setInputFormat(m_trainInstances);
+      m_trainInstances = Filter.useFilter(m_trainInstances, m_normalizeFilter);
+    } */
+
+<span class="nc" id="L476">    m_nominalToBinFilter = new NominalToBinary();</span>
+<span class="nc" id="L477">    m_nominalToBinFilter.setInputFormat(m_trainInstances);</span>
+<span class="nc" id="L478">    m_trainInstances = Filter.useFilter(m_trainInstances, </span>
+<span class="nc" id="L479">                                        m_nominalToBinFilter);</span>
+    
+    // delete any attributes with only one distinct value or are all missing
+<span class="nc" id="L482">    Vector deleteCols = new Vector();</span>
+<span class="nc bnc" id="L483" title="All 2 branches missed.">    for (int i=0;i&lt;m_trainInstances.numAttributes();i++) {</span>
+<span class="nc bnc" id="L484" title="All 2 branches missed.">      if (m_trainInstances.numDistinctValues(i) &lt;=1) {</span>
+<span class="nc" id="L485">        deleteCols.addElement(new Integer(i));</span>
+      }
+    }
+
+<span class="nc bnc" id="L489" title="All 2 branches missed.">    if (m_trainInstances.classIndex() &gt;=0) {</span>
+      // get rid of the class column
+<span class="nc" id="L491">      m_hasClass = true;</span>
+<span class="nc" id="L492">      m_classIndex = m_trainInstances.classIndex();</span>
+<span class="nc" id="L493">      deleteCols.addElement(new Integer(m_classIndex));</span>
+    }
+
+    // remove columns from the data if necessary
+<span class="nc bnc" id="L497" title="All 2 branches missed.">    if (deleteCols.size() &gt; 0) {</span>
+<span class="nc" id="L498">      m_attributeFilter = new Remove();</span>
+<span class="nc" id="L499">      int [] todelete = new int [deleteCols.size()];</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">      for (int i=0;i&lt;deleteCols.size();i++) {</span>
+<span class="nc" id="L501">        todelete[i] = ((Integer)(deleteCols.elementAt(i))).intValue();</span>
+      }
+<span class="nc" id="L503">      m_attributeFilter.setAttributeIndicesArray(todelete);</span>
+<span class="nc" id="L504">      m_attributeFilter.setInvertSelection(false);</span>
+<span class="nc" id="L505">      m_attributeFilter.setInputFormat(m_trainInstances);</span>
+<span class="nc" id="L506">      m_trainInstances = Filter.useFilter(m_trainInstances, m_attributeFilter);</span>
+    }
+    
+    // can evaluator handle the processed data ? e.g., enough attributes?
+<span class="nc" id="L510">    getCapabilities().testWithFail(m_trainInstances);</span>
+
+<span class="nc" id="L512">    m_numInstances = m_trainInstances.numInstances();</span>
+<span class="nc" id="L513">    m_numAttribs = m_trainInstances.numAttributes();</span>
+
+    //fillCorrelation();
+<span class="nc" id="L516">    fillCovariance();</span>
+
+<span class="nc" id="L518">    double [] d = new double[m_numAttribs]; </span>
+<span class="nc" id="L519">    double [][] v = new double[m_numAttribs][m_numAttribs];</span>
+
+<span class="nc" id="L521">    Matrix corr = new Matrix(m_correlation);</span>
+<span class="nc" id="L522">    corr.eigenvalueDecomposition(v, d);</span>
+<span class="nc" id="L523">    m_eigenvectors = (double [][])v.clone();</span>
+<span class="nc" id="L524">    m_eigenvalues = (double [])d.clone();</span>
+    
+    /*for (int i = 0; i &lt; m_numAttribs; i++) {
+      for (int j = 0; j &lt; m_numAttribs; j++) {
+        System.err.println(v[i][j] + &quot; &quot;);
+      }
+      System.err.println(d[i]);
+    } */
+
+    // any eigenvalues less than 0 are not worth anything --- change to 0
+<span class="nc bnc" id="L534" title="All 2 branches missed.">    for (int i = 0; i &lt; m_eigenvalues.length; i++) {</span>
+<span class="nc bnc" id="L535" title="All 2 branches missed.">      if (m_eigenvalues[i] &lt; 0) {</span>
+<span class="nc" id="L536">        m_eigenvalues[i] = 0.0;</span>
+      }
+    }
+<span class="nc" id="L539">    m_sortedEigens = Utils.sort(m_eigenvalues);</span>
+<span class="nc" id="L540">    m_sumOfEigenValues = Utils.sum(m_eigenvalues);</span>
+
+<span class="nc" id="L542">    m_transformedFormat = setOutputFormat();</span>
+<span class="nc bnc" id="L543" title="All 2 branches missed.">    if (m_transBackToOriginal) {</span>
+<span class="nc" id="L544">      m_originalSpaceFormat = setOutputFormatOriginal();</span>
+      
+      // new ordered eigenvector matrix
+<span class="nc bnc" id="L547" title="All 2 branches missed.">      int numVectors = (m_transformedFormat.classIndex() &lt; 0) </span>
+<span class="nc" id="L548">        ? m_transformedFormat.numAttributes()</span>
+<span class="nc" id="L549">        : m_transformedFormat.numAttributes() - 1;</span>
+
+<span class="nc" id="L551">      double [][] orderedVectors = </span>
+<span class="nc" id="L552">        new double [m_eigenvectors.length][numVectors + 1];</span>
+      
+      // try converting back to the original space
+<span class="nc bnc" id="L555" title="All 2 branches missed.">      for (int i = m_numAttribs - 1; i &gt; (m_numAttribs - numVectors - 1); i--) {</span>
+<span class="nc bnc" id="L556" title="All 2 branches missed.">        for (int j = 0; j &lt; m_numAttribs; j++) {</span>
+<span class="nc" id="L557">          orderedVectors[j][m_numAttribs - i] = </span>
+<span class="nc" id="L558">            m_eigenvectors[j][m_sortedEigens[i]];</span>
+        }
+      }
+      
+      // transpose the matrix
+<span class="nc" id="L563">      int nr = orderedVectors.length;</span>
+<span class="nc" id="L564">      int nc = orderedVectors[0].length;</span>
+<span class="nc" id="L565">      m_eTranspose = </span>
+<span class="nc" id="L566">        new double [nc][nr];</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">      for (int i = 0; i &lt; nc; i++) {</span>
+<span class="nc bnc" id="L568" title="All 2 branches missed.">        for (int j = 0; j &lt; nr; j++) {</span>
+<span class="nc" id="L569">          m_eTranspose[i][j] = orderedVectors[j][i];</span>
+        }
+      }
+    }
+<span class="nc" id="L573">  }</span>
+
+  /**
+   * Returns just the header for the transformed data (ie. an empty
+   * set of instances. This is so that AttributeSelection can
+   * determine the structure of the transformed data without actually
+   * having to get all the transformed data through transformedData().
+   * @return the header of the transformed data.
+   * @throws Exception if the header of the transformed data can't
+   * be determined.
+   */
+  public Instances transformedHeader() throws Exception {
+<span class="nc bnc" id="L585" title="All 2 branches missed.">    if (m_eigenvalues == null) {</span>
+<span class="nc" id="L586">      throw new Exception(&quot;Principal components hasn't been built yet&quot;);</span>
+    }
+<span class="nc bnc" id="L588" title="All 2 branches missed.">    if (m_transBackToOriginal) {</span>
+<span class="nc" id="L589">      return m_originalSpaceFormat;</span>
+    } else {
+<span class="nc" id="L591">      return m_transformedFormat;</span>
+    }
+  }
+
+  /**
+   * Gets the transformed training data.
+   * @return the transformed training data
+   * @throws Exception if transformed data can't be returned
+   */
+  public Instances transformedData(Instances data) throws Exception {
+<span class="nc bnc" id="L601" title="All 2 branches missed.">    if (m_eigenvalues == null) {</span>
+<span class="nc" id="L602">      throw new Exception(&quot;Principal components hasn't been built yet&quot;);</span>
+    }
+
+<span class="nc" id="L605">    Instances output = null;</span>
+
+<span class="nc bnc" id="L607" title="All 2 branches missed.">    if (m_transBackToOriginal) {</span>
+<span class="nc" id="L608">      output = new Instances(m_originalSpaceFormat);</span>
+    } else {
+<span class="nc" id="L610">      output = new Instances(m_transformedFormat);</span>
+    }
+<span class="nc bnc" id="L612" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="nc" id="L613">      Instance converted = convertInstance(data.instance(i));</span>
+<span class="nc" id="L614">      output.add(converted);</span>
+    }
+
+<span class="nc" id="L617">    return output;</span>
+  }
+
+  /**
+   * Evaluates the merit of a transformed attribute. This is defined
+   * to be 1 minus the cumulative variance explained. Merit can't
+   * be meaningfully evaluated if the data is to be transformed back
+   * to the original space.
+   * @param att the attribute to be evaluated
+   * @return the merit of a transformed attribute
+   * @throws Exception if attribute can't be evaluated
+   */
+  public double evaluateAttribute(int att) throws Exception {
+<span class="nc bnc" id="L630" title="All 2 branches missed.">    if (m_eigenvalues == null) {</span>
+<span class="nc" id="L631">      throw new Exception(&quot;Principal components hasn't been built yet!&quot;);</span>
+    }
+
+<span class="nc bnc" id="L634" title="All 2 branches missed.">    if (m_transBackToOriginal) {</span>
+<span class="nc" id="L635">      return 1.0; // can't evaluate back in the original space!</span>
+    }
+
+    // return 1-cumulative variance explained for this transformed att
+<span class="nc" id="L639">    double cumulative = 0.0;</span>
+<span class="nc bnc" id="L640" title="All 2 branches missed.">    for (int i = m_numAttribs - 1; i &gt;= m_numAttribs - att - 1; i--) {</span>
+<span class="nc" id="L641">      cumulative += m_eigenvalues[m_sortedEigens[i]];</span>
+    }
+
+<span class="nc" id="L644">    return 1.0 - cumulative / m_sumOfEigenValues;</span>
+  }
+  
+  private void fillCovariance() throws Exception {
+    // first store the means
+<span class="nc" id="L649">    m_means = new double[m_trainInstances.numAttributes()];</span>
+<span class="nc" id="L650">    m_stdDevs = new double[m_trainInstances.numAttributes()];</span>
+<span class="nc bnc" id="L651" title="All 2 branches missed.">    for (int i = 0; i &lt; m_trainInstances.numAttributes(); i++) {</span>
+<span class="nc" id="L652">      m_means[i] = m_trainInstances.meanOrMode(i);</span>
+    }
+    
+<span class="nc bnc" id="L655" title="All 2 branches missed.">    if (!m_center) {</span>
+<span class="nc" id="L656">      fillCorrelation();</span>
+<span class="nc" id="L657">      return;</span>
+    }
+    
+<span class="nc" id="L660">    double[] att = new double[m_trainInstances.numInstances()];</span>
+    
+    // now center the data by subtracting the mean
+<span class="nc" id="L663">    m_centerFilter = new Center();</span>
+<span class="nc" id="L664">    m_centerFilter.setInputFormat(m_trainInstances);</span>
+<span class="nc" id="L665">    m_trainInstances = Filter.useFilter(m_trainInstances, m_centerFilter);</span>
+    
+    // now compute the covariance matrix
+<span class="nc" id="L668">    m_correlation = new double[m_numAttribs][m_numAttribs];</span>
+    
+<span class="nc bnc" id="L670" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="nc bnc" id="L671" title="All 2 branches missed.">      for (int j = 0; j &lt; m_numAttribs; j++) {</span>
+        
+<span class="nc" id="L673">        double cov = 0;</span>
+<span class="nc bnc" id="L674" title="All 2 branches missed.">        for (int k = 0; k &lt; m_numInstances; k++) {</span>
+       
+<span class="nc bnc" id="L676" title="All 2 branches missed.">          if (i == j) {</span>
+<span class="nc" id="L677">            cov += (m_trainInstances.instance(k).value(i) *</span>
+<span class="nc" id="L678">                m_trainInstances.instance(k).value(i));</span>
+          } else {
+<span class="nc" id="L680">          cov += (m_trainInstances.instance(k).value(i) *</span>
+<span class="nc" id="L681">              m_trainInstances.instance(k).value(j));</span>
+          }
+        }
+        
+<span class="nc" id="L685">        cov /= (double)(m_trainInstances.numInstances() - 1);</span>
+<span class="nc" id="L686">        m_correlation[i][j] = cov;</span>
+<span class="nc" id="L687">        m_correlation[j][i] = cov;                </span>
+      }
+    }
+<span class="nc" id="L690">  }</span>
+
+  /**
+   * Fill the correlation matrix
+   */
+  private void fillCorrelation() throws Exception {
+<span class="nc" id="L696">    m_correlation = new double[m_numAttribs][m_numAttribs];</span>
+<span class="nc" id="L697">    double [] att1 = new double [m_numInstances];</span>
+<span class="nc" id="L698">    double [] att2 = new double [m_numInstances];</span>
+    double corr;
+
+<span class="nc bnc" id="L701" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="nc bnc" id="L702" title="All 2 branches missed.">      for (int j = 0; j &lt; m_numAttribs; j++) {</span>
+<span class="nc bnc" id="L703" title="All 2 branches missed.">        for (int k = 0; k &lt; m_numInstances; k++) {</span>
+<span class="nc" id="L704">          att1[k] = m_trainInstances.instance(k).value(i);</span>
+<span class="nc" id="L705">          att2[k] = m_trainInstances.instance(k).value(j);</span>
+        }
+<span class="nc bnc" id="L707" title="All 2 branches missed.">        if (i == j) {</span>
+<span class="nc" id="L708">          m_correlation[i][j] = 1.0;</span>
+            // store the standard deviation
+<span class="nc" id="L710">            m_stdDevs[i] = Math.sqrt(Utils.variance(att1));</span>
+        } else {
+<span class="nc" id="L712">          corr = Utils.correlation(att1,att2,m_numInstances);</span>
+<span class="nc" id="L713">          m_correlation[i][j] = corr;</span>
+<span class="nc" id="L714">          m_correlation[j][i] = corr;</span>
+        }
+      }
+    }
+    
+    // now standardize the input data
+<span class="nc" id="L720">    m_standardizeFilter = new Standardize();</span>
+<span class="nc" id="L721">    m_standardizeFilter.setInputFormat(m_trainInstances);</span>
+<span class="nc" id="L722">    m_trainInstances = Filter.useFilter(m_trainInstances, m_standardizeFilter);</span>
+<span class="nc" id="L723">  }</span>
+
+  /**
+   * Return a summary of the analysis
+   * @return a summary of the analysis.
+   */
+  private String principalComponentsSummary() {
+<span class="nc" id="L730">    StringBuffer result = new StringBuffer();</span>
+<span class="nc" id="L731">    double cumulative = 0.0;</span>
+<span class="nc" id="L732">    Instances output = null;</span>
+<span class="nc" id="L733">    int numVectors=0;</span>
+
+    try {
+<span class="nc" id="L736">      output = setOutputFormat();</span>
+<span class="nc bnc" id="L737" title="All 2 branches missed.">      numVectors = (output.classIndex() &lt; 0) </span>
+<span class="nc" id="L738">        ? output.numAttributes()</span>
+<span class="nc" id="L739">        : output.numAttributes()-1;</span>
+<span class="nc" id="L740">    } catch (Exception ex) {</span>
+    }
+    //tomorrow
+<span class="nc bnc" id="L743" title="All 2 branches missed.">    String corrCov = (m_center) ? &quot;Covariance &quot; : &quot;Correlation &quot;;</span>
+<span class="nc" id="L744">    result.append(corrCov + &quot;matrix\n&quot;+matrixToString(m_correlation)</span>
+<span class="nc" id="L745">                  +&quot;\n\n&quot;);</span>
+<span class="nc" id="L746">    result.append(&quot;eigenvalue\tproportion\tcumulative\n&quot;);</span>
+<span class="nc bnc" id="L747" title="All 2 branches missed.">    for (int i = m_numAttribs - 1; i &gt; (m_numAttribs - numVectors - 1); i--) {</span>
+<span class="nc" id="L748">      cumulative+=m_eigenvalues[m_sortedEigens[i]];</span>
+<span class="nc" id="L749">      result.append(Utils.doubleToString(m_eigenvalues[m_sortedEigens[i]],9,5)</span>
+<span class="nc" id="L750">                    +&quot;\t&quot;+Utils.</span>
+<span class="nc" id="L751">                    doubleToString((m_eigenvalues[m_sortedEigens[i]] / </span>
+<span class="nc" id="L752">                                    m_sumOfEigenValues),</span>
+<span class="nc" id="L753">                                     9,5)</span>
+<span class="nc" id="L754">                    +&quot;\t&quot;+Utils.doubleToString((cumulative / </span>
+<span class="nc" id="L755">                                                m_sumOfEigenValues),9,5)</span>
+<span class="nc" id="L756">                    +&quot;\t&quot;+output.attribute(m_numAttribs - i - 1).name()+&quot;\n&quot;);</span>
+    }
+
+<span class="nc" id="L759">    result.append(&quot;\nEigenvectors\n&quot;);</span>
+<span class="nc bnc" id="L760" title="All 2 branches missed.">    for (int j = 1;j &lt;= numVectors;j++) {</span>
+<span class="nc" id="L761">      result.append(&quot; V&quot;+j+'\t');</span>
+    }
+<span class="nc" id="L763">    result.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L764" title="All 2 branches missed.">    for (int j = 0; j &lt; m_numAttribs; j++) {</span>
+
+<span class="nc bnc" id="L766" title="All 2 branches missed.">      for (int i = m_numAttribs - 1; i &gt; (m_numAttribs - numVectors - 1); i--) {</span>
+<span class="nc" id="L767">        result.append(Utils.</span>
+<span class="nc" id="L768">                      doubleToString(m_eigenvectors[j][m_sortedEigens[i]],7,4)</span>
+<span class="nc" id="L769">                      +&quot;\t&quot;);</span>
+      }
+<span class="nc" id="L771">      result.append(m_trainInstances.attribute(j).name()+'\n');</span>
+    }
+
+<span class="nc bnc" id="L774" title="All 2 branches missed.">    if (m_transBackToOriginal) {</span>
+<span class="nc" id="L775">      result.append(&quot;\nPC space transformed back to original space.\n&quot;</span>
+                    +&quot;(Note: can't evaluate attributes in the original &quot;
+                    +&quot;space)\n&quot;);
+    }
+<span class="nc" id="L779">    return result.toString();</span>
+  }
+
+  /**
+   * Returns a description of this attribute transformer
+   * @return a String describing this attribute transformer
+   */
+  public String toString() {
+<span class="nc bnc" id="L787" title="All 2 branches missed.">    if (m_eigenvalues == null) {</span>
+<span class="nc" id="L788">      return &quot;Principal components hasn't been built yet!&quot;;</span>
+    } else {
+<span class="nc" id="L790">      return &quot;\tPrincipal Components Attribute Transformer\n\n&quot;</span>
+<span class="nc" id="L791">        +principalComponentsSummary();</span>
+    }
+  }
+
+  /**
+   * Return a matrix as a String
+   * @param matrix that is decribed as a string
+   * @return a String describing a matrix
+   */
+  private String matrixToString(double [][] matrix) {
+<span class="nc" id="L801">    StringBuffer result = new StringBuffer();</span>
+<span class="nc" id="L802">    int last = matrix.length - 1;</span>
+
+<span class="nc bnc" id="L804" title="All 2 branches missed.">    for (int i = 0; i &lt;= last; i++) {</span>
+<span class="nc bnc" id="L805" title="All 2 branches missed.">      for (int j = 0; j &lt;= last; j++) {</span>
+<span class="nc" id="L806">        result.append(Utils.doubleToString(matrix[i][j],6,2)+&quot; &quot;);</span>
+<span class="nc bnc" id="L807" title="All 2 branches missed.">        if (j == last) {</span>
+<span class="nc" id="L808">          result.append('\n');</span>
+        }
+      }
+    }
+<span class="nc" id="L812">    return result.toString();</span>
+  }
+
+  /**
+   * Convert a pc transformed instance back to the original space
+   * 
+   * @param inst        the instance to convert
+   * @return            the processed instance
+   * @throws Exception  if something goes wrong
+   */
+  private Instance convertInstanceToOriginal(Instance inst)
+    throws Exception {
+<span class="nc" id="L824">    double[] newVals = null;</span>
+
+<span class="nc bnc" id="L826" title="All 2 branches missed.">    if (m_hasClass) {</span>
+<span class="nc" id="L827">      newVals = new double[m_numAttribs+1];</span>
+    } else {
+<span class="nc" id="L829">      newVals = new double[m_numAttribs];</span>
+    }
+
+<span class="nc bnc" id="L832" title="All 2 branches missed.">    if (m_hasClass) {</span>
+      // class is always appended as the last attribute
+<span class="nc" id="L834">      newVals[m_numAttribs] = inst.value(inst.numAttributes() - 1);</span>
+    }
+
+<span class="nc bnc" id="L837" title="All 2 branches missed.">    for (int i = 0; i &lt; m_eTranspose[0].length; i++) {</span>
+<span class="nc" id="L838">      double tempval = 0.0;</span>
+<span class="nc bnc" id="L839" title="All 2 branches missed.">      for (int j = 1; j &lt; m_eTranspose.length; j++) {</span>
+<span class="nc" id="L840">        tempval += (m_eTranspose[j][i] * </span>
+<span class="nc" id="L841">                    inst.value(j - 1));</span>
+       }
+<span class="nc" id="L843">      newVals[i] = tempval;</span>
+<span class="nc bnc" id="L844" title="All 2 branches missed.">      if (!m_center) {</span>
+<span class="nc" id="L845">        newVals[i] *= m_stdDevs[i];</span>
+      } 
+<span class="nc" id="L847">      newVals[i] += m_means[i];</span>
+    }
+    
+<span class="nc bnc" id="L850" title="All 2 branches missed.">    if (inst instanceof SparseInstance) {</span>
+<span class="nc" id="L851">      return new SparseInstance(inst.weight(), newVals);</span>
+    } else {
+<span class="nc" id="L853">      return new Instance(inst.weight(), newVals);</span>
+    }      
+  }
+
+  /**
+   * Transform an instance in original (unormalized) format. Convert back
+   * to the original space if requested.
+   * @param instance an instance in the original (unormalized) format
+   * @return a transformed instance
+   * @throws Exception if instance cant be transformed
+   */
+  public Instance convertInstance(Instance instance) throws Exception {
+
+<span class="nc bnc" id="L866" title="All 2 branches missed.">    if (m_eigenvalues == null) {</span>
+<span class="nc" id="L867">      throw new Exception(&quot;convertInstance: Principal components not &quot;</span>
+                          +&quot;built yet&quot;);
+    }
+
+<span class="nc" id="L871">    double[] newVals = new double[m_outputNumAtts];</span>
+<span class="nc" id="L872">    Instance tempInst = (Instance)instance.copy();</span>
+<span class="nc bnc" id="L873" title="All 2 branches missed.">    if (!instance.dataset().equalHeaders(m_trainHeader)) {</span>
+<span class="nc" id="L874">      throw new Exception(&quot;Can't convert instance: header's don't match: &quot;</span>
+                          +&quot;PrincipalComponents\n&quot;
+                          + &quot;Can't convert instance: header's don't match.&quot;);
+    }
+
+<span class="nc" id="L879">    m_replaceMissingFilter.input(tempInst);</span>
+<span class="nc" id="L880">    m_replaceMissingFilter.batchFinished();</span>
+<span class="nc" id="L881">    tempInst = m_replaceMissingFilter.output();</span>
+
+    /*if (m_normalize) {
+      m_normalizeFilter.input(tempInst);
+      m_normalizeFilter.batchFinished();
+      tempInst = m_normalizeFilter.output();
+    }*/
+
+<span class="nc" id="L889">    m_nominalToBinFilter.input(tempInst);</span>
+<span class="nc" id="L890">    m_nominalToBinFilter.batchFinished();</span>
+<span class="nc" id="L891">    tempInst = m_nominalToBinFilter.output();</span>
+
+<span class="nc bnc" id="L893" title="All 2 branches missed.">    if (m_attributeFilter != null) {</span>
+<span class="nc" id="L894">      m_attributeFilter.input(tempInst);</span>
+<span class="nc" id="L895">      m_attributeFilter.batchFinished();</span>
+<span class="nc" id="L896">      tempInst = m_attributeFilter.output();</span>
+    }
+    
+<span class="nc bnc" id="L899" title="All 2 branches missed.">    if (!m_center) {</span>
+<span class="nc" id="L900">      m_standardizeFilter.input(tempInst);</span>
+<span class="nc" id="L901">      m_standardizeFilter.batchFinished();</span>
+<span class="nc" id="L902">      tempInst = m_standardizeFilter.output();</span>
+    } else {
+<span class="nc" id="L904">      m_centerFilter.input(tempInst);</span>
+<span class="nc" id="L905">      m_centerFilter.batchFinished();</span>
+<span class="nc" id="L906">      tempInst = m_centerFilter.output();</span>
+    }
+
+<span class="nc bnc" id="L909" title="All 2 branches missed.">    if (m_hasClass) {</span>
+<span class="nc" id="L910">       newVals[m_outputNumAtts - 1] = instance.value(instance.classIndex());</span>
+    }
+
+<span class="nc" id="L913">    double cumulative = 0;</span>
+<span class="nc bnc" id="L914" title="All 2 branches missed.">    for (int i = m_numAttribs - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L915">      double tempval = 0.0;</span>
+<span class="nc bnc" id="L916" title="All 2 branches missed.">      for (int j = 0; j &lt; m_numAttribs; j++) {</span>
+<span class="nc" id="L917">        tempval += (m_eigenvectors[j][m_sortedEigens[i]] * </span>
+<span class="nc" id="L918">                    tempInst.value(j));</span>
+       }
+<span class="nc" id="L920">      newVals[m_numAttribs - i - 1] = tempval;</span>
+<span class="nc" id="L921">      cumulative+=m_eigenvalues[m_sortedEigens[i]];</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">      if ((cumulative / m_sumOfEigenValues) &gt;= m_coverVariance) {</span>
+<span class="nc" id="L923">        break;</span>
+      }
+    }
+    
+<span class="nc bnc" id="L927" title="All 2 branches missed.">    if (!m_transBackToOriginal) {</span>
+<span class="nc bnc" id="L928" title="All 2 branches missed.">      if (instance instanceof SparseInstance) {</span>
+<span class="nc" id="L929">      return new SparseInstance(instance.weight(), newVals);</span>
+      } else {
+<span class="nc" id="L931">        return new Instance(instance.weight(), newVals);</span>
+      }      
+    } else {
+<span class="nc bnc" id="L934" title="All 2 branches missed.">      if (instance instanceof SparseInstance) {</span>
+<span class="nc" id="L935">        return convertInstanceToOriginal(new SparseInstance(instance.weight(), </span>
+<span class="nc" id="L936">                                                            newVals));</span>
+      } else {
+<span class="nc" id="L938">        return convertInstanceToOriginal(new Instance(instance.weight(),</span>
+<span class="nc" id="L939">                                                      newVals));</span>
+      }
+    }
+  }
+
+  /**
+   * Set up the header for the PC-&gt;original space dataset
+   * 
+   * @return            the output format
+   * @throws Exception  if something goes wrong
+   */
+  private Instances setOutputFormatOriginal() throws Exception {
+<span class="nc" id="L951">    FastVector attributes = new FastVector();</span>
+    
+<span class="nc bnc" id="L953" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="nc" id="L954">      String att = m_trainInstances.attribute(i).name();</span>
+<span class="nc" id="L955">      attributes.addElement(new Attribute(att));</span>
+    }
+    
+<span class="nc bnc" id="L958" title="All 2 branches missed.">    if (m_hasClass) {</span>
+<span class="nc" id="L959">      attributes.addElement(m_trainHeader.classAttribute().copy());</span>
+    }
+
+<span class="nc" id="L962">    Instances outputFormat = </span>
+<span class="nc" id="L963">      new Instances(m_trainHeader.relationName()+&quot;-&gt;PC-&gt;original space&quot;,</span>
+<span class="nc" id="L964">                    attributes, 0);</span>
+    
+    // set the class to be the last attribute if necessary
+<span class="nc bnc" id="L967" title="All 2 branches missed.">    if (m_hasClass) {</span>
+<span class="nc" id="L968">      outputFormat.setClassIndex(outputFormat.numAttributes()-1);</span>
+    }
+
+<span class="nc" id="L971">    return outputFormat;</span>
+  }
+
+  /**
+   * Set the format for the transformed data
+   * @return a set of empty Instances (header only) in the new format
+   * @throws Exception if the output format can't be set
+   */
+  private Instances setOutputFormat() throws Exception {
+<span class="nc bnc" id="L980" title="All 2 branches missed.">    if (m_eigenvalues == null) {</span>
+<span class="nc" id="L981">      return null;</span>
+    }
+
+<span class="nc" id="L984">    double cumulative = 0.0;</span>
+<span class="nc" id="L985">    FastVector attributes = new FastVector();</span>
+<span class="nc bnc" id="L986" title="All 2 branches missed.">     for (int i = m_numAttribs - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L987">       StringBuffer attName = new StringBuffer();</span>
+       // build array of coefficients
+<span class="nc" id="L989">       double[] coeff_mags = new double[m_numAttribs];</span>
+<span class="nc bnc" id="L990" title="All 2 branches missed.">       for (int j = 0; j &lt; m_numAttribs; j++)</span>
+<span class="nc" id="L991">         coeff_mags[j] = -Math.abs(m_eigenvectors[j][m_sortedEigens[i]]);</span>
+<span class="nc bnc" id="L992" title="All 2 branches missed.">       int num_attrs = (m_maxAttrsInName &gt; 0) ? Math.min(m_numAttribs, m_maxAttrsInName) : m_numAttribs;</span>
+       // this array contains the sorted indices of the coefficients
+       int[] coeff_inds;
+<span class="nc bnc" id="L995" title="All 2 branches missed.">       if (m_numAttribs &gt; 0) {</span>
+          // if m_maxAttrsInName &gt; 0, sort coefficients by decreasing magnitude
+<span class="nc" id="L997">          coeff_inds = Utils.sort(coeff_mags);</span>
+       } else {
+          // if  m_maxAttrsInName &lt;= 0, use all coeffs in original order
+<span class="nc" id="L1000">          coeff_inds = new int[m_numAttribs];</span>
+<span class="nc bnc" id="L1001" title="All 2 branches missed.">          for (int j=0; j&lt;m_numAttribs; j++)</span>
+<span class="nc" id="L1002">            coeff_inds[j] = j;</span>
+       }
+       // build final attName string
+<span class="nc bnc" id="L1005" title="All 2 branches missed.">       for (int j = 0; j &lt; num_attrs; j++) {</span>
+<span class="nc" id="L1006">         double coeff_value = m_eigenvectors[coeff_inds[j]][m_sortedEigens[i]];</span>
+<span class="nc bnc" id="L1007" title="All 4 branches missed.">         if (j &gt; 0 &amp;&amp; coeff_value &gt;= 0)</span>
+<span class="nc" id="L1008">           attName.append(&quot;+&quot;);</span>
+<span class="nc" id="L1009">         attName.append(Utils.doubleToString(coeff_value,5,3)</span>
+<span class="nc" id="L1010">                        +m_trainInstances.attribute(coeff_inds[j]).name());</span>
+       }
+<span class="nc bnc" id="L1012" title="All 2 branches missed.">       if (num_attrs &lt; m_numAttribs)</span>
+<span class="nc" id="L1013">         attName.append(&quot;...&quot;);</span>
+         
+<span class="nc" id="L1015">       attributes.addElement(new Attribute(attName.toString()));</span>
+<span class="nc" id="L1016">       cumulative+=m_eigenvalues[m_sortedEigens[i]];</span>
+
+<span class="nc bnc" id="L1018" title="All 2 branches missed.">       if ((cumulative / m_sumOfEigenValues) &gt;= m_coverVariance) {</span>
+<span class="nc" id="L1019">         break;</span>
+       }
+     }
+     
+<span class="nc bnc" id="L1023" title="All 2 branches missed.">     if (m_hasClass) {</span>
+<span class="nc" id="L1024">       attributes.addElement(m_trainHeader.classAttribute().copy());</span>
+     }
+
+<span class="nc" id="L1027">     Instances outputFormat = </span>
+<span class="nc" id="L1028">       new Instances(m_trainInstances.relationName()+&quot;_principal components&quot;,</span>
+<span class="nc" id="L1029">                     attributes, 0);</span>
+
+     // set the class to be the last attribute if necessary
+<span class="nc bnc" id="L1032" title="All 2 branches missed.">     if (m_hasClass) {</span>
+<span class="nc" id="L1033">       outputFormat.setClassIndex(outputFormat.numAttributes()-1);</span>
+     }
+     
+<span class="nc" id="L1036">     m_outputNumAtts = outputFormat.numAttributes();</span>
+<span class="nc" id="L1037">     return outputFormat;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1046">    return RevisionUtils.extract(&quot;$Revision: 6690 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class
+   * @param argv should contain the command line arguments to the
+   * evaluator/transformer (see AttributeSelection)
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L1055">    runEvaluator(new PrincipalComponents(), argv);</span>
+<span class="nc" id="L1056">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

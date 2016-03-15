@@ -1,0 +1,841 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Regression.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.pmml.consumer</a> &gt; <span class="el_source">Regression.java</span></div><h1>Regression.java</h1><pre class="source lang-java linenums"><span class="pc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Regression.java
+ *    Copyright (C) 2008 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.pmml.consumer;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+import weka.core.Attribute;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.pmml.*;
+
+/**
+ * Class implementing import of PMML Regression model. Can be
+ * used as a Weka classifier for prediction (buildClassifier()
+ * raises an Exception).
+ *
+ * @author Mark Hall (mhall{[at]}pentaho{[dot]}com
+ * @version $Revision: 6019 $
+ */
+public class Regression extends PMMLClassifier
+  implements Serializable {
+
+  /** For serialization */
+  private static final long serialVersionUID = -5551125528409488634L;
+
+  /**
+   * Inner class for encapsulating a regression table
+   */
+  static class RegressionTable implements Serializable {
+
+    /** For serialization */
+    private static final long serialVersionUID = -5259866093996338995L;
+
+    /**
+     * Abstract inner base class for different predictor types.
+     */
+    abstract static class Predictor implements Serializable {
+
+      /** For serialization */
+      private static final long serialVersionUID = 7043831847273383618L;
+      
+      /** Name of this predictor */
+      protected String m_name;
+      
+      /** 
+       * Index of the attribute in the mining schema that corresponds to this
+       * predictor
+       */
+<span class="fc" id="L75">      protected int m_miningSchemaAttIndex = -1;</span>
+      
+      /** Coefficient for this predictor */
+<span class="fc" id="L78">      protected double m_coefficient = 1.0;</span>
+      
+      /**
+       * Constructs a new Predictor.
+       * 
+       * @param predictor the &lt;code&gt;Element&lt;/code&gt; encapsulating this predictor
+       * @param miningSchema the mining schema as an Instances object
+       * @throws Exception if there is a problem constructing this Predictor
+       */
+<span class="fc" id="L87">      protected Predictor(Element predictor, Instances miningSchema) throws Exception {</span>
+<span class="fc" id="L88">        m_name = predictor.getAttribute(&quot;name&quot;);</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">        for (int i = 0; i &lt; miningSchema.numAttributes(); i++) {</span>
+<span class="fc" id="L90">          Attribute temp = miningSchema.attribute(i);</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">          if (temp.name().equals(m_name)) {</span>
+<span class="fc" id="L92">            m_miningSchemaAttIndex = i;</span>
+          }
+        }
+        
+<span class="pc bpc" id="L96" title="1 of 2 branches missed.">        if (m_miningSchemaAttIndex == -1) {</span>
+<span class="nc" id="L97">          throw new Exception(&quot;[Predictor] unable to find matching attribute for &quot;</span>
+<span class="nc" id="L98">                              + &quot;predictor &quot; + m_name);</span>
+        }
+
+<span class="fc" id="L101">        String coeff = predictor.getAttribute(&quot;coefficient&quot;);</span>
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">        if (coeff.length() &gt; 0) {</span>
+<span class="fc" id="L103">          m_coefficient = Double.parseDouble(coeff);</span>
+        }
+<span class="fc" id="L105">      }</span>
+
+      /**
+       * Returns a textual description of this predictor applicable
+       * to all sub classes.
+       */
+      public String toString() {
+<span class="nc" id="L112">        return Utils.doubleToString(m_coefficient, 12, 4) + &quot; * &quot;;</span>
+      }
+
+      /**
+       * Abstract add method. Adds this predictor into the sum for the
+       * current prediction.
+       * 
+       * @param preds the prediction computed so far. For regression, it is a
+       * single element array; for classification it is a multi-element array
+       * @param input the input instance's values
+       */
+      public abstract void add(double[] preds, double[] input);
+    }
+
+    /**
+     * Inner class for a numeric predictor
+     */
+    protected class NumericPredictor extends Predictor {
+      /**
+       * For serialization
+       */
+      private static final long serialVersionUID = -4335075205696648273L;
+      
+      /** The exponent*/
+<span class="fc" id="L136">      protected double m_exponent = 1.0;</span>
+
+      /**
+       * Constructs a NumericPredictor.
+       * 
+       * @param predictor the &lt;code&gt;Element&lt;/code&gt; holding the predictor
+       * @param miningSchema the mining schema as an Instances object
+       * @throws Exception if something goes wrong while constructing this
+       * predictor
+       */
+      protected NumericPredictor(Element predictor, 
+                              Instances miningSchema) throws Exception {
+<span class="fc" id="L148">        super(predictor, miningSchema);</span>
+        
+<span class="fc" id="L150">        String exponent = predictor.getAttribute(&quot;exponent&quot;);</span>
+<span class="fc bfc" id="L151" title="All 2 branches covered.">        if (exponent.length() &gt; 0) {</span>
+<span class="fc" id="L152">          m_exponent = Double.parseDouble(exponent);</span>
+        }
+<span class="fc" id="L154">      }</span>
+
+      /**
+       * Return a textual description of this predictor.
+       */
+      public String toString() {
+<span class="nc" id="L160">        String output = super.toString();</span>
+<span class="nc" id="L161">        output += m_name;</span>
+<span class="nc bnc" id="L162" title="All 4 branches missed.">        if (m_exponent &gt; 1.0 || m_exponent &lt; 1.0) {</span>
+<span class="nc" id="L163">          output += &quot;^&quot; + Utils.doubleToString(m_exponent, 4);</span>
+        }
+<span class="nc" id="L165">        return output;</span>
+      }
+
+      /**
+       * Adds this predictor into the sum for the
+       * current prediction.
+       * 
+       * @param preds the prediction computed so far. For regression, it is a
+       * single element array; for classification it is a multi-element array
+       * @param input the input instance's values
+       */
+      public void add(double[] preds, double[] input) {
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">        if (m_targetCategory == -1) {</span>
+<span class="fc" id="L178">          preds[0] += m_coefficient * Math.pow(input[m_miningSchemaAttIndex], m_exponent);</span>
+        } else {
+<span class="nc" id="L180">          preds[m_targetCategory] += </span>
+<span class="nc" id="L181">            m_coefficient * Math.pow(input[m_miningSchemaAttIndex], m_exponent);</span>
+        }
+<span class="fc" id="L183">      }</span>
+    }
+
+    /**
+     * Inner class encapsulating a categorical predictor.
+     */
+    protected class CategoricalPredictor extends Predictor {
+      
+      /**For serialization */
+      private static final long serialVersionUID = 3077920125549906819L;
+      
+      /** The attribute value for this predictor */
+      protected String m_valueName;
+      
+      /** The index of the attribute value for this predictor */
+<span class="nc" id="L198">      protected int m_valueIndex = -1;</span>
+
+      /**
+       * Constructs a CategoricalPredictor.
+       * 
+       * @param predictor the &lt;code&gt;Element&lt;/code&gt; containing the predictor
+       * @param miningSchema the mining schema as an Instances object
+       * @throws Exception if something goes wrong while constructing
+       * this predictor
+       */
+      protected CategoricalPredictor(Element predictor,
+                                  Instances miningSchema) throws Exception {
+<span class="nc" id="L210">        super(predictor, miningSchema);</span>
+        
+<span class="nc" id="L212">        String valName = predictor.getAttribute(&quot;value&quot;);</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (valName.length() == 0) {</span>
+<span class="nc" id="L214">          throw new Exception(&quot;[CategoricalPredictor] attribute value not specified!&quot;);</span>
+        }
+        
+<span class="nc" id="L217">        m_valueName = valName;</span>
+
+<span class="nc" id="L219">        Attribute att = miningSchema.attribute(m_miningSchemaAttIndex);</span>
+<span class="nc bnc" id="L220" title="All 2 branches missed.">        if (att.isString()) {</span>
+          // means that there were no Value elements defined in the 
+          // data dictionary (and hence the mining schema).
+          // We add our value here.
+<span class="nc" id="L224">          att.addStringValue(m_valueName);</span>
+        }
+<span class="nc" id="L226">        m_valueIndex = att.indexOfValue(m_valueName);</span>
+        /*        for (int i = 0; i &lt; att.numValues(); i++) {
+          if (att.value(i).equals(m_valueName)) {
+            m_valueIndex = i;
+          }
+          }*/
+
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (m_valueIndex == -1) {</span>
+<span class="nc" id="L234">          throw new Exception(&quot;[CategoricalPredictor] unable to find value &quot;</span>
+<span class="nc" id="L235">                              + m_valueName + &quot; in mining schema attribute &quot;</span>
+<span class="nc" id="L236">                              + att.name());</span>
+        }
+<span class="nc" id="L238">      }</span>
+
+      /**
+       * Return a textual description of this predictor.
+       */
+      public String toString() {
+<span class="nc" id="L244">        String output = super.toString();</span>
+<span class="nc" id="L245">        output += m_name + &quot;=&quot; + m_valueName;</span>
+<span class="nc" id="L246">        return output;</span>
+      }
+
+      /**
+       * Adds this predictor into the sum for the
+       * current prediction.
+       * 
+       * @param preds the prediction computed so far. For regression, it is a
+       * single element array; for classification it is a multi-element array
+       * @param input the input instance's values
+       */
+      public void add(double[] preds, double[] input) {
+        
+        // if the value is equal to the one in the input then add the coefficient
+<span class="nc bnc" id="L260" title="All 2 branches missed.">        if (m_valueIndex == (int)input[m_miningSchemaAttIndex]) {</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">          if (m_targetCategory == -1) {</span>
+<span class="nc" id="L262">            preds[0] += m_coefficient;</span>
+          } else {
+<span class="nc" id="L264">            preds[m_targetCategory] += m_coefficient;</span>
+          }
+        }
+<span class="nc" id="L267">      }</span>
+    }
+
+    /**
+     * Inner class to handle PredictorTerms.
+     */
+    protected class PredictorTerm implements Serializable {
+
+      /** For serialization */
+      private static final long serialVersionUID = 5493100145890252757L;
+
+      /** The coefficient for this predictor term */
+<span class="nc" id="L279">      protected double m_coefficient = 1.0;</span>
+
+      /** the indexes of the terms to be multiplied */
+      protected int[] m_indexes;
+
+      /** The names of the terms (attributes) to be multiplied */
+      protected String[] m_fieldNames;
+
+      /**
+       * Construct a new PredictorTerm.
+       * 
+       * @param predictorTerm the &lt;code&gt;Element&lt;/code&gt; describing the predictor term
+       * @param miningSchema the mining schema as an Instances object
+       * @throws Exception if something goes wrong while constructing this
+       * predictor term
+       */
+<span class="nc" id="L295">      protected PredictorTerm(Element predictorTerm, </span>
+                              Instances miningSchema) throws Exception {
+
+<span class="nc" id="L298">        String coeff = predictorTerm.getAttribute(&quot;coefficient&quot;);</span>
+<span class="nc bnc" id="L299" title="All 4 branches missed.">        if (coeff != null &amp;&amp; coeff.length() &gt; 0) {</span>
+          try {
+<span class="nc" id="L301">            m_coefficient = Double.parseDouble(coeff);</span>
+<span class="nc" id="L302">          } catch (IllegalArgumentException ex) {</span>
+<span class="nc" id="L303">            throw new Exception(&quot;[PredictorTerm] unable to parse coefficient&quot;);</span>
+          }
+        }
+        
+<span class="nc" id="L307">        NodeList fields = predictorTerm.getElementsByTagName(&quot;FieldRef&quot;);</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">        if (fields.getLength() &gt; 0) {</span>
+<span class="nc" id="L309">          m_indexes = new int[fields.getLength()];</span>
+<span class="nc" id="L310">          m_fieldNames = new String[fields.getLength()];</span>
+
+<span class="nc bnc" id="L312" title="All 2 branches missed.">          for (int i = 0; i &lt; fields.getLength(); i++) {</span>
+<span class="nc" id="L313">            Node fieldRef = fields.item(i);</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">            if (fieldRef.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="nc" id="L315">              String fieldName = ((Element)fieldRef).getAttribute(&quot;field&quot;);</span>
+<span class="nc bnc" id="L316" title="All 4 branches missed.">              if (fieldName != null &amp;&amp; fieldName.length() &gt; 0) {</span>
+<span class="nc" id="L317">                boolean found = false;</span>
+                // look for this field in the mining schema
+<span class="nc bnc" id="L319" title="All 2 branches missed.">                for (int j = 0; j &lt; miningSchema.numAttributes(); j++) {</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">                  if (miningSchema.attribute(j).name().equals(fieldName)) {</span>
+                    
+                    // all referenced fields MUST be numeric
+<span class="nc bnc" id="L323" title="All 2 branches missed.">                    if (!miningSchema.attribute(j).isNumeric()) {</span>
+<span class="nc" id="L324">                      throw new Exception(&quot;[PredictorTerm] field is not continuous: &quot;</span>
+<span class="nc" id="L325">                                          + fieldName);</span>
+                    }
+<span class="nc" id="L327">                    found = true;</span>
+<span class="nc" id="L328">                    m_indexes[i] = j;</span>
+<span class="nc" id="L329">                    m_fieldNames[i] = fieldName;</span>
+<span class="nc" id="L330">                    break;</span>
+                  }
+                }
+<span class="nc bnc" id="L333" title="All 2 branches missed.">                if (!found) {</span>
+<span class="nc" id="L334">                  throw new Exception(&quot;[PredictorTerm] Unable to find field &quot;</span>
+<span class="nc" id="L335">                                      + fieldName + &quot; in mining schema!&quot;);</span>
+                }
+              }
+            }
+          }
+        }
+<span class="nc" id="L341">      }</span>
+
+      /**
+       * Return a textual description of this predictor term.
+       */
+      public String toString() {
+<span class="nc" id="L347">        StringBuffer result = new StringBuffer();</span>
+<span class="nc" id="L348">        result.append(&quot;(&quot; + Utils.doubleToString(m_coefficient, 12, 4));</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">        for (int i = 0; i &lt; m_fieldNames.length; i++) {</span>
+<span class="nc" id="L350">          result.append(&quot; * &quot; + m_fieldNames[i]);</span>
+        }
+<span class="nc" id="L352">        result.append(&quot;)&quot;);</span>
+<span class="nc" id="L353">        return result.toString();</span>
+      }
+
+      /**
+       * Adds this predictor term into the sum for the
+       * current prediction.
+       * 
+       * @param preds the prediction computed so far. For regression, it is a
+       * single element array; for classification it is a multi-element array
+       * @param input the input instance's values
+       */
+      public void add(double[] preds, double[] input) {
+<span class="nc" id="L365">        int indx = 0;</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">        if (m_targetCategory != -1) {</span>
+<span class="nc" id="L367">          indx = m_targetCategory;</span>
+        }
+
+<span class="nc" id="L370">        double result = m_coefficient;</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">        for (int i = 0; i &lt; m_indexes.length; i++) {</span>
+<span class="nc" id="L372">          result *= input[m_indexes[i]];</span>
+        }
+<span class="nc" id="L374">        preds[indx] += result;</span>
+<span class="nc" id="L375">      }</span>
+    }
+    
+    /** Constant for regression model type */
+    public static final int REGRESSION = 0;
+    
+    /** Constant for classification model type */
+    public static final int CLASSIFICATION = 1;
+
+    /** The type of function - regression or classification */
+<span class="fc" id="L385">    protected int m_functionType = REGRESSION;</span>
+    
+    /** The mining schema */
+    protected MiningSchema m_miningSchema;
+        
+    /** The intercept */
+<span class="fc" id="L391">    protected double m_intercept = 0.0;</span>
+    
+    /** classification only */
+<span class="fc" id="L394">    protected int m_targetCategory = -1;</span>
+
+    /** Numeric and categorical predictors */
+<span class="fc" id="L397">    protected ArrayList&lt;Predictor&gt; m_predictors = </span>
+<span class="fc" id="L398">      new ArrayList&lt;Predictor&gt;();</span>
+
+    /** Interaction terms */
+<span class="fc" id="L401">    protected ArrayList&lt;PredictorTerm&gt; m_predictorTerms =</span>
+<span class="fc" id="L402">      new ArrayList&lt;PredictorTerm&gt;();</span>
+
+    /**
+     * Return a textual description of this RegressionTable.
+     */
+    public String toString() {
+<span class="nc" id="L408">      Instances miningSchema = m_miningSchema.getFieldsAsInstances();</span>
+<span class="nc" id="L409">      StringBuffer temp = new StringBuffer();</span>
+<span class="nc" id="L410">      temp.append(&quot;Regression table:\n&quot;);</span>
+<span class="nc" id="L411">      temp.append(miningSchema.classAttribute().name());</span>
+<span class="nc bnc" id="L412" title="All 2 branches missed.">      if (m_functionType == CLASSIFICATION) {</span>
+<span class="nc" id="L413">        temp.append(&quot;=&quot; + miningSchema.</span>
+<span class="nc" id="L414">                    classAttribute().value(m_targetCategory));</span>
+      }
+
+<span class="nc" id="L417">      temp.append(&quot; =\n\n&quot;);</span>
+      
+      // do the predictors
+<span class="nc bnc" id="L420" title="All 2 branches missed.">      for (int i = 0; i &lt; m_predictors.size(); i++) {</span>
+<span class="nc" id="L421">        temp.append(m_predictors.get(i).toString() + &quot; +\n&quot;);</span>
+      }
+      
+      // do the predictor terms
+<span class="nc bnc" id="L425" title="All 2 branches missed.">      for (int i = 0; i &lt; m_predictorTerms.size(); i++) {</span>
+<span class="nc" id="L426">        temp.append(m_predictorTerms.get(i).toString() + &quot; +\n&quot;);</span>
+      }
+
+<span class="nc" id="L429">      temp.append(Utils.doubleToString(m_intercept, 12, 4));</span>
+<span class="nc" id="L430">      temp.append(&quot;\n\n&quot;);</span>
+
+<span class="nc" id="L432">      return temp.toString();</span>
+    }
+
+    /**
+     * Construct a regression table from an &lt;code&gt;Element&lt;/code&gt;
+     *
+     * @param table the table to encapsulate
+     * @param functionType the type of function 
+     * (regression or classification)
+     * to use
+     * @param mSchema the mining schema
+     * @throws Exception if there is a problem while constructing
+     * this regression table
+     */
+<span class="fc" id="L446">    protected RegressionTable(Element table, </span>
+                           int functionType,
+                           MiningSchema mSchema) throws Exception {
+
+<span class="fc" id="L450">      m_miningSchema = mSchema;</span>
+<span class="fc" id="L451">      m_functionType = functionType;</span>
+
+<span class="fc" id="L453">      Instances miningSchema = m_miningSchema.getFieldsAsInstances();</span>
+
+      // get the intercept
+<span class="fc" id="L456">      String intercept = table.getAttribute(&quot;intercept&quot;);</span>
+<span class="pc bpc" id="L457" title="1 of 2 branches missed.">      if (intercept.length() &gt; 0) {</span>
+<span class="fc" id="L458">        m_intercept = Double.parseDouble(intercept);</span>
+      }
+
+      // get the target category (if classification)
+<span class="pc bpc" id="L462" title="1 of 2 branches missed.">      if (m_functionType == CLASSIFICATION) {</span>
+        // target category MUST be defined
+<span class="nc" id="L464">        String targetCat = table.getAttribute(&quot;targetCategory&quot;);</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">        if (targetCat.length() &gt; 0) {</span>
+<span class="nc" id="L466">          Attribute classA = miningSchema.classAttribute();</span>
+<span class="nc bnc" id="L467" title="All 2 branches missed.">          for (int i = 0; i &lt; classA.numValues(); i++) {</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">            if (classA.value(i).equals(targetCat)) {</span>
+<span class="nc" id="L469">              m_targetCategory = i;</span>
+            }
+          }
+        } 
+<span class="nc bnc" id="L473" title="All 2 branches missed.">        if (m_targetCategory == -1) {</span>
+<span class="nc" id="L474">          throw new Exception(&quot;[RegressionTable] No target categories defined for classification&quot;);</span>
+        }
+      }
+
+      // read all the numeric predictors
+<span class="fc" id="L479">      NodeList numericPs = table.getElementsByTagName(&quot;NumericPredictor&quot;);</span>
+<span class="fc bfc" id="L480" title="All 2 branches covered.">      for (int i = 0; i &lt; numericPs.getLength(); i++) {</span>
+<span class="fc" id="L481">        Node nP = numericPs.item(i);</span>
+<span class="pc bpc" id="L482" title="1 of 2 branches missed.">        if (nP.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L483">          NumericPredictor numP = new NumericPredictor((Element)nP, miningSchema);</span>
+<span class="fc" id="L484">          m_predictors.add(numP);</span>
+        }
+      }
+
+      // read all the categorical predictors
+<span class="fc" id="L489">      NodeList categoricalPs = table.getElementsByTagName(&quot;CategoricalPredictor&quot;);</span>
+<span class="pc bpc" id="L490" title="1 of 2 branches missed.">      for (int i = 0; i &lt; categoricalPs.getLength(); i++) {</span>
+<span class="nc" id="L491">        Node cP = categoricalPs.item(i);</span>
+<span class="nc bnc" id="L492" title="All 2 branches missed.">        if (cP.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="nc" id="L493">          CategoricalPredictor catP = new CategoricalPredictor((Element)cP, miningSchema);</span>
+<span class="nc" id="L494">          m_predictors.add(catP);</span>
+        }
+      }
+
+      // read all the PredictorTerms
+<span class="fc" id="L499">      NodeList predictorTerms = table.getElementsByTagName(&quot;PredictorTerm&quot;);</span>
+<span class="pc bpc" id="L500" title="1 of 2 branches missed.">      for (int i = 0; i &lt; predictorTerms.getLength(); i++) {</span>
+<span class="nc" id="L501">        Node pT = predictorTerms.item(i);</span>
+<span class="nc" id="L502">        PredictorTerm predT = new PredictorTerm((Element)pT, miningSchema);</span>
+<span class="nc" id="L503">        m_predictorTerms.add(predT);</span>
+      }
+<span class="fc" id="L505">    }</span>
+
+    public void predict(double[] preds, double[] input) {
+<span class="pc bpc" id="L508" title="1 of 2 branches missed.">      if (m_targetCategory == -1) {</span>
+<span class="fc" id="L509">        preds[0] = m_intercept;</span>
+      } else {
+<span class="nc" id="L511">        preds[m_targetCategory] = m_intercept;</span>
+      }
+      
+      // add the predictors
+<span class="fc bfc" id="L515" title="All 2 branches covered.">      for (int i = 0; i &lt; m_predictors.size(); i++) {</span>
+<span class="fc" id="L516">        Predictor p = m_predictors.get(i);</span>
+<span class="fc" id="L517">        p.add(preds, input);</span>
+      }
+
+      // add the PredictorTerms
+<span class="pc bpc" id="L521" title="1 of 2 branches missed.">      for (int i = 0; i &lt; m_predictorTerms.size(); i++) {</span>
+<span class="nc" id="L522">        PredictorTerm pt = m_predictorTerms.get(i);</span>
+<span class="nc" id="L523">        pt.add(preds, input);</span>
+      }
+<span class="fc" id="L525">    }</span>
+  }
+
+  /** Description of the algorithm */
+  protected String m_algorithmName;
+
+  /** The regression tables for this regression */
+  protected RegressionTable[] m_regressionTables;
+
+  /**
+   * Enum for the normalization methods.
+   */
+<span class="fc" id="L537">  enum Normalization {</span>
+<span class="fc" id="L538">    NONE, SIMPLEMAX, SOFTMAX, LOGIT, PROBIT, CLOGLOG,</span>
+<span class="fc" id="L539">      EXP, LOGLOG, CAUCHIT}</span>
+
+  /** The normalization to use */
+<span class="fc" id="L542">  protected Normalization m_normalizationMethod = Normalization.NONE;</span>
+
+  /**
+   * Constructs a new PMML Regression.
+   * 
+   * @param model the &lt;code&gt;Element&lt;/code&gt; containing the regression model
+   * @param dataDictionary the data dictionary as an Instances object
+   * @param miningSchema the mining schema
+   * @throws Exception if there is a problem constructing this Regression
+   */
+  public Regression(Element model, Instances dataDictionary,
+                    MiningSchema miningSchema) throws Exception {
+<span class="fc" id="L554">    super(dataDictionary, miningSchema);</span>
+    
+<span class="fc" id="L556">    int functionType = RegressionTable.REGRESSION;</span>
+
+    // determine function name first
+<span class="fc" id="L559">    String fName = model.getAttribute(&quot;functionName&quot;);</span>
+    
+<span class="pc bpc" id="L561" title="1 of 2 branches missed.">    if (fName.equals(&quot;regression&quot;)) {</span>
+<span class="fc" id="L562">      functionType = RegressionTable.REGRESSION;</span>
+<span class="nc bnc" id="L563" title="All 2 branches missed.">    } else if (fName.equals(&quot;classification&quot;)) {</span>
+<span class="nc" id="L564">      functionType = RegressionTable.CLASSIFICATION;</span>
+    } else {
+<span class="nc" id="L566">      throw new Exception(&quot;[PMML Regression] Function name not defined in pmml!&quot;);</span>
+    }
+
+    // do we have an algorithm name?
+<span class="fc" id="L570">    String algName = model.getAttribute(&quot;algorithmName&quot;);</span>
+<span class="pc bpc" id="L571" title="1 of 4 branches missed.">    if (algName != null &amp;&amp; algName.length() &gt; 0) {</span>
+<span class="fc" id="L572">      m_algorithmName = algName;</span>
+    }
+
+    // determine normalization method (if any)
+<span class="fc" id="L576">    m_normalizationMethod = determineNormalization(model);</span>
+
+<span class="fc" id="L578">    setUpRegressionTables(model, functionType);</span>
+
+    // convert any string attributes in the mining schema
+    //miningSchema.convertStringAttsToNominal();
+<span class="fc" id="L582">  }</span>
+
+  /**
+   * Create all the RegressionTables for this model.
+   * 
+   * @param model the &lt;code&gt;Element&lt;/code&gt; holding this regression model
+   * @param functionType the type of function (regression or
+   * classification)
+   * @throws Exception if there is a problem setting up the regression
+   * tables
+   */
+  private void setUpRegressionTables(Element model,
+                                     int functionType) throws Exception {
+<span class="fc" id="L595">    NodeList tableList = model.getElementsByTagName(&quot;RegressionTable&quot;);</span>
+    
+<span class="pc bpc" id="L597" title="1 of 2 branches missed.">    if (tableList.getLength() == 0) {</span>
+<span class="nc" id="L598">      throw new Exception(&quot;[Regression] no regression tables defined!&quot;);</span>
+    }
+
+<span class="fc" id="L601">    m_regressionTables = new RegressionTable[tableList.getLength()];</span>
+    
+<span class="fc bfc" id="L603" title="All 2 branches covered.">    for (int i = 0; i &lt; tableList.getLength(); i++) {</span>
+<span class="fc" id="L604">      Node table = tableList.item(i);</span>
+<span class="pc bpc" id="L605" title="1 of 2 branches missed.">      if (table.getNodeType() == Node.ELEMENT_NODE) {</span>
+<span class="fc" id="L606">        RegressionTable tempRTable = </span>
+<span class="fc" id="L607">          new RegressionTable((Element)table, </span>
+<span class="fc" id="L608">                              functionType, </span>
+<span class="fc" id="L609">                              m_miningSchema);</span>
+<span class="fc" id="L610">        m_regressionTables[i] = tempRTable;</span>
+      }
+    }
+<span class="fc" id="L613">  }</span>
+
+  /**
+   * Return the type of normalization used for this regression
+   * 
+   * @param model the &lt;code&gt;Element&lt;/code&gt; holding the model
+   * @return the normalization used in this regression
+   */
+  private static Normalization determineNormalization(Element model) {
+    
+<span class="fc" id="L623">    Normalization normMethod = Normalization.NONE;</span>
+
+<span class="fc" id="L625">    String normName = model.getAttribute(&quot;normalizationMethod&quot;);</span>
+<span class="pc bpc" id="L626" title="1 of 2 branches missed.">    if (normName.equals(&quot;simplemax&quot;)) {</span>
+<span class="nc" id="L627">      normMethod = Normalization.SIMPLEMAX;</span>
+<span class="pc bpc" id="L628" title="1 of 2 branches missed.">    } else if (normName.equals(&quot;softmax&quot;)) {</span>
+<span class="nc" id="L629">      normMethod = Normalization.SOFTMAX;</span>
+<span class="pc bpc" id="L630" title="1 of 2 branches missed.">    } else if (normName.equals(&quot;logit&quot;)) {</span>
+<span class="nc" id="L631">      normMethod = Normalization.LOGIT;</span>
+<span class="pc bpc" id="L632" title="1 of 2 branches missed.">    } else if (normName.equals(&quot;probit&quot;)) {</span>
+<span class="nc" id="L633">      normMethod = Normalization.PROBIT;</span>
+<span class="pc bpc" id="L634" title="1 of 2 branches missed.">    } else if (normName.equals(&quot;cloglog&quot;)) {</span>
+<span class="nc" id="L635">      normMethod = Normalization.CLOGLOG;</span>
+<span class="pc bpc" id="L636" title="1 of 2 branches missed.">    } else if (normName.equals(&quot;exp&quot;)) {</span>
+<span class="nc" id="L637">      normMethod = Normalization.EXP;</span>
+<span class="pc bpc" id="L638" title="1 of 2 branches missed.">    } else if (normName.equals(&quot;loglog&quot;)) {</span>
+<span class="nc" id="L639">      normMethod = Normalization.LOGLOG;</span>
+<span class="pc bpc" id="L640" title="1 of 2 branches missed.">    } else if (normName.equals(&quot;cauchit&quot;)) {</span>
+<span class="nc" id="L641">      normMethod = Normalization.CAUCHIT;</span>
+    } 
+<span class="fc" id="L643">    return normMethod;</span>
+  }
+
+  /**
+   * Return a textual description of this Regression model.
+   */
+  public String toString() {
+<span class="nc" id="L650">    StringBuffer temp = new StringBuffer();</span>
+<span class="nc" id="L651">    temp.append(&quot;PMML version &quot; + getPMMLVersion());</span>
+<span class="nc bnc" id="L652" title="All 2 branches missed.">    if (!getCreatorApplication().equals(&quot;?&quot;)) {</span>
+<span class="nc" id="L653">      temp.append(&quot;\nApplication: &quot; + getCreatorApplication());</span>
+    }
+<span class="nc bnc" id="L655" title="All 2 branches missed.">    if (m_algorithmName != null) {</span>
+<span class="nc" id="L656">      temp.append(&quot;\nPMML Model: &quot; + m_algorithmName);</span>
+    }
+<span class="nc" id="L658">    temp.append(&quot;\n\n&quot;);</span>
+<span class="nc" id="L659">    temp.append(m_miningSchema);</span>
+
+<span class="nc bnc" id="L661" title="All 2 branches missed.">    for (RegressionTable table : m_regressionTables) {</span>
+<span class="nc" id="L662">      temp.append(table);</span>
+    }
+    
+<span class="nc bnc" id="L665" title="All 2 branches missed.">    if (m_normalizationMethod != Normalization.NONE) {</span>
+<span class="nc" id="L666">      temp.append(&quot;Normalization: &quot; + m_normalizationMethod);</span>
+    }
+<span class="nc" id="L668">    temp.append(&quot;\n&quot;);</span>
+
+<span class="nc" id="L670">    return temp.toString();</span>
+  }
+
+  /**                                                                                                             
+   * Classifies the given test instance. The instance has to belong to a                                          
+   * dataset when it's being classified.                                                          
+   *                                                                                                              
+   * @param inst the instance to be classified                                                                
+   * @return the predicted most likely class for the instance or                                                  
+   * Instance.missingValue() if no prediction is made                                                             
+   * @exception Exception if an error occurred during the prediction                                              
+   */
+  public double[] distributionForInstance(Instance inst) throws Exception {
+<span class="fc bfc" id="L683" title="All 2 branches covered.">    if (!m_initialized) {</span>
+<span class="fc" id="L684">      mapToMiningSchema(inst.dataset());</span>
+    }
+<span class="fc" id="L686">    double[] preds = null;</span>
+<span class="pc bpc" id="L687" title="1 of 2 branches missed.">    if (m_miningSchema.getFieldsAsInstances().classAttribute().isNumeric()) {</span>
+<span class="fc" id="L688">      preds = new double[1];</span>
+    } else {
+<span class="nc" id="L690">      preds = new double[m_miningSchema.getFieldsAsInstances().classAttribute().numValues()];</span>
+    }
+
+    // create an array of doubles that holds values from the incoming
+    // instance; in order of the fields in the mining schema. We will
+    // also handle missing values and outliers here.
+    //    System.err.println(inst);
+<span class="fc" id="L697">    double[] incoming = m_fieldsMap.instanceToSchema(inst, m_miningSchema);</span>
+
+    // scan for missing values. If there are still missing values after instanceToSchema(),
+    // then missing value handling has been deferred to the PMML scheme. The specification
+    // (Regression PMML 3.2) seems to contradict itself with regards to classification and categorical
+    // variables. In one place it states that if a categorical variable is missing then 
+    // variable_name=value is 0 for any value. Further down in the document it states: &quot;if
+    // one or more of the y_j cannot be evaluated because the value in one of the referenced
+    // fields is missing, then the following formulas (for computing p_j) do not apply. In
+    // that case the predictions are defined by the priorProbability values in the Target
+    // element&quot;.
+
+    // In this implementation we will default to information in the Target element (default
+    // value for numeric prediction and prior probabilities for classification). If there is
+    // no Target element defined, then an Exception is thrown.
+
+<span class="fc" id="L713">    boolean hasMissing = false;</span>
+<span class="fc bfc" id="L714" title="All 2 branches covered.">    for (int i = 0; i &lt; incoming.length; i++) {</span>
+<span class="fc bfc" id="L715" title="All 2 branches covered.">      if (i != m_miningSchema.getFieldsAsInstances().classIndex() &amp;&amp; </span>
+<span class="fc bfc" id="L716" title="All 2 branches covered.">          Instance.isMissingValue(incoming[i])) {</span>
+<span class="fc" id="L717">        hasMissing = true;</span>
+<span class="fc" id="L718">        break;</span>
+      }
+    }
+
+<span class="fc bfc" id="L722" title="All 2 branches covered.">    if (hasMissing) {</span>
+<span class="pc bpc" id="L723" title="1 of 2 branches missed.">      if (!m_miningSchema.hasTargetMetaData()) {</span>
+<span class="fc" id="L724">        String message = &quot;[Regression] WARNING: Instance to predict has missing value(s) but &quot;</span>
+          + &quot;there is no missing value handling meta data and no &quot;
+          + &quot;prior probabilities/default value to fall back to. No &quot;
+          + &quot;prediction will be made (&quot; 
+<span class="pc bpc" id="L728" title="1 of 2 branches missed.">          + ((m_miningSchema.getFieldsAsInstances().classAttribute().isNominal() ||</span>
+<span class="pc bpc" id="L729" title="1 of 2 branches missed.">              m_miningSchema.getFieldsAsInstances().classAttribute().isString())</span>
+<span class="nc" id="L730">              ? &quot;zero probabilities output).&quot;</span>
+<span class="fc" id="L731">              : &quot;NaN output).&quot;);</span>
+<span class="pc bpc" id="L732" title="1 of 2 branches missed.">        if (m_log == null) {</span>
+<span class="fc" id="L733">          System.err.println(message);</span>
+        } else {
+<span class="nc" id="L735">          m_log.logMessage(message);</span>
+        }
+<span class="pc bpc" id="L737" title="1 of 2 branches missed.">        if (m_miningSchema.getFieldsAsInstances().classAttribute().isNumeric()) {</span>
+<span class="fc" id="L738">          preds[0] = Instance.missingValue();</span>
+        }
+<span class="fc" id="L740">        return preds;</span>
+      } else {
+        // use prior probablilities/default value
+<span class="nc" id="L743">        TargetMetaInfo targetData = m_miningSchema.getTargetMetaData();</span>
+<span class="nc bnc" id="L744" title="All 2 branches missed.">        if (m_miningSchema.getFieldsAsInstances().classAttribute().isNumeric()) {</span>
+<span class="nc" id="L745">          preds[0] = targetData.getDefaultValue();</span>
+        } else {
+<span class="nc" id="L747">          Instances miningSchemaI = m_miningSchema.getFieldsAsInstances();</span>
+<span class="nc bnc" id="L748" title="All 2 branches missed.">          for (int i = 0; i &lt; miningSchemaI.classAttribute().numValues(); i++) {</span>
+<span class="nc" id="L749">            preds[i] = targetData.getPriorProbability(miningSchemaI.classAttribute().value(i));</span>
+          }
+        }
+<span class="nc" id="L752">        return preds;</span>
+      }
+    } else {
+      // loop through the RegressionTables
+<span class="fc bfc" id="L756" title="All 2 branches covered.">      for (int i = 0; i &lt; m_regressionTables.length; i++) {</span>
+<span class="fc" id="L757">        m_regressionTables[i].predict(preds, incoming);</span>
+      }
+ 
+      // Now apply the normalization
+<span class="pc bpc" id="L761" title="9 of 10 branches missed.">      switch (m_normalizationMethod) {</span>
+      case NONE:
+        // nothing to be done
+<span class="fc" id="L764">        break;</span>
+      case SIMPLEMAX:
+<span class="nc" id="L766">        Utils.normalize(preds);</span>
+<span class="nc" id="L767">        break;</span>
+      case SOFTMAX:
+<span class="nc bnc" id="L769" title="All 2 branches missed.">        for (int i = 0; i &lt; preds.length; i++) {</span>
+<span class="nc" id="L770">          preds[i] = Math.exp(preds[i]);</span>
+        }
+<span class="nc bnc" id="L772" title="All 2 branches missed.">        if (preds.length == 1) {</span>
+          // hack for those models that do binary logistic regression as
+          // a numeric prediction model
+<span class="nc" id="L775">          preds[0] = preds[0] / (preds[0] + 1.0);</span>
+        } else {
+<span class="nc" id="L777">          Utils.normalize(preds);</span>
+        }
+<span class="nc" id="L779">        break;</span>
+      case LOGIT:
+<span class="nc bnc" id="L781" title="All 2 branches missed.">        for (int i = 0; i &lt; preds.length; i++) {</span>
+<span class="nc" id="L782">          preds[i] = 1.0 / (1.0 + Math.exp(-preds[i]));</span>
+        }
+<span class="nc" id="L784">        Utils.normalize(preds);</span>
+<span class="nc" id="L785">        break;</span>
+      case PROBIT:
+<span class="nc bnc" id="L787" title="All 2 branches missed.">        for (int i = 0; i &lt; preds.length; i++) {</span>
+<span class="nc" id="L788">          preds[i] = weka.core.matrix.Maths.pnorm(preds[i]);</span>
+        }
+<span class="nc" id="L790">        Utils.normalize(preds);</span>
+<span class="nc" id="L791">        break;</span>
+      case CLOGLOG:
+        // note this is supposed to be illegal for regression
+<span class="nc bnc" id="L794" title="All 2 branches missed.">        for (int i = 0; i &lt; preds.length; i++) {</span>
+<span class="nc" id="L795">          preds[i] = 1.0 - Math.exp(-Math.exp(-preds[i]));</span>
+        }
+<span class="nc" id="L797">        Utils.normalize(preds);</span>
+<span class="nc" id="L798">        break;</span>
+      case EXP:
+<span class="nc bnc" id="L800" title="All 2 branches missed.">        for (int i = 0; i &lt; preds.length; i++) {</span>
+<span class="nc" id="L801">          preds[i] = Math.exp(preds[i]);</span>
+        }
+<span class="nc" id="L803">        Utils.normalize(preds);</span>
+<span class="nc" id="L804">        break;</span>
+      case LOGLOG:
+        // note this is supposed to be illegal for regression
+<span class="nc bnc" id="L807" title="All 2 branches missed.">        for (int i = 0; i &lt; preds.length; i++) {</span>
+<span class="nc" id="L808">          preds[i] = Math.exp(-Math.exp(-preds[i]));</span>
+        }
+<span class="nc" id="L810">        Utils.normalize(preds);</span>
+<span class="nc" id="L811">        break;</span>
+      case CAUCHIT:
+<span class="nc bnc" id="L813" title="All 2 branches missed.">        for (int i = 0; i &lt; preds.length; i++) {</span>
+<span class="nc" id="L814">          preds[i] = 0.5 + (1.0 / Math.PI) * Math.atan(preds[i]);</span>
+        }
+<span class="nc" id="L816">        Utils.normalize(preds);</span>
+<span class="nc" id="L817">        break;</span>
+      default:
+<span class="nc" id="L819">          throw new Exception(&quot;[Regression] unknown normalization method&quot;);</span>
+      }
+
+      // If there is a Target defined, and this is a numeric prediction problem,
+      // then apply any min, max, rescaling etc.
+<span class="pc bpc" id="L824" title="1 of 2 branches missed.">      if (m_miningSchema.getFieldsAsInstances().classAttribute().isNumeric()</span>
+<span class="pc bpc" id="L825" title="1 of 2 branches missed.">          &amp;&amp; m_miningSchema.hasTargetMetaData()) {</span>
+<span class="nc" id="L826">        TargetMetaInfo targetData = m_miningSchema.getTargetMetaData();</span>
+<span class="nc" id="L827">        preds[0] = targetData.applyMinMaxRescaleCast(preds[0]);</span>
+      }
+    }
+    
+<span class="fc" id="L831">    return preds;</span>
+  }
+
+  /* (non-Javadoc)
+   * @see weka.core.RevisionHandler#getRevision()
+   */
+  public String getRevision() {
+<span class="nc" id="L838">    return RevisionUtils.extract(&quot;$Revision: 6019 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

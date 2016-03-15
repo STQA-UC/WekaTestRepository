@@ -1,0 +1,683 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Resample.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.filters.supervised.instance</a> &gt; <span class="el_source">Resample.java</span></div><h1>Resample.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Resample.java
+ *    Copyright (C) 2002 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.filters.supervised.instance;
+
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.filters.Filter;
+import weka.filters.SupervisedFilter;
+
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * Produces a random subsample of a dataset using either sampling with replacement or without replacement.&lt;br/&gt;
+ * The original dataset must fit entirely in memory. The number of instances in the generated dataset may be specified. The dataset must have a nominal class attribute. If not, use the unsupervised version. The filter can be made to maintain the class distribution in the subsample, or to bias the class distribution toward a uniform distribution. When used in batch mode (i.e. in the FilteredClassifier), subsequent batches are NOT resampled.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Specify the random number seed (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Z &amp;lt;num&amp;gt;
+ *  The size of the output dataset, as a percentage of
+ *  the input dataset (default 100)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;num&amp;gt;
+ *  Bias factor towards uniform class distribution.
+ *  0 = distribution in input data -- 1 = uniform distribution.
+ *  (default 0)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -no-replacement
+ *  Disables replacement of instances
+ *  (default: with replacement)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V
+ *  Inverts the selection - only available with '-no-replacement'.&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Len Trigg (len@reeltwo.com)
+ * @author FracPete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 5542 $ 
+ */
+<span class="nc" id="L76">public class Resample</span>
+  extends Filter 
+  implements SupervisedFilter, OptionHandler {
+  
+  /** for serialization. */
+  static final long serialVersionUID = 7079064953548300681L;
+
+  /** The subsample size, percent of original set, default 100%. */
+<span class="nc" id="L84">  protected double m_SampleSizePercent = 100;</span>
+  
+  /** The random number generator seed. */
+<span class="nc" id="L87">  protected int m_RandomSeed = 1;</span>
+  
+  /** The degree of bias towards uniform (nominal) class distribution. */
+<span class="nc" id="L90">  protected double m_BiasToUniformClass = 0;</span>
+
+  /** Whether to perform sampling with replacement or without. */
+<span class="nc" id="L93">  protected boolean m_NoReplacement = false;</span>
+
+  /** Whether to invert the selection (only if instances are drawn WITHOUT 
+   * replacement).
+   * @see #m_NoReplacement */
+<span class="nc" id="L98">  protected boolean m_InvertSelection = false;</span>
+
+  /**
+   * Returns a string describing this filter.
+   *
+   * @return a description of the filter suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L107">    return </span>
+<span class="nc" id="L108">        &quot;Produces a random subsample of a dataset using either sampling &quot;</span>
+      + &quot;with replacement or without replacement.\n&quot;
+      + &quot;The original dataset must &quot;
+      + &quot;fit entirely in memory. The number of instances in the generated &quot;
+      + &quot;dataset may be specified. The dataset must have a nominal class &quot;
+      + &quot;attribute. If not, use the unsupervised version. The filter can be &quot;
+      + &quot;made to maintain the class distribution in the subsample, or to bias &quot;
+      + &quot;the class distribution toward a uniform distribution. When used in batch &quot;
+      + &quot;mode (i.e. in the FilteredClassifier), subsequent batches are NOT resampled.&quot;;
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L125">    Vector result = new Vector();</span>
+
+<span class="nc" id="L127">    result.addElement(new Option(</span>
+<span class="nc" id="L128">	&quot;\tSpecify the random number seed (default 1)&quot;,</span>
+<span class="nc" id="L129">	&quot;S&quot;, 1, &quot;-S &lt;num&gt;&quot;));</span>
+
+<span class="nc" id="L131">    result.addElement(new Option(</span>
+<span class="nc" id="L132">	&quot;\tThe size of the output dataset, as a percentage of\n&quot;</span>
+	+&quot;\tthe input dataset (default 100)&quot;,
+<span class="nc" id="L134">	&quot;Z&quot;, 1, &quot;-Z &lt;num&gt;&quot;));</span>
+
+<span class="nc" id="L136">    result.addElement(new Option(</span>
+<span class="nc" id="L137">	&quot;\tBias factor towards uniform class distribution.\n&quot;</span>
+	+&quot;\t0 = distribution in input data -- 1 = uniform distribution.\n&quot;
+	+&quot;\t(default 0)&quot;,
+<span class="nc" id="L140">	&quot;B&quot;, 1, &quot;-B &lt;num&gt;&quot;));</span>
+
+<span class="nc" id="L142">    result.addElement(new Option(</span>
+<span class="nc" id="L143">	&quot;\tDisables replacement of instances\n&quot;</span>
+	+&quot;\t(default: with replacement)&quot;,
+<span class="nc" id="L145">	&quot;no-replacement&quot;, 0, &quot;-no-replacement&quot;));</span>
+
+<span class="nc" id="L147">    result.addElement(new Option(</span>
+<span class="nc" id="L148">	&quot;\tInverts the selection - only available with '-no-replacement'.&quot;,</span>
+<span class="nc" id="L149">	&quot;V&quot;, 0, &quot;-V&quot;));</span>
+
+<span class="nc" id="L151">    return result.elements();</span>
+  }
+
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Specify the random number seed (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -Z &amp;lt;num&amp;gt;
+   *  The size of the output dataset, as a percentage of
+   *  the input dataset (default 100)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -B &amp;lt;num&amp;gt;
+   *  Bias factor towards uniform class distribution.
+   *  0 = distribution in input data -- 1 = uniform distribution.
+   *  (default 0)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -no-replacement
+   *  Disables replacement of instances
+   *  (default: with replacement)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V
+   *  Inverts the selection - only available with '-no-replacement'.&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    String	tmpStr;
+    
+<span class="nc" id="L188">    tmpStr = Utils.getOption('S', options);</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L190">      setRandomSeed(Integer.parseInt(tmpStr));</span>
+    else
+<span class="nc" id="L192">      setRandomSeed(1);</span>
+
+<span class="nc" id="L194">    tmpStr = Utils.getOption('B', options);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L196">      setBiasToUniformClass(Double.parseDouble(tmpStr));</span>
+    else
+<span class="nc" id="L198">      setBiasToUniformClass(0);</span>
+
+<span class="nc" id="L200">    tmpStr = Utils.getOption('Z', options);</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L202">      setSampleSizePercent(Double.parseDouble(tmpStr));</span>
+    else
+<span class="nc" id="L204">      setSampleSizePercent(100);</span>
+
+<span class="nc" id="L206">    setNoReplacement(Utils.getFlag(&quot;no-replacement&quot;, options));</span>
+
+<span class="nc bnc" id="L208" title="All 2 branches missed.">    if (getNoReplacement())</span>
+<span class="nc" id="L209">      setInvertSelection(Utils.getFlag('V', options));</span>
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">    if (getInputFormat() != null) {</span>
+<span class="nc" id="L212">      setInputFormat(getInputFormat());</span>
+    }
+<span class="nc" id="L214">  }</span>
+
+  /**
+   * Gets the current settings of the filter.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+    Vector&lt;String&gt;	result;
+
+<span class="nc" id="L224">    result = new Vector&lt;String&gt;();</span>
+
+<span class="nc" id="L226">    result.add(&quot;-B&quot;);</span>
+<span class="nc" id="L227">    result.add(&quot;&quot; + getBiasToUniformClass());</span>
+
+<span class="nc" id="L229">    result.add(&quot;-S&quot;);</span>
+<span class="nc" id="L230">    result.add(&quot;&quot; + getRandomSeed());</span>
+
+<span class="nc" id="L232">    result.add(&quot;-Z&quot;);</span>
+<span class="nc" id="L233">    result.add(&quot;&quot; + getSampleSizePercent());</span>
+
+<span class="nc bnc" id="L235" title="All 2 branches missed.">    if (getNoReplacement()) {</span>
+<span class="nc" id="L236">      result.add(&quot;-no-replacement&quot;);</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">      if (getInvertSelection())</span>
+<span class="nc" id="L238">	result.add(&quot;-V&quot;);</span>
+    }
+    
+<span class="nc" id="L241">    return result.toArray(new String[result.size()]);</span>
+  }
+    
+  /**
+   * Returns the tip text for this property.
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String biasToUniformClassTipText() {
+<span class="nc" id="L251">    return &quot;Whether to use bias towards a uniform class. A value of 0 leaves the class &quot;</span>
+      + &quot;distribution as-is, a value of 1 ensures the class distribution is &quot;
+      + &quot;uniform in the output data.&quot;;
+  }
+    
+  /**
+   * Gets the bias towards a uniform class. A value of 0 leaves the class
+   * distribution as-is, a value of 1 ensures the class distributions are
+   * uniform in the output data.
+   *
+   * @return the current bias
+   */
+  public double getBiasToUniformClass() {
+<span class="nc" id="L264">    return m_BiasToUniformClass;</span>
+  }
+  
+  /**
+   * Sets the bias towards a uniform class. A value of 0 leaves the class
+   * distribution as-is, a value of 1 ensures the class distributions are
+   * uniform in the output data.
+   *
+   * @param newBiasToUniformClass the new bias value, between 0 and 1.
+   */
+  public void setBiasToUniformClass(double newBiasToUniformClass) {
+<span class="nc" id="L275">    m_BiasToUniformClass = newBiasToUniformClass;</span>
+<span class="nc" id="L276">  }</span>
+    
+  /**
+   * Returns the tip text for this property.
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String randomSeedTipText() {
+<span class="nc" id="L285">    return &quot;Sets the random number seed for subsampling.&quot;;</span>
+  }
+  
+  /**
+   * Gets the random number seed.
+   *
+   * @return the random number seed.
+   */
+  public int getRandomSeed() {
+<span class="nc" id="L294">    return m_RandomSeed;</span>
+  }
+  
+  /**
+   * Sets the random number seed.
+   *
+   * @param newSeed the new random number seed.
+   */
+  public void setRandomSeed(int newSeed) {
+<span class="nc" id="L303">    m_RandomSeed = newSeed;</span>
+<span class="nc" id="L304">  }</span>
+    
+  /**
+   * Returns the tip text for this property.
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String sampleSizePercentTipText() {
+<span class="nc" id="L313">    return &quot;The subsample size as a percentage of the original set.&quot;;</span>
+  }
+  
+  /**
+   * Gets the subsample size as a percentage of the original set.
+   *
+   * @return the subsample size
+   */
+  public double getSampleSizePercent() {
+<span class="nc" id="L322">    return m_SampleSizePercent;</span>
+  }
+  
+  /**
+   * Sets the size of the subsample, as a percentage of the original set.
+   *
+   * @param newSampleSizePercent the subsample set size, between 0 and 100.
+   */
+  public void setSampleSizePercent(double newSampleSizePercent) {
+<span class="nc" id="L331">    m_SampleSizePercent = newSampleSizePercent;</span>
+<span class="nc" id="L332">  }</span>
+  
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String noReplacementTipText() {
+<span class="nc" id="L341">    return &quot;Disables the replacement of instances.&quot;;</span>
+  }
+
+  /**
+   * Gets whether instances are drawn with or without replacement.
+   * 
+   * @return true if the replacement is disabled
+   */
+  public boolean getNoReplacement() {
+<span class="nc" id="L350">    return m_NoReplacement;</span>
+  }
+  
+  /**
+   * Sets whether instances are drawn with or with out replacement.
+   * 
+   * @param value if true then the replacement of instances is disabled
+   */
+  public void setNoReplacement(boolean value) {
+<span class="nc" id="L359">    m_NoReplacement = value;</span>
+<span class="nc" id="L360">  }</span>
+  
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String invertSelectionTipText() {
+<span class="nc" id="L369">    return &quot;Inverts the selection (only if instances are drawn WITHOUT replacement).&quot;;</span>
+  }
+
+  /**
+   * Gets whether selection is inverted (only if instances are drawn WIHTOUT 
+   * replacement).
+   * 
+   * @return true if the replacement is disabled
+   * @see #m_NoReplacement
+   */
+  public boolean getInvertSelection() {
+<span class="nc" id="L380">    return m_InvertSelection;</span>
+  }
+  
+  /**
+   * Sets whether the selection is inverted (only if instances are drawn WIHTOUT 
+   * replacement).
+   * 
+   * @param value if true then selection is inverted
+   */
+  public void setInvertSelection(boolean value) {
+<span class="nc" id="L390">    m_InvertSelection = value;</span>
+<span class="nc" id="L391">  }</span>
+
+  /** 
+   * Returns the Capabilities of this filter.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L400">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L401">    result.disableAll();</span>
+
+    // attributes
+<span class="nc" id="L404">    result.enableAllAttributes();</span>
+<span class="nc" id="L405">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="nc" id="L408">    result.enable(Capability.NOMINAL_CLASS);</span>
+    
+<span class="nc" id="L410">    return result;</span>
+  }
+  
+  /**
+   * Sets the format of the input instances.
+   *
+   * @param instanceInfo an Instances object containing the input 
+   * instance structure (any instances contained in the object are 
+   * ignored - only the structure is required).
+   * @return true if the outputFormat may be collected immediately
+   * @throws Exception if the input format can't be set 
+   * successfully
+   */
+  public boolean setInputFormat(Instances instanceInfo) 
+       throws Exception {
+
+<span class="nc" id="L426">    super.setInputFormat(instanceInfo);</span>
+<span class="nc" id="L427">    setOutputFormat(instanceInfo);</span>
+<span class="nc" id="L428">    return true;</span>
+  }
+
+  /**
+   * Input an instance for filtering. Filter requires all
+   * training instances be read before producing output.
+   *
+   * @param instance the input instance
+   * @return true if the filtered instance may now be
+   * collected with output().
+   * @throws IllegalStateException if no input structure has been defined
+   */
+  public boolean input(Instance instance) {
+
+<span class="nc bnc" id="L442" title="All 2 branches missed.">    if (getInputFormat() == null) {</span>
+<span class="nc" id="L443">      throw new IllegalStateException(&quot;No input instance format defined&quot;);</span>
+    }
+<span class="nc bnc" id="L445" title="All 2 branches missed.">    if (m_NewBatch) {</span>
+<span class="nc" id="L446">      resetQueue();</span>
+<span class="nc" id="L447">      m_NewBatch = false;</span>
+    }
+<span class="nc bnc" id="L449" title="All 2 branches missed.">    if (isFirstBatchDone()) {</span>
+<span class="nc" id="L450">      push(instance);</span>
+<span class="nc" id="L451">      return true;</span>
+    } else {
+<span class="nc" id="L453">      bufferInput(instance);</span>
+<span class="nc" id="L454">      return false;</span>
+    }
+  }
+
+  /**
+   * Signify that this batch of input to the filter is finished. 
+   * If the filter requires all instances prior to filtering,
+   * output() may now be called to retrieve the filtered instances.
+   *
+   * @return true if there are instances pending output
+   * @throws IllegalStateException if no input structure has been defined
+   */
+  public boolean batchFinished() {
+
+<span class="nc bnc" id="L468" title="All 2 branches missed.">    if (getInputFormat() == null) {</span>
+<span class="nc" id="L469">      throw new IllegalStateException(&quot;No input instance format defined&quot;);</span>
+    }
+
+<span class="nc bnc" id="L472" title="All 2 branches missed.">    if (!isFirstBatchDone()) {</span>
+      // Do the subsample, and clear the input instances.
+<span class="nc" id="L474">      createSubsample();</span>
+    }
+<span class="nc" id="L476">    flushInput();</span>
+
+<span class="nc" id="L478">    m_NewBatch = true;</span>
+<span class="nc" id="L479">    m_FirstBatchDone = true;</span>
+<span class="nc bnc" id="L480" title="All 2 branches missed.">    return (numPendingOutput() != 0);</span>
+  }
+
+  /**
+   * creates the subsample with replacement.
+   * 
+   * @param random		the random number generator to use
+   * @param origSize		the original size of the dataset
+   * @param sampleSize		the size to generate
+   * @param actualClasses	the number of classes found in the data
+   * @param classIndices	the indices where classes start
+   */
+  public void createSubsampleWithReplacement(Random random, int origSize, 
+      int sampleSize, int actualClasses, int[] classIndices) {
+    
+<span class="nc bnc" id="L495" title="All 2 branches missed.">    for (int i = 0; i &lt; sampleSize; i++) {</span>
+<span class="nc" id="L496">      int index = 0;</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">      if (random.nextDouble() &lt; m_BiasToUniformClass) {</span>
+	// Pick a random class (of those classes that actually appear)
+<span class="nc" id="L499">	int cIndex = random.nextInt(actualClasses);</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">	for (int j = 0, k = 0; j &lt; classIndices.length - 1; j++) {</span>
+<span class="nc bnc" id="L501" title="All 4 branches missed.">	  if ((classIndices[j] != classIndices[j + 1]) &amp;&amp; (k++ &gt;= cIndex)) {</span>
+	    // Pick a random instance of the designated class
+<span class="nc" id="L503">	    index =   classIndices[j] </span>
+<span class="nc" id="L504">	            + random.nextInt(classIndices[j + 1] - classIndices[j]);</span>
+<span class="nc" id="L505">	    break;</span>
+	  }
+	}
+      }
+      else {
+<span class="nc" id="L510">	index = random.nextInt(origSize);</span>
+      }
+<span class="nc" id="L512">      push((Instance) getInputFormat().instance(index).copy());</span>
+    }
+<span class="nc" id="L514">  }</span>
+
+  /**
+   * creates the subsample without replacement.
+   * 
+   * @param random		the random number generator to use
+   * @param origSize		the original size of the dataset
+   * @param sampleSize		the size to generate
+   * @param actualClasses	the number of classes found in the data
+   * @param classIndices	the indices where classes start
+   */
+  public void createSubsampleWithoutReplacement(Random random, int origSize, 
+      int sampleSize, int actualClasses, int[] classIndices) {
+    
+<span class="nc bnc" id="L528" title="All 2 branches missed.">    if (sampleSize &gt; origSize) {</span>
+<span class="nc" id="L529">      sampleSize = origSize;</span>
+<span class="nc" id="L530">      System.err.println(</span>
+<span class="nc" id="L531">	  &quot;Resampling without replacement can only use percentage &lt;=100% - &quot;</span>
+	  + &quot;Using full dataset!&quot;);
+    }
+
+<span class="nc" id="L535">    Vector&lt;Integer&gt;[] indices = new Vector[classIndices.length - 1];</span>
+<span class="nc" id="L536">    Vector&lt;Integer&gt;[] indicesNew = new Vector[classIndices.length - 1];</span>
+
+    // generate list of all indices to draw from
+<span class="nc bnc" id="L539" title="All 2 branches missed.">    for (int i = 0; i &lt; classIndices.length - 1; i++) {</span>
+<span class="nc" id="L540">      indices[i] = new Vector&lt;Integer&gt;(classIndices[i + 1] - classIndices[i]);</span>
+<span class="nc" id="L541">      indicesNew[i] = new Vector&lt;Integer&gt;(indices[i].capacity());</span>
+<span class="nc bnc" id="L542" title="All 2 branches missed.">      for (int n = classIndices[i]; n &lt; classIndices[i + 1]; n++)</span>
+<span class="nc" id="L543">	indices[i].add(n);</span>
+    }
+
+    // draw X samples
+<span class="nc" id="L547">    int currentSize = origSize;</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">    for (int i = 0; i &lt; sampleSize; i++) {</span>
+<span class="nc" id="L549">      int index = 0;</span>
+<span class="nc bnc" id="L550" title="All 2 branches missed.">      if (random.nextDouble() &lt; m_BiasToUniformClass) {</span>
+	// Pick a random class (of those classes that actually appear)
+<span class="nc" id="L552">	int cIndex = random.nextInt(actualClasses);</span>
+<span class="nc bnc" id="L553" title="All 2 branches missed.">	for (int j = 0, k = 0; j &lt; classIndices.length - 1; j++) {</span>
+<span class="nc bnc" id="L554" title="All 4 branches missed.">	  if ((classIndices[j] != classIndices[j + 1]) &amp;&amp; (k++ &gt;= cIndex)) {</span>
+	    // no more indices for this class left, try again
+<span class="nc bnc" id="L556" title="All 2 branches missed.">	    if (indices[j].size() == 0) {</span>
+<span class="nc" id="L557">	      i--;</span>
+<span class="nc" id="L558">	      break;</span>
+	    }
+	    // Pick a random instance of the designated class
+<span class="nc" id="L561">	    index = random.nextInt(indices[j].size());</span>
+<span class="nc" id="L562">	    indicesNew[j].add(indices[j].get(index));</span>
+<span class="nc" id="L563">	    indices[j].remove(index);</span>
+<span class="nc" id="L564">	    break;</span>
+	  }
+	}
+      }
+      else {
+<span class="nc" id="L569">	index = random.nextInt(currentSize);</span>
+<span class="nc bnc" id="L570" title="All 2 branches missed.">	for (int n = 0; n &lt; actualClasses; n++) {</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">	  if (index &lt; indices[n].size()) {</span>
+<span class="nc" id="L572">	    indicesNew[n].add(indices[n].get(index));</span>
+<span class="nc" id="L573">	    indices[n].remove(index);</span>
+<span class="nc" id="L574">	    break;</span>
+	  }
+	  else {
+<span class="nc" id="L577">	    index -= indices[n].size();</span>
+	  }
+	}
+<span class="nc" id="L580">	currentSize--;</span>
+      }
+    }
+
+    // sort indices
+<span class="nc bnc" id="L585" title="All 2 branches missed.">    if (getInvertSelection()) {</span>
+<span class="nc" id="L586">      indicesNew = indices;</span>
+    }
+    else {
+<span class="nc bnc" id="L589" title="All 2 branches missed.">      for (int i = 0; i &lt; indicesNew.length; i++)</span>
+<span class="nc" id="L590">	Collections.sort(indicesNew[i]);</span>
+    }
+
+    // add to ouput
+<span class="nc bnc" id="L594" title="All 2 branches missed.">    for (int i = 0; i &lt; indicesNew.length; i++) {</span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">      for (int n = 0; n &lt; indicesNew[i].size(); n++)</span>
+<span class="nc" id="L596">	push((Instance) getInputFormat().instance(indicesNew[i].get(n)).copy());</span>
+    }
+
+    // clean up
+<span class="nc bnc" id="L600" title="All 2 branches missed.">    for (int i = 0; i &lt; indices.length; i++) {</span>
+<span class="nc" id="L601">      indices[i].clear();</span>
+<span class="nc" id="L602">      indicesNew[i].clear();</span>
+    }
+<span class="nc" id="L604">    indices = null;</span>
+<span class="nc" id="L605">    indicesNew = null;</span>
+<span class="nc" id="L606">  }</span>
+
+  /**
+   * Creates a subsample of the current set of input instances. The output
+   * instances are pushed onto the output queue for collection.
+   */
+  protected void createSubsample() {
+<span class="nc" id="L613">    int origSize = getInputFormat().numInstances();</span>
+<span class="nc" id="L614">    int sampleSize = (int) (origSize * m_SampleSizePercent / 100);</span>
+
+    // Subsample that takes class distribution into consideration
+
+    // Sort according to class attribute.
+<span class="nc" id="L619">    getInputFormat().sort(getInputFormat().classIndex());</span>
+    
+    // Create an index of where each class value starts
+<span class="nc" id="L622">    int[] classIndices = new int [getInputFormat().numClasses() + 1];</span>
+<span class="nc" id="L623">    int currentClass = 0;</span>
+<span class="nc" id="L624">    classIndices[currentClass] = 0;</span>
+<span class="nc bnc" id="L625" title="All 2 branches missed.">    for (int i = 0; i &lt; getInputFormat().numInstances(); i++) {</span>
+<span class="nc" id="L626">      Instance current = getInputFormat().instance(i);</span>
+<span class="nc bnc" id="L627" title="All 2 branches missed.">      if (current.classIsMissing()) {</span>
+<span class="nc bnc" id="L628" title="All 2 branches missed.">	for (int j = currentClass + 1; j &lt; classIndices.length; j++) {</span>
+<span class="nc" id="L629">	  classIndices[j] = i;</span>
+	}
+<span class="nc" id="L631">	break;</span>
+<span class="nc bnc" id="L632" title="All 2 branches missed.">      } else if (current.classValue() != currentClass) {</span>
+<span class="nc bnc" id="L633" title="All 2 branches missed.">	for (int j = currentClass + 1; j &lt;= current.classValue(); j++) {</span>
+<span class="nc" id="L634">	  classIndices[j] = i;</span>
+	}          
+<span class="nc" id="L636">	currentClass = (int) current.classValue();</span>
+      }
+    }
+<span class="nc bnc" id="L639" title="All 2 branches missed.">    if (currentClass &lt;= getInputFormat().numClasses()) {</span>
+<span class="nc bnc" id="L640" title="All 2 branches missed.">      for (int j = currentClass + 1; j &lt; classIndices.length; j++) {</span>
+<span class="nc" id="L641">	classIndices[j] = getInputFormat().numInstances();</span>
+      }
+    }
+    
+<span class="nc" id="L645">    int actualClasses = 0;</span>
+<span class="nc bnc" id="L646" title="All 2 branches missed.">    for (int i = 0; i &lt; classIndices.length - 1; i++) {</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">      if (classIndices[i] != classIndices[i + 1]) {</span>
+<span class="nc" id="L648">	actualClasses++;</span>
+      }
+    }
+
+    // Create the new sample
+<span class="nc" id="L653">    Random random = new Random(m_RandomSeed);</span>
+
+    // Convert pending input instances
+<span class="nc bnc" id="L656" title="All 2 branches missed.">    if (getNoReplacement())</span>
+<span class="nc" id="L657">      createSubsampleWithoutReplacement(</span>
+<span class="nc" id="L658">	  random, origSize, sampleSize, actualClasses, classIndices);</span>
+    else
+<span class="nc" id="L660">      createSubsampleWithReplacement(</span>
+<span class="nc" id="L661">	  random, origSize, sampleSize, actualClasses, classIndices);</span>
+<span class="nc" id="L662">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L670">    return RevisionUtils.extract(&quot;$Revision: 5542 $&quot;);</span>
+  }
+  
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain arguments to the filter: 
+   * use -h for help
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L680">    runFilter(new Resample(), argv);</span>
+<span class="nc" id="L681">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

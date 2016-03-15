@@ -1,0 +1,806 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>LatentSemanticAnalysis.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">LatentSemanticAnalysis.java</span></div><h1>LatentSemanticAnalysis.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    LatentSemanticAnalysis.java
+ *    Copyright (C) 2008 Amri Napolitano
+ *
+ */
+
+package weka.attributeSelection;
+
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.Check;
+import weka.core.CheckOptionHandler;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.matrix.Matrix;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SparseInstance;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.matrix.SingularValueDecomposition;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.NominalToBinary;
+import weka.filters.unsupervised.attribute.Normalize;
+import weka.filters.unsupervised.attribute.Remove;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Performs latent semantic analysis and transformation of the data. 
+ * Use in conjunction with a Ranker search. A low-rank approximation 
+ * of the full data is found by specifying the number of singular values 
+ * to use. The dataset may be transformed to give the relation of either 
+ * the attributes or the instances (default) to the concept space created 
+ * by the transformation.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -N
+ *  Normalize input data.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R
+ *  Rank approximation used in LSA. May be actual number of 
+ *  LSA attributes to include (if greater than 1) or a proportion 
+ *  of total singular values to account for (if between 0 and 1). 
+ *  A value less than or equal to zero means use all latent variables.
+ *  (default = 0.95)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A
+ *  Maximum number of attributes to include in 
+ *  transformed attribute names. (-1 = include all)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Amri Napolitano
+ * @version $Revision: 5728 $
+ */
+
+<span class="nc" id="L86">public class LatentSemanticAnalysis </span>
+extends UnsupervisedAttributeEvaluator 
+implements AttributeTransformer, OptionHandler {
+  
+  /** For serialization */
+  static final long serialVersionUID = -8712112988018106198L;
+  
+  /** The data to transform analyse/transform */
+  private Instances m_trainInstances;
+  
+  /** 
+   * Keep a copy for the class attribute (if set) and for checking
+   * header compatibility 
+   */
+  private Instances m_trainHeader;
+  
+  /** The header for the transformed data format */
+  private Instances m_transformedFormat;
+  
+  /** Data has a class set */
+  private boolean m_hasClass;
+  
+  /** Class index */
+  private int m_classIndex;
+  
+  /** Number of attributes */
+  private int m_numAttributes;
+  
+  /** Number of instances */
+  private int m_numInstances;
+  
+  /** Is transpose necessary because numAttributes &lt; numInstances? */
+<span class="nc" id="L118">  private boolean m_transpose = false;</span>
+  
+  /** Will hold the left singular vectors */
+<span class="nc" id="L121">  private Matrix m_u = null;</span>
+  
+  /** Will hold the singular values */
+<span class="nc" id="L124">  private Matrix m_s = null;</span>
+  
+  /** Will hold the right singular values */
+<span class="nc" id="L127">  private Matrix m_v = null;</span>
+  
+  /** Will hold the matrix used to transform instances to the new feature space */
+<span class="nc" id="L130">  private Matrix m_transformationMatrix = null;</span>
+  
+  /** Filters for original data */
+  private ReplaceMissingValues m_replaceMissingFilter;
+  private Normalize m_normalizeFilter;
+  private NominalToBinary m_nominalToBinaryFilter;
+  private Remove m_attributeFilter;
+  
+  /** The number of attributes in the LSA transformed data */
+<span class="nc" id="L139">  private int m_outputNumAttributes = -1;</span>
+  
+  /** Normalize the input data? */
+<span class="nc" id="L142">  private boolean m_normalize = false;</span>
+  
+  /** The approximation rank to use (between 0 and 1 means coverage proportion) */
+<span class="nc" id="L145">  private double m_rank = 0.95;</span>
+  
+  /** The sum of the squares of the singular values */
+<span class="nc" id="L148">  private double m_sumSquaredSingularValues = 0.0;</span>
+  
+  /** The actual rank number to use for computation */
+<span class="nc" id="L151">  private int m_actualRank = -1;</span>
+  
+  /** Maximum number of attributes in the transformed attribute name */
+<span class="nc" id="L154">  private int m_maxAttributesInName = 5;</span>
+  
+  /**
+   * Returns a string describing this attribute transformer
+   * @return a description of the evaluator suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L162">    return &quot;Performs latent semantic analysis and transformation of the data. Use in &quot; +</span>
+            &quot;conjunction with a Ranker search. A low-rank approximation of the full data is &quot; +
+            &quot;found by either specifying the number of singular values to use or specifying a &quot; +
+            &quot;proportion of the singular values to cover.&quot;;
+  }
+  
+  /**
+   * Returns an enumeration describing the available options. &lt;p&gt;
+   *
+   * @return an enumeration of all the available options.
+   **/
+  public Enumeration listOptions () {
+<span class="nc" id="L174">    Vector options = new Vector(4);</span>
+<span class="nc" id="L175">    options.addElement(new Option(&quot;\tNormalize input data.&quot;, &quot;N&quot;, 0, &quot;-N&quot;));</span>
+    
+<span class="nc" id="L177">    options.addElement(new Option(&quot;\tRank approximation used in LSA. \n&quot; +</span>
+                                   &quot;\tMay be actual number of LSA attributes \n&quot; +
+                                   &quot;\tto include (if greater than 1) or a \n&quot; +
+                                   &quot;\tproportion of total singular values to \n&quot; +
+                                   &quot;\taccount for (if between 0 and 1). \n&quot; +
+                                   &quot;\tA value less than or equal to zero means \n&quot; +
+                                   &quot;\tuse all latent variables.(default = 0.95)&quot;,
+<span class="nc" id="L184">                                   &quot;R&quot;,1,&quot;-R&quot;));</span>
+    
+<span class="nc" id="L186">    options.addElement(new Option(&quot;\tMaximum number of attributes to include\n&quot; +</span>
+                                   &quot;\tin transformed attribute names.\n&quot; +
+                                   &quot;\t(-1 = include all)&quot;
+<span class="nc" id="L189">                                   , &quot;A&quot;, 1, &quot;-A&quot;));</span>
+<span class="nc" id="L190">    return  options.elements();</span>
+  }
+  
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -N
+   *  Normalize input data.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R
+   *  Rank approximation used in LSA. May be actual number of 
+   *  LSA attributes to include (if greater than 1) or a proportion 
+   *  of total singular values to account for (if between 0 and 1). 
+   *  A value less than or equal to zero means use all latent variables.
+   *  (default = 0.95)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -A
+   *  Maximum number of attributes to include in 
+   *  transformed attribute names. (-1 = include all)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions (String[] options)
+  throws Exception {
+<span class="nc" id="L220">    resetOptions();</span>
+    String optionString;
+    
+    //set approximation rank
+<span class="nc" id="L224">    optionString = Utils.getOption('R', options);</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+      double temp;
+<span class="nc" id="L227">      temp = Double.valueOf(optionString).doubleValue();</span>
+<span class="nc" id="L228">      setRank(temp);</span>
+    }
+    
+    //set number of attributes to use in transformed names
+<span class="nc" id="L232">    optionString = Utils.getOption('A', options);</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L234">      setMaximumAttributeNames(Integer.parseInt(optionString));</span>
+    }
+    
+    //set normalize option
+<span class="nc" id="L238">    setNormalize(Utils.getFlag('N', options));</span>
+<span class="nc" id="L239">  }</span>
+  
+  /**
+   * Reset to defaults
+   */
+  private void resetOptions() {
+<span class="nc" id="L245">    m_rank = 0.95;</span>
+<span class="nc" id="L246">    m_normalize = true;</span>
+<span class="nc" id="L247">    m_maxAttributesInName = 5;</span>
+<span class="nc" id="L248">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String normalizeTipText() {
+<span class="nc" id="L256">    return &quot;Normalize input data.&quot;;</span>
+  }
+  
+  /**
+   * Set whether input data will be normalized.
+   * @param newNormalize true if input data is to be normalized
+   */
+  public void setNormalize(boolean newNormalize) {
+<span class="nc" id="L264">    m_normalize = newNormalize;</span>
+<span class="nc" id="L265">  }</span>
+  
+  /**
+   * Gets whether or not input data is to be normalized
+   * @return true if input data is to be normalized
+   */
+  public boolean getNormalize() {
+<span class="nc" id="L272">    return m_normalize;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String rankTipText() {
+<span class="nc" id="L281">    return &quot;Matrix rank to use for data reduction. Can be a&quot; +</span>
+    &quot; proportion to indicate desired coverage&quot;;
+  }
+  
+  /**
+   * Sets the desired matrix rank (or coverage proportion) for feature-space reduction
+   * @param newRank the desired rank (or coverage) for feature-space reduction
+   */
+  public void setRank(double newRank) {
+<span class="nc" id="L290">      m_rank = newRank;</span>
+<span class="nc" id="L291">  }</span>
+  
+  /**
+   * Gets the desired matrix rank (or coverage proportion) for feature-space reduction
+   * @return the rank (or coverage) for feature-space reduction
+   */
+  public double getRank() {
+<span class="nc" id="L298">    return m_rank;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String maximumAttributeNamesTipText() {
+<span class="nc" id="L307">    return &quot;The maximum number of attributes to include in transformed attribute names.&quot;;</span>
+  }
+  
+  /**
+   * Sets maximum number of attributes to include in
+   * transformed attribute names.
+   * @param newMaxAttributes the maximum number of attributes
+   */
+  public void setMaximumAttributeNames(int newMaxAttributes) {
+<span class="nc" id="L316">    m_maxAttributesInName = newMaxAttributes;</span>
+<span class="nc" id="L317">  }</span>
+  
+  /**
+   * Gets maximum number of attributes to include in
+   * transformed attribute names.
+   * @return the maximum number of attributes
+   */
+  public int getMaximumAttributeNames() {
+<span class="nc" id="L325">    return m_maxAttributesInName;</span>
+  }
+  
+  /**
+   * Gets the current settings of LatentSemanticAnalysis
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions () {
+    
+<span class="nc" id="L335">    String[] options = new String[5];</span>
+<span class="nc" id="L336">    int current = 0;</span>
+    
+<span class="nc bnc" id="L338" title="All 2 branches missed.">    if (getNormalize()) {</span>
+<span class="nc" id="L339">      options[current++] = &quot;-N&quot;;</span>
+    }
+    
+<span class="nc" id="L342">    options[current++] = &quot;-R&quot;;</span>
+<span class="nc" id="L343">    options[current++] = &quot;&quot; + getRank();</span>
+    
+<span class="nc" id="L345">    options[current++] = &quot;-A&quot;;</span>
+<span class="nc" id="L346">    options[current++] = &quot;&quot; + getMaximumAttributeNames();</span>
+    
+<span class="nc bnc" id="L348" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L349">      options[current++] = &quot;&quot;;</span>
+    }
+    
+<span class="nc" id="L352">    return  options;</span>
+  }
+  
+  /**
+   * Returns the capabilities of this evaluator.
+   *
+   * @return            the capabilities of this evaluator
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L362">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L363">    result.disableAll();</span>
+    
+    // attributes
+<span class="nc" id="L366">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L367">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L368">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="nc" id="L369">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="nc" id="L372">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="nc" id="L373">    result.enable(Capability.NUMERIC_CLASS);</span>
+<span class="nc" id="L374">    result.enable(Capability.DATE_CLASS);</span>
+<span class="nc" id="L375">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+<span class="nc" id="L376">    result.enable(Capability.NO_CLASS);</span>
+    
+<span class="nc" id="L378">    return result;</span>
+  }
+  
+  /**
+   * Initializes the singular values/vectors and performs the analysis
+   * @param data the instances to analyse/transform
+   * @throws Exception if analysis fails
+   */
+  public void buildEvaluator(Instances data) throws Exception {
+    // can evaluator handle data?
+<span class="nc" id="L388">    getCapabilities().testWithFail(data);</span>
+    
+<span class="nc" id="L390">    buildAttributeConstructor(data);</span>
+<span class="nc" id="L391">  }</span>
+  
+  /**
+   * Initializes the singular values/vectors and performs the analysis
+   * @param data the instances to analyse/transform
+   * @throws Exception if analysis fails
+   */
+  private void buildAttributeConstructor (Instances data) throws Exception {
+    // initialize attributes for performing analysis
+<span class="nc" id="L400">    m_transpose = false;</span>
+<span class="nc" id="L401">    m_s = null;</span>
+<span class="nc" id="L402">    m_u = null;</span>
+<span class="nc" id="L403">    m_v = null;</span>
+<span class="nc" id="L404">    m_outputNumAttributes = -1;</span>
+<span class="nc" id="L405">    m_actualRank = -1;</span>
+<span class="nc" id="L406">    m_sumSquaredSingularValues = 0.0;</span>
+    
+<span class="nc" id="L408">    m_trainInstances = new Instances(data);</span>
+<span class="nc" id="L409">    m_trainHeader = null;</span>
+    
+<span class="nc" id="L411">    m_attributeFilter = null;</span>
+<span class="nc" id="L412">    m_nominalToBinaryFilter = null;</span>
+    
+<span class="nc" id="L414">    m_replaceMissingFilter = new ReplaceMissingValues();</span>
+<span class="nc" id="L415">    m_replaceMissingFilter.setInputFormat(m_trainInstances);</span>
+<span class="nc" id="L416">    m_trainInstances = Filter.useFilter(m_trainInstances, m_replaceMissingFilter);</span>
+    
+    // vector to hold indices of attributes to delete (class attribute, 
+    // attributes that are all missing, or attributes with one distinct value)
+<span class="nc" id="L420">    Vector attributesToRemove = new Vector();</span>
+    
+    // if data has a class attribute
+<span class="nc bnc" id="L423" title="All 2 branches missed.">    if (m_trainInstances.classIndex() &gt;= 0) {      </span>
+<span class="nc" id="L424">      m_hasClass = true;</span>
+<span class="nc" id="L425">      m_classIndex = m_trainInstances.classIndex();</span>
+      
+      // set class attribute to be removed
+<span class="nc" id="L428">      attributesToRemove.addElement(new Integer(m_classIndex));</span>
+    }
+    
+    // make copy of training data so the class values (if set) can be appended to final 
+    // transformed instances and we can check header compatibility
+<span class="nc" id="L433">    m_trainHeader = new Instances(m_trainInstances, 0);</span>
+    
+    // normalize data if desired
+<span class="nc bnc" id="L436" title="All 2 branches missed.">    if (m_normalize) {</span>
+<span class="nc" id="L437">      m_normalizeFilter = new Normalize();</span>
+<span class="nc" id="L438">      m_normalizeFilter.setInputFormat(m_trainInstances);</span>
+<span class="nc" id="L439">      m_trainInstances = Filter.useFilter(m_trainInstances, m_normalizeFilter);</span>
+    }
+    
+    // convert any nominal attributes to binary numeric attributes
+<span class="nc" id="L443">    m_nominalToBinaryFilter = new NominalToBinary();</span>
+<span class="nc" id="L444">    m_nominalToBinaryFilter.setInputFormat(m_trainInstances);</span>
+<span class="nc" id="L445">    m_trainInstances = Filter.useFilter(m_trainInstances, m_nominalToBinaryFilter);</span>
+    
+    // delete any attributes with only one distinct value or are all missing
+<span class="nc bnc" id="L448" title="All 2 branches missed.">    for (int i = 0; i &lt; m_trainInstances.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L449" title="All 2 branches missed.">      if (m_trainInstances.numDistinctValues(i) &lt;= 1) {</span>
+<span class="nc" id="L450">        attributesToRemove.addElement(new Integer(i));</span>
+      }
+    }
+    
+    // remove columns from the data if necessary
+<span class="nc bnc" id="L455" title="All 2 branches missed.">    if (attributesToRemove.size() &gt; 0) {</span>
+<span class="nc" id="L456">      m_attributeFilter = new Remove();</span>
+<span class="nc" id="L457">      int [] todelete = new int[attributesToRemove.size()];</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">      for (int i = 0; i &lt; attributesToRemove.size(); i++) {</span>
+<span class="nc" id="L459">        todelete[i] = ((Integer)(attributesToRemove.elementAt(i))).intValue();</span>
+      }
+<span class="nc" id="L461">      m_attributeFilter.setAttributeIndicesArray(todelete);</span>
+<span class="nc" id="L462">      m_attributeFilter.setInvertSelection(false);</span>
+<span class="nc" id="L463">      m_attributeFilter.setInputFormat(m_trainInstances);</span>
+<span class="nc" id="L464">      m_trainInstances = Filter.useFilter(m_trainInstances, m_attributeFilter);</span>
+    }
+    
+    // can evaluator handle the processed data ? e.g., enough attributes?
+<span class="nc" id="L468">    getCapabilities().testWithFail(m_trainInstances);</span>
+    
+    // record properties of final, ready-to-process data
+<span class="nc" id="L471">    m_numInstances = m_trainInstances.numInstances();</span>
+<span class="nc" id="L472">    m_numAttributes = m_trainInstances.numAttributes();</span>
+    
+    // create matrix of attribute values and compute singular value decomposition
+<span class="nc" id="L475">    double [][] trainValues = new double[m_numAttributes][m_numInstances];</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc" id="L477">      trainValues[i] = m_trainInstances.attributeToDoubleArray(i);</span>
+    }
+<span class="nc" id="L479">    Matrix trainMatrix = new Matrix(trainValues);</span>
+    // svd requires rows &gt;= columns, so transpose data if necessary
+<span class="nc bnc" id="L481" title="All 2 branches missed.">    if (m_numAttributes &lt; m_numInstances) {</span>
+<span class="nc" id="L482">      m_transpose = true;</span>
+<span class="nc" id="L483">      trainMatrix = trainMatrix.transpose();</span>
+    }
+<span class="nc" id="L485">    SingularValueDecomposition trainSVD = trainMatrix.svd();</span>
+<span class="nc" id="L486">    m_u = trainSVD.getU(); // left singular vectors</span>
+<span class="nc" id="L487">    m_s = trainSVD.getS(); // singular values</span>
+<span class="nc" id="L488">    m_v = trainSVD.getV(); // right singular vectors</span>
+    
+    // find actual rank to use
+<span class="nc" id="L491">    int maxSingularValues = trainSVD.rank();</span>
+<span class="nc bnc" id="L492" title="All 2 branches missed.">    for (int i = 0; i &lt; m_s.getRowDimension(); i++) {</span>
+<span class="nc" id="L493">      m_sumSquaredSingularValues += m_s.get(i, i) * m_s.get(i, i);</span>
+    }
+<span class="nc bnc" id="L495" title="All 2 branches missed.">    if (maxSingularValues == 0) { // no nonzero singular values (shouldn't happen)</span>
+      // reset values from computation
+<span class="nc" id="L497">      m_s = null;</span>
+<span class="nc" id="L498">      m_u = null;</span>
+<span class="nc" id="L499">      m_v = null;</span>
+<span class="nc" id="L500">      m_sumSquaredSingularValues = 0.0;</span>
+      
+<span class="nc" id="L502">      throw new Exception(&quot;SVD computation produced no non-zero singular values.&quot;);</span>
+    }
+<span class="nc bnc" id="L504" title="All 4 branches missed.">    if (m_rank &gt; maxSingularValues || m_rank &lt;= 0) { // adjust rank if too high or too low</span>
+<span class="nc" id="L505">      m_actualRank = maxSingularValues;</span>
+<span class="nc bnc" id="L506" title="All 2 branches missed.">    } else if (m_rank &lt; 1.0) { // determine how many singular values to include for desired coverage</span>
+<span class="nc" id="L507">      double currentSumOfSquaredSingularValues = 0.0;</span>
+<span class="nc bnc" id="L508" title="All 4 branches missed.">      for (int i = 0; i &lt; m_s.getRowDimension() &amp;&amp; m_actualRank == -1; i++) {</span>
+<span class="nc" id="L509">        currentSumOfSquaredSingularValues += m_s.get(i, i) * m_s.get(i, i);</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">        if (currentSumOfSquaredSingularValues / m_sumSquaredSingularValues &gt;= m_rank) {</span>
+<span class="nc" id="L511">          m_actualRank = i + 1;</span>
+        }
+      }
+    } else {
+<span class="nc" id="L515">      m_actualRank = (int) m_rank;</span>
+    }
+    
+    // lower matrix ranks, adjust for transposition (if necessary), and
+    // compute matrix for transforming future instances
+<span class="nc bnc" id="L520" title="All 2 branches missed.">    if (m_transpose) {</span>
+<span class="nc" id="L521">      Matrix tempMatrix = m_u;</span>
+<span class="nc" id="L522">      m_u = m_v;</span>
+<span class="nc" id="L523">      m_v = tempMatrix;</span>
+    }
+<span class="nc" id="L525">    m_u = m_u.getMatrix(0, m_u.getRowDimension() - 1, 0, m_actualRank - 1);</span>
+<span class="nc" id="L526">    m_s = m_s.getMatrix(0, m_actualRank - 1, 0, m_actualRank - 1);</span>
+<span class="nc" id="L527">    m_v = m_v.getMatrix(0, m_v.getRowDimension() - 1, 0, m_actualRank - 1);</span>
+<span class="nc" id="L528">    m_transformationMatrix = m_u.times(m_s.inverse());</span>
+    
+    //create dataset header for transformed instances
+<span class="nc" id="L531">    m_transformedFormat = setOutputFormat();</span>
+<span class="nc" id="L532">  }</span>
+  
+  /**
+   * Set the format for the transformed data
+   * @return a set of empty Instances (header only) in the new format
+   */
+  private Instances setOutputFormat() {
+    // if analysis hasn't been performed (successfully) yet
+<span class="nc bnc" id="L540" title="All 2 branches missed.">    if (m_s == null) {</span>
+<span class="nc" id="L541">      return null;</span>
+    }
+    
+    // set up transformed attributes
+<span class="nc bnc" id="L545" title="All 2 branches missed.">    if (m_hasClass) {</span>
+<span class="nc" id="L546">      m_outputNumAttributes = m_actualRank + 1;</span>
+    } else {
+<span class="nc" id="L548">      m_outputNumAttributes = m_actualRank;</span>
+    }
+<span class="nc" id="L550">    int numAttributesInName = m_maxAttributesInName;</span>
+<span class="nc bnc" id="L551" title="All 4 branches missed.">    if (numAttributesInName &lt;= 0 || numAttributesInName &gt;= m_numAttributes) {</span>
+<span class="nc" id="L552">      numAttributesInName = m_numAttributes;</span>
+    }
+<span class="nc" id="L554">    FastVector attributes = new FastVector(m_outputNumAttributes);</span>
+<span class="nc bnc" id="L555" title="All 2 branches missed.">    for (int i = 0; i &lt; m_actualRank; i++) {</span>
+      // create attribute name
+<span class="nc" id="L557">      String attributeName = &quot;&quot;;</span>
+<span class="nc" id="L558">      double [] attributeCoefficients = </span>
+<span class="nc" id="L559">        m_transformationMatrix.getMatrix(0, m_numAttributes - 1, i, i).getColumnPackedCopy();</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">      for (int j = 0; j &lt; numAttributesInName; j++) {</span>
+<span class="nc bnc" id="L561" title="All 2 branches missed.">        if (j &gt; 0) {</span>
+<span class="nc" id="L562">          attributeName += &quot;+&quot;;</span>
+        }
+<span class="nc" id="L564">        attributeName += Utils.doubleToString(attributeCoefficients[j], 5, 3);</span>
+<span class="nc" id="L565">        attributeName += m_trainInstances.attribute(j).name();</span>
+      }
+<span class="nc bnc" id="L567" title="All 2 branches missed.">      if (numAttributesInName &lt; m_numAttributes) {</span>
+<span class="nc" id="L568">        attributeName += &quot;...&quot;;</span>
+      }
+      // add attribute
+<span class="nc" id="L571">      attributes.addElement(new Attribute(attributeName));</span>
+    }
+    // add original class attribute if present
+<span class="nc bnc" id="L574" title="All 2 branches missed.">    if (m_hasClass) {</span>
+<span class="nc" id="L575">      attributes.addElement(m_trainHeader.classAttribute().copy());</span>
+    }
+    // create blank header
+<span class="nc" id="L578">    Instances outputFormat = new Instances(m_trainInstances.relationName() + &quot;_LSA&quot;, </span>
+<span class="nc" id="L579">        attributes, 0);</span>
+<span class="nc" id="L580">    m_outputNumAttributes = outputFormat.numAttributes();</span>
+    // set class attribute if applicable
+<span class="nc bnc" id="L582" title="All 2 branches missed.">    if (m_hasClass) {</span>
+<span class="nc" id="L583">      outputFormat.setClassIndex(m_outputNumAttributes - 1);</span>
+    }
+    
+<span class="nc" id="L586">    return outputFormat;</span>
+  }
+  
+  /**
+   * Returns just the header for the transformed data (ie. an empty
+   * set of instances. This is so that AttributeSelection can
+   * determine the structure of the transformed data without actually
+   * having to get all the transformed data through getTransformedData().
+   * @return the header of the transformed data.
+   * @throws Exception if the header of the transformed data can't
+   * be determined.
+   */
+  public Instances transformedHeader() throws Exception {
+<span class="nc bnc" id="L599" title="All 2 branches missed.">    if (m_s == null) {</span>
+<span class="nc" id="L600">      throw new Exception(&quot;Latent Semantic Analysis hasn't been successfully performed.&quot;);</span>
+    }
+<span class="nc" id="L602">    return m_transformedFormat;</span>
+  }
+  
+  /**
+   * Transform the supplied data set (assumed to be the same format
+   * as the training data)
+   * @return the transformed training data
+   * @throws Exception if transformed data can't be returned
+   */
+  public Instances transformedData(Instances data) throws Exception {
+<span class="nc bnc" id="L612" title="All 2 branches missed.">    if (m_s == null) {</span>
+<span class="nc" id="L613">      throw new Exception(&quot;Latent Semantic Analysis hasn't been built yet&quot;);</span>
+    }
+    
+<span class="nc" id="L616">    Instances output = new Instances(m_transformedFormat, m_numInstances);</span>
+    
+    // the transformed version of instance i from the training data
+    // is stored as the i'th row vector in v (the right singular vectors)
+<span class="nc bnc" id="L620" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="nc" id="L621">      Instance currentInstance = data.instance(i);</span>
+      // record attribute values for converted instance
+<span class="nc" id="L623">      double [] newValues = new double[m_outputNumAttributes];</span>
+<span class="nc bnc" id="L624" title="All 2 branches missed.">      for (int j = 0; j &lt; m_actualRank; j++) { // fill in values from v</span>
+<span class="nc" id="L625">        newValues[j] = m_v.get(i, j);</span>
+      }
+<span class="nc bnc" id="L627" title="All 2 branches missed.">      if (m_hasClass) { // copy class value if applicable</span>
+<span class="nc" id="L628">        newValues[m_outputNumAttributes - 1] = currentInstance.classValue();</span>
+      }
+      //create new instance with recorded values and add to output dataset
+      Instance newInstance;
+<span class="nc bnc" id="L632" title="All 2 branches missed.">      if (currentInstance instanceof SparseInstance) {</span>
+<span class="nc" id="L633">        newInstance = new SparseInstance(currentInstance.weight(), newValues);</span>
+      } else {
+<span class="nc" id="L635">        newInstance = new Instance(currentInstance.weight(), newValues);</span>
+      }
+<span class="nc" id="L637">      output.add(newInstance);</span>
+    }
+    
+<span class="nc" id="L640">    return output;</span>
+  }
+  
+  /**
+   * Evaluates the merit of a transformed attribute. This is defined
+   * to be the square of the singular value for the latent variable 
+   * corresponding to the transformed attribute.
+   * @param att the attribute to be evaluated
+   * @return the merit of a transformed attribute
+   * @throws Exception if attribute can't be evaluated
+   */
+  public double evaluateAttribute(int att) throws Exception {
+<span class="nc bnc" id="L652" title="All 2 branches missed.">    if (m_s == null) {</span>
+<span class="nc" id="L653">      throw new Exception(&quot;Latent Semantic Analysis hasn't been successfully&quot; +</span>
+                            &quot; performed yet!&quot;);
+    }
+    
+    //return the square of the corresponding singular value
+<span class="nc" id="L658">    return (m_s.get(att, att) * m_s.get(att, att)) / m_sumSquaredSingularValues;</span>
+  }
+  
+  /**
+   * Transform an instance in original (unnormalized) format
+   * @param instance an instance in the original (unnormalized) format
+   * @return a transformed instance
+   * @throws Exception if instance can't be transformed
+   */
+  public Instance convertInstance(Instance instance) throws Exception {
+<span class="nc bnc" id="L668" title="All 2 branches missed.">    if (m_s == null) {</span>
+<span class="nc" id="L669">      throw new Exception(&quot;convertInstance: Latent Semantic Analysis not &quot; +</span>
+                           &quot;performed yet.&quot;);
+    }
+    
+    // array to hold new attribute values
+<span class="nc" id="L674">    double [] newValues = new double[m_outputNumAttributes];</span>
+    
+    // apply filters so new instance is in same format as training instances
+<span class="nc" id="L677">    Instance tempInstance = (Instance)instance.copy();</span>
+<span class="nc bnc" id="L678" title="All 2 branches missed.">    if (!instance.dataset().equalHeaders(m_trainHeader)) {</span>
+<span class="nc" id="L679">      throw new Exception(&quot;Can't convert instance: headers don't match: &quot; +</span>
+      &quot;LatentSemanticAnalysis&quot;);
+    }
+    // replace missing values
+<span class="nc" id="L683">    m_replaceMissingFilter.input(tempInstance);</span>
+<span class="nc" id="L684">    m_replaceMissingFilter.batchFinished();</span>
+<span class="nc" id="L685">    tempInstance = m_replaceMissingFilter.output();</span>
+    // normalize
+<span class="nc bnc" id="L687" title="All 2 branches missed.">    if (m_normalize) {</span>
+<span class="nc" id="L688">      m_normalizeFilter.input(tempInstance);</span>
+<span class="nc" id="L689">      m_normalizeFilter.batchFinished();</span>
+<span class="nc" id="L690">      tempInstance = m_normalizeFilter.output();</span>
+    }
+    // convert nominal attributes to binary
+<span class="nc" id="L693">    m_nominalToBinaryFilter.input(tempInstance);</span>
+<span class="nc" id="L694">    m_nominalToBinaryFilter.batchFinished();</span>
+<span class="nc" id="L695">    tempInstance = m_nominalToBinaryFilter.output();</span>
+    // remove class/other attributes
+<span class="nc bnc" id="L697" title="All 2 branches missed.">    if (m_attributeFilter != null) {</span>
+<span class="nc" id="L698">      m_attributeFilter.input(tempInstance);</span>
+<span class="nc" id="L699">      m_attributeFilter.batchFinished();</span>
+<span class="nc" id="L700">      tempInstance = m_attributeFilter.output();</span>
+    }
+    
+    // record new attribute values
+<span class="nc bnc" id="L704" title="All 2 branches missed.">    if (m_hasClass) { // copy class value</span>
+<span class="nc" id="L705">      newValues[m_outputNumAttributes - 1] = instance.classValue();</span>
+    }
+<span class="nc" id="L707">    double [][] oldInstanceValues = new double[1][m_numAttributes];</span>
+<span class="nc" id="L708">    oldInstanceValues[0] = tempInstance.toDoubleArray();</span>
+<span class="nc" id="L709">    Matrix instanceVector = new Matrix(oldInstanceValues); // old attribute values</span>
+<span class="nc" id="L710">    instanceVector = instanceVector.times(m_transformationMatrix); // new attribute values</span>
+<span class="nc bnc" id="L711" title="All 2 branches missed.">    for (int i = 0; i &lt; m_actualRank; i++) {</span>
+<span class="nc" id="L712">      newValues[i] = instanceVector.get(0, i);</span>
+    }
+    
+    // return newly transformed instance
+<span class="nc bnc" id="L716" title="All 2 branches missed.">    if (instance instanceof SparseInstance) {</span>
+<span class="nc" id="L717">      return new SparseInstance(instance.weight(), newValues);</span>
+    } else {
+<span class="nc" id="L719">      return new Instance(instance.weight(), newValues);</span>
+    }
+  }
+  
+  /**
+   * Returns a description of this attribute transformer
+   * @return a String describing this attribute transformer
+   */
+  public String toString() {
+<span class="nc bnc" id="L728" title="All 2 branches missed.">    if (m_s == null) {</span>
+<span class="nc" id="L729">      return &quot;Latent Semantic Analysis hasn't been built yet!&quot;;</span>
+    } else {
+<span class="nc" id="L731">      return &quot;\tLatent Semantic Analysis Attribute Transformer\n\n&quot;</span>
+<span class="nc" id="L732">      + lsaSummary();</span>
+    }
+  }
+  
+  /**
+   * Return a summary of the analysis
+   * @return a summary of the analysis.
+   */
+  private String lsaSummary() {
+<span class="nc" id="L741">    StringBuffer result = new StringBuffer();</span>
+    
+    // print number of latent variables used
+<span class="nc" id="L744">    result.append(&quot;Number of latent variables utilized: &quot; + m_actualRank);</span>
+    
+    // print singular values
+<span class="nc" id="L747">    result.append(&quot;\n\nSingularValue\tLatentVariable#\n&quot;);</span>
+    // create single array of singular values rather than diagonal matrix
+<span class="nc bnc" id="L749" title="All 2 branches missed.">    for (int i = 0; i &lt; m_actualRank; i++) {</span>
+<span class="nc" id="L750">      result.append(Utils.doubleToString(m_s.get(i, i), 9, 5) + &quot;\t&quot; + (i + 1) + &quot;\n&quot;);</span>
+    }
+    
+    // print attribute vectors
+<span class="nc" id="L754">    result.append(&quot;\nAttribute vectors (left singular vectors) -- row vectors show\n&quot; +</span>
+                  &quot;the relation between the original attributes and the latent \n&quot; +
+                  &quot;variables computed by the singular value decomposition:\n&quot;);
+<span class="nc bnc" id="L757" title="All 2 branches missed.">    for (int i = 0; i &lt; m_actualRank; i++) {</span>
+<span class="nc" id="L758">      result.append(&quot;LatentVariable#&quot; + (i + 1) + &quot;\t&quot;);</span>
+    }
+<span class="nc" id="L760">    result.append(&quot;AttributeName\n&quot;);</span>
+<span class="nc bnc" id="L761" title="All 2 branches missed.">    for (int i = 0; i &lt; m_u.getRowDimension(); i++) { // for each attribute</span>
+<span class="nc bnc" id="L762" title="All 2 branches missed.">      for (int j = 0; j &lt; m_u.getColumnDimension(); j++) { // for each latent variable</span>
+<span class="nc" id="L763">        result.append(Utils.doubleToString(m_u.get(i, j), 9, 5) + &quot;\t\t&quot;);</span>
+      }
+<span class="nc" id="L765">      result.append(m_trainInstances.attribute(i).name() + &quot;\n&quot;);</span>
+    }
+    
+    // print instance vectors
+<span class="nc" id="L769">    result.append(&quot;\n\nInstance vectors (right singular vectors) -- column\n&quot; +</span>
+                  &quot;vectors show the relation between the original instances and the\n&quot; +
+                  &quot;latent variables computed by the singular value decomposition:\n&quot;);
+<span class="nc bnc" id="L772" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="nc" id="L773">      result.append(&quot;Instance#&quot; + (i + 1) + &quot;\t&quot;);</span>
+    }
+<span class="nc" id="L775">    result.append(&quot;LatentVariable#\n&quot;);</span>
+<span class="nc bnc" id="L776" title="All 2 branches missed.">    for (int i = 0; i &lt; m_v.getColumnDimension(); i++) { // for each instance</span>
+<span class="nc bnc" id="L777" title="All 2 branches missed.">      for (int j = 0; j &lt; m_v.getRowDimension(); j++) { // for each latent variable</span>
+        // going down columns instead of across rows because we're
+        // printing v' but have v stored
+<span class="nc" id="L780">        result.append(Utils.doubleToString(m_v.get(j, i), 9, 5) + &quot;\t&quot;);</span>
+      }
+<span class="nc" id="L782">      result.append((i + 1) + &quot;\n&quot;);</span>
+    }
+    
+<span class="nc" id="L785">    return result.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L794">    return RevisionUtils.extract(&quot;$Revision: 5728 $&quot;);</span>
+  }
+  
+  /**
+   * Main method for testing this class
+   * @param argv should contain the command line arguments to the
+   * evaluator/transformer (see AttributeSelection)
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L803">    runEvaluator(new LatentSemanticAnalysis(), argv);</span>
+<span class="nc" id="L804">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

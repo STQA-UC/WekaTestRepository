@@ -1,0 +1,2142 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>SMO.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.functions</a> &gt; <span class="el_source">SMO.java</span></div><h1>SMO.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    SMO.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.functions;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.functions.supportVector.Kernel;
+import weka.classifiers.functions.supportVector.PolyKernel;
+import weka.classifiers.functions.supportVector.SMOset;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.SerializedObject;
+import weka.core.Tag;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.NominalToBinary;
+import weka.filters.unsupervised.attribute.Normalize;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+import weka.filters.unsupervised.attribute.Standardize;
+
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Implements John Platt's sequential minimal optimization algorithm for training a support vector classifier.&lt;br/&gt;
+ * &lt;br/&gt;
+ * This implementation globally replaces all missing values and transforms nominal attributes into binary ones. It also normalizes all attributes by default. (In that case the coefficients in the output are based on the normalized data, not the original data --- this is important for interpreting the classifier.)&lt;br/&gt;
+ * &lt;br/&gt;
+ * Multi-class problems are solved using pairwise classification (1-vs-1 and if logistic models are built pairwise coupling according to Hastie and Tibshirani, 1998).&lt;br/&gt;
+ * &lt;br/&gt;
+ * To obtain proper probability estimates, use the option that fits logistic regression models to the outputs of the support vector machine. In the multi-class case the predicted probabilities are coupled using Hastie and Tibshirani's pairwise coupling method.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Note: for improved speed normalization should be turned off when operating on SparseInstances.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information on the SMO algorithm, see&lt;br/&gt;
+ * &lt;br/&gt;
+ * J. Platt: Fast Training of Support Vector Machines using Sequential Minimal Optimization. In B. Schoelkopf and C. Burges and A. Smola, editors, Advances in Kernel Methods - Support Vector Learning, 1998.&lt;br/&gt;
+ * &lt;br/&gt;
+ * S.S. Keerthi, S.K. Shevade, C. Bhattacharyya, K.R.K. Murthy (2001). Improvements to Platt's SMO Algorithm for SVM Classifier Design. Neural Computation. 13(3):637-649.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Trevor Hastie, Robert Tibshirani: Classification by Pairwise Coupling. In: Advances in Neural Information Processing Systems, 1998.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;incollection{Platt1998,
+ *    author = {J. Platt},
+ *    booktitle = {Advances in Kernel Methods - Support Vector Learning},
+ *    editor = {B. Schoelkopf and C. Burges and A. Smola},
+ *    publisher = {MIT Press},
+ *    title = {Fast Training of Support Vector Machines using Sequential Minimal Optimization},
+ *    year = {1998},
+ *    URL = {http://research.microsoft.com/\~jplatt/smo.html},
+ *    PS = {http://research.microsoft.com/\~jplatt/smo-book.ps.gz},
+ *    PDF = {http://research.microsoft.com/\~jplatt/smo-book.pdf}
+ * }
+ * 
+ * &amp;#64;article{Keerthi2001,
+ *    author = {S.S. Keerthi and S.K. Shevade and C. Bhattacharyya and K.R.K. Murthy},
+ *    journal = {Neural Computation},
+ *    number = {3},
+ *    pages = {637-649},
+ *    title = {Improvements to Platt's SMO Algorithm for SVM Classifier Design},
+ *    volume = {13},
+ *    year = {2001},
+ *    PS = {http://guppy.mpe.nus.edu.sg/\~mpessk/svm/smo_mod_nc.ps.gz}
+ * }
+ * 
+ * &amp;#64;inproceedings{Hastie1998,
+ *    author = {Trevor Hastie and Robert Tibshirani},
+ *    booktitle = {Advances in Neural Information Processing Systems},
+ *    editor = {Michael I. Jordan and Michael J. Kearns and Sara A. Solla},
+ *    publisher = {MIT Press},
+ *    title = {Classification by Pairwise Coupling},
+ *    volume = {10},
+ *    year = {1998},
+ *    PS = {http://www-stat.stanford.edu/\~hastie/Papers/2class.ps}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -no-checks
+ *  Turns off all checks - use with caution!
+ *  Turning them off assumes that data is purely numeric, doesn't
+ *  contain any missing values, and has a nominal class. Turning them
+ *  off also means that no header information will be stored if the
+ *  machine is linear. Finally, it also assumes that no instance has
+ *  a weight equal to 0.
+ *  (default: checks on)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;double&amp;gt;
+ *  The complexity constant C. (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N
+ *  Whether to 0=normalize/1=standardize/2=neither. (default 0=normalize)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -L &amp;lt;double&amp;gt;
+ *  The tolerance parameter. (default 1.0e-3)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;double&amp;gt;
+ *  The epsilon for round-off error. (default 1.0e-12)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Fit logistic models to SVM outputs. &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V &amp;lt;double&amp;gt;
+ *  The number of folds for the internal
+ *  cross-validation. (default -1, use training data)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;double&amp;gt;
+ *  The random number seed. (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -K &amp;lt;classname and parameters&amp;gt;
+ *  The Kernel to use.
+ *  (default: weka.classifiers.functions.supportVector.PolyKernel)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to kernel weka.classifiers.functions.supportVector.PolyKernel:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Enables debugging output (if available) to be printed.
+ *  (default: off)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -no-checks
+ *  Turns off all checks - use with caution!
+ *  (default: checks on)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+ *  The size of the cache (a prime number), 0 for full cache and 
+ *  -1 to turn it off.
+ *  (default: 250007)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -E &amp;lt;num&amp;gt;
+ *  The Exponent to use.
+ *  (default: 1.0)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -L
+ *  Use lower-order terms.
+ *  (default: no)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Shane Legg (shane@intelligenesis.net) (sparse vector code)
+ * @author Stuart Inglis (stuart@reeltwo.com) (sparse vector code)
+ * @version $Revision: 6025 $
+ */
+<span class="fc" id="L194">public class SMO </span>
+  extends Classifier 
+  implements WeightedInstancesHandler, TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -6585883636378691736L;
+  
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L208">    return  &quot;Implements John Platt's sequential minimal optimization &quot;</span>
+      + &quot;algorithm for training a support vector classifier.\n\n&quot;
+      + &quot;This implementation globally replaces all missing values and &quot;
+      + &quot;transforms nominal attributes into binary ones. It also &quot;
+      + &quot;normalizes all attributes by default. (In that case the coefficients &quot;
+      + &quot;in the output are based on the normalized data, not the &quot;
+      + &quot;original data --- this is important for interpreting the classifier.)\n\n&quot;
+      + &quot;Multi-class problems are solved using pairwise classification &quot;
+      + &quot;(1-vs-1 and if logistic models are built pairwise coupling &quot;
+      + &quot;according to Hastie and Tibshirani, 1998).\n\n&quot;
+      + &quot;To obtain proper probability estimates, use the option that fits &quot;
+      + &quot;logistic regression models to the outputs of the support vector &quot;
+      + &quot;machine. In the multi-class case the predicted probabilities &quot;
+      + &quot;are coupled using Hastie and Tibshirani's pairwise coupling &quot;
+      + &quot;method.\n\n&quot;
+      + &quot;Note: for improved speed normalization should be turned off when &quot;
+      + &quot;operating on SparseInstances.\n\n&quot;
+      + &quot;For more information on the SMO algorithm, see\n\n&quot;
+<span class="nc" id="L226">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    TechnicalInformation 	additional;
+    
+<span class="nc" id="L240">    result = new TechnicalInformation(Type.INCOLLECTION);</span>
+<span class="nc" id="L241">    result.setValue(Field.AUTHOR, &quot;J. Platt&quot;);</span>
+<span class="nc" id="L242">    result.setValue(Field.YEAR, &quot;1998&quot;);</span>
+<span class="nc" id="L243">    result.setValue(Field.TITLE, &quot;Fast Training of Support Vector Machines using Sequential Minimal Optimization&quot;);</span>
+<span class="nc" id="L244">    result.setValue(Field.BOOKTITLE, &quot;Advances in Kernel Methods - Support Vector Learning&quot;);</span>
+<span class="nc" id="L245">    result.setValue(Field.EDITOR, &quot;B. Schoelkopf and C. Burges and A. Smola&quot;);</span>
+<span class="nc" id="L246">    result.setValue(Field.PUBLISHER, &quot;MIT Press&quot;);</span>
+<span class="nc" id="L247">    result.setValue(Field.URL, &quot;http://research.microsoft.com/~jplatt/smo.html&quot;);</span>
+<span class="nc" id="L248">    result.setValue(Field.PDF, &quot;http://research.microsoft.com/~jplatt/smo-book.pdf&quot;);</span>
+<span class="nc" id="L249">    result.setValue(Field.PS, &quot;http://research.microsoft.com/~jplatt/smo-book.ps.gz&quot;);</span>
+    
+<span class="nc" id="L251">    additional = result.add(Type.ARTICLE);</span>
+<span class="nc" id="L252">    additional.setValue(Field.AUTHOR, &quot;S.S. Keerthi and S.K. Shevade and C. Bhattacharyya and K.R.K. Murthy&quot;);</span>
+<span class="nc" id="L253">    additional.setValue(Field.YEAR, &quot;2001&quot;);</span>
+<span class="nc" id="L254">    additional.setValue(Field.TITLE, &quot;Improvements to Platt's SMO Algorithm for SVM Classifier Design&quot;);</span>
+<span class="nc" id="L255">    additional.setValue(Field.JOURNAL, &quot;Neural Computation&quot;);</span>
+<span class="nc" id="L256">    additional.setValue(Field.VOLUME, &quot;13&quot;);</span>
+<span class="nc" id="L257">    additional.setValue(Field.NUMBER, &quot;3&quot;);</span>
+<span class="nc" id="L258">    additional.setValue(Field.PAGES, &quot;637-649&quot;);</span>
+<span class="nc" id="L259">    additional.setValue(Field.PS, &quot;http://guppy.mpe.nus.edu.sg/~mpessk/svm/smo_mod_nc.ps.gz&quot;);</span>
+    
+<span class="nc" id="L261">    additional = result.add(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L262">    additional.setValue(Field.AUTHOR, &quot;Trevor Hastie and Robert Tibshirani&quot;);</span>
+<span class="nc" id="L263">    additional.setValue(Field.YEAR, &quot;1998&quot;);</span>
+<span class="nc" id="L264">    additional.setValue(Field.TITLE, &quot;Classification by Pairwise Coupling&quot;);</span>
+<span class="nc" id="L265">    additional.setValue(Field.BOOKTITLE, &quot;Advances in Neural Information Processing Systems&quot;);</span>
+<span class="nc" id="L266">    additional.setValue(Field.VOLUME, &quot;10&quot;);</span>
+<span class="nc" id="L267">    additional.setValue(Field.PUBLISHER, &quot;MIT Press&quot;);</span>
+<span class="nc" id="L268">    additional.setValue(Field.EDITOR, &quot;Michael I. Jordan and Michael J. Kearns and Sara A. Solla&quot;);</span>
+<span class="nc" id="L269">    additional.setValue(Field.PS, &quot;http://www-stat.stanford.edu/~hastie/Papers/2class.ps&quot;);</span>
+    
+<span class="nc" id="L271">    return result;</span>
+  }
+
+  /**
+   * Class for building a binary support vector machine.
+   */
+<span class="fc" id="L277">  public class BinarySMO </span>
+    implements Serializable {
+    
+    /** for serialization */
+    static final long serialVersionUID = -8246163625699362456L;
+    
+    /** The Lagrange multipliers. */
+    protected double[] m_alpha;
+
+    /** The thresholds. */
+    protected double m_b, m_bLow, m_bUp;
+
+    /** The indices for m_bLow and m_bUp */
+    protected int m_iLow, m_iUp;
+
+    /** The training data. */
+    protected Instances m_data;
+
+    /** Weight vector for linear machine. */
+    protected double[] m_weights;
+
+    /** Variables to hold weight vector in sparse form.
+	(To reduce storage requirements.) */
+    protected double[] m_sparseWeights;
+    protected int[] m_sparseIndices;
+
+    /** Kernel to use **/
+    protected Kernel m_kernel;
+
+    /** The transformed class values. */
+    protected double[] m_class;
+
+    /** The current set of errors for all non-bound examples. */
+    protected double[] m_errors;
+
+    /* The five different sets used by the algorithm. */
+    /** {i: 0 &lt; m_alpha[i] &lt; C} */
+    protected SMOset m_I0;
+    /**  {i: m_class[i] = 1, m_alpha[i] = 0} */
+    protected SMOset m_I1; 
+    /**  {i: m_class[i] = -1, m_alpha[i] =C} */
+    protected SMOset m_I2; 
+    /** {i: m_class[i] = 1, m_alpha[i] = C} */
+    protected SMOset m_I3;
+    /**  {i: m_class[i] = -1, m_alpha[i] = 0} */
+    protected SMOset m_I4; 
+
+    /** The set of support vectors */
+    protected SMOset m_supportVectors; // {i: 0 &lt; m_alpha[i]}
+
+    /** Stores logistic regression model for probability estimate */
+<span class="fc" id="L328">    protected Logistic m_logistic = null;</span>
+
+    /** Stores the weight of the training instances */
+<span class="fc" id="L331">    protected double m_sumOfWeights = 0;</span>
+
+    /**
+     * Fits logistic regression model to SVM outputs analogue
+     * to John Platt's method.  
+     *
+     * @param insts the set of training instances
+     * @param cl1 the first class' index
+     * @param cl2 the second class' index
+     * @param numFolds the number of folds for cross-validation
+     * @param random for randomizing the data
+     * @throws Exception if the sigmoid can't be fit successfully
+     */
+    protected void fitLogistic(Instances insts, int cl1, int cl2,
+			     int numFolds, Random random) 
+      throws Exception {
+
+      // Create header of instances object
+<span class="nc" id="L349">      FastVector atts = new FastVector(2);</span>
+<span class="nc" id="L350">      atts.addElement(new Attribute(&quot;pred&quot;));</span>
+<span class="nc" id="L351">      FastVector attVals = new FastVector(2);</span>
+<span class="nc" id="L352">      attVals.addElement(insts.classAttribute().value(cl1));</span>
+<span class="nc" id="L353">      attVals.addElement(insts.classAttribute().value(cl2));</span>
+<span class="nc" id="L354">      atts.addElement(new Attribute(&quot;class&quot;, attVals));</span>
+<span class="nc" id="L355">      Instances data = new Instances(&quot;data&quot;, atts, insts.numInstances());</span>
+<span class="nc" id="L356">      data.setClassIndex(1);</span>
+
+      // Collect data for fitting the logistic model
+<span class="nc bnc" id="L359" title="All 2 branches missed.">      if (numFolds &lt;= 0) {</span>
+
+	// Use training data
+<span class="nc bnc" id="L362" title="All 2 branches missed.">	for (int j = 0; j &lt; insts.numInstances(); j++) {</span>
+<span class="nc" id="L363">	  Instance inst = insts.instance(j);</span>
+<span class="nc" id="L364">	  double[] vals = new double[2];</span>
+<span class="nc" id="L365">	  vals[0] = SVMOutput(-1, inst);</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">	  if (inst.classValue() == cl2) {</span>
+<span class="nc" id="L367">	    vals[1] = 1;</span>
+	  }
+<span class="nc" id="L369">	  data.add(new Instance(inst.weight(), vals));</span>
+	}
+      } else {
+
+	// Check whether number of folds too large
+<span class="nc bnc" id="L374" title="All 2 branches missed.">	if (numFolds &gt; insts.numInstances()) {</span>
+<span class="nc" id="L375">	  numFolds = insts.numInstances();</span>
+	}
+
+	// Make copy of instances because we will shuffle them around
+<span class="nc" id="L379">	insts = new Instances(insts);</span>
+	
+	// Perform three-fold cross-validation to collect
+	// unbiased predictions
+<span class="nc" id="L383">	insts.randomize(random);</span>
+<span class="nc" id="L384">	insts.stratify(numFolds);</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">	for (int i = 0; i &lt; numFolds; i++) {</span>
+<span class="nc" id="L386">	  Instances train = insts.trainCV(numFolds, i, random);</span>
+          /*	  SerializedObject so = new SerializedObject(this);
+                  BinarySMO smo = (BinarySMO)so.getObject(); */
+<span class="nc" id="L389">          BinarySMO smo = new BinarySMO();</span>
+<span class="nc" id="L390">          smo.setKernel(Kernel.makeCopy(SMO.this.m_kernel));</span>
+<span class="nc" id="L391">          smo.buildClassifier(train, cl1, cl2, false, -1, -1);</span>
+<span class="nc" id="L392">	  Instances test = insts.testCV(numFolds, i);</span>
+<span class="nc bnc" id="L393" title="All 2 branches missed.">	  for (int j = 0; j &lt; test.numInstances(); j++) {</span>
+<span class="nc" id="L394">	    double[] vals = new double[2];</span>
+<span class="nc" id="L395">	    vals[0] = smo.SVMOutput(-1, test.instance(j));</span>
+<span class="nc bnc" id="L396" title="All 2 branches missed.">	    if (test.instance(j).classValue() == cl2) {</span>
+<span class="nc" id="L397">	      vals[1] = 1;</span>
+	    }
+<span class="nc" id="L399">	    data.add(new Instance(test.instance(j).weight(), vals));</span>
+	  }
+	}
+      }
+
+      // Build logistic regression model
+<span class="nc" id="L405">      m_logistic = new Logistic();</span>
+<span class="nc" id="L406">      m_logistic.buildClassifier(data);</span>
+<span class="nc" id="L407">    }</span>
+    
+    /**
+     * sets the kernel to use
+     * 
+     * @param value	the kernel to use
+     */
+    public void setKernel(Kernel value) {
+<span class="fc" id="L415">      m_kernel = value;</span>
+<span class="fc" id="L416">    }</span>
+    
+    /**
+     * Returns the kernel to use
+     * 
+     * @return 		the current kernel
+     */
+    public Kernel getKernel() {
+<span class="nc" id="L424">      return m_kernel;</span>
+    }
+
+    /**
+     * Method for building the binary classifier.
+     *
+     * @param insts the set of training instances
+     * @param cl1 the first class' index
+     * @param cl2 the second class' index
+     * @param fitLogistic true if logistic model is to be fit
+     * @param numFolds number of folds for internal cross-validation
+     * @param randomSeed random number generator for cross-validation
+     * @throws Exception if the classifier can't be built successfully
+     */
+    protected void buildClassifier(Instances insts, int cl1, int cl2,
+				 boolean fitLogistic, int numFolds,
+				 int randomSeed) throws Exception {
+      
+      // Initialize some variables
+<span class="fc" id="L443">      m_bUp = -1; m_bLow = 1; m_b = 0; </span>
+<span class="fc" id="L444">      m_alpha = null; m_data = null; m_weights = null; m_errors = null;</span>
+<span class="fc" id="L445">      m_logistic = null; m_I0 = null; m_I1 = null; m_I2 = null;</span>
+<span class="fc" id="L446">      m_I3 = null; m_I4 = null;	m_sparseWeights = null; m_sparseIndices = null;</span>
+
+      // Store the sum of weights
+<span class="fc" id="L449">      m_sumOfWeights = insts.sumOfWeights();</span>
+      
+      // Set class values
+<span class="fc" id="L452">      m_class = new double[insts.numInstances()];</span>
+<span class="fc" id="L453">      m_iUp = -1; m_iLow = -1;</span>
+<span class="fc bfc" id="L454" title="All 2 branches covered.">      for (int i = 0; i &lt; m_class.length; i++) {</span>
+<span class="fc bfc" id="L455" title="All 2 branches covered.">	if ((int) insts.instance(i).classValue() == cl1) {</span>
+<span class="fc" id="L456">	  m_class[i] = -1; m_iLow = i;</span>
+<span class="pc bpc" id="L457" title="1 of 2 branches missed.">	} else if ((int) insts.instance(i).classValue() == cl2) {</span>
+<span class="fc" id="L458">	  m_class[i] = 1; m_iUp = i;</span>
+	} else {
+<span class="nc" id="L460">	  throw new Exception (&quot;This should never happen!&quot;);</span>
+	}
+      }
+
+      // Check whether one or both classes are missing
+<span class="fc bfc" id="L465" title="All 4 branches covered.">      if ((m_iUp == -1) || (m_iLow == -1)) {</span>
+<span class="fc bfc" id="L466" title="All 2 branches covered.">	if (m_iUp != -1) {</span>
+<span class="fc" id="L467">	  m_b = -1;</span>
+<span class="pc bpc" id="L468" title="1 of 2 branches missed.">	} else if (m_iLow != -1) {</span>
+<span class="fc" id="L469">	  m_b = 1;</span>
+	} else {
+<span class="nc" id="L471">	  m_class = null;</span>
+<span class="nc" id="L472">	  return;</span>
+	}
+<span class="pc bpc" id="L474" title="1 of 2 branches missed.">	if (m_KernelIsLinear) {</span>
+<span class="fc" id="L475">	  m_sparseWeights = new double[0];</span>
+<span class="fc" id="L476">	  m_sparseIndices = new int[0];</span>
+<span class="fc" id="L477">	  m_class = null;</span>
+	} else {
+<span class="nc" id="L479">	  m_supportVectors = new SMOset(0);</span>
+<span class="nc" id="L480">	  m_alpha = new double[0];</span>
+<span class="nc" id="L481">	  m_class = new double[0];</span>
+	}
+
+	// Fit sigmoid if requested
+<span class="pc bpc" id="L485" title="1 of 2 branches missed.">	if (fitLogistic) {</span>
+<span class="nc" id="L486">	  fitLogistic(insts, cl1, cl2, numFolds, new Random(randomSeed));</span>
+	}
+<span class="fc" id="L488">	return;</span>
+      }
+      
+      // Set the reference to the data
+<span class="fc" id="L492">      m_data = insts;</span>
+
+      // If machine is linear, reserve space for weights
+<span class="pc bpc" id="L495" title="1 of 2 branches missed.">      if (m_KernelIsLinear) {</span>
+<span class="fc" id="L496">	m_weights = new double[m_data.numAttributes()];</span>
+      } else {
+<span class="nc" id="L498">	m_weights = null;</span>
+      }
+      
+      // Initialize alpha array to zero
+<span class="fc" id="L502">      m_alpha = new double[m_data.numInstances()];</span>
+      
+      // Initialize sets
+<span class="fc" id="L505">      m_supportVectors = new SMOset(m_data.numInstances());</span>
+<span class="fc" id="L506">      m_I0 = new SMOset(m_data.numInstances());</span>
+<span class="fc" id="L507">      m_I1 = new SMOset(m_data.numInstances());</span>
+<span class="fc" id="L508">      m_I2 = new SMOset(m_data.numInstances());</span>
+<span class="fc" id="L509">      m_I3 = new SMOset(m_data.numInstances());</span>
+<span class="fc" id="L510">      m_I4 = new SMOset(m_data.numInstances());</span>
+
+      // Clean out some instance variables
+<span class="fc" id="L513">      m_sparseWeights = null;</span>
+<span class="fc" id="L514">      m_sparseIndices = null;</span>
+      
+      // init kernel
+<span class="fc" id="L517">      m_kernel.buildKernel(m_data);</span>
+      
+      // Initialize error cache
+<span class="fc" id="L520">      m_errors = new double[m_data.numInstances()];</span>
+<span class="fc" id="L521">      m_errors[m_iLow] = 1; m_errors[m_iUp] = -1;</span>
+     
+      // Build up I1 and I4
+<span class="fc bfc" id="L524" title="All 2 branches covered.">      for (int i = 0; i &lt; m_class.length; i++ ) {</span>
+<span class="fc bfc" id="L525" title="All 2 branches covered.">	if (m_class[i] == 1) {</span>
+<span class="fc" id="L526">	  m_I1.insert(i);</span>
+	} else {
+<span class="fc" id="L528">	  m_I4.insert(i);</span>
+	}
+      }
+      
+      // Loop to find all the support vectors
+<span class="fc" id="L533">      int numChanged = 0;</span>
+<span class="fc" id="L534">      boolean examineAll = true;</span>
+<span class="fc bfc" id="L535" title="All 4 branches covered.">      while ((numChanged &gt; 0) || examineAll) {</span>
+<span class="fc" id="L536">	numChanged = 0;</span>
+<span class="fc bfc" id="L537" title="All 2 branches covered.">	if (examineAll) {</span>
+<span class="fc bfc" id="L538" title="All 2 branches covered.">	  for (int i = 0; i &lt; m_alpha.length; i++) {</span>
+<span class="fc bfc" id="L539" title="All 2 branches covered.">	    if (examineExample(i)) {</span>
+<span class="fc" id="L540">	      numChanged++;</span>
+	    }
+	  }
+	} else {
+	  
+	  // This code implements Modification 1 from Keerthi et al.'s paper
+<span class="fc bfc" id="L546" title="All 2 branches covered.">	  for (int i = 0; i &lt; m_alpha.length; i++) {</span>
+<span class="fc bfc" id="L547" title="All 2 branches covered.">	    if ((m_alpha[i] &gt; 0) &amp;&amp;  </span>
+<span class="fc bfc" id="L548" title="All 2 branches covered.">		(m_alpha[i] &lt; m_C * m_data.instance(i).weight())) {</span>
+<span class="fc bfc" id="L549" title="All 2 branches covered.">	      if (examineExample(i)) {</span>
+<span class="fc" id="L550">		numChanged++;</span>
+	      }
+	      
+	      // Is optimality on unbound vectors obtained?
+<span class="fc bfc" id="L554" title="All 2 branches covered.">	      if (m_bUp &gt; m_bLow - 2 * m_tol) {</span>
+<span class="fc" id="L555">		numChanged = 0;</span>
+<span class="fc" id="L556">		break;</span>
+	      }
+	    }
+	  }
+	  
+	  //This is the code for Modification 2 from Keerthi et al.'s paper
+	  /*boolean innerLoopSuccess = true; 
+	    numChanged = 0;
+	    while ((m_bUp &lt; m_bLow - 2 * m_tol) &amp;&amp; (innerLoopSuccess == true)) {
+	    innerLoopSuccess = takeStep(m_iUp, m_iLow, m_errors[m_iLow]);
+	    }*/
+	}
+	
+<span class="fc bfc" id="L569" title="All 2 branches covered.">	if (examineAll) {</span>
+<span class="fc" id="L570">	  examineAll = false;</span>
+<span class="fc bfc" id="L571" title="All 2 branches covered.">	} else if (numChanged == 0) {</span>
+<span class="fc" id="L572">	  examineAll = true;</span>
+	}
+      }
+      
+      // Set threshold
+<span class="fc" id="L577">      m_b = (m_bLow + m_bUp) / 2.0;</span>
+      
+      // Save memory
+<span class="fc" id="L580">      m_kernel.clean(); </span>
+      
+<span class="fc" id="L582">      m_errors = null;</span>
+<span class="fc" id="L583">      m_I0 = m_I1 = m_I2 = m_I3 = m_I4 = null;</span>
+      
+      // If machine is linear, delete training data
+      // and store weight vector in sparse format
+<span class="pc bpc" id="L587" title="1 of 2 branches missed.">      if (m_KernelIsLinear) {</span>
+	
+	// We don't need to store the set of support vectors
+<span class="fc" id="L590">	m_supportVectors = null;</span>
+
+	// We don't need to store the class values either
+<span class="fc" id="L593">	m_class = null;</span>
+	
+	// Clean out training data
+<span class="pc bpc" id="L596" title="1 of 2 branches missed.">	if (!m_checksTurnedOff) {</span>
+<span class="fc" id="L597">	  m_data = new Instances(m_data, 0);</span>
+	} else {
+<span class="nc" id="L599">	  m_data = null;</span>
+	}
+	
+	// Convert weight vector
+<span class="fc" id="L603">	double[] sparseWeights = new double[m_weights.length];</span>
+<span class="fc" id="L604">	int[] sparseIndices = new int[m_weights.length];</span>
+<span class="fc" id="L605">	int counter = 0;</span>
+<span class="fc bfc" id="L606" title="All 2 branches covered.">	for (int i = 0; i &lt; m_weights.length; i++) {</span>
+<span class="fc bfc" id="L607" title="All 2 branches covered.">	  if (m_weights[i] != 0.0) {</span>
+<span class="fc" id="L608">	    sparseWeights[counter] = m_weights[i];</span>
+<span class="fc" id="L609">	    sparseIndices[counter] = i;</span>
+<span class="fc" id="L610">	    counter++;</span>
+	  }
+	}
+<span class="fc" id="L613">	m_sparseWeights = new double[counter];</span>
+<span class="fc" id="L614">	m_sparseIndices = new int[counter];</span>
+<span class="fc" id="L615">	System.arraycopy(sparseWeights, 0, m_sparseWeights, 0, counter);</span>
+<span class="fc" id="L616">	System.arraycopy(sparseIndices, 0, m_sparseIndices, 0, counter);</span>
+	
+	// Clean out weight vector
+<span class="fc" id="L619">	m_weights = null;</span>
+	
+	// We don't need the alphas in the linear case
+<span class="fc" id="L622">	m_alpha = null;</span>
+      }
+      
+      // Fit sigmoid if requested
+<span class="pc bpc" id="L626" title="1 of 2 branches missed.">      if (fitLogistic) {</span>
+<span class="nc" id="L627">	fitLogistic(insts, cl1, cl2, numFolds, new Random(randomSeed));</span>
+      }
+
+<span class="fc" id="L630">    }</span>
+    
+    /**
+     * Computes SVM output for given instance.
+     *
+     * @param index the instance for which output is to be computed
+     * @param inst the instance 
+     * @return the output of the SVM for the given instance
+     * @throws Exception in case of an error
+     */
+    public double SVMOutput(int index, Instance inst) throws Exception {
+      
+<span class="fc" id="L642">      double result = 0;</span>
+      
+      // Is the machine linear?
+<span class="pc bpc" id="L645" title="1 of 2 branches missed.">      if (m_KernelIsLinear) {</span>
+	
+	// Is weight vector stored in sparse format?
+<span class="fc bfc" id="L648" title="All 2 branches covered.">	if (m_sparseWeights == null) {</span>
+<span class="fc" id="L649">	  int n1 = inst.numValues(); </span>
+<span class="fc bfc" id="L650" title="All 2 branches covered.">	  for (int p = 0; p &lt; n1; p++) {</span>
+<span class="fc bfc" id="L651" title="All 2 branches covered.">	    if (inst.index(p) != m_classIndex) {</span>
+<span class="fc" id="L652">	      result += m_weights[inst.index(p)] * inst.valueSparse(p);</span>
+	    }
+	  }
+	} else {
+<span class="fc" id="L656">	  int n1 = inst.numValues(); int n2 = m_sparseWeights.length;</span>
+<span class="fc bfc" id="L657" title="All 4 branches covered.">	  for (int p1 = 0, p2 = 0; p1 &lt; n1 &amp;&amp; p2 &lt; n2;) {</span>
+<span class="fc" id="L658">	    int ind1 = inst.index(p1); </span>
+<span class="fc" id="L659">	    int ind2 = m_sparseIndices[p2];</span>
+<span class="fc bfc" id="L660" title="All 2 branches covered.">	    if (ind1 == ind2) {</span>
+<span class="pc bpc" id="L661" title="1 of 2 branches missed.">	      if (ind1 != m_classIndex) {</span>
+<span class="fc" id="L662">		result += inst.valueSparse(p1) * m_sparseWeights[p2];</span>
+	      }
+<span class="fc" id="L664">	      p1++; p2++;</span>
+<span class="pc bpc" id="L665" title="1 of 2 branches missed.">	    } else if (ind1 &gt; ind2) {</span>
+<span class="nc" id="L666">	      p2++;</span>
+	    } else { 
+<span class="fc" id="L668">	      p1++;</span>
+	    }
+	  }
+	}
+      } else {
+<span class="nc bnc" id="L673" title="All 2 branches missed.">	for (int i = m_supportVectors.getNext(-1); i != -1; </span>
+<span class="nc" id="L674">	     i = m_supportVectors.getNext(i)) {</span>
+<span class="nc" id="L675">	  result += m_class[i] * m_alpha[i] * m_kernel.eval(index, i, inst);</span>
+	}
+      }
+<span class="fc" id="L678">      result -= m_b;</span>
+      
+<span class="fc" id="L680">      return result;</span>
+    }
+
+    /**
+     * Prints out the classifier.
+     *
+     * @return a description of the classifier as a string
+     */
+    public String toString() {
+
+<span class="nc" id="L690">      StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L691">      int printed = 0;</span>
+
+<span class="nc bnc" id="L693" title="All 4 branches missed.">      if ((m_alpha == null) &amp;&amp; (m_sparseWeights == null)) {</span>
+<span class="nc" id="L694">	return &quot;BinarySMO: No model built yet.\n&quot;;</span>
+      }
+      try {
+<span class="nc" id="L697">	text.append(&quot;BinarySMO\n\n&quot;);</span>
+
+	// If machine linear, print weight vector
+<span class="nc bnc" id="L700" title="All 2 branches missed.">	if (m_KernelIsLinear) {</span>
+<span class="nc" id="L701">	  text.append(&quot;Machine linear: showing attribute weights, &quot;);</span>
+<span class="nc" id="L702">	  text.append(&quot;not support vectors.\n\n&quot;);</span>
+
+	  // We can assume that the weight vector is stored in sparse
+	  // format because the classifier has been built
+<span class="nc bnc" id="L706" title="All 2 branches missed.">	  for (int i = 0; i &lt; m_sparseWeights.length; i++) {</span>
+<span class="nc bnc" id="L707" title="All 2 branches missed.">	    if (m_sparseIndices[i] != (int)m_classIndex) {</span>
+<span class="nc bnc" id="L708" title="All 2 branches missed.">	      if (printed &gt; 0) {</span>
+<span class="nc" id="L709">		text.append(&quot; + &quot;);</span>
+	      } else {
+<span class="nc" id="L711">		text.append(&quot;   &quot;);</span>
+	      }
+<span class="nc" id="L713">	      text.append(Utils.doubleToString(m_sparseWeights[i], 12, 4) +</span>
+<span class="nc" id="L714">			  &quot; * &quot;);</span>
+<span class="nc bnc" id="L715" title="All 2 branches missed.">	      if (m_filterType == FILTER_STANDARDIZE) {</span>
+<span class="nc" id="L716">		text.append(&quot;(standardized) &quot;);</span>
+<span class="nc bnc" id="L717" title="All 2 branches missed.">	      } else if (m_filterType == FILTER_NORMALIZE) {</span>
+<span class="nc" id="L718">		text.append(&quot;(normalized) &quot;);</span>
+	      }
+<span class="nc bnc" id="L720" title="All 2 branches missed.">	      if (!m_checksTurnedOff) {</span>
+<span class="nc" id="L721">		text.append(m_data.attribute(m_sparseIndices[i]).name()+&quot;\n&quot;);</span>
+	      } else {
+<span class="nc" id="L723">		text.append(&quot;attribute with index &quot; + </span>
+<span class="nc" id="L724">			    m_sparseIndices[i] +&quot;\n&quot;);</span>
+	      }
+<span class="nc" id="L726">	      printed++;</span>
+	    }
+	  }
+	} else {
+<span class="nc bnc" id="L730" title="All 2 branches missed.">	  for (int i = 0; i &lt; m_alpha.length; i++) {</span>
+<span class="nc bnc" id="L731" title="All 2 branches missed.">	    if (m_supportVectors.contains(i)) {</span>
+<span class="nc" id="L732">	      double val = m_alpha[i];</span>
+<span class="nc bnc" id="L733" title="All 2 branches missed.">	      if (m_class[i] == 1) {</span>
+<span class="nc bnc" id="L734" title="All 2 branches missed.">		if (printed &gt; 0) {</span>
+<span class="nc" id="L735">		  text.append(&quot; + &quot;);</span>
+		}
+	      } else {
+<span class="nc" id="L738">		text.append(&quot; - &quot;);</span>
+	      }
+<span class="nc" id="L740">	      text.append(Utils.doubleToString(val, 12, 4) </span>
+<span class="nc" id="L741">			  + &quot; * &lt;&quot;);</span>
+<span class="nc bnc" id="L742" title="All 2 branches missed.">	      for (int j = 0; j &lt; m_data.numAttributes(); j++) {</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">		if (j != m_data.classIndex()) {</span>
+<span class="nc" id="L744">		  text.append(m_data.instance(i).toString(j));</span>
+		}
+<span class="nc bnc" id="L746" title="All 2 branches missed.">		if (j != m_data.numAttributes() - 1) {</span>
+<span class="nc" id="L747">		  text.append(&quot; &quot;);</span>
+		}
+	      }
+<span class="nc" id="L750">	      text.append(&quot;&gt; * X]\n&quot;);</span>
+<span class="nc" id="L751">	      printed++;</span>
+	    }
+	  }
+	}
+<span class="nc bnc" id="L755" title="All 2 branches missed.">	if (m_b &gt; 0) {</span>
+<span class="nc" id="L756">	  text.append(&quot; - &quot; + Utils.doubleToString(m_b, 12, 4));</span>
+	} else {
+<span class="nc" id="L758">	  text.append(&quot; + &quot; + Utils.doubleToString(-m_b, 12, 4));</span>
+	}
+
+<span class="nc bnc" id="L761" title="All 2 branches missed.">	if (!m_KernelIsLinear) {</span>
+<span class="nc" id="L762">	  text.append(&quot;\n\nNumber of support vectors: &quot; + </span>
+<span class="nc" id="L763">		      m_supportVectors.numElements());</span>
+	}
+<span class="nc" id="L765">	int numEval = 0;</span>
+<span class="nc" id="L766">	int numCacheHits = -1;</span>
+<span class="nc bnc" id="L767" title="All 2 branches missed.">	if (m_kernel != null) {</span>
+<span class="nc" id="L768">	  numEval = m_kernel.numEvals();</span>
+<span class="nc" id="L769">	  numCacheHits = m_kernel.numCacheHits();</span>
+	}
+<span class="nc" id="L771">	text.append(&quot;\n\nNumber of kernel evaluations: &quot; + numEval);</span>
+<span class="nc bnc" id="L772" title="All 4 branches missed.">	if (numCacheHits &gt;= 0 &amp;&amp; numEval &gt; 0) {</span>
+<span class="nc" id="L773">	  double hitRatio = 1 - numEval*1.0/(numCacheHits+numEval);</span>
+<span class="nc" id="L774">	  text.append(&quot; (&quot; + Utils.doubleToString(hitRatio*100, 7, 3).trim() + &quot;% cached)&quot;);</span>
+	}
+
+<span class="nc" id="L777">      } catch (Exception e) {</span>
+<span class="nc" id="L778">	e.printStackTrace();</span>
+
+<span class="nc" id="L780">	return &quot;Can't print BinarySMO classifier.&quot;;</span>
+      }
+    
+<span class="nc" id="L783">      return text.toString();</span>
+    }
+
+    /**
+     * Examines instance.
+     *
+     * @param i2 index of instance to examine
+     * @return true if examination was successfull
+     * @throws Exception if something goes wrong
+     */
+    protected boolean examineExample(int i2) throws Exception {
+    
+      double y2, F2;
+<span class="fc" id="L796">      int i1 = -1;</span>
+    
+<span class="fc" id="L798">      y2 = m_class[i2];</span>
+<span class="fc bfc" id="L799" title="All 2 branches covered.">      if (m_I0.contains(i2)) {</span>
+<span class="fc" id="L800">	F2 = m_errors[i2];</span>
+      } else {
+<span class="fc" id="L802">	F2 = SVMOutput(i2, m_data.instance(i2)) + m_b - y2;</span>
+<span class="fc" id="L803">	m_errors[i2] = F2;</span>
+      
+	// Update thresholds
+<span class="fc bfc" id="L806" title="All 6 branches covered.">	if ((m_I1.contains(i2) || m_I2.contains(i2)) &amp;&amp; (F2 &lt; m_bUp)) {</span>
+<span class="fc" id="L807">	  m_bUp = F2; m_iUp = i2;</span>
+<span class="fc bfc" id="L808" title="All 6 branches covered.">	} else if ((m_I3.contains(i2) || m_I4.contains(i2)) &amp;&amp; (F2 &gt; m_bLow)) {</span>
+<span class="fc" id="L809">	  m_bLow = F2; m_iLow = i2;</span>
+	}
+      }
+
+      // Check optimality using current bLow and bUp and, if
+      // violated, find an index i1 to do joint optimization
+      // with i2...
+<span class="fc" id="L816">      boolean optimal = true;</span>
+<span class="fc bfc" id="L817" title="All 6 branches covered.">      if (m_I0.contains(i2) || m_I1.contains(i2) || m_I2.contains(i2)) {</span>
+<span class="fc bfc" id="L818" title="All 2 branches covered.">	if (m_bLow - F2 &gt; 2 * m_tol) {</span>
+<span class="fc" id="L819">	  optimal = false; i1 = m_iLow;</span>
+	}
+      }
+<span class="fc bfc" id="L822" title="All 6 branches covered.">      if (m_I0.contains(i2) || m_I3.contains(i2) || m_I4.contains(i2)) {</span>
+<span class="fc bfc" id="L823" title="All 2 branches covered.">	if (F2 - m_bUp &gt; 2 * m_tol) {</span>
+<span class="fc" id="L824">	  optimal = false; i1 = m_iUp;</span>
+	}
+      }
+<span class="fc bfc" id="L827" title="All 2 branches covered.">      if (optimal) {</span>
+<span class="fc" id="L828">	return false;</span>
+      }
+
+      // For i2 unbound choose the better i1...
+<span class="fc bfc" id="L832" title="All 2 branches covered.">      if (m_I0.contains(i2)) {</span>
+<span class="fc bfc" id="L833" title="All 2 branches covered.">	if (m_bLow - F2 &gt; F2 - m_bUp) {</span>
+<span class="fc" id="L834">	  i1 = m_iLow;</span>
+	} else {
+<span class="fc" id="L836">	  i1 = m_iUp;</span>
+	}
+      }
+<span class="pc bpc" id="L839" title="1 of 2 branches missed.">      if (i1 == -1) {</span>
+<span class="nc" id="L840">	throw new Exception(&quot;This should never happen!&quot;);</span>
+      }
+<span class="fc" id="L842">      return takeStep(i1, i2, F2);</span>
+    }
+
+    /**
+     * Method solving for the Lagrange multipliers for
+     * two instances.
+     *
+     * @param i1 index of the first instance
+     * @param i2 index of the second instance
+     * @param F2
+     * @return true if multipliers could be found
+     * @throws Exception if something goes wrong
+     */
+    protected boolean takeStep(int i1, int i2, double F2) throws Exception {
+
+      double alph1, alph2, y1, y2, F1, s, L, H, k11, k12, k22, eta,
+	a1, a2, f1, f2, v1, v2, Lobj, Hobj;
+<span class="fc" id="L859">      double C1 = m_C * m_data.instance(i1).weight();</span>
+<span class="fc" id="L860">      double C2 = m_C * m_data.instance(i2).weight();</span>
+
+      // Don't do anything if the two instances are the same
+<span class="pc bpc" id="L863" title="1 of 2 branches missed.">      if (i1 == i2) {</span>
+<span class="nc" id="L864">	return false;</span>
+      }
+
+      // Initialize variables
+<span class="fc" id="L868">      alph1 = m_alpha[i1]; alph2 = m_alpha[i2];</span>
+<span class="fc" id="L869">      y1 = m_class[i1]; y2 = m_class[i2];</span>
+<span class="fc" id="L870">      F1 = m_errors[i1];</span>
+<span class="fc" id="L871">      s = y1 * y2;</span>
+
+      // Find the constraints on a2
+<span class="fc bfc" id="L874" title="All 2 branches covered.">      if (y1 != y2) {</span>
+<span class="fc" id="L875">	L = Math.max(0, alph2 - alph1); </span>
+<span class="fc" id="L876">	H = Math.min(C2, C1 + alph2 - alph1);</span>
+      } else {
+<span class="fc" id="L878">	L = Math.max(0, alph1 + alph2 - C1);</span>
+<span class="fc" id="L879">	H = Math.min(C2, alph1 + alph2);</span>
+      }
+<span class="fc bfc" id="L881" title="All 2 branches covered.">      if (L &gt;= H) {</span>
+<span class="fc" id="L882">	return false;</span>
+      }
+
+      // Compute second derivative of objective function
+<span class="fc" id="L886">      k11 = m_kernel.eval(i1, i1, m_data.instance(i1));</span>
+<span class="fc" id="L887">      k12 = m_kernel.eval(i1, i2, m_data.instance(i1));</span>
+<span class="fc" id="L888">      k22 = m_kernel.eval(i2, i2, m_data.instance(i2));</span>
+<span class="fc" id="L889">      eta = 2 * k12 - k11 - k22;</span>
+
+      // Check if second derivative is negative
+<span class="fc bfc" id="L892" title="All 2 branches covered.">      if (eta &lt; 0) {</span>
+
+	// Compute unconstrained maximum
+<span class="fc" id="L895">	a2 = alph2 - y2 * (F1 - F2) / eta;</span>
+
+	// Compute constrained maximum
+<span class="fc bfc" id="L898" title="All 2 branches covered.">	if (a2 &lt; L) {</span>
+<span class="fc" id="L899">	  a2 = L;</span>
+<span class="fc bfc" id="L900" title="All 2 branches covered.">	} else if (a2 &gt; H) {</span>
+<span class="fc" id="L901">	  a2 = H;</span>
+	}
+      } else {
+
+	// Look at endpoints of diagonal
+<span class="fc" id="L906">	f1 = SVMOutput(i1, m_data.instance(i1));</span>
+<span class="fc" id="L907">	f2 = SVMOutput(i2, m_data.instance(i2));</span>
+<span class="fc" id="L908">	v1 = f1 + m_b - y1 * alph1 * k11 - y2 * alph2 * k12; </span>
+<span class="fc" id="L909">	v2 = f2 + m_b - y1 * alph1 * k12 - y2 * alph2 * k22; </span>
+<span class="fc" id="L910">	double gamma = alph1 + s * alph2;</span>
+<span class="fc" id="L911">	Lobj = (gamma - s * L) + L - 0.5 * k11 * (gamma - s * L) * (gamma - s * L) - </span>
+<span class="fc" id="L912">	  0.5 * k22 * L * L - s * k12 * (gamma - s * L) * L - </span>
+<span class="fc" id="L913">	  y1 * (gamma - s * L) * v1 - y2 * L * v2;</span>
+<span class="fc" id="L914">	Hobj = (gamma - s * H) + H - 0.5 * k11 * (gamma - s * H) * (gamma - s * H) - </span>
+<span class="fc" id="L915">	  0.5 * k22 * H * H - s * k12 * (gamma - s * H) * H - </span>
+<span class="fc" id="L916">	  y1 * (gamma - s * H) * v1 - y2 * H * v2;</span>
+<span class="pc bpc" id="L917" title="1 of 2 branches missed.">	if (Lobj &gt; Hobj + m_eps) {</span>
+<span class="nc" id="L918">	  a2 = L;</span>
+<span class="pc bpc" id="L919" title="1 of 2 branches missed.">	} else if (Lobj &lt; Hobj - m_eps) {</span>
+<span class="fc" id="L920">	  a2 = H;</span>
+	} else {
+<span class="nc" id="L922">	  a2 = alph2;</span>
+	}
+      }
+<span class="fc bfc" id="L925" title="All 2 branches covered.">      if (Math.abs(a2 - alph2) &lt; m_eps * (a2 + alph2 + m_eps)) {</span>
+<span class="fc" id="L926">	return false;</span>
+      }
+      
+      // To prevent precision problems
+<span class="pc bpc" id="L930" title="1 of 2 branches missed.">      if (a2 &gt; C2 - m_Del * C2) {</span>
+<span class="nc" id="L931">	a2 = C2;</span>
+<span class="fc bfc" id="L932" title="All 2 branches covered.">      } else if (a2 &lt;= m_Del * C2) {</span>
+<span class="fc" id="L933">	a2 = 0;</span>
+      }
+      
+      // Recompute a1
+<span class="fc" id="L937">      a1 = alph1 + s * (alph2 - a2);</span>
+      
+      // To prevent precision problems
+<span class="pc bpc" id="L940" title="1 of 2 branches missed.">      if (a1 &gt; C1 - m_Del * C1) {</span>
+<span class="nc" id="L941">	a1 = C1;</span>
+<span class="fc bfc" id="L942" title="All 2 branches covered.">      } else if (a1 &lt;= m_Del * C1) {</span>
+<span class="fc" id="L943">	a1 = 0;</span>
+      }
+      
+      // Update sets
+<span class="fc bfc" id="L947" title="All 2 branches covered.">      if (a1 &gt; 0) {</span>
+<span class="fc" id="L948">	m_supportVectors.insert(i1);</span>
+      } else {
+<span class="fc" id="L950">	m_supportVectors.delete(i1);</span>
+      }
+<span class="fc bfc" id="L952" title="All 4 branches covered.">      if ((a1 &gt; 0) &amp;&amp; (a1 &lt; C1)) {</span>
+<span class="fc" id="L953">	m_I0.insert(i1);</span>
+      } else {
+<span class="fc" id="L955">	m_I0.delete(i1);</span>
+      }
+<span class="fc bfc" id="L957" title="All 4 branches covered.">      if ((y1 == 1) &amp;&amp; (a1 == 0)) {</span>
+<span class="fc" id="L958">	m_I1.insert(i1);</span>
+      } else {
+<span class="fc" id="L960">	m_I1.delete(i1);</span>
+      }
+<span class="fc bfc" id="L962" title="All 4 branches covered.">      if ((y1 == -1) &amp;&amp; (a1 == C1)) {</span>
+<span class="fc" id="L963">	m_I2.insert(i1);</span>
+      } else {
+<span class="fc" id="L965">	m_I2.delete(i1);</span>
+      }
+<span class="fc bfc" id="L967" title="All 4 branches covered.">      if ((y1 == 1) &amp;&amp; (a1 == C1)) {</span>
+<span class="fc" id="L968">	m_I3.insert(i1);</span>
+      } else {
+<span class="fc" id="L970">	m_I3.delete(i1);</span>
+      }
+<span class="fc bfc" id="L972" title="All 4 branches covered.">      if ((y1 == -1) &amp;&amp; (a1 == 0)) {</span>
+<span class="fc" id="L973">	m_I4.insert(i1);</span>
+      } else {
+<span class="fc" id="L975">	m_I4.delete(i1);</span>
+      }
+<span class="fc bfc" id="L977" title="All 2 branches covered.">      if (a2 &gt; 0) {</span>
+<span class="fc" id="L978">	m_supportVectors.insert(i2);</span>
+      } else {
+<span class="fc" id="L980">	m_supportVectors.delete(i2);</span>
+      }
+<span class="fc bfc" id="L982" title="All 4 branches covered.">      if ((a2 &gt; 0) &amp;&amp; (a2 &lt; C2)) {</span>
+<span class="fc" id="L983">	m_I0.insert(i2);</span>
+      } else {
+<span class="fc" id="L985">	m_I0.delete(i2);</span>
+      }
+<span class="fc bfc" id="L987" title="All 4 branches covered.">      if ((y2 == 1) &amp;&amp; (a2 == 0)) {</span>
+<span class="fc" id="L988">	m_I1.insert(i2);</span>
+      } else {
+<span class="fc" id="L990">	m_I1.delete(i2);</span>
+      }
+<span class="fc bfc" id="L992" title="All 4 branches covered.">      if ((y2 == -1) &amp;&amp; (a2 == C2)) {</span>
+<span class="fc" id="L993">	m_I2.insert(i2);</span>
+      } else {
+<span class="fc" id="L995">	m_I2.delete(i2);</span>
+      }
+<span class="fc bfc" id="L997" title="All 4 branches covered.">      if ((y2 == 1) &amp;&amp; (a2 == C2)) {</span>
+<span class="fc" id="L998">	m_I3.insert(i2);</span>
+      } else {
+<span class="fc" id="L1000">	m_I3.delete(i2);</span>
+      }
+<span class="fc bfc" id="L1002" title="All 4 branches covered.">      if ((y2 == -1) &amp;&amp; (a2 == 0)) {</span>
+<span class="fc" id="L1003">	m_I4.insert(i2);</span>
+      } else {
+<span class="fc" id="L1005">	m_I4.delete(i2);</span>
+      }
+      
+      // Update weight vector to reflect change a1 and a2, if linear SVM
+<span class="pc bpc" id="L1009" title="1 of 2 branches missed.">      if (m_KernelIsLinear) {</span>
+<span class="fc" id="L1010">	Instance inst1 = m_data.instance(i1);</span>
+<span class="fc bfc" id="L1011" title="All 2 branches covered.">	for (int p1 = 0; p1 &lt; inst1.numValues(); p1++) {</span>
+<span class="fc bfc" id="L1012" title="All 2 branches covered.">	  if (inst1.index(p1) != m_data.classIndex()) {</span>
+<span class="fc" id="L1013">	    m_weights[inst1.index(p1)] += </span>
+<span class="fc" id="L1014">	      y1 * (a1 - alph1) * inst1.valueSparse(p1);</span>
+	  }
+	}
+<span class="fc" id="L1017">	Instance inst2 = m_data.instance(i2);</span>
+<span class="fc bfc" id="L1018" title="All 2 branches covered.">	for (int p2 = 0; p2 &lt; inst2.numValues(); p2++) {</span>
+<span class="fc bfc" id="L1019" title="All 2 branches covered.">	  if (inst2.index(p2) != m_data.classIndex()) {</span>
+<span class="fc" id="L1020">	    m_weights[inst2.index(p2)] += </span>
+<span class="fc" id="L1021">	      y2 * (a2 - alph2) * inst2.valueSparse(p2);</span>
+	  }
+	}
+      }
+      
+      // Update error cache using new Lagrange multipliers
+<span class="fc bfc" id="L1027" title="All 2 branches covered.">      for (int j = m_I0.getNext(-1); j != -1; j = m_I0.getNext(j)) {</span>
+<span class="fc bfc" id="L1028" title="All 4 branches covered.">	if ((j != i1) &amp;&amp; (j != i2)) {</span>
+<span class="fc" id="L1029">	  m_errors[j] += </span>
+<span class="fc" id="L1030">	    y1 * (a1 - alph1) * m_kernel.eval(i1, j, m_data.instance(i1)) + </span>
+<span class="fc" id="L1031">	    y2 * (a2 - alph2) * m_kernel.eval(i2, j, m_data.instance(i2));</span>
+	}
+      }
+      
+      // Update error cache for i1 and i2
+<span class="fc" id="L1036">      m_errors[i1] += y1 * (a1 - alph1) * k11 + y2 * (a2 - alph2) * k12;</span>
+<span class="fc" id="L1037">      m_errors[i2] += y1 * (a1 - alph1) * k12 + y2 * (a2 - alph2) * k22;</span>
+      
+      // Update array with Lagrange multipliers
+<span class="fc" id="L1040">      m_alpha[i1] = a1;</span>
+<span class="fc" id="L1041">      m_alpha[i2] = a2;</span>
+      
+      // Update thresholds
+<span class="fc" id="L1044">      m_bLow = -Double.MAX_VALUE; m_bUp = Double.MAX_VALUE;</span>
+<span class="fc" id="L1045">      m_iLow = -1; m_iUp = -1;</span>
+<span class="fc bfc" id="L1046" title="All 2 branches covered.">      for (int j = m_I0.getNext(-1); j != -1; j = m_I0.getNext(j)) {</span>
+<span class="fc bfc" id="L1047" title="All 2 branches covered.">	if (m_errors[j] &lt; m_bUp) {</span>
+<span class="fc" id="L1048">	  m_bUp = m_errors[j]; m_iUp = j;</span>
+	}
+<span class="fc bfc" id="L1050" title="All 2 branches covered.">	if (m_errors[j] &gt; m_bLow) {</span>
+<span class="fc" id="L1051">	  m_bLow = m_errors[j]; m_iLow = j;</span>
+	}
+      }
+<span class="fc bfc" id="L1054" title="All 2 branches covered.">      if (!m_I0.contains(i1)) {</span>
+<span class="fc bfc" id="L1055" title="All 4 branches covered.">	if (m_I3.contains(i1) || m_I4.contains(i1)) {</span>
+<span class="fc bfc" id="L1056" title="All 2 branches covered.">	  if (m_errors[i1] &gt; m_bLow) {</span>
+<span class="fc" id="L1057">	    m_bLow = m_errors[i1]; m_iLow = i1;</span>
+	  } 
+	} else {
+<span class="fc bfc" id="L1060" title="All 2 branches covered.">	  if (m_errors[i1] &lt; m_bUp) {</span>
+<span class="fc" id="L1061">	    m_bUp = m_errors[i1]; m_iUp = i1;</span>
+	  }
+	}
+      }
+<span class="fc bfc" id="L1065" title="All 2 branches covered.">      if (!m_I0.contains(i2)) {</span>
+<span class="fc bfc" id="L1066" title="All 4 branches covered.">	if (m_I3.contains(i2) || m_I4.contains(i2)) {</span>
+<span class="fc bfc" id="L1067" title="All 2 branches covered.">	  if (m_errors[i2] &gt; m_bLow) {</span>
+<span class="fc" id="L1068">	    m_bLow = m_errors[i2]; m_iLow = i2;</span>
+	  }
+	} else {
+<span class="fc bfc" id="L1071" title="All 2 branches covered.">	  if (m_errors[i2] &lt; m_bUp) {</span>
+<span class="fc" id="L1072">	    m_bUp = m_errors[i2]; m_iUp = i2;</span>
+	  }
+	}
+      }
+<span class="pc bpc" id="L1076" title="2 of 4 branches missed.">      if ((m_iLow == -1) || (m_iUp == -1)) {</span>
+<span class="nc" id="L1077">	throw new Exception(&quot;This should never happen!&quot;);</span>
+      }
+
+      // Made some progress.
+<span class="fc" id="L1081">      return true;</span>
+    }
+  
+    /**
+     * Quick and dirty check whether the quadratic programming problem is solved.
+     * 
+     * @throws Exception if checking fails
+     */
+    protected void checkClassifier() throws Exception {
+
+<span class="nc" id="L1091">      double sum = 0;</span>
+<span class="nc bnc" id="L1092" title="All 2 branches missed.">      for (int i = 0; i &lt; m_alpha.length; i++) {</span>
+<span class="nc bnc" id="L1093" title="All 2 branches missed.">	if (m_alpha[i] &gt; 0) {</span>
+<span class="nc" id="L1094">	  sum += m_class[i] * m_alpha[i];</span>
+	}
+      }
+<span class="nc" id="L1097">      System.err.println(&quot;Sum of y(i) * alpha(i): &quot; + sum);</span>
+
+<span class="nc bnc" id="L1099" title="All 2 branches missed.">      for (int i = 0; i &lt; m_alpha.length; i++) {</span>
+<span class="nc" id="L1100">	double output = SVMOutput(i, m_data.instance(i));</span>
+<span class="nc bnc" id="L1101" title="All 2 branches missed.">	if (Utils.eq(m_alpha[i], 0)) {</span>
+<span class="nc bnc" id="L1102" title="All 2 branches missed.">	  if (Utils.sm(m_class[i] * output, 1)) {</span>
+<span class="nc" id="L1103">	    System.err.println(&quot;KKT condition 1 violated: &quot; + m_class[i] * output);</span>
+	  }
+	} 
+<span class="nc bnc" id="L1106" title="All 2 branches missed.">	if (Utils.gr(m_alpha[i], 0) &amp;&amp; </span>
+<span class="nc bnc" id="L1107" title="All 2 branches missed.">	    Utils.sm(m_alpha[i], m_C * m_data.instance(i).weight())) {</span>
+<span class="nc bnc" id="L1108" title="All 2 branches missed.">	  if (!Utils.eq(m_class[i] * output, 1)) {</span>
+<span class="nc" id="L1109">	    System.err.println(&quot;KKT condition 2 violated: &quot; + m_class[i] * output);</span>
+	  }
+	} 
+<span class="nc bnc" id="L1112" title="All 2 branches missed.">	if (Utils.eq(m_alpha[i], m_C * m_data.instance(i).weight())) {</span>
+<span class="nc bnc" id="L1113" title="All 2 branches missed.">	  if (Utils.gr(m_class[i] * output, 1)) {</span>
+<span class="nc" id="L1114">	    System.err.println(&quot;KKT condition 3 violated: &quot; + m_class[i] * output);</span>
+	  }
+	} 
+      }
+<span class="nc" id="L1118">    }  </span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L1126">      return RevisionUtils.extract(&quot;$Revision: 6025 $&quot;);</span>
+    }
+  }
+
+  /** filter: Normalize training data */
+  public static final int FILTER_NORMALIZE = 0;
+  /** filter: Standardize training data */
+  public static final int FILTER_STANDARDIZE = 1;
+  /** filter: No normalization/standardization */
+  public static final int FILTER_NONE = 2;
+  /** The filter to apply to the training data */
+<span class="fc" id="L1137">  public static final Tag [] TAGS_FILTER = {</span>
+<span class="fc" id="L1138">    new Tag(FILTER_NORMALIZE, &quot;Normalize training data&quot;),</span>
+<span class="fc" id="L1139">    new Tag(FILTER_STANDARDIZE, &quot;Standardize training data&quot;),</span>
+<span class="fc" id="L1140">    new Tag(FILTER_NONE, &quot;No normalization/standardization&quot;),</span>
+  };
+
+  /** The binary classifier(s) */
+<span class="fc" id="L1144">  protected BinarySMO[][] m_classifiers = null;</span>
+  
+  /** The complexity parameter. */
+<span class="fc" id="L1147">  protected double m_C = 1.0;</span>
+  
+  /** Epsilon for rounding. */
+<span class="fc" id="L1150">  protected double m_eps = 1.0e-12;</span>
+  
+  /** Tolerance for accuracy of result. */
+<span class="fc" id="L1153">  protected double m_tol = 1.0e-3;</span>
+
+  /** Whether to normalize/standardize/neither */
+<span class="fc" id="L1156">  protected int m_filterType = FILTER_NORMALIZE;</span>
+
+  /** The filter used to make attributes numeric. */
+  protected NominalToBinary m_NominalToBinary;
+
+  /** The filter used to standardize/normalize all values. */
+<span class="fc" id="L1162">  protected Filter m_Filter = null;</span>
+
+  /** The filter used to get rid of missing values. */
+  protected ReplaceMissingValues m_Missing;
+
+  /** The class index from the training data */
+<span class="fc" id="L1168">  protected int m_classIndex = -1;</span>
+
+  /** The class attribute */
+  protected Attribute m_classAttribute;
+  
+  /** whether the kernel is a linear one */
+<span class="fc" id="L1174">  protected boolean m_KernelIsLinear = false;</span>
+
+  /** Turn off all checks and conversions? Turning them off assumes
+      that data is purely numeric, doesn't contain any missing values,
+      and has a nominal class. Turning them off also means that
+      no header information will be stored if the machine is linear. 
+      Finally, it also assumes that no instance has a weight equal to 0.*/
+  protected boolean m_checksTurnedOff;
+
+  /** Precision constant for updating sets */
+<span class="fc" id="L1184">  protected static double m_Del = 1000 * Double.MIN_VALUE;</span>
+
+  /** Whether logistic models are to be fit */
+<span class="fc" id="L1187">  protected boolean m_fitLogisticModels = false;</span>
+
+  /** The number of folds for the internal cross-validation */
+<span class="fc" id="L1190">  protected int m_numFolds = -1;</span>
+
+  /** The random number seed  */
+<span class="fc" id="L1193">  protected int m_randomSeed = 1;</span>
+
+  /** the kernel to use */
+<span class="fc" id="L1196">  protected Kernel m_kernel = new PolyKernel();</span>
+  
+  /**
+   * Turns off checks for missing values, etc. Use with caution.
+   */
+  public void turnChecksOff() {
+
+<span class="nc" id="L1203">    m_checksTurnedOff = true;</span>
+<span class="nc" id="L1204">  }</span>
+
+  /**
+   * Turns on checks for missing values, etc.
+   */
+  public void turnChecksOn() {
+
+<span class="fc" id="L1211">    m_checksTurnedOff = false;</span>
+<span class="fc" id="L1212">  }</span>
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L1220">    Capabilities result = getKernel().getCapabilities();</span>
+<span class="fc" id="L1221">    result.setOwner(this);</span>
+    
+    // attribute
+<span class="fc" id="L1224">    result.enableAllAttributeDependencies();</span>
+    // with NominalToBinary we can also handle nominal attributes, but only
+    // if the kernel can handle numeric attributes
+<span class="pc bpc" id="L1227" title="1 of 2 branches missed.">    if (result.handles(Capability.NUMERIC_ATTRIBUTES))</span>
+<span class="fc" id="L1228">      result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L1229">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="fc" id="L1232">    result.disableAllClasses();</span>
+<span class="fc" id="L1233">    result.disableAllClassDependencies();</span>
+<span class="fc" id="L1234">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L1235">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="fc" id="L1237">    return result;</span>
+  }
+
+  /**
+   * Method for building the classifier. Implements a one-against-one
+   * wrapper for multi-class problems.
+   *
+   * @param insts the set of training instances
+   * @throws Exception if the classifier can't be built successfully
+   */
+  public void buildClassifier(Instances insts) throws Exception {
+
+<span class="pc bpc" id="L1249" title="1 of 2 branches missed.">    if (!m_checksTurnedOff) {</span>
+      // can classifier handle the data?
+<span class="fc" id="L1251">      getCapabilities().testWithFail(insts);</span>
+
+      // remove instances with missing class
+<span class="fc" id="L1254">      insts = new Instances(insts);</span>
+<span class="fc" id="L1255">      insts.deleteWithMissingClass();</span>
+      
+      /* Removes all the instances with weight equal to 0.
+       MUST be done since condition (8) of Keerthi's paper 
+       is made with the assertion Ci &gt; 0 (See equation (3a). */
+<span class="fc" id="L1260">      Instances data = new Instances(insts, insts.numInstances());</span>
+<span class="fc bfc" id="L1261" title="All 2 branches covered.">      for(int i = 0; i &lt; insts.numInstances(); i++){</span>
+<span class="fc bfc" id="L1262" title="All 2 branches covered.">        if(insts.instance(i).weight() &gt; 0)</span>
+<span class="fc" id="L1263">          data.add(insts.instance(i));</span>
+      }
+<span class="pc bpc" id="L1265" title="1 of 2 branches missed.">      if (data.numInstances() == 0) {</span>
+<span class="nc" id="L1266">        throw new Exception(&quot;No training instances left after removing &quot; + </span>
+        &quot;instances with weight 0!&quot;);
+      }
+<span class="fc" id="L1269">      insts = data;</span>
+    }
+
+<span class="pc bpc" id="L1272" title="1 of 2 branches missed.">    if (!m_checksTurnedOff) {</span>
+<span class="fc" id="L1273">      m_Missing = new ReplaceMissingValues();</span>
+<span class="fc" id="L1274">      m_Missing.setInputFormat(insts);</span>
+<span class="fc" id="L1275">      insts = Filter.useFilter(insts, m_Missing); </span>
+    } else {
+<span class="nc" id="L1277">      m_Missing = null;</span>
+    }
+
+<span class="pc bpc" id="L1280" title="1 of 2 branches missed.">    if (getCapabilities().handles(Capability.NUMERIC_ATTRIBUTES)) {</span>
+<span class="fc" id="L1281">      boolean onlyNumeric = true;</span>
+<span class="pc bpc" id="L1282" title="1 of 2 branches missed.">      if (!m_checksTurnedOff) {</span>
+<span class="fc bfc" id="L1283" title="All 2 branches covered.">	for (int i = 0; i &lt; insts.numAttributes(); i++) {</span>
+<span class="fc bfc" id="L1284" title="All 2 branches covered.">	  if (i != insts.classIndex()) {</span>
+<span class="fc bfc" id="L1285" title="All 2 branches covered.">	    if (!insts.attribute(i).isNumeric()) {</span>
+<span class="fc" id="L1286">	      onlyNumeric = false;</span>
+<span class="fc" id="L1287">	      break;</span>
+	    }
+	  }
+	}
+      }
+      
+<span class="fc bfc" id="L1293" title="All 2 branches covered.">      if (!onlyNumeric) {</span>
+<span class="fc" id="L1294">	m_NominalToBinary = new NominalToBinary();</span>
+<span class="fc" id="L1295">	m_NominalToBinary.setInputFormat(insts);</span>
+<span class="fc" id="L1296">	insts = Filter.useFilter(insts, m_NominalToBinary);</span>
+      } 
+      else {
+<span class="fc" id="L1299">	m_NominalToBinary = null;</span>
+      }
+    }
+    else {
+<span class="nc" id="L1303">      m_NominalToBinary = null;</span>
+    }
+
+<span class="pc bpc" id="L1306" title="1 of 2 branches missed.">    if (m_filterType == FILTER_STANDARDIZE) {</span>
+<span class="nc" id="L1307">      m_Filter = new Standardize();</span>
+<span class="nc" id="L1308">      m_Filter.setInputFormat(insts);</span>
+<span class="nc" id="L1309">      insts = Filter.useFilter(insts, m_Filter); </span>
+<span class="pc bpc" id="L1310" title="1 of 2 branches missed.">    } else if (m_filterType == FILTER_NORMALIZE) {</span>
+<span class="fc" id="L1311">      m_Filter = new Normalize();</span>
+<span class="fc" id="L1312">      m_Filter.setInputFormat(insts);</span>
+<span class="fc" id="L1313">      insts = Filter.useFilter(insts, m_Filter); </span>
+    } else {
+<span class="nc" id="L1315">      m_Filter = null;</span>
+    }
+
+<span class="fc" id="L1318">    m_classIndex = insts.classIndex();</span>
+<span class="fc" id="L1319">    m_classAttribute = insts.classAttribute();</span>
+<span class="pc bpc" id="L1320" title="2 of 4 branches missed.">    m_KernelIsLinear = (m_kernel instanceof PolyKernel) &amp;&amp; (((PolyKernel) m_kernel).getExponent() == 1.0);</span>
+    
+    // Generate subsets representing each class
+<span class="fc" id="L1323">    Instances[] subsets = new Instances[insts.numClasses()];</span>
+<span class="fc bfc" id="L1324" title="All 2 branches covered.">    for (int i = 0; i &lt; insts.numClasses(); i++) {</span>
+<span class="fc" id="L1325">      subsets[i] = new Instances(insts, insts.numInstances());</span>
+    }
+<span class="fc bfc" id="L1327" title="All 2 branches covered.">    for (int j = 0; j &lt; insts.numInstances(); j++) {</span>
+<span class="fc" id="L1328">      Instance inst = insts.instance(j);</span>
+<span class="fc" id="L1329">      subsets[(int)inst.classValue()].add(inst);</span>
+    }
+<span class="fc bfc" id="L1331" title="All 2 branches covered.">    for (int i = 0; i &lt; insts.numClasses(); i++) {</span>
+<span class="fc" id="L1332">      subsets[i].compactify();</span>
+    }
+
+    // Build the binary classifiers
+<span class="fc" id="L1336">    Random rand = new Random(m_randomSeed);</span>
+<span class="fc" id="L1337">    m_classifiers = new BinarySMO[insts.numClasses()][insts.numClasses()];</span>
+<span class="fc bfc" id="L1338" title="All 2 branches covered.">    for (int i = 0; i &lt; insts.numClasses(); i++) {</span>
+<span class="fc bfc" id="L1339" title="All 2 branches covered.">      for (int j = i + 1; j &lt; insts.numClasses(); j++) {</span>
+<span class="fc" id="L1340">	m_classifiers[i][j] = new BinarySMO();</span>
+<span class="fc" id="L1341">	m_classifiers[i][j].setKernel(Kernel.makeCopy(getKernel()));</span>
+<span class="fc" id="L1342">	Instances data = new Instances(insts, insts.numInstances());</span>
+<span class="fc bfc" id="L1343" title="All 2 branches covered.">	for (int k = 0; k &lt; subsets[i].numInstances(); k++) {</span>
+<span class="fc" id="L1344">	  data.add(subsets[i].instance(k));</span>
+	}
+<span class="fc bfc" id="L1346" title="All 2 branches covered.">	for (int k = 0; k &lt; subsets[j].numInstances(); k++) {</span>
+<span class="fc" id="L1347">	  data.add(subsets[j].instance(k));</span>
+	}
+<span class="fc" id="L1349">	data.compactify();</span>
+<span class="fc" id="L1350">	data.randomize(rand);</span>
+<span class="fc" id="L1351">	m_classifiers[i][j].buildClassifier(data, i, j, </span>
+<span class="fc" id="L1352">					    m_fitLogisticModels,</span>
+<span class="fc" id="L1353">					    m_numFolds, m_randomSeed);</span>
+      }
+    }
+<span class="fc" id="L1356">  }</span>
+
+  /**
+   * Estimates class probabilities for given instance.
+   * 
+   * @param inst the instance to compute the probabilities for
+   * @throws Exception in case of an error
+   */
+  public double[] distributionForInstance(Instance inst) throws Exception {
+
+    // Filter instance
+<span class="pc bpc" id="L1367" title="1 of 2 branches missed.">    if (!m_checksTurnedOff) {</span>
+<span class="fc" id="L1368">      m_Missing.input(inst);</span>
+<span class="fc" id="L1369">      m_Missing.batchFinished();</span>
+<span class="fc" id="L1370">      inst = m_Missing.output();</span>
+    }
+
+<span class="fc bfc" id="L1373" title="All 2 branches covered.">    if (m_NominalToBinary != null) {</span>
+<span class="fc" id="L1374">      m_NominalToBinary.input(inst);</span>
+<span class="fc" id="L1375">      m_NominalToBinary.batchFinished();</span>
+<span class="fc" id="L1376">      inst = m_NominalToBinary.output();</span>
+    }
+    
+<span class="pc bpc" id="L1379" title="1 of 2 branches missed.">    if (m_Filter != null) {</span>
+<span class="fc" id="L1380">      m_Filter.input(inst);</span>
+<span class="fc" id="L1381">      m_Filter.batchFinished();</span>
+<span class="fc" id="L1382">      inst = m_Filter.output();</span>
+    }
+    
+<span class="pc bpc" id="L1385" title="1 of 2 branches missed.">    if (!m_fitLogisticModels) {</span>
+<span class="fc" id="L1386">      double[] result = new double[inst.numClasses()];</span>
+<span class="fc bfc" id="L1387" title="All 2 branches covered.">      for (int i = 0; i &lt; inst.numClasses(); i++) {</span>
+<span class="fc bfc" id="L1388" title="All 2 branches covered.">	for (int j = i + 1; j &lt; inst.numClasses(); j++) {</span>
+<span class="pc bpc" id="L1389" title="1 of 2 branches missed.">	  if ((m_classifiers[i][j].m_alpha != null) || </span>
+<span class="pc bpc" id="L1390" title="1 of 2 branches missed.">	      (m_classifiers[i][j].m_sparseWeights != null)) {</span>
+<span class="fc" id="L1391">	    double output = m_classifiers[i][j].SVMOutput(-1, inst);</span>
+<span class="fc bfc" id="L1392" title="All 2 branches covered.">	    if (output &gt; 0) {</span>
+<span class="fc" id="L1393">	      result[j] += 1;</span>
+	    } else {
+<span class="fc" id="L1395">	      result[i] += 1;</span>
+	    }
+	  }
+	} 
+      }
+<span class="fc" id="L1400">      Utils.normalize(result);</span>
+<span class="fc" id="L1401">      return result;</span>
+    } else {
+
+      // We only need to do pairwise coupling if there are more
+      // then two classes.
+<span class="nc bnc" id="L1406" title="All 2 branches missed.">      if (inst.numClasses() == 2) {</span>
+<span class="nc" id="L1407">	double[] newInst = new double[2];</span>
+<span class="nc" id="L1408">	newInst[0] = m_classifiers[0][1].SVMOutput(-1, inst);</span>
+<span class="nc" id="L1409">	newInst[1] = Instance.missingValue();</span>
+<span class="nc" id="L1410">	return m_classifiers[0][1].m_logistic.</span>
+<span class="nc" id="L1411">	  distributionForInstance(new Instance(1, newInst));</span>
+      }
+<span class="nc" id="L1413">      double[][] r = new double[inst.numClasses()][inst.numClasses()];</span>
+<span class="nc" id="L1414">      double[][] n = new double[inst.numClasses()][inst.numClasses()];</span>
+<span class="nc bnc" id="L1415" title="All 2 branches missed.">      for (int i = 0; i &lt; inst.numClasses(); i++) {</span>
+<span class="nc bnc" id="L1416" title="All 2 branches missed.">	for (int j = i + 1; j &lt; inst.numClasses(); j++) {</span>
+<span class="nc bnc" id="L1417" title="All 2 branches missed.">	  if ((m_classifiers[i][j].m_alpha != null) || </span>
+<span class="nc bnc" id="L1418" title="All 2 branches missed.">	      (m_classifiers[i][j].m_sparseWeights != null)) {</span>
+<span class="nc" id="L1419">	    double[] newInst = new double[2];</span>
+<span class="nc" id="L1420">	    newInst[0] = m_classifiers[i][j].SVMOutput(-1, inst);</span>
+<span class="nc" id="L1421">	    newInst[1] = Instance.missingValue();</span>
+<span class="nc" id="L1422">	    r[i][j] = m_classifiers[i][j].m_logistic.</span>
+<span class="nc" id="L1423">	      distributionForInstance(new Instance(1, newInst))[0];</span>
+<span class="nc" id="L1424">	    n[i][j] = m_classifiers[i][j].m_sumOfWeights;</span>
+	  }
+	}
+      }
+<span class="nc" id="L1428">      return weka.classifiers.meta.MultiClassClassifier.pairwiseCoupling(n, r);</span>
+    }
+  }
+
+  /**
+   * Returns an array of votes for the given instance.
+   * @param inst the instance
+   * @return array of votex
+   * @throws Exception if something goes wrong
+   */
+  public int[] obtainVotes(Instance inst) throws Exception {
+
+    // Filter instance
+<span class="nc bnc" id="L1441" title="All 2 branches missed.">    if (!m_checksTurnedOff) {</span>
+<span class="nc" id="L1442">      m_Missing.input(inst);</span>
+<span class="nc" id="L1443">      m_Missing.batchFinished();</span>
+<span class="nc" id="L1444">      inst = m_Missing.output();</span>
+    }
+
+<span class="nc bnc" id="L1447" title="All 2 branches missed.">    if (m_NominalToBinary != null) {</span>
+<span class="nc" id="L1448">      m_NominalToBinary.input(inst);</span>
+<span class="nc" id="L1449">      m_NominalToBinary.batchFinished();</span>
+<span class="nc" id="L1450">      inst = m_NominalToBinary.output();</span>
+    }
+    
+<span class="nc bnc" id="L1453" title="All 2 branches missed.">    if (m_Filter != null) {</span>
+<span class="nc" id="L1454">      m_Filter.input(inst);</span>
+<span class="nc" id="L1455">      m_Filter.batchFinished();</span>
+<span class="nc" id="L1456">      inst = m_Filter.output();</span>
+    }
+
+<span class="nc" id="L1459">    int[] votes = new int[inst.numClasses()];</span>
+<span class="nc bnc" id="L1460" title="All 2 branches missed.">    for (int i = 0; i &lt; inst.numClasses(); i++) {</span>
+<span class="nc bnc" id="L1461" title="All 2 branches missed.">      for (int j = i + 1; j &lt; inst.numClasses(); j++) {</span>
+<span class="nc" id="L1462">	double output = m_classifiers[i][j].SVMOutput(-1, inst);</span>
+<span class="nc bnc" id="L1463" title="All 2 branches missed.">	if (output &gt; 0) {</span>
+<span class="nc" id="L1464">	  votes[j] += 1;</span>
+	} else {
+<span class="nc" id="L1466">	  votes[i] += 1;</span>
+	}
+      }
+    }
+<span class="nc" id="L1470">    return votes;</span>
+  }
+
+  /**
+   * Returns the weights in sparse format.
+   */
+  public double [][][] sparseWeights() {
+    
+<span class="nc" id="L1478">    int numValues = m_classAttribute.numValues();</span>
+<span class="nc" id="L1479">    double [][][] sparseWeights = new double[numValues][numValues][];</span>
+    
+<span class="nc bnc" id="L1481" title="All 2 branches missed.">    for (int i = 0; i &lt; numValues; i++) {</span>
+<span class="nc bnc" id="L1482" title="All 2 branches missed.">      for (int j = i + 1; j &lt; numValues; j++) {</span>
+<span class="nc" id="L1483">	sparseWeights[i][j] = m_classifiers[i][j].m_sparseWeights;</span>
+      }
+    }
+    
+<span class="nc" id="L1487">    return sparseWeights;</span>
+  }
+  
+  /**
+   * Returns the indices in sparse format.
+   */
+  public int [][][] sparseIndices() {
+    
+<span class="nc" id="L1495">    int numValues = m_classAttribute.numValues();</span>
+<span class="nc" id="L1496">    int [][][] sparseIndices = new int[numValues][numValues][];</span>
+
+<span class="nc bnc" id="L1498" title="All 2 branches missed.">    for (int i = 0; i &lt; numValues; i++) {</span>
+<span class="nc bnc" id="L1499" title="All 2 branches missed.">      for (int j = i + 1; j &lt; numValues; j++) {</span>
+<span class="nc" id="L1500">	sparseIndices[i][j] = m_classifiers[i][j].m_sparseIndices;</span>
+      }
+    }
+    
+<span class="nc" id="L1504">    return sparseIndices;</span>
+  }
+  
+  /**
+   * Returns the bias of each binary SMO.
+   */
+  public double [][] bias() {
+    
+<span class="nc" id="L1512">    int numValues = m_classAttribute.numValues();</span>
+<span class="nc" id="L1513">    double [][] bias = new double[numValues][numValues];</span>
+
+<span class="nc bnc" id="L1515" title="All 2 branches missed.">    for (int i = 0; i &lt; numValues; i++) {</span>
+<span class="nc bnc" id="L1516" title="All 2 branches missed.">      for (int j = i + 1; j &lt; numValues; j++) {</span>
+<span class="nc" id="L1517">	bias[i][j] = m_classifiers[i][j].m_b;</span>
+      }
+    }
+    
+<span class="nc" id="L1521">    return bias;</span>
+  }
+  
+  /*
+   * Returns the number of values of the class attribute.
+   */
+  public int numClassAttributeValues() {
+
+<span class="nc" id="L1529">    return m_classAttribute.numValues();</span>
+  }
+  
+  /*
+   * Returns the names of the class attributes.
+   */
+  public String [] classAttributeNames() {
+
+<span class="nc" id="L1537">    int numValues = m_classAttribute.numValues();</span>
+    
+<span class="nc" id="L1539">    String [] classAttributeNames = new String[numValues];</span>
+    
+<span class="nc bnc" id="L1541" title="All 2 branches missed.">    for (int i = 0; i &lt; numValues; i++) {</span>
+<span class="nc" id="L1542">      classAttributeNames[i] = m_classAttribute.value(i);</span>
+    }
+    
+<span class="nc" id="L1545">    return classAttributeNames;</span>
+  }
+  
+  /**
+   * Returns the attribute names.
+   */
+  public String [][][] attributeNames() {
+    
+<span class="nc" id="L1553">    int numValues = m_classAttribute.numValues();</span>
+<span class="nc" id="L1554">    String [][][] attributeNames = new String[numValues][numValues][];</span>
+    
+<span class="nc bnc" id="L1556" title="All 2 branches missed.">    for (int i = 0; i &lt; numValues; i++) {</span>
+<span class="nc bnc" id="L1557" title="All 2 branches missed.">      for (int j = i + 1; j &lt; numValues; j++) {</span>
+        //	int numAttributes = m_classifiers[i][j].m_data.numAttributes();
+<span class="nc" id="L1559">	int numAttributes = m_classifiers[i][j].m_sparseIndices.length;</span>
+<span class="nc" id="L1560">	String [] attrNames = new String[numAttributes];</span>
+<span class="nc bnc" id="L1561" title="All 2 branches missed.">	for (int k = 0; k &lt; numAttributes; k++) {</span>
+<span class="nc" id="L1562">	  attrNames[k] = m_classifiers[i][j].</span>
+<span class="nc" id="L1563">            m_data.attribute(m_classifiers[i][j].m_sparseIndices[k]).name();</span>
+	}
+<span class="nc" id="L1565">	attributeNames[i][j] = attrNames;          </span>
+      }
+    }
+<span class="nc" id="L1568">    return attributeNames;</span>
+  }
+  
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="fc" id="L1578">    Vector result = new Vector();</span>
+
+<span class="fc" id="L1580">    Enumeration enm = super.listOptions();</span>
+<span class="fc bfc" id="L1581" title="All 2 branches covered.">    while (enm.hasMoreElements())</span>
+<span class="fc" id="L1582">      result.addElement(enm.nextElement());</span>
+
+<span class="fc" id="L1584">    result.addElement(new Option(</span>
+<span class="fc" id="L1585">	&quot;\tTurns off all checks - use with caution!\n&quot;</span>
+	+ &quot;\tTurning them off assumes that data is purely numeric, doesn't\n&quot;
+	+ &quot;\tcontain any missing values, and has a nominal class. Turning them\n&quot;
+	+ &quot;\toff also means that no header information will be stored if the\n&quot;
+	+ &quot;\tmachine is linear. Finally, it also assumes that no instance has\n&quot;
+	+ &quot;\ta weight equal to 0.\n&quot;
+	+ &quot;\t(default: checks on)&quot;,
+<span class="fc" id="L1592">	&quot;no-checks&quot;, 0, &quot;-no-checks&quot;));</span>
+
+<span class="fc" id="L1594">    result.addElement(new Option(</span>
+<span class="fc" id="L1595">	&quot;\tThe complexity constant C. (default 1)&quot;,</span>
+<span class="fc" id="L1596">	&quot;C&quot;, 1, &quot;-C &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L1598">    result.addElement(new Option(</span>
+<span class="fc" id="L1599">	&quot;\tWhether to 0=normalize/1=standardize/2=neither. &quot; +</span>
+	&quot;(default 0=normalize)&quot;,
+<span class="fc" id="L1601">	&quot;N&quot;, 1, &quot;-N&quot;));</span>
+    
+<span class="fc" id="L1603">    result.addElement(new Option(</span>
+<span class="fc" id="L1604">	&quot;\tThe tolerance parameter. &quot; +</span>
+	&quot;(default 1.0e-3)&quot;,
+<span class="fc" id="L1606">	&quot;L&quot;, 1, &quot;-L &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L1608">    result.addElement(new Option(</span>
+<span class="fc" id="L1609">	&quot;\tThe epsilon for round-off error. &quot; +</span>
+	&quot;(default 1.0e-12)&quot;,
+<span class="fc" id="L1611">	&quot;P&quot;, 1, &quot;-P &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L1613">    result.addElement(new Option(</span>
+<span class="fc" id="L1614">	&quot;\tFit logistic models to SVM outputs. &quot;,</span>
+<span class="fc" id="L1615">	&quot;M&quot;, 0, &quot;-M&quot;));</span>
+    
+<span class="fc" id="L1617">    result.addElement(new Option(</span>
+<span class="fc" id="L1618">	&quot;\tThe number of folds for the internal\n&quot; +</span>
+	&quot;\tcross-validation. &quot; +
+	&quot;(default -1, use training data)&quot;,
+<span class="fc" id="L1621">	&quot;V&quot;, 1, &quot;-V &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L1623">    result.addElement(new Option(</span>
+<span class="fc" id="L1624">	&quot;\tThe random number seed. &quot; +</span>
+	&quot;(default 1)&quot;,
+<span class="fc" id="L1626">	&quot;W&quot;, 1, &quot;-W &lt;double&gt;&quot;));</span>
+    
+<span class="fc" id="L1628">    result.addElement(new Option(</span>
+<span class="fc" id="L1629">	&quot;\tThe Kernel to use.\n&quot;</span>
+	+ &quot;\t(default: weka.classifiers.functions.supportVector.PolyKernel)&quot;,
+<span class="fc" id="L1631">	&quot;K&quot;, 1, &quot;-K &lt;classname and parameters&gt;&quot;));</span>
+
+<span class="fc" id="L1633">    result.addElement(new Option(</span>
+<span class="fc" id="L1634">	&quot;&quot;,</span>
+<span class="fc" id="L1635">	&quot;&quot;, 0, &quot;\nOptions specific to kernel &quot;</span>
+<span class="fc" id="L1636">	+ getKernel().getClass().getName() + &quot;:&quot;));</span>
+    
+<span class="fc" id="L1638">    enm = ((OptionHandler) getKernel()).listOptions();</span>
+<span class="fc bfc" id="L1639" title="All 2 branches covered.">    while (enm.hasMoreElements())</span>
+<span class="fc" id="L1640">      result.addElement(enm.nextElement());</span>
+
+<span class="fc" id="L1642">    return result.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -no-checks
+   *  Turns off all checks - use with caution!
+   *  Turning them off assumes that data is purely numeric, doesn't
+   *  contain any missing values, and has a nominal class. Turning them
+   *  off also means that no header information will be stored if the
+   *  machine is linear. Finally, it also assumes that no instance has
+   *  a weight equal to 0.
+   *  (default: checks on)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;double&amp;gt;
+   *  The complexity constant C. (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N
+   *  Whether to 0=normalize/1=standardize/2=neither. (default 0=normalize)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -L &amp;lt;double&amp;gt;
+   *  The tolerance parameter. (default 1.0e-3)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;double&amp;gt;
+   *  The epsilon for round-off error. (default 1.0e-12)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  Fit logistic models to SVM outputs. &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V &amp;lt;double&amp;gt;
+   *  The number of folds for the internal
+   *  cross-validation. (default -1, use training data)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;double&amp;gt;
+   *  The random number seed. (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -K &amp;lt;classname and parameters&amp;gt;
+   *  The Kernel to use.
+   *  (default: weka.classifiers.functions.supportVector.PolyKernel)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to kernel weka.classifiers.functions.supportVector.PolyKernel:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Enables debugging output (if available) to be printed.
+   *  (default: off)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -no-checks
+   *  Turns off all checks - use with caution!
+   *  (default: checks on)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+   *  The size of the cache (a prime number), 0 for full cache and 
+   *  -1 to turn it off.
+   *  (default: 250007)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -E &amp;lt;num&amp;gt;
+   *  The Exponent to use.
+   *  (default: 1.0)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -L
+   *  Use lower-order terms.
+   *  (default: no)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported 
+   */
+  public void setOptions(String[] options) throws Exception {
+    String 	tmpStr;
+    String[]	tmpOptions;
+    
+<span class="fc" id="L1724">    setChecksTurnedOff(Utils.getFlag(&quot;no-checks&quot;, options));</span>
+
+<span class="fc" id="L1726">    tmpStr = Utils.getOption('C', options);</span>
+<span class="fc bfc" id="L1727" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L1728">      setC(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L1730">      setC(1.0);</span>
+
+<span class="fc" id="L1732">    tmpStr = Utils.getOption('L', options);</span>
+<span class="fc bfc" id="L1733" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L1734">      setToleranceParameter(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L1736">      setToleranceParameter(1.0e-3);</span>
+    
+<span class="fc" id="L1738">    tmpStr = Utils.getOption('P', options);</span>
+<span class="fc bfc" id="L1739" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L1740">      setEpsilon(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L1742">      setEpsilon(1.0e-12);</span>
+    
+<span class="fc" id="L1744">    tmpStr = Utils.getOption('N', options);</span>
+<span class="fc bfc" id="L1745" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L1746">      setFilterType(new SelectedTag(Integer.parseInt(tmpStr), TAGS_FILTER));</span>
+    else
+<span class="fc" id="L1748">      setFilterType(new SelectedTag(FILTER_NORMALIZE, TAGS_FILTER));</span>
+    
+<span class="fc" id="L1750">    setBuildLogisticModels(Utils.getFlag('M', options));</span>
+    
+<span class="fc" id="L1752">    tmpStr = Utils.getOption('V', options);</span>
+<span class="fc bfc" id="L1753" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L1754">      setNumFolds(Integer.parseInt(tmpStr));</span>
+    else
+<span class="fc" id="L1756">      setNumFolds(-1);</span>
+    
+<span class="fc" id="L1758">    tmpStr = Utils.getOption('W', options);</span>
+<span class="fc bfc" id="L1759" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L1760">      setRandomSeed(Integer.parseInt(tmpStr));</span>
+    else
+<span class="fc" id="L1762">      setRandomSeed(1);</span>
+
+<span class="fc" id="L1764">    tmpStr     = Utils.getOption('K', options);</span>
+<span class="fc" id="L1765">    tmpOptions = Utils.splitOptions(tmpStr);</span>
+<span class="fc bfc" id="L1766" title="All 2 branches covered.">    if (tmpOptions.length != 0) {</span>
+<span class="fc" id="L1767">      tmpStr        = tmpOptions[0];</span>
+<span class="fc" id="L1768">      tmpOptions[0] = &quot;&quot;;</span>
+<span class="fc" id="L1769">      setKernel(Kernel.forName(tmpStr, tmpOptions));</span>
+    }
+    
+<span class="fc" id="L1772">    super.setOptions(options);</span>
+<span class="fc" id="L1773">  }</span>
+
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    int       i;
+    Vector    result;
+    String[]  options;
+
+<span class="fc" id="L1785">    result = new Vector();</span>
+<span class="fc" id="L1786">    options = super.getOptions();</span>
+<span class="pc bpc" id="L1787" title="1 of 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L1788">      result.add(options[i]);</span>
+
+<span class="pc bpc" id="L1790" title="1 of 2 branches missed.">    if (getChecksTurnedOff())</span>
+<span class="nc" id="L1791">      result.add(&quot;-no-checks&quot;);</span>
+
+<span class="fc" id="L1793">    result.add(&quot;-C&quot;);</span>
+<span class="fc" id="L1794">    result.add(&quot;&quot; + getC());</span>
+    
+<span class="fc" id="L1796">    result.add(&quot;-L&quot;);</span>
+<span class="fc" id="L1797">    result.add(&quot;&quot; + getToleranceParameter());</span>
+    
+<span class="fc" id="L1799">    result.add(&quot;-P&quot;);</span>
+<span class="fc" id="L1800">    result.add(&quot;&quot; + getEpsilon());</span>
+    
+<span class="fc" id="L1802">    result.add(&quot;-N&quot;);</span>
+<span class="fc" id="L1803">    result.add(&quot;&quot; + m_filterType);</span>
+    
+<span class="pc bpc" id="L1805" title="1 of 2 branches missed.">    if (getBuildLogisticModels())</span>
+<span class="nc" id="L1806">      result.add(&quot;-M&quot;);</span>
+    
+<span class="fc" id="L1808">    result.add(&quot;-V&quot;);</span>
+<span class="fc" id="L1809">    result.add(&quot;&quot; + getNumFolds());</span>
+    
+<span class="fc" id="L1811">    result.add(&quot;-W&quot;);</span>
+<span class="fc" id="L1812">    result.add(&quot;&quot; + getRandomSeed());</span>
+
+<span class="fc" id="L1814">    result.add(&quot;-K&quot;);</span>
+<span class="fc" id="L1815">    result.add(&quot;&quot; + getKernel().getClass().getName() + &quot; &quot; + Utils.joinOptions(getKernel().getOptions()));</span>
+    
+<span class="fc" id="L1817">    return (String[]) result.toArray(new String[result.size()]);	  </span>
+  }
+
+  /**
+   * Disables or enables the checks (which could be time-consuming). Use with
+   * caution!
+   * 
+   * @param value	if true turns off all checks
+   */
+  public void setChecksTurnedOff(boolean value) {
+<span class="pc bpc" id="L1827" title="1 of 2 branches missed.">    if (value)</span>
+<span class="nc" id="L1828">      turnChecksOff();</span>
+    else
+<span class="fc" id="L1830">      turnChecksOn();</span>
+<span class="fc" id="L1831">  }</span>
+  
+  /**
+   * Returns whether the checks are turned off or not.
+   * 
+   * @return		true if the checks are turned off
+   */
+  public boolean getChecksTurnedOff() {
+<span class="fc" id="L1839">    return m_checksTurnedOff;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String checksTurnedOffTipText() {
+<span class="nc" id="L1849">    return &quot;Turns time-consuming checks off - use with caution.&quot;;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String kernelTipText() {
+<span class="nc" id="L1859">    return &quot;The kernel to use.&quot;;</span>
+  }
+  
+  /**
+   * sets the kernel to use
+   * 
+   * @param value	the kernel to use
+   */
+  public void setKernel(Kernel value) {
+<span class="fc" id="L1868">    m_kernel = value;</span>
+<span class="fc" id="L1869">  }</span>
+  
+  /**
+   * Returns the kernel to use
+   * 
+   * @return 		the current kernel
+   */
+  public Kernel getKernel() {
+<span class="fc" id="L1877">    return m_kernel;</span>
+  }
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String cTipText() {
+<span class="nc" id="L1886">    return &quot;The complexity parameter C.&quot;;</span>
+  }
+  
+  /**
+   * Get the value of C.
+   *
+   * @return Value of C.
+   */
+  public double getC() {
+    
+<span class="fc" id="L1896">    return m_C;</span>
+  }
+  
+  /**
+   * Set the value of C.
+   *
+   * @param v  Value to assign to C.
+   */
+  public void setC(double v) {
+    
+<span class="fc" id="L1906">    m_C = v;</span>
+<span class="fc" id="L1907">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String toleranceParameterTipText() {
+<span class="nc" id="L1915">    return &quot;The tolerance parameter (shouldn't be changed).&quot;;</span>
+  }
+  
+  /**
+   * Get the value of tolerance parameter.
+   * @return Value of tolerance parameter.
+   */
+  public double getToleranceParameter() {
+    
+<span class="fc" id="L1924">    return m_tol;</span>
+  }
+  
+  /**
+   * Set the value of tolerance parameter.
+   * @param v  Value to assign to tolerance parameter.
+   */
+  public void setToleranceParameter(double v) {
+    
+<span class="fc" id="L1933">    m_tol = v;</span>
+<span class="fc" id="L1934">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String epsilonTipText() {
+<span class="nc" id="L1942">    return &quot;The epsilon for round-off error (shouldn't be changed).&quot;;</span>
+  }
+  
+  /**
+   * Get the value of epsilon.
+   * @return Value of epsilon.
+   */
+  public double getEpsilon() {
+    
+<span class="fc" id="L1951">    return m_eps;</span>
+  }
+  
+  /**
+   * Set the value of epsilon.
+   * @param v  Value to assign to epsilon.
+   */
+  public void setEpsilon(double v) {
+    
+<span class="fc" id="L1960">    m_eps = v;</span>
+<span class="fc" id="L1961">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String filterTypeTipText() {
+<span class="nc" id="L1969">    return &quot;Determines how/if the data will be transformed.&quot;;</span>
+  }
+  
+  /**
+   * Gets how the training data will be transformed. Will be one of
+   * FILTER_NORMALIZE, FILTER_STANDARDIZE, FILTER_NONE.
+   *
+   * @return the filtering mode
+   */
+  public SelectedTag getFilterType() {
+
+<span class="nc" id="L1980">    return new SelectedTag(m_filterType, TAGS_FILTER);</span>
+  }
+  
+  /**
+   * Sets how the training data will be transformed. Should be one of
+   * FILTER_NORMALIZE, FILTER_STANDARDIZE, FILTER_NONE.
+   *
+   * @param newType the new filtering mode
+   */
+  public void setFilterType(SelectedTag newType) {
+    
+<span class="fc bfc" id="L1991" title="All 2 branches covered.">    if (newType.getTags() == TAGS_FILTER) {</span>
+<span class="fc" id="L1992">      m_filterType = newType.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L1994">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String buildLogisticModelsTipText() {
+<span class="nc" id="L2002">    return &quot;Whether to fit logistic models to the outputs (for proper &quot;</span>
+      + &quot;probability estimates).&quot;;
+  }
+
+  /**
+   * Get the value of buildLogisticModels.
+   *
+   * @return Value of buildLogisticModels.
+   */
+  public boolean getBuildLogisticModels() {
+    
+<span class="fc" id="L2013">    return m_fitLogisticModels;</span>
+  }
+  
+  /**
+   * Set the value of buildLogisticModels.
+   *
+   * @param newbuildLogisticModels Value to assign to buildLogisticModels.
+   */
+  public void setBuildLogisticModels(boolean newbuildLogisticModels) {
+    
+<span class="fc" id="L2023">    m_fitLogisticModels = newbuildLogisticModels;</span>
+<span class="fc" id="L2024">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numFoldsTipText() {
+<span class="nc" id="L2032">    return &quot;The number of folds for cross-validation used to generate &quot;</span>
+      + &quot;training data for logistic models (-1 means use training data).&quot;;
+  }
+  
+  /**
+   * Get the value of numFolds.
+   *
+   * @return Value of numFolds.
+   */
+  public int getNumFolds() {
+    
+<span class="fc" id="L2043">    return m_numFolds;</span>
+  }
+  
+  /**
+   * Set the value of numFolds.
+   *
+   * @param newnumFolds Value to assign to numFolds.
+   */
+  public void setNumFolds(int newnumFolds) {
+    
+<span class="fc" id="L2053">    m_numFolds = newnumFolds;</span>
+<span class="fc" id="L2054">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String randomSeedTipText() {
+<span class="nc" id="L2062">    return &quot;Random number seed for the cross-validation.&quot;;</span>
+  }
+  
+  /**
+   * Get the value of randomSeed.
+   *
+   * @return Value of randomSeed.
+   */
+  public int getRandomSeed() {
+    
+<span class="fc" id="L2072">    return m_randomSeed;</span>
+  }
+  
+  /**
+   * Set the value of randomSeed.
+   *
+   * @param newrandomSeed Value to assign to randomSeed.
+   */
+  public void setRandomSeed(int newrandomSeed) {
+    
+<span class="fc" id="L2082">    m_randomSeed = newrandomSeed;</span>
+<span class="fc" id="L2083">  }</span>
+  
+  /**
+   * Prints out the classifier.
+   *
+   * @return a description of the classifier as a string
+   */
+  public String toString() {
+    
+<span class="fc" id="L2092">    StringBuffer text = new StringBuffer();</span>
+    
+<span class="pc bpc" id="L2094" title="1 of 2 branches missed.">    if ((m_classAttribute == null)) {</span>
+<span class="fc" id="L2095">      return &quot;SMO: No model built yet.&quot;;</span>
+    }
+    try {
+<span class="nc" id="L2098">      text.append(&quot;SMO\n\n&quot;);</span>
+<span class="nc" id="L2099">      text.append(&quot;Kernel used:\n  &quot; + m_kernel.toString() + &quot;\n\n&quot;);</span>
+      
+<span class="nc bnc" id="L2101" title="All 2 branches missed.">      for (int i = 0; i &lt; m_classAttribute.numValues(); i++) {</span>
+<span class="nc bnc" id="L2102" title="All 2 branches missed.">	for (int j = i + 1; j &lt; m_classAttribute.numValues(); j++) {</span>
+<span class="nc" id="L2103">	  text.append(&quot;Classifier for classes: &quot; + </span>
+<span class="nc" id="L2104">		      m_classAttribute.value(i) + &quot;, &quot; +</span>
+<span class="nc" id="L2105">		      m_classAttribute.value(j) + &quot;\n\n&quot;);</span>
+<span class="nc" id="L2106">	  text.append(m_classifiers[i][j]);</span>
+<span class="nc bnc" id="L2107" title="All 2 branches missed.">	  if (m_fitLogisticModels) {</span>
+<span class="nc" id="L2108">	    text.append(&quot;\n\n&quot;);</span>
+<span class="nc bnc" id="L2109" title="All 2 branches missed.">	    if ( m_classifiers[i][j].m_logistic == null) {</span>
+<span class="nc" id="L2110">	      text.append(&quot;No logistic model has been fit.\n&quot;);</span>
+	    } else {
+<span class="nc" id="L2112">	      text.append(m_classifiers[i][j].m_logistic);</span>
+	    }
+	  }
+<span class="nc" id="L2115">	  text.append(&quot;\n\n&quot;);</span>
+	}
+      }
+<span class="nc" id="L2118">    } catch (Exception e) {</span>
+<span class="nc" id="L2119">      return &quot;Can't print SMO classifier.&quot;;</span>
+    }
+    
+<span class="nc" id="L2122">    return text.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L2131">    return RevisionUtils.extract(&quot;$Revision: 6025 $&quot;);</span>
+  }
+  
+  /**
+   * Main method for testing this class.
+   */
+  public static void main(String[] argv) {
+<span class="nc" id="L2138">    runClassifier(new SMO(), argv);</span>
+<span class="nc" id="L2139">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

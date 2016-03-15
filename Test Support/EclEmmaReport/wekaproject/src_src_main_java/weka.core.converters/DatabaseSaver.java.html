@@ -1,0 +1,922 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>DatabaseSaver.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core.converters</a> &gt; <span class="el_source">DatabaseSaver.java</span></div><h1>DatabaseSaver.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    DatabaseSaver.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.core.converters;
+
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+
+import java.io.File;
+import java.io.IOException;
+import java.sql.SQLException;
+import java.text.SimpleDateFormat;
+import java.util.Enumeration;
+import java.util.Properties;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Writes to a database (tested with MySQL, InstantDB, HSQLDB).
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -url &amp;lt;JDBC URL&amp;gt;
+ *  The JDBC URL to connect to.
+ *  (default: from DatabaseUtils.props file)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -user &amp;lt;name&amp;gt;
+ *  The user to connect with to the database.
+ *  (default: none)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -password &amp;lt;password&amp;gt;
+ *  The password to connect with to the database.
+ *  (default: none)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -T &amp;lt;table name&amp;gt;
+ *  The name of the table.
+ *  (default: the relation name)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P
+ *  Add an ID column as primary key. The name is specified
+ *  in the DatabaseUtils file ('idColumn'). The DatabaseLoader
+ *  won't load this column.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -i &amp;lt;input file name&amp;gt;
+ *  Input file in arff format that should be saved in database.&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Stefan Mutter (mutter@cs.waikato.ac.nz)
+ * @version $Revision: 7499 $
+ */
+<span class="fc" id="L82">public class DatabaseSaver </span>
+  extends AbstractSaver 
+  implements BatchConverter, IncrementalConverter, DatabaseConverter, OptionHandler {
+  
+  /** for serialization. */
+  static final long serialVersionUID = 863971733782624956L;
+  
+  /** The database connection. */
+  private DatabaseConnection m_DataBaseConnection;
+  
+  /** The name of the table in which the instances should be stored. */
+  private String m_tableName;
+  
+  /** An input arff file (for command line use). */
+  private String m_inputFile;
+  
+  /** The database specific type for a string (read in from the properties file). */
+  private String m_createText;
+  
+  /** The database specific type for a double (read in from the properties file). */
+  private String m_createDouble;
+  
+  /** The database specific type for an int (read in from the properties file). */
+  private String m_createInt;
+  
+  /** The database specific type for a date (read in from the properties file). */
+  private String m_createDate;
+  
+  /** For converting the date value into a database string. */
+  private SimpleDateFormat m_DateFormat;
+  
+  /** The name of the primary key column that will be automatically generated (if enabled). The name is read from DatabaseUtils.*/
+  private String m_idColumn;
+  
+  /** counts the rows and used as a primary key value. */
+  private int m_count;
+  
+  /** Flag indicating if a primary key column should be added. */
+  private boolean m_id;
+  
+  /** Flag indicating whether the default name of the table is the relaion name or not.*/
+  private boolean m_tabName;
+  
+  /** the user name for the database. */
+  private String m_Username;
+  
+  /** the password for the database. */
+  private String m_Password;
+  
+  /** The property file for the database connection. */
+<span class="fc" id="L132">  protected static String PROPERTY_FILE = DatabaseConnection.PROPERTY_FILE;</span>
+  
+  /** Properties associated with the database connection. */
+  protected static Properties PROPERTIES;
+
+  /** reads the property file */
+  static {
+
+    try {
+<span class="fc" id="L141">      PROPERTIES = Utils.readProperties(PROPERTY_FILE);</span>
+   
+<span class="nc" id="L143">    } catch (Exception ex) {</span>
+<span class="nc" id="L144">      System.err.println(&quot;Problem reading properties. Fix before continuing.&quot;);</span>
+<span class="nc" id="L145">      System.err.println(ex);</span>
+    }
+  }
+  
+   /** 
+    * Constructor.
+    * 
+    * @throws Exception throws Exception if property file cannot be read
+    */
+<span class="fc" id="L154">  public DatabaseSaver() throws Exception{</span>
+  
+<span class="fc" id="L156">      resetOptions();</span>
+<span class="fc" id="L157">      m_createText = PROPERTIES.getProperty(&quot;CREATE_STRING&quot;);</span>
+<span class="fc" id="L158">      m_createDouble = PROPERTIES.getProperty(&quot;CREATE_DOUBLE&quot;);</span>
+<span class="fc" id="L159">      m_createInt = PROPERTIES.getProperty(&quot;CREATE_INT&quot;);</span>
+<span class="fc" id="L160">      m_createDate = PROPERTIES.getProperty(&quot;CREATE_DATE&quot;, &quot;DATETIME&quot;);</span>
+<span class="fc" id="L161">      m_DateFormat = new SimpleDateFormat(PROPERTIES.getProperty(&quot;DateFormat&quot;, &quot;yyyy-MM-dd HH:mm:ss&quot;));</span>
+<span class="fc" id="L162">      m_idColumn = PROPERTIES.getProperty(&quot;idColumn&quot;);</span>
+<span class="fc" id="L163">  }</span>
+  
+  /** 
+   * Resets the Saver ready to save a new data set.
+   */
+  public void resetOptions(){
+
+<span class="fc" id="L170">    super.resetOptions();</span>
+<span class="fc" id="L171">    setRetrieval(NONE);</span>
+<span class="fc" id="L172">    m_tableName = &quot;&quot;;</span>
+<span class="fc" id="L173">    m_Username = &quot;&quot;;</span>
+<span class="fc" id="L174">    m_Password = &quot;&quot;;</span>
+<span class="fc" id="L175">    m_count = 1;</span>
+<span class="fc" id="L176">    m_id = false;</span>
+<span class="fc" id="L177">    m_tabName = true;</span>
+    try{
+<span class="pc bpc" id="L179" title="3 of 4 branches missed.">        if(m_DataBaseConnection != null &amp;&amp; m_DataBaseConnection.isConnected())</span>
+<span class="nc" id="L180">            m_DataBaseConnection.disconnectFromDatabase();</span>
+<span class="fc" id="L181">        m_DataBaseConnection = new DatabaseConnection();</span>
+<span class="nc" id="L182">    }catch(Exception ex) {</span>
+<span class="nc" id="L183">        printException(ex);</span>
+    }    
+<span class="fc" id="L185">  }</span>
+  
+  /** 
+   * Cancels the incremental saving process and tries to drop the table if 
+   * the write mode is CANCEL.
+   */  
+  public void cancel(){
+  
+<span class="nc bnc" id="L193" title="All 2 branches missed.">      if(getWriteMode() == CANCEL){</span>
+          try{
+<span class="nc" id="L195">              m_DataBaseConnection.update(&quot;DROP TABLE &quot;+m_tableName);</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">              if(m_DataBaseConnection.tableExists(m_tableName))</span>
+<span class="nc" id="L197">                System.err.println(&quot;Table cannot be dropped.&quot;);</span>
+<span class="nc" id="L198">          }catch(Exception ex) {</span>
+<span class="nc" id="L199">              printException(ex);</span>
+          }
+<span class="nc" id="L201">          resetOptions();</span>
+      }
+<span class="nc" id="L203">  }</span>
+   
+  /**
+   * Returns a string describing this Saver.
+   * 
+   * @return a description of the Saver suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L212">    return &quot;Writes to a database (tested with MySQL, InstantDB, HSQLDB).&quot;;</span>
+  }
+
+  
+  /** 
+   * Sets the table's name.
+   * 
+   * @param tn the name of the table
+   */  
+  public void setTableName(String tn){
+   
+<span class="nc" id="L223">      m_tableName = tn;</span>
+<span class="nc" id="L224">  }</span>
+  
+  /** 
+   * Gets the table's name.
+   * 
+   * @return the table's name
+   */  
+  public String getTableName(){
+  
+<span class="nc" id="L233">      return m_tableName;</span>
+  }
+  
+  /** 
+   * Returns the tip text for this property.
+   * 
+   * @return the tip text for this property
+   */
+  public String tableNameTipText(){
+  
+<span class="nc" id="L243">      return &quot;Sets the name of the table.&quot;;</span>
+  }
+  
+  /** 
+   * En/Dis-ables the automatic generation of a primary key.
+   * 
+   * @param flag flag for automatic key-genereration
+   */  
+  public void setAutoKeyGeneration(boolean flag){
+  
+<span class="nc" id="L253">      m_id = flag;</span>
+<span class="nc" id="L254">  }</span>
+  
+  /** 
+   * Gets whether or not a primary key will be generated automatically.
+   * 
+   * @return true if a primary key column will be generated, false otherwise
+   */  
+  public boolean getAutoKeyGeneration(){
+   
+<span class="nc" id="L263">      return m_id;</span>
+  }
+  
+  /** 
+   * Returns the tip text for this property.
+   * 
+   * @return tip text for this property
+   */
+  public String autoKeyGenerationTipText(){
+  
+<span class="nc" id="L273">      return &quot;If set to true, a primary key column is generated automatically (containing the row number as INTEGER). The name of the key is read from DatabaseUtils (idColumn)&quot;</span>
+        +&quot; This primary key can be used for incremental loading (requires an unique key). This primary key will not be loaded as an attribute.&quot;;
+  }
+  
+  /** 
+   * En/Dis-ables that the relation name is used for the name of the table (default enabled).
+   * 
+   * @param flag if true the relation name is used as table name
+   */  
+  public void setRelationForTableName(boolean flag){
+  
+<span class="nc" id="L284">      m_tabName = flag;</span>
+<span class="nc" id="L285">  }</span>
+  
+  /** 
+   * Gets whether or not the relation name is used as name of the table.
+   * 
+   * @return true if the relation name is used as the name of the table, false otherwise
+   */  
+  public boolean getRelationForTableName(){
+   
+<span class="nc" id="L294">      return m_tabName;</span>
+  }
+  
+  /** 
+   * Returns the tip text fo this property.
+   * 
+   * @return the tip text for this property
+   */
+  public String relationForTableNameTipText(){
+  
+<span class="nc" id="L304">      return &quot;If set to true, the relation name will be used as name for the database table. Otherwise the user has to provide a table name.&quot;;</span>
+  }
+  
+  /** 
+   * Sets the database URL.
+   * 
+   * @param url the URL
+   */  
+  public void setUrl(String url){
+      
+<span class="nc" id="L314">      m_DataBaseConnection.setDatabaseURL(url);</span>
+    
+<span class="nc" id="L316">  }</span>
+  
+  /** 
+   * Gets the database URL.
+   * 
+   * @return the URL
+   */  
+  public String getUrl(){
+  
+<span class="nc" id="L325">      return m_DataBaseConnection.getDatabaseURL();</span>
+  }
+  
+  /** 
+   * Returns the tip text for this property.
+   * 
+   * @return the tip text for this property
+   */
+  public String urlTipText(){
+  
+<span class="nc" id="L335">      return &quot;The URL of the database&quot;;</span>
+  }
+  
+  /** 
+   * Sets the database user.
+   * 
+   * @param user the user name
+   */  
+  public void setUser(String user){
+<span class="nc" id="L344">      m_Username = user;</span>
+<span class="nc" id="L345">      m_DataBaseConnection.setUsername(user);</span>
+<span class="nc" id="L346">  }</span>
+  
+  /** 
+   * Gets the database user.
+   * 
+   * @return the user name
+   */  
+  public String getUser(){
+   
+<span class="nc" id="L355">      return m_DataBaseConnection.getUsername();</span>
+  }
+  
+  /** 
+   * Returns the tip text for this property.
+   * 
+   * @return the tip text for this property
+   */
+  public String userTipText(){
+  
+<span class="nc" id="L365">      return &quot;The user name for the database&quot;;</span>
+  }
+  
+  /** 
+   * Sets the database password.
+   * 
+   * @param password the password
+   */  
+  public void setPassword(String password){
+<span class="nc" id="L374">      m_Password = password;</span>
+<span class="nc" id="L375">      m_DataBaseConnection.setPassword(password);</span>
+<span class="nc" id="L376">  }</span>
+
+  /**
+   * Returns the database password.
+   *
+   * @return the database password
+   */
+  public String getPassword() {
+<span class="nc" id="L384">    return m_DataBaseConnection.getPassword();</span>
+  }
+  
+  /** 
+   * Returns the tip text for this property.
+   * 
+   * @return the tip text for this property
+   */
+  public String passwordTipText(){
+  
+<span class="nc" id="L394">      return &quot;The database password&quot;;</span>
+  }
+      
+  /** 
+   * Sets the database url.
+   * 
+   * @param url the database url
+   * @param userName the user name
+   * @param password the password
+   */  
+  public void setDestination(String url, String userName, String password){
+  
+      try{
+<span class="nc" id="L407">        m_DataBaseConnection = new DatabaseConnection();</span>
+<span class="nc" id="L408">        m_DataBaseConnection.setDatabaseURL(url);</span>
+<span class="nc" id="L409">        m_DataBaseConnection.setUsername(userName);</span>
+<span class="nc" id="L410">        m_DataBaseConnection.setPassword(password);</span>
+<span class="nc" id="L411">      } catch(Exception ex) {</span>
+<span class="nc" id="L412">            printException(ex);</span>
+      }    
+<span class="nc" id="L414">  }</span>
+  
+  /** 
+   * Sets the database url.
+   * 
+   * @param url the database url
+   */  
+  public void setDestination(String url){
+  
+      try{
+<span class="nc" id="L424">        m_DataBaseConnection = new DatabaseConnection();</span>
+<span class="nc" id="L425">        m_DataBaseConnection.setDatabaseURL(url);</span>
+<span class="nc" id="L426">        m_DataBaseConnection.setUsername(m_Username);</span>
+<span class="nc" id="L427">        m_DataBaseConnection.setPassword(m_Password);</span>
+<span class="nc" id="L428">      } catch(Exception ex) {</span>
+<span class="nc" id="L429">            printException(ex);</span>
+       }    
+<span class="nc" id="L431">  }</span>
+  
+  /** Sets the database url using the DatabaseUtils file. */  
+  public void setDestination(){
+  
+      try{
+<span class="nc" id="L437">        m_DataBaseConnection = new DatabaseConnection();</span>
+<span class="nc" id="L438">        m_DataBaseConnection.setUsername(m_Username);</span>
+<span class="nc" id="L439">        m_DataBaseConnection.setPassword(m_Password);</span>
+<span class="nc" id="L440">      } catch(Exception ex) {</span>
+<span class="nc" id="L441">            printException(ex);</span>
+       }    
+<span class="nc" id="L443">  }</span>
+
+  /** 
+   * Returns the Capabilities of this saver.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L452">    Capabilities result = super.getCapabilities();</span>
+    
+    // attributes
+<span class="nc" id="L455">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L456">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L457">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="nc" id="L458">    result.enable(Capability.STRING_ATTRIBUTES);</span>
+<span class="nc" id="L459">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="nc" id="L462">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="nc" id="L463">    result.enable(Capability.NUMERIC_CLASS);</span>
+<span class="nc" id="L464">    result.enable(Capability.DATE_CLASS);</span>
+<span class="nc" id="L465">    result.enable(Capability.STRING_CLASS);</span>
+<span class="nc" id="L466">    result.enable(Capability.NO_CLASS);</span>
+<span class="nc" id="L467">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="nc" id="L469">    return result;</span>
+  }
+  
+   /**
+   * Opens a connection to the database.
+   *
+   */
+  public void connectToDatabase() {
+   
+      try{
+<span class="nc bnc" id="L479" title="All 2 branches missed.">        if(!m_DataBaseConnection.isConnected())</span>
+<span class="nc" id="L480">            m_DataBaseConnection.connectToDatabase();</span>
+<span class="nc" id="L481">      } catch(Exception ex) {</span>
+<span class="nc" id="L482">	printException(ex);</span>
+       }    
+<span class="nc" id="L484">  }</span>
+  
+  /** 
+   * Writes the structure (header information) to a database by creating a new table.
+   * 
+   * @throws Exception if something goes wrong
+   */
+  private void writeStructure() throws Exception{
+  
+<span class="nc" id="L493">      StringBuffer query = new StringBuffer();</span>
+<span class="nc" id="L494">      Instances structure = getInstances();</span>
+<span class="nc" id="L495">      query.append(&quot;CREATE TABLE &quot;);</span>
+<span class="nc bnc" id="L496" title="All 4 branches missed.">      if(m_tabName || m_tableName.equals(&quot;&quot;))</span>
+<span class="nc" id="L497">        m_tableName = m_DataBaseConnection.maskKeyword(structure.relationName());</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">      if(m_DataBaseConnection.getUpperCase()){</span>
+<span class="nc" id="L499">        m_tableName = m_tableName.toUpperCase();</span>
+<span class="nc" id="L500">        m_createInt = m_createInt.toUpperCase(); </span>
+<span class="nc" id="L501">        m_createDouble = m_createDouble.toUpperCase(); </span>
+<span class="nc" id="L502">        m_createText = m_createText.toUpperCase(); </span>
+<span class="nc" id="L503">        m_createDate = m_createDate.toUpperCase(); </span>
+      }
+<span class="nc" id="L505">      m_tableName = m_tableName.replaceAll(&quot;[^\\w]&quot;,&quot;_&quot;);</span>
+<span class="nc" id="L506">      m_tableName = m_DataBaseConnection.maskKeyword(m_tableName);</span>
+<span class="nc" id="L507">      query.append(m_tableName);</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">      if(structure.numAttributes() == 0)</span>
+<span class="nc" id="L509">          throw new Exception(&quot;Instances have no attribute.&quot;);</span>
+<span class="nc" id="L510">      query.append(&quot; ( &quot;);</span>
+<span class="nc bnc" id="L511" title="All 2 branches missed.">      if(m_id){</span>
+<span class="nc bnc" id="L512" title="All 2 branches missed.">        if(m_DataBaseConnection.getUpperCase())</span>
+<span class="nc" id="L513">              m_idColumn = m_idColumn.toUpperCase();</span>
+<span class="nc" id="L514">        query.append(m_DataBaseConnection.maskKeyword(m_idColumn));</span>
+<span class="nc" id="L515">        query.append(&quot; &quot;);</span>
+<span class="nc" id="L516">        query.append(m_createInt);</span>
+<span class="nc" id="L517">        query.append(&quot; PRIMARY KEY,&quot;);</span>
+      }
+<span class="nc bnc" id="L519" title="All 2 branches missed.">      for(int i = 0;i &lt; structure.numAttributes(); i++){</span>
+<span class="nc" id="L520">          Attribute att = structure.attribute(i);</span>
+<span class="nc" id="L521">          String attName = att.name();</span>
+<span class="nc" id="L522">          attName = attName.replaceAll(&quot;[^\\w]&quot;,&quot;_&quot;);</span>
+<span class="nc" id="L523">          attName = m_DataBaseConnection.maskKeyword(attName);</span>
+<span class="nc bnc" id="L524" title="All 2 branches missed.">          if(m_DataBaseConnection.getUpperCase())</span>
+<span class="nc" id="L525">              query.append(attName.toUpperCase());</span>
+          else
+<span class="nc" id="L527">              query.append(attName);</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">          if(att.isDate())</span>
+<span class="nc" id="L529">              query.append(&quot; &quot; + m_createDate);</span>
+          else{
+<span class="nc bnc" id="L531" title="All 2 branches missed.">              if(att.isNumeric())</span>
+<span class="nc" id="L532">                  query.append(&quot; &quot;+m_createDouble);</span>
+              else
+<span class="nc" id="L534">                  query.append(&quot; &quot;+m_createText);</span>
+          }
+<span class="nc bnc" id="L536" title="All 2 branches missed.">          if(i != structure.numAttributes()-1)</span>
+<span class="nc" id="L537">              query.append(&quot;, &quot;);</span>
+      }
+<span class="nc" id="L539">      query.append(&quot; )&quot;);</span>
+      //System.out.println(query.toString());
+<span class="nc" id="L541">      m_DataBaseConnection.update(query.toString());</span>
+<span class="nc" id="L542">      m_DataBaseConnection.close();</span>
+<span class="nc bnc" id="L543" title="All 2 branches missed.">      if(!m_DataBaseConnection.tableExists(m_tableName)){</span>
+<span class="nc" id="L544">          throw new IOException(&quot;Table cannot be built.&quot;);</span>
+      }
+<span class="nc" id="L546">  }</span>
+  
+  /**
+   * inserts the given instance into the table.
+   * 
+   * @param inst the instance to insert
+   * @throws Exception if something goes wrong
+   */
+  private void writeInstance(Instance inst) throws Exception{
+  
+<span class="nc" id="L556">      StringBuffer insert = new StringBuffer();</span>
+<span class="nc" id="L557">      insert.append(&quot;INSERT INTO &quot;);</span>
+<span class="nc" id="L558">      insert.append(m_tableName);</span>
+<span class="nc" id="L559">      insert.append(&quot; VALUES ( &quot;);</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">      if(m_id){</span>
+<span class="nc" id="L561">        insert.append(m_count);</span>
+<span class="nc" id="L562">        insert.append(&quot;, &quot;);</span>
+<span class="nc" id="L563">        m_count++;</span>
+      }
+<span class="nc bnc" id="L565" title="All 2 branches missed.">      for(int j = 0; j &lt; inst.numAttributes(); j++){</span>
+<span class="nc bnc" id="L566" title="All 2 branches missed.">        if(inst.isMissing(j))</span>
+<span class="nc" id="L567">            insert.append(&quot;NULL&quot;);</span>
+        else{
+<span class="nc bnc" id="L569" title="All 2 branches missed.">            if((inst.attribute(j)).isDate())</span>
+<span class="nc" id="L570">                insert.append(&quot;'&quot; + m_DateFormat.format((long) inst.value(j)) + &quot;'&quot;);</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">            else if((inst.attribute(j)).isNumeric())</span>
+<span class="nc" id="L572">                insert.append(inst.value(j));</span>
+            else{
+<span class="nc" id="L574">                String stringInsert = &quot;'&quot;+inst.stringValue(j)+&quot;'&quot;;</span>
+<span class="nc bnc" id="L575" title="All 2 branches missed.">                if (stringInsert.length() &gt; 2)</span>
+<span class="nc" id="L576">                  stringInsert = stringInsert.replaceAll(&quot;''&quot;,&quot;'&quot;);</span>
+<span class="nc" id="L577">                insert.append(stringInsert);</span>
+            }
+        }
+<span class="nc bnc" id="L580" title="All 2 branches missed.">        if(j != inst.numAttributes()-1)</span>
+<span class="nc" id="L581">            insert.append(&quot;, &quot;);</span>
+      }
+<span class="nc" id="L583">      insert.append(&quot; )&quot;);</span>
+      //System.out.println(insert.toString());
+<span class="nc bnc" id="L585" title="All 2 branches missed.">      if (m_DataBaseConnection.update(insert.toString()) &lt; 1) {</span>
+<span class="nc" id="L586">        throw new IOException(&quot;Tuple cannot be inserted.&quot;);</span>
+      }
+      else {
+<span class="nc" id="L589">	m_DataBaseConnection.close();</span>
+      }
+<span class="nc" id="L591">  }</span>
+  
+  /** 
+   * Saves an instances incrementally. Structure has to be set by using the
+   * setStructure() method or setInstances() method. When a structure is set, a table is created. 
+   * 
+   * @param inst the instance to save
+   * @throws IOException throws IOEXception.
+   */  
+  public void writeIncremental(Instance inst) throws IOException{
+  
+<span class="nc" id="L602">      int writeMode = getWriteMode();</span>
+<span class="nc" id="L603">      Instances structure = getInstances();</span>
+      
+<span class="nc bnc" id="L605" title="All 2 branches missed.">      if(m_DataBaseConnection == null)</span>
+<span class="nc" id="L606">           throw new IOException(&quot;No database has been set up.&quot;);</span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">      if(getRetrieval() == BATCH)</span>
+<span class="nc" id="L608">          throw new IOException(&quot;Batch and incremental saving cannot be mixed.&quot;);</span>
+<span class="nc" id="L609">      setRetrieval(INCREMENTAL);</span>
+      
+      try{
+<span class="nc bnc" id="L612" title="All 2 branches missed.">        if(!m_DataBaseConnection.isConnected())</span>
+<span class="nc" id="L613">            connectToDatabase();</span>
+<span class="nc bnc" id="L614" title="All 2 branches missed.">        if(writeMode == WAIT){</span>
+<span class="nc bnc" id="L615" title="All 2 branches missed.">            if(structure == null){</span>
+<span class="nc" id="L616">                setWriteMode(CANCEL);</span>
+<span class="nc bnc" id="L617" title="All 2 branches missed.">                if(inst != null)</span>
+<span class="nc" id="L618">                    throw new Exception(&quot;Structure(Header Information) has to be set in advance&quot;);</span>
+            }
+            else
+<span class="nc" id="L621">                setWriteMode(STRUCTURE_READY);</span>
+<span class="nc" id="L622">            writeMode = getWriteMode();</span>
+        }
+<span class="nc bnc" id="L624" title="All 2 branches missed.">        if(writeMode == CANCEL){</span>
+<span class="nc" id="L625">          cancel();</span>
+        }
+<span class="nc bnc" id="L627" title="All 2 branches missed.">        if(writeMode == STRUCTURE_READY){</span>
+<span class="nc" id="L628">          setWriteMode(WRITE);</span>
+<span class="nc" id="L629">          writeStructure();</span>
+<span class="nc" id="L630">          writeMode = getWriteMode();</span>
+        }
+<span class="nc bnc" id="L632" title="All 2 branches missed.">        if(writeMode == WRITE){</span>
+<span class="nc bnc" id="L633" title="All 2 branches missed.">          if(structure == null)</span>
+<span class="nc" id="L634">              throw new IOException(&quot;No instances information available.&quot;);</span>
+<span class="nc bnc" id="L635" title="All 2 branches missed.">          if(inst != null){</span>
+            //write instance 
+<span class="nc" id="L637">            writeInstance(inst);  </span>
+          }
+          else{
+          //close
+<span class="nc" id="L641">              m_DataBaseConnection.disconnectFromDatabase();</span>
+<span class="nc" id="L642">              resetStructure();</span>
+<span class="nc" id="L643">              m_count = 1;</span>
+          }
+        }
+<span class="nc" id="L646">      }catch(Exception ex) {</span>
+<span class="nc" id="L647">            printException(ex);</span>
+       }    
+<span class="nc" id="L649">  }</span>
+  
+  /** 
+   * Writes a Batch of instances.
+   * 
+   * @throws IOException throws IOException
+   */
+  public void writeBatch() throws IOException {
+  
+<span class="nc" id="L658">      Instances instances = getInstances();</span>
+<span class="nc bnc" id="L659" title="All 2 branches missed.">      if(instances == null)</span>
+<span class="nc" id="L660">          throw new IOException(&quot;No instances to save&quot;);</span>
+<span class="nc bnc" id="L661" title="All 2 branches missed.">      if(getRetrieval() == INCREMENTAL)</span>
+<span class="nc" id="L662">          throw new IOException(&quot;Batch and incremental saving cannot be mixed.&quot;);</span>
+<span class="nc bnc" id="L663" title="All 2 branches missed.">      if(m_DataBaseConnection == null)</span>
+<span class="nc" id="L664">           throw new IOException(&quot;No database has been set up.&quot;);</span>
+<span class="nc" id="L665">      setRetrieval(BATCH);</span>
+      try{
+<span class="nc bnc" id="L667" title="All 2 branches missed.">          if(!m_DataBaseConnection.isConnected())</span>
+<span class="nc" id="L668">              connectToDatabase();</span>
+<span class="nc" id="L669">          setWriteMode(WRITE);</span>
+<span class="nc" id="L670">          writeStructure();</span>
+<span class="nc bnc" id="L671" title="All 2 branches missed.">          for(int i = 0; i &lt; instances.numInstances(); i++){</span>
+<span class="nc" id="L672">            writeInstance(instances.instance(i));</span>
+          }
+<span class="nc" id="L674">          m_DataBaseConnection.disconnectFromDatabase();</span>
+<span class="nc" id="L675">          setWriteMode(WAIT);</span>
+<span class="nc" id="L676">          resetStructure();</span>
+<span class="nc" id="L677">          m_count = 1;</span>
+<span class="nc" id="L678">      } catch(Exception ex) {</span>
+<span class="nc" id="L679">            printException(ex);</span>
+       }    
+<span class="nc" id="L681">  }</span>
+
+  /**
+   * Prints an exception.
+   * 
+   * @param ex the exception to print
+   */  
+  private void printException(Exception ex){
+  
+<span class="nc" id="L690">      System.out.println(&quot;\n--- Exception caught ---\n&quot;);</span>
+<span class="nc bnc" id="L691" title="All 2 branches missed.">	while (ex != null) {</span>
+<span class="nc" id="L692">		System.out.println(&quot;Message:   &quot;</span>
+<span class="nc" id="L693">                                   + ex.getMessage ());</span>
+<span class="nc bnc" id="L694" title="All 2 branches missed.">                if(ex instanceof SQLException){</span>
+<span class="nc" id="L695">                    System.out.println(&quot;SQLState:  &quot;</span>
+<span class="nc" id="L696">                                   + ((SQLException)ex).getSQLState ());</span>
+<span class="nc" id="L697">                    System.out.println(&quot;ErrorCode: &quot;</span>
+<span class="nc" id="L698">                                   + ((SQLException)ex).getErrorCode ());</span>
+<span class="nc" id="L699">                    ex = ((SQLException)ex).getNextException();</span>
+                }
+                else
+<span class="nc" id="L702">                    ex = null;</span>
+<span class="nc" id="L703">		System.out.println(&quot;&quot;);</span>
+	}
+      
+<span class="nc" id="L706">  }</span>
+  
+  /** 
+   * Gets the setting.
+   * 
+   * @return the current setting
+   */  
+  public String[] getOptions() {
+<span class="nc" id="L714">    Vector options = new Vector();</span>
+
+<span class="nc bnc" id="L716" title="All 4 branches missed.">    if ( (getUrl() != null) &amp;&amp; (getUrl().length() != 0) ) {</span>
+<span class="nc" id="L717">      options.add(&quot;-url&quot;);</span>
+<span class="nc" id="L718">      options.add(getUrl());</span>
+    }
+
+<span class="nc bnc" id="L721" title="All 4 branches missed.">    if ( (getUser() != null) &amp;&amp; (getUser().length() != 0) ) {</span>
+<span class="nc" id="L722">      options.add(&quot;-user&quot;);</span>
+<span class="nc" id="L723">      options.add(getUser());</span>
+    }
+
+<span class="nc bnc" id="L726" title="All 4 branches missed.">    if ( (getPassword() != null) &amp;&amp; (getPassword().length() != 0) ) {</span>
+<span class="nc" id="L727">      options.add(&quot;-password&quot;);</span>
+<span class="nc" id="L728">      options.add(getPassword());</span>
+    }
+
+<span class="nc bnc" id="L731" title="All 4 branches missed.">    if ( (m_tableName != null) &amp;&amp; (m_tableName.length() != 0) ) {</span>
+<span class="nc" id="L732">      options.add(&quot;-T&quot;); </span>
+<span class="nc" id="L733">      options.add(m_tableName);</span>
+    }
+    
+<span class="nc bnc" id="L736" title="All 2 branches missed.">    if (m_id)</span>
+<span class="nc" id="L737">        options.add(&quot;-P&quot;);</span>
+
+<span class="nc bnc" id="L739" title="All 4 branches missed.">    if ( (m_inputFile != null) &amp;&amp; (m_inputFile.length() != 0) ) {</span>
+<span class="nc" id="L740">      options.add(&quot;-i&quot;); </span>
+<span class="nc" id="L741">      options.add(m_inputFile);</span>
+    }
+    
+<span class="nc" id="L744">    return (String[]) options.toArray(new String[options.size()]);</span>
+  }
+  
+  /** 
+   * Lists the available options.
+   * 
+   * @return an enumeration of the available options
+   */  
+  public java.util.Enumeration listOptions() {
+      
+<span class="nc" id="L754">     FastVector newVector = new FastVector();</span>
+
+<span class="nc" id="L756">     newVector.addElement(new Option(</span>
+<span class="nc" id="L757">           &quot;\tThe JDBC URL to connect to.\n&quot;</span>
+           + &quot;\t(default: from DatabaseUtils.props file)&quot;,
+<span class="nc" id="L759">           &quot;url&quot;, 1, &quot;-url &lt;JDBC URL&gt;&quot;));</span>
+     
+<span class="nc" id="L761">     newVector.addElement(new Option(</span>
+<span class="nc" id="L762">           &quot;\tThe user to connect with to the database.\n&quot;</span>
+           + &quot;\t(default: none)&quot;,
+<span class="nc" id="L764">           &quot;user&quot;, 1, &quot;-user &lt;name&gt;&quot;));</span>
+     
+<span class="nc" id="L766">     newVector.addElement(new Option(</span>
+<span class="nc" id="L767">           &quot;\tThe password to connect with to the database.\n&quot;</span>
+           + &quot;\t(default: none)&quot;,
+<span class="nc" id="L769">           &quot;password&quot;, 1, &quot;-password &lt;password&gt;&quot;));</span>
+     
+<span class="nc" id="L771">     newVector.addElement(new Option(</span>
+<span class="nc" id="L772">           &quot;\tThe name of the table.\n&quot;</span>
+           + &quot;\t(default: the relation name)&quot;,
+<span class="nc" id="L774">           &quot;T&quot;, 1, &quot;-T &lt;table name&gt;&quot;));</span>
+     
+<span class="nc" id="L776">     newVector.addElement(new Option(</span>
+<span class="nc" id="L777">           &quot;\tAdd an ID column as primary key. The name is specified\n&quot;</span>
+           + &quot;\tin the DatabaseUtils file ('idColumn'). The DatabaseLoader\n&quot;
+           + &quot;\twon't load this column.&quot;,
+<span class="nc" id="L780">           &quot;P&quot;, 0, &quot;-P&quot;));</span>
+     
+<span class="nc" id="L782">     newVector.addElement(new Option(</span>
+<span class="nc" id="L783">           &quot;\tInput file in arff format that should be saved in database.&quot;,</span>
+<span class="nc" id="L784">           &quot;i&quot;, 1, &quot;-i &lt;input file name&gt;&quot;));</span>
+     
+<span class="nc" id="L786">     return  newVector.elements();</span>
+  }
+  
+  /** 
+   * Sets the options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -url &amp;lt;JDBC URL&amp;gt;
+   *  The JDBC URL to connect to.
+   *  (default: from DatabaseUtils.props file)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -user &amp;lt;name&amp;gt;
+   *  The user to connect with to the database.
+   *  (default: none)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -password &amp;lt;password&amp;gt;
+   *  The password to connect with to the database.
+   *  (default: none)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -T &amp;lt;table name&amp;gt;
+   *  The name of the table.
+   *  (default: the relation name)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P
+   *  Add an ID column as primary key. The name is specified
+   *  in the DatabaseUtils file ('idColumn'). The DatabaseLoader
+   *  won't load this column.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -i &amp;lt;input file name&amp;gt;
+   *  Input file in arff format that should be saved in database.&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the options
+   * @throws Exception if options cannot be set
+   */  
+  public void setOptions(String[] options) throws Exception {
+      
+    String tableString, inputString, tmpStr;
+    
+<span class="nc" id="L828">    resetOptions();</span>
+
+<span class="nc" id="L830">    tmpStr = Utils.getOption(&quot;url&quot;, options);</span>
+<span class="nc bnc" id="L831" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L832">      setUrl(tmpStr);</span>
+
+<span class="nc" id="L834">    tmpStr = Utils.getOption(&quot;user&quot;, options);</span>
+<span class="nc bnc" id="L835" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L836">      setUser(tmpStr);</span>
+
+<span class="nc" id="L838">    tmpStr = Utils.getOption(&quot;password&quot;, options);</span>
+<span class="nc bnc" id="L839" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L840">      setPassword(tmpStr);</span>
+    
+<span class="nc" id="L842">    tableString = Utils.getOption('T', options);</span>
+    
+<span class="nc" id="L844">    inputString = Utils.getOption('i', options);</span>
+    
+<span class="nc bnc" id="L846" title="All 2 branches missed.">    if(tableString.length() != 0){</span>
+<span class="nc" id="L847">        m_tableName = tableString;</span>
+<span class="nc" id="L848">        m_tabName = false;</span>
+    }
+    
+<span class="nc" id="L851">    m_id = Utils.getFlag('P', options);</span>
+    
+<span class="nc bnc" id="L853" title="All 2 branches missed.">    if(inputString.length() != 0){</span>
+        try{
+<span class="nc" id="L855">            m_inputFile = inputString;</span>
+<span class="nc" id="L856">            ArffLoader al = new ArffLoader();</span>
+<span class="nc" id="L857">            File inputFile = new File(inputString);</span>
+<span class="nc" id="L858">            al.setSource(inputFile);</span>
+<span class="nc" id="L859">            setInstances(al.getDataSet());</span>
+            //System.out.println(getInstances());
+<span class="nc bnc" id="L861" title="All 2 branches missed.">            if(tableString.length() == 0)</span>
+<span class="nc" id="L862">                m_tableName = getInstances().relationName();</span>
+<span class="nc" id="L863">        }catch(Exception ex) {</span>
+<span class="nc" id="L864">            printException(ex);</span>
+<span class="nc" id="L865">            ex.printStackTrace();</span>
+      }    
+    }
+<span class="nc" id="L868">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L876">    return RevisionUtils.extract(&quot;$Revision: 7499 $&quot;);</span>
+  }
+  
+  /**
+   * Main method.
+   *
+   * @param options should contain the options of a Saver.
+   */
+  public static void main(String [] options) {
+      
+<span class="nc" id="L886">      StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L887">      text.append(&quot;\n\nDatabaseSaver options:\n&quot;);</span>
+      try {
+<span class="nc" id="L889">	DatabaseSaver asv = new DatabaseSaver();</span>
+        try {
+<span class="nc" id="L891">          Enumeration enumi = asv.listOptions();</span>
+<span class="nc bnc" id="L892" title="All 2 branches missed.">          while (enumi.hasMoreElements()) {</span>
+<span class="nc" id="L893">            Option option = (Option)enumi.nextElement();</span>
+<span class="nc" id="L894">            text.append(option.synopsis()+'\n');</span>
+<span class="nc" id="L895">            text.append(option.description()+'\n');</span>
+        }  
+<span class="nc" id="L897">          asv.setOptions(options);</span>
+<span class="nc" id="L898">          asv.setDestination();</span>
+<span class="nc" id="L899">        } catch (Exception ex) {</span>
+<span class="nc" id="L900">            ex.printStackTrace();</span>
+	}
+        //incremental
+        
+        /*asv.setRetrieval(INCREMENTAL);
+        Instances instances = asv.getInstances();
+        asv.setStructure(instances);
+        for(int i = 0; i &lt; instances.numInstances(); i++){ //last instance is null and finishes incremental saving
+            asv.writeIncremental(instances.instance(i));
+        }
+        asv.writeIncremental(null);*/
+        
+        
+        //batch
+<span class="nc" id="L914">        asv.writeBatch();</span>
+<span class="nc" id="L915">      } catch (Exception ex) {</span>
+<span class="nc" id="L916">	ex.printStackTrace();</span>
+<span class="nc" id="L917">        System.out.println(text);</span>
+	}
+      
+<span class="nc" id="L920">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

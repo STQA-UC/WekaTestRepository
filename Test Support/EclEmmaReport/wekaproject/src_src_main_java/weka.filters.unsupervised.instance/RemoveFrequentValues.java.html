@@ -1,0 +1,652 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RemoveFrequentValues.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.filters.unsupervised.instance</a> &gt; <span class="el_source">RemoveFrequentValues.java</span></div><h1>RemoveFrequentValues.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RemoveFrequentValues.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.filters.unsupervised.instance;
+
+import weka.core.Attribute;
+import weka.core.AttributeStats;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SingleIndex;
+import weka.core.UnsupportedAttributeTypeException;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.filters.Filter;
+import weka.filters.UnsupervisedFilter;
+
+import java.util.Arrays;
+import java.util.Enumeration;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * Determines which values (frequent or infrequent ones) of an (nominal) attribute are retained and filters the instances accordingly. In case of values with the same frequency, they are kept in the way they appear in the original instances object. E.g. if you have the values &quot;1,2,3,4&quot; with the frequencies &quot;10,5,5,3&quot; and you chose to keep the 2 most common values, the values &quot;1,2&quot; would be returned, since the value &quot;2&quot; comes before &quot;3&quot;, even though they have the same frequency.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+ *  Choose attribute to be used for selection.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+ *  Number of values to retain for the sepcified attribute, 
+ *  i.e. the ones with the most instances (default 2).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -L
+ *  Instead of values with the most instances the ones with the 
+ *  least are retained.
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -H
+ *  When selecting on nominal attributes, removes header
+ *  references to excluded values.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V
+ *  Invert matching sense.&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author FracPete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 8972 $
+ */
+<span class="nc" id="L80">public class RemoveFrequentValues </span>
+   extends Filter 
+   implements OptionHandler, UnsupervisedFilter {
+  
+   /** for serialization */
+   static final long serialVersionUID = -2447432930070059511L;
+
+   /** The attribute's index setting. */
+<span class="nc" id="L88">   private SingleIndex m_AttIndex = new SingleIndex(&quot;last&quot;); </span>
+
+   /** the number of values to retain. */
+<span class="nc" id="L91">   protected int m_NumValues = 2; </span>
+   
+   /** whether to retain values with least instances instead of most. */
+<span class="nc" id="L94">   protected boolean m_LeastValues = false;</span>
+   
+   /** whether to invert the matching sense. */
+<span class="nc" id="L97">   protected boolean m_Invert = false;</span>
+   
+   /** Modify header for nominal attributes? */
+<span class="nc" id="L100">   protected boolean m_ModifyHeader = false;</span>
+   
+   /** If m_ModifyHeader, stores a mapping from old to new indexes */
+   protected int [] m_NominalMapping;
+   
+   /** contains the values to retain */
+<span class="nc" id="L106">   protected HashSet m_Values = null;</span>
+   
+   /**
+    * Returns a string describing this filter
+    * @return a description of the classifier suitable for
+    * displaying in the explorer/experimenter gui
+    */
+   public String globalInfo() {
+<span class="nc" id="L114">     return </span>
+<span class="nc" id="L115">         &quot;Determines which values (frequent or infrequent ones) of an &quot;</span>
+       + &quot;(nominal) attribute are retained and filters the instances &quot;
+       + &quot;accordingly. In case of values with the same frequency, they are &quot;
+       + &quot;kept in the way they appear in the original instances object. E.g. &quot;
+       + &quot;if you have the values \&quot;1,2,3,4\&quot; with the frequencies \&quot;10,5,5,3\&quot; &quot;
+       + &quot;and you chose to keep the 2 most common values, the values \&quot;1,2\&quot; &quot;
+       + &quot;would be returned, since the value \&quot;2\&quot; comes before \&quot;3\&quot;, even &quot;
+       + &quot;though they have the same frequency.&quot;;
+   }
+
+   /**
+    * Returns an enumeration describing the available options.
+    *
+    * @return an enumeration of all the available options.
+    */
+   public Enumeration listOptions() {
+<span class="nc" id="L131">      Vector newVector = new Vector(5);</span>
+
+<span class="nc" id="L133">      newVector.addElement(new Option(</span>
+<span class="nc" id="L134">                &quot;\tChoose attribute to be used for selection.&quot;,</span>
+<span class="nc" id="L135">                &quot;C&quot;, 1, &quot;-C &lt;num&gt;&quot;));</span>
+<span class="nc" id="L136">      newVector.addElement(new Option(</span>
+<span class="nc" id="L137">                  &quot;\tNumber of values to retain for the sepcified attribute, \n&quot;</span>
+                + &quot;\ti.e. the ones with the most instances (default 2).&quot;,
+<span class="nc" id="L139">                &quot;N&quot;, 1, &quot;-N &lt;num&gt;&quot;));</span>
+<span class="nc" id="L140">      newVector.addElement(new Option(</span>
+<span class="nc" id="L141">                  &quot;\tInstead of values with the most instances the ones with the \n&quot;</span>
+                + &quot;\tleast are retained.\n&quot;,
+<span class="nc" id="L143">                &quot;L&quot;, 0, &quot;-L&quot;));</span>
+<span class="nc" id="L144">      newVector.addElement(new Option(</span>
+<span class="nc" id="L145">                  &quot;\tWhen selecting on nominal attributes, removes header\n&quot;</span>
+            	 + &quot;\treferences to excluded values.&quot;,
+<span class="nc" id="L147">            	 &quot;H&quot;, 0, &quot;-H&quot;));</span>
+<span class="nc" id="L148">      newVector.addElement(new Option(</span>
+<span class="nc" id="L149">            	 &quot;\tInvert matching sense.&quot;,</span>
+<span class="nc" id="L150">                &quot;V&quot;, 0, &quot;-V&quot;));</span>
+
+<span class="nc" id="L152">      return newVector.elements();</span>
+   }
+
+   /**
+    * Parses a given list of options. &lt;p/&gt;
+    * 
+    &lt;!-- options-start --&gt;
+    * Valid options are: &lt;p/&gt;
+    * 
+    * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+    *  Choose attribute to be used for selection.&lt;/pre&gt;
+    * 
+    * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+    *  Number of values to retain for the sepcified attribute, 
+    *  i.e. the ones with the most instances (default 2).&lt;/pre&gt;
+    * 
+    * &lt;pre&gt; -L
+    *  Instead of values with the most instances the ones with the 
+    *  least are retained.
+    * &lt;/pre&gt;
+    * 
+    * &lt;pre&gt; -H
+    *  When selecting on nominal attributes, removes header
+    *  references to excluded values.&lt;/pre&gt;
+    * 
+    * &lt;pre&gt; -V
+    *  Invert matching sense.&lt;/pre&gt;
+    * 
+    &lt;!-- options-end --&gt;
+    *
+    * @param options the list of options as an array of strings
+    * @throws Exception if an option is not supported
+    */
+   public void setOptions(String[] options) throws Exception {
+<span class="nc" id="L186">      String attIndex = Utils.getOption('C', options);</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">      if (attIndex.length() != 0) {</span>
+<span class="nc" id="L188">         setAttributeIndex(attIndex);</span>
+      } else {
+<span class="nc" id="L190">         setAttributeIndex(&quot;last&quot;);</span>
+      }
+      
+<span class="nc" id="L193">      String numValues = Utils.getOption('N', options);</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">      if (numValues.length() != 0) {</span>
+<span class="nc" id="L195">         setNumValues(Integer.parseInt(numValues));</span>
+      } else {
+<span class="nc" id="L197">         setNumValues(2);</span>
+      }
+      
+<span class="nc" id="L200">      setUseLeastValues(Utils.getFlag('L', options));</span>
+
+<span class="nc" id="L202">      setModifyHeader(Utils.getFlag('H', options));</span>
+
+<span class="nc" id="L204">      setInvertSelection(Utils.getFlag('V', options));</span>
+      
+<span class="nc bnc" id="L206" title="All 2 branches missed.">      if (getInputFormat() != null) {</span>
+<span class="nc" id="L207">         setInputFormat(getInputFormat());</span>
+      }
+<span class="nc" id="L209">   }</span>
+
+   /**
+    * Gets the current settings of the filter.
+    *
+    * @return an array of strings suitable for passing to setOptions
+    */
+   public String[] getOptions() {
+<span class="nc" id="L217">      String [] options = new String [7];</span>
+<span class="nc" id="L218">      int current = 0;</span>
+
+<span class="nc" id="L220">      options[current++] = &quot;-C&quot;;</span>
+<span class="nc" id="L221">      options[current++] = &quot;&quot; + (getAttributeIndex());</span>
+<span class="nc" id="L222">      options[current++] = &quot;-N&quot;;</span>
+<span class="nc" id="L223">      options[current++] = &quot;&quot; + (getNumValues());</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">      if (getUseLeastValues()) {</span>
+<span class="nc" id="L225">        options[current++] = &quot;-H&quot;;</span>
+      }
+<span class="nc bnc" id="L227" title="All 2 branches missed.">      if (getModifyHeader()) {</span>
+<span class="nc" id="L228">         options[current++] = &quot;-H&quot;;</span>
+      }
+<span class="nc bnc" id="L230" title="All 2 branches missed.">      if (getInvertSelection()) {</span>
+<span class="nc" id="L231">         options[current++] = &quot;-V&quot;;</span>
+      }
+<span class="nc bnc" id="L233" title="All 2 branches missed.">      while (current &lt; options.length) {</span>
+<span class="nc" id="L234">        options[current++] = &quot;&quot;;</span>
+      }
+<span class="nc" id="L236">      return options;</span>
+   }
+
+   /**
+    * Returns the tip text for this property
+    * @return tip text for this property suitable for
+    * displaying in the explorer/experimenter gui
+    */
+   public String attributeIndexTipText() {
+<span class="nc" id="L245">     return &quot;Choose attribute to be used for selection (default last).&quot;;</span>
+   }
+
+   /**
+    * Get the index of the attribute used.
+    *
+    * @return the index of the attribute
+    */
+   public String getAttributeIndex() {
+<span class="nc" id="L254">     return m_AttIndex.getSingleIndex();</span>
+   }
+
+   /**
+    * Sets index of the attribute used.
+    *
+    * @param attIndex the index of the attribute
+    */
+   public void setAttributeIndex(String attIndex) {
+<span class="nc" id="L263">     m_AttIndex.setSingleIndex(attIndex);</span>
+<span class="nc" id="L264">   }</span>
+
+   /**
+    * Returns the tip text for this property
+    * 
+    * @return tip text for this property suitable for
+    * displaying in the explorer/experimenter gui
+    */
+   public String numValuesTipText() {
+<span class="nc" id="L273">      return &quot;The number of values to retain.&quot;;</span>
+   }
+
+   /**
+    * Gets how many values are retained
+    *
+    * @return how many values are retained
+    */
+   public int getNumValues() {
+<span class="nc" id="L282">      return m_NumValues;</span>
+   }
+
+   /**
+    * Sets how many values are retained  
+    *
+    * @param numValues the number of values to retain
+    */
+   public void setNumValues(int numValues) {
+<span class="nc" id="L291">      m_NumValues = numValues;</span>
+<span class="nc" id="L292">   }</span>
+
+   /**
+    * Returns the tip text for this property
+    * 
+    * @return tip text for this property suitable for
+    * displaying in the explorer/experimenter gui
+    */
+   public String useLeastValuesTipText() {
+<span class="nc" id="L301">      return &quot;Retains values with least instance instead of most.&quot;;</span>
+   }
+
+   /**
+    * Gets whether to use values with least or most instances
+    *
+    * @return true if values with least instances are retained
+    */
+   public boolean getUseLeastValues() {
+<span class="nc" id="L310">      return m_LeastValues;</span>
+   }
+
+   /**
+    * Sets whether to use values with least or most instances  
+    *
+    * @param leastValues whether values with least or most instances are retained
+    */
+   public void setUseLeastValues(boolean leastValues) {
+<span class="nc" id="L319">      m_LeastValues = leastValues;</span>
+<span class="nc" id="L320">   }</span>
+
+   /**
+    * Returns the tip text for this property
+    * @return tip text for this property suitable for
+    * displaying in the explorer/experimenter gui
+    */
+   public String modifyHeaderTipText() {
+<span class="nc" id="L328">      return &quot;When selecting on nominal attributes, removes header references to &quot;</span>
+      + &quot;excluded values.&quot;;
+   }
+   
+   /**
+    * Gets whether the header will be modified when selecting on nominal
+    * attributes.
+    *
+    * @return true if so.
+    */
+   public boolean getModifyHeader() {
+<span class="nc" id="L339">      return m_ModifyHeader;</span>
+   }
+   
+   /**
+    * Sets whether the header will be modified when selecting on nominal
+    * attributes.
+    *
+    * @param newModifyHeader true if so.
+    */
+   public void setModifyHeader(boolean newModifyHeader) {
+<span class="nc" id="L349">      m_ModifyHeader = newModifyHeader;</span>
+<span class="nc" id="L350">   }</span>
+   
+   /**
+    * Returns the tip text for this property
+    * 
+    * @return tip text for this property suitable for
+    * displaying in the explorer/experimenter gui
+    */
+   public String invertSelectionTipText() {
+<span class="nc" id="L359">      return &quot;Invert matching sense.&quot;;</span>
+   }
+
+   /**
+    * Get whether the supplied columns are to be removed or kept
+    *
+    * @return true if the supplied columns will be kept
+    */
+   public boolean getInvertSelection() {
+<span class="nc" id="L368">      return m_Invert;</span>
+   }
+
+   /**
+    * Set whether selected values should be removed or kept. If true the 
+    * selected values are kept and unselected values are deleted. 
+    *
+    * @param invert the new invert setting
+    */
+   public void setInvertSelection(boolean invert) {
+<span class="nc" id="L378">      m_Invert = invert;</span>
+<span class="nc" id="L379">   }</span>
+
+   /** 
+    * Returns true if selection attribute is nominal.
+    *
+    * @return true if selection attribute is nominal
+    */
+   public boolean isNominal() {
+<span class="nc bnc" id="L387" title="All 2 branches missed.">      if (getInputFormat() == null) {</span>
+<span class="nc" id="L388">         return false;</span>
+      } else {
+<span class="nc" id="L390">         return getInputFormat().attribute(m_AttIndex.getIndex()).isNominal();</span>
+      }
+   }
+   
+   /**
+    * determines the values to retain, it is always at least 1
+    * and up to the maximum number of distinct values
+    * 
+    * @param inst the Instances to determine the values from which are kept  
+    */
+   public void determineValues(Instances inst) {
+      int					i;
+      AttributeStats		stats;
+      int					attIdx;
+      int					min;
+      int					max;
+      int					count;
+
+<span class="nc" id="L408">      m_AttIndex.setUpper(inst.numAttributes() - 1);</span>
+<span class="nc" id="L409">      attIdx = m_AttIndex.getIndex();</span>
+      
+      // init names
+<span class="nc" id="L412">      m_Values = new HashSet();</span>
+      
+<span class="nc bnc" id="L414" title="All 2 branches missed.">      if (inst == null)</span>
+         return;
+      
+      // number of values to retain
+<span class="nc" id="L418">      stats = inst.attributeStats(attIdx);</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">      if (m_Invert)</span>
+<span class="nc" id="L420">         count = stats.nominalCounts.length - m_NumValues;</span>
+      else
+<span class="nc" id="L422">         count = m_NumValues;</span>
+      // out of bounds? -&gt; fix
+<span class="nc bnc" id="L424" title="All 2 branches missed.">      if (count &lt; 1)</span>
+<span class="nc" id="L425">         count = 1;  // at least one value!</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">      if (count &gt; stats.nominalCounts.length)</span>
+<span class="nc" id="L427">         count = stats.nominalCounts.length;  // at max the existing values</span>
+      
+      // determine min/max occurences
+<span class="nc" id="L430">      Arrays.sort(stats.nominalCounts);</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">      if (m_LeastValues) {</span>
+<span class="nc" id="L432">         min = stats.nominalCounts[0];</span>
+<span class="nc" id="L433">         max = stats.nominalCounts[count - 1];</span>
+      }
+      else {
+<span class="nc" id="L436">         min = stats.nominalCounts[(stats.nominalCounts.length - 1) - count + 1];</span>
+<span class="nc" id="L437">         max = stats.nominalCounts[stats.nominalCounts.length - 1];</span>
+      }
+      
+      // add values if they are inside min/max (incl. borders) and not more than count
+<span class="nc" id="L441">      stats = inst.attributeStats(attIdx);</span>
+<span class="nc bnc" id="L442" title="All 2 branches missed.">      for (i = 0; i &lt; stats.nominalCounts.length; i++) {</span>
+<span class="nc bnc" id="L443" title="All 6 branches missed.">         if ( (stats.nominalCounts[i] &gt;= min) &amp;&amp; (stats.nominalCounts[i] &lt;= max) &amp;&amp; (m_Values.size() &lt; count) )</span>
+<span class="nc" id="L444">            m_Values.add(inst.attribute(attIdx).value(i));</span>
+      }
+<span class="nc" id="L446">   }</span>
+   
+   /**
+    * modifies the header of the Instances and returns the format w/o 
+    * any instances
+    * 
+    * @param instanceInfo the instances structure to modify
+    * @return the new structure (w/o instances!)
+    */
+   protected Instances modifyHeader(Instances instanceInfo) {
+<span class="nc" id="L456">      instanceInfo = new Instances(getInputFormat(), 0); // copy before modifying</span>
+<span class="nc" id="L457">      Attribute oldAtt = instanceInfo.attribute(m_AttIndex.getIndex());</span>
+<span class="nc" id="L458">      int [] selection = new int[m_Values.size()];</span>
+<span class="nc" id="L459">      Iterator iter = m_Values.iterator();</span>
+<span class="nc" id="L460">      int i = 0;</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">      while (iter.hasNext()) {</span>
+<span class="nc" id="L462">         selection[i] = oldAtt.indexOfValue(iter.next().toString());</span>
+<span class="nc" id="L463">         i++;</span>
+      }
+<span class="nc" id="L465">      FastVector newVals = new FastVector();</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">      for (i = 0; i &lt; selection.length; i++) {</span>
+<span class="nc" id="L467">         newVals.addElement(oldAtt.value(selection[i]));</span>
+      }
+<span class="nc" id="L469">      instanceInfo.deleteAttributeAt(m_AttIndex.getIndex());</span>
+<span class="nc" id="L470">      Attribute newAtt = new Attribute(oldAtt.name(), newVals);</span>
+<span class="nc" id="L471">      newAtt.setWeight(oldAtt.weight());</span>
+<span class="nc" id="L472">      instanceInfo.insertAttributeAt(newAtt,</span>
+<span class="nc" id="L473">            m_AttIndex.getIndex());</span>
+<span class="nc" id="L474">      m_NominalMapping = new int [oldAtt.numValues()];</span>
+<span class="nc bnc" id="L475" title="All 2 branches missed.">      for (i = 0; i &lt; m_NominalMapping.length; i++) {</span>
+<span class="nc" id="L476">         boolean found = false;</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">         for (int j = 0; j &lt; selection.length; j++) {</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">            if (selection[j] == i) {</span>
+<span class="nc" id="L479">               m_NominalMapping[i] = j;</span>
+<span class="nc" id="L480">               found = true;</span>
+<span class="nc" id="L481">               break;</span>
+            }
+         }
+<span class="nc bnc" id="L484" title="All 2 branches missed.">         if (!found) {</span>
+<span class="nc" id="L485">            m_NominalMapping[i] = -1;</span>
+         }
+      }
+      
+<span class="nc" id="L489">      return instanceInfo;</span>
+   }
+
+   /** 
+    * Returns the Capabilities of this filter.
+    *
+    * @return            the capabilities of this object
+    * @see               Capabilities
+    */
+   public Capabilities getCapabilities() {
+<span class="nc" id="L499">     Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L500">     result.disableAll();</span>
+
+     // attributes
+<span class="nc" id="L503">     result.enableAllAttributes();</span>
+<span class="nc" id="L504">     result.enable(Capability.MISSING_VALUES);</span>
+     
+     // class
+<span class="nc" id="L507">     result.enableAllClasses();</span>
+<span class="nc" id="L508">     result.enable(Capability.MISSING_CLASS_VALUES);</span>
+<span class="nc" id="L509">     result.enable(Capability.NO_CLASS);</span>
+     
+<span class="nc" id="L511">     return result;</span>
+   }
+
+   /**
+    * Sets the format of the input instances.
+    *
+    * @param instanceInfo an Instances object containing the input instance
+    * structure (any instances contained in the object are ignored - only the
+    * structure is required).
+    * @return true if the outputFormat can be collected immediately
+    * @throws UnsupportedAttributeTypeException if the specified attribute
+    *         is not nominal.
+    */
+   public boolean setInputFormat(Instances instanceInfo) throws Exception {
+<span class="nc" id="L525">      super.setInputFormat(instanceInfo);</span>
+      
+<span class="nc" id="L527">      m_AttIndex.setUpper(instanceInfo.numAttributes() - 1);</span>
+
+<span class="nc bnc" id="L529" title="All 2 branches missed.">      if (!isNominal())</span>
+<span class="nc" id="L530">         throw new UnsupportedAttributeTypeException(&quot;Can only handle nominal attributes.&quot;);</span>
+      
+<span class="nc" id="L532">      m_Values = null;</span>
+         
+<span class="nc" id="L534">      return false;</span>
+   }
+   
+   /**
+    * Set the output format. Takes the currently defined Values to retain and 
+    * m_InputFormat and calls setOutputFormat(Instances) appropriately. 
+    * Those instances that have a value to retain are &quot;push&quot;ed to the output.
+    */
+   protected void setOutputFormat() {
+      Instances      instances;
+      int            i;
+      Instance       instance;
+      
+<span class="nc bnc" id="L547" title="All 2 branches missed.">      if (m_Values == null) {</span>
+<span class="nc" id="L548">         setOutputFormat(null);</span>
+<span class="nc" id="L549">         return;</span>
+      }
+      
+      // get structure
+<span class="nc bnc" id="L553" title="All 2 branches missed.">      if (getModifyHeader())</span>
+<span class="nc" id="L554">         instances = modifyHeader(getInputFormat());</span>
+      else
+<span class="nc" id="L556">         instances = new Instances(getInputFormat(), 0);</span>
+<span class="nc" id="L557">      setOutputFormat(instances);</span>
+      
+      // remove instances with unwanted values, for the others change the values
+      // value if m_ModifyHeader is set
+<span class="nc bnc" id="L561" title="All 2 branches missed.">      for (i = 0; i &lt; getInputFormat().numInstances(); i++) {</span>
+<span class="nc" id="L562">         instance = getInputFormat().instance(i);</span>
+<span class="nc bnc" id="L563" title="All 2 branches missed.">         if (instance.isMissing(m_AttIndex.getIndex())) {</span>
+<span class="nc" id="L564">           push(instance);</span>
+<span class="nc" id="L565">           continue;</span>
+         }      
+<span class="nc bnc" id="L567" title="All 2 branches missed.">         if (m_Values.contains(instance.stringValue(m_AttIndex.getIndex()))) {</span>
+<span class="nc bnc" id="L568" title="All 2 branches missed.">            if (getModifyHeader()) {</span>
+<span class="nc" id="L569">               instance.setValue(m_AttIndex.getIndex(),</span>
+<span class="nc" id="L570">                     m_NominalMapping[(int)instance.value(m_AttIndex.getIndex())]);</span>
+            }
+<span class="nc" id="L572">            push(instance);</span>
+         }
+      }
+<span class="nc" id="L575">   }</span>
+   
+   /**
+    * Input an instance for filtering. Ordinarily the instance is processed
+    * and made available for output immediately. Some filters require all
+    * instances be read before producing output.
+    *
+    * @param instance the input instance
+    * @return true if the filtered instance may now be
+    * collected with output().
+    * @throws IllegalStateException if no input format has been set.
+    */
+   public boolean input(Instance instance) {
+<span class="nc bnc" id="L588" title="All 2 branches missed.">      if (getInputFormat() == null) {</span>
+<span class="nc" id="L589">         throw new IllegalStateException(&quot;No input instance format defined&quot;);</span>
+      }
+      
+<span class="nc bnc" id="L592" title="All 2 branches missed.">      if (m_NewBatch) {</span>
+<span class="nc" id="L593">         resetQueue();</span>
+<span class="nc" id="L594">         m_NewBatch = false;</span>
+      }
+
+<span class="nc bnc" id="L597" title="All 2 branches missed.">      if (isFirstBatchDone()) {</span>
+<span class="nc" id="L598">	push(instance);</span>
+<span class="nc" id="L599">	return true;</span>
+      } 
+      else {
+<span class="nc" id="L602">	bufferInput(instance);</span>
+<span class="nc" id="L603">	return false;</span>
+      }
+   }
+
+   /**
+    * Signifies that this batch of input to the filter is finished. If the 
+    * filter requires all instances prior to filtering, output() may now 
+    * be called to retrieve the filtered instances.
+    *
+    * @return true if there are instances pending output
+    * @throws IllegalStateException if no input structure has been defined
+    */
+   public boolean batchFinished() {
+<span class="nc bnc" id="L616" title="All 2 branches missed.">      if (getInputFormat() == null) {</span>
+<span class="nc" id="L617">         throw new IllegalStateException(&quot;No input instance format defined&quot;);</span>
+      }
+
+      // process input
+<span class="nc bnc" id="L621" title="All 2 branches missed.">      if (m_Values == null) {</span>
+<span class="nc" id="L622">         determineValues(getInputFormat());</span>
+<span class="nc" id="L623">         setOutputFormat();</span>
+      } 
+<span class="nc" id="L625">      flushInput();</span>
+      
+<span class="nc" id="L627">      m_NewBatch = true;</span>
+<span class="nc" id="L628">      m_FirstBatchDone = true;</span>
+
+<span class="nc bnc" id="L630" title="All 2 branches missed.">      return (numPendingOutput() != 0);</span>
+   }
+   
+   /**
+    * Returns the revision string.
+    * 
+    * @return		the revision
+    */
+   public String getRevision() {
+<span class="nc" id="L639">     return RevisionUtils.extract(&quot;$Revision: 8972 $&quot;);</span>
+   }
+   
+   /**
+    * Main method for testing this class.
+    *
+    * @param argv should contain arguments to the filter: 
+    * use -h for help
+    */
+   public static void main(String[] argv) {
+<span class="nc" id="L649">      runFilter(new RemoveFrequentValues(), argv);</span>
+<span class="nc" id="L650">   }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

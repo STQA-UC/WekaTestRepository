@@ -1,0 +1,382 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RuleGeneration.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.associations</a> &gt; <span class="el_source">RuleGeneration.java</span></div><h1>RuleGeneration.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RuleGeneration.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.associations;
+
+import weka.core.FastVector;
+import weka.core.Instances;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Statistics;
+import weka.core.Utils;
+
+import java.io.Serializable;
+import java.util.Hashtable;
+import java.util.TreeSet;
+
+/**
+ * Class implementing the rule generation procedure of the predictive apriori algorithm.
+ *
+ * Reference: T. Scheffer (2001). &lt;i&gt;Finding Association Rules That Trade Support 
+ * Optimally against Confidence&lt;/i&gt;. Proc of the 5th European Conf.
+ * on Principles and Practice of Knowledge Discovery in Databases (PKDD'01),
+ * pp. 424-435. Freiburg, Germany: Springer-Verlag. &lt;p&gt;
+ *
+ * The implementation follows the paper expect for adding a rule to the output of the
+ * &lt;i&gt;n&lt;/i&gt; best rules. A rule is added if:
+ * the expected predictive accuracy of this rule is among the &lt;i&gt;n&lt;/i&gt; best and it is 
+ * not subsumed by a rule with at least the same expected predictive accuracy
+ * (out of an unpublished manuscript from T. Scheffer). 
+ *
+ * @author Stefan Mutter (mutter@cs.waikato.ac.nz)
+ * @version $Revision: 1.4 $ */
+public class RuleGeneration
+  implements Serializable, RevisionHandler {
+
+  /** for serialization */
+  private static final long serialVersionUID = -8927041669872491432L;
+
+  /** The items stored as an array of of integer. */
+  protected int[] m_items;
+
+  /** Counter for how many transactions contain this item set. */
+  protected int m_counter;
+
+  /** The total number of transactions */
+  protected int m_totalTransactions;
+
+  /** Flag indicating whether the list fo the best rules has changed. */
+<span class="nc" id="L68">  protected boolean m_change = false;</span>
+
+  /** The minimum expected predictive accuracy that is needed to be a candidate for the list of the best rules. */
+  protected double m_expectation;
+
+  /** Threshold. If the support of the premise is higher the binomial distrubution is approximated by a normal one. */
+  protected static final int MAX_N = 300;
+
+  /** The minimum support a rule needs to be a candidate for the list of the best rules. */
+  protected int m_minRuleCount;
+
+  /** Sorted array of the mied points of the intervals used for prior estimation. */
+  protected double[] m_midPoints;
+
+  /** Hashtable conatining the estimated prior probabilities. */
+  protected Hashtable m_priors;
+
+  /** The list of the actual &lt;i&gt;n&lt;/i&gt; best rules. */
+  protected TreeSet m_best;
+
+  /** Integer indicating the generation time of a rule. */
+  protected int m_count;
+
+  /** The instances. */
+  protected Instances m_instances;
+
+
+  /**
+   * Constructor
+   * @param itemSet item set for that rules should be generated.
+   * The item set will form the premise of the rules.
+   */
+<span class="nc" id="L100">  public RuleGeneration(ItemSet itemSet){</span>
+
+<span class="nc" id="L102">    m_totalTransactions = itemSet.m_totalTransactions;</span>
+<span class="nc" id="L103">    m_counter = itemSet.m_counter;</span>
+<span class="nc" id="L104">    m_items = itemSet.m_items;</span>
+<span class="nc" id="L105">  }</span>
+
+
+  /**
+   * calculates the probability using a binomial distribution.
+   * If the support of the premise is too large this distribution
+   * is approximated by a normal distribution.
+   * @param accuracy the accuracy value
+   * @param ruleCount the support of the whole rule
+   * @param premiseCount the support of the premise
+   * @return the probability value
+   */  
+  public static final double binomialDistribution(double accuracy, double ruleCount, double premiseCount){
+
+    double mu, sigma;
+
+<span class="nc bnc" id="L121" title="All 2 branches missed.">    if(premiseCount &lt; MAX_N) </span>
+<span class="nc" id="L122">      return Math.pow(2,(Utils.log2(Math.pow(accuracy,ruleCount))+Utils.log2(Math.pow((1.0-accuracy),(premiseCount-ruleCount)))+PriorEstimation.logbinomialCoefficient((int)premiseCount,(int)ruleCount)));</span>
+    else{
+<span class="nc" id="L124">      mu = premiseCount * accuracy;</span>
+<span class="nc" id="L125">      sigma = Math.sqrt((premiseCount * (1.0 - accuracy))*accuracy);</span>
+<span class="nc" id="L126">      return Statistics.normalProbability(((ruleCount+0.5)-mu)/(sigma*Math.sqrt(2)));</span>
+    }
+  }
+
+  /**
+   * calculates the expected predctive accuracy of a rule
+   * @param ruleCount the support of the rule
+   * @param premiseCount the premise support of the rule
+   * @param midPoints array with all mid points
+   * @param priors hashtable containing the prior probabilities
+   * @return the expected predictive accuracy
+   */  
+  public static final double expectation(double ruleCount, int premiseCount,double[] midPoints, Hashtable priors){
+
+<span class="nc" id="L140">    double numerator = 0, denominator = 0;</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">    for(int i = 0;i &lt; midPoints.length; i++){</span>
+<span class="nc" id="L142">      Double actualPrior = (Double)priors.get(new Double(midPoints[i]));</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">      if(actualPrior != null){</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">	if(actualPrior.doubleValue() != 0){</span>
+<span class="nc" id="L145">	  double addend = actualPrior.doubleValue() * binomialDistribution(midPoints[i], ruleCount, (double)premiseCount);</span>
+<span class="nc" id="L146">	  denominator += addend;</span>
+<span class="nc" id="L147">	  numerator += addend*midPoints[i];</span>
+	}
+      }
+    }
+<span class="nc bnc" id="L151" title="All 4 branches missed.">    if(denominator &lt;= 0 || Double.isNaN(denominator))</span>
+<span class="nc" id="L152">      System.out.println(&quot;RuleItem denominator: &quot;+denominator);</span>
+<span class="nc bnc" id="L153" title="All 4 branches missed.">    if(numerator &lt;= 0 || Double.isNaN(numerator))</span>
+<span class="nc" id="L154">      System.out.println(&quot;RuleItem numerator: &quot;+numerator);</span>
+<span class="nc" id="L155">    return numerator/denominator;</span>
+  }
+
+  /**
+   * Generates all rules for an item set. The item set is the premise.
+   * @param numRules the number of association rules the use wants to mine.
+   * This number equals the size &lt;i&gt;n&lt;/i&gt; of the list of the
+   * best rules.
+   * @param midPoints the mid points of the intervals
+   * @param priors Hashtable that contains the prior probabilities
+   * @param expectation the minimum value of the expected predictive accuracy
+   * that is needed to get into the list of the best rules
+   * @param instances the instances for which association rules are generated
+   * @param best the list of the &lt;i&gt;n&lt;/i&gt; best rules.
+   * The list is implemented as a TreeSet
+   * @param genTime the maximum time of generation
+   * @return all the rules with minimum confidence for the given item set
+   */
+  public TreeSet generateRules(int numRules, double[] midPoints, Hashtable priors, double expectation, Instances instances,TreeSet best,int genTime) {
+
+<span class="nc" id="L175">    boolean redundant = false;</span>
+<span class="nc" id="L176">    FastVector consequences = new FastVector(), consequencesMinusOne = new FastVector();</span>
+    ItemSet premise;
+<span class="nc" id="L178">    int s = 0;</span>
+<span class="nc" id="L179">    RuleItem current = null, old;</span>
+
+    Hashtable hashtable;
+
+<span class="nc" id="L183">    m_change = false;</span>
+<span class="nc" id="L184">    m_midPoints = midPoints;</span>
+<span class="nc" id="L185">    m_priors = priors;</span>
+<span class="nc" id="L186">    m_best = best;</span>
+<span class="nc" id="L187">    m_expectation = expectation;</span>
+<span class="nc" id="L188">    m_count = genTime;</span>
+<span class="nc" id="L189">    m_instances = instances;</span>
+
+    //create rule body
+<span class="nc" id="L192">    premise =null;</span>
+<span class="nc" id="L193">    premise = new ItemSet(m_totalTransactions);</span>
+<span class="nc" id="L194">    premise.m_items = new int[m_items.length];</span>
+<span class="nc" id="L195">    System.arraycopy(m_items, 0, premise.m_items, 0, m_items.length);</span>
+<span class="nc" id="L196">    premise.m_counter = m_counter;</span>
+
+
+<span class="nc bnc" id="L199" title="All 2 branches missed.">    do{  </span>
+<span class="nc" id="L200">      m_minRuleCount = 1;</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">      while(expectation((double)m_minRuleCount,premise.m_counter,m_midPoints,m_priors) &lt;= m_expectation){</span>
+<span class="nc" id="L202">	m_minRuleCount++;</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">	if(m_minRuleCount &gt; premise.m_counter)</span>
+<span class="nc" id="L204">	  return m_best;</span>
+      }
+<span class="nc" id="L206">      redundant = false;</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">      for(int i = 0; i &lt; instances.numAttributes();i++){        </span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">	if(i == 0){    </span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">	  for(int j = 0; j &lt; m_items.length;j++)</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">	    if(m_items[j] == -1)</span>
+<span class="nc" id="L211">	      consequences = singleConsequence(instances, j,consequences);           </span>
+<span class="nc bnc" id="L212" title="All 4 branches missed.">	  if(premise == null || consequences.size() == 0)</span>
+<span class="nc" id="L213">	    return m_best;</span>
+	}
+<span class="nc" id="L215">	FastVector allRuleItems = new FastVector();</span>
+<span class="nc" id="L216">	int index = 0;</span>
+	do {
+<span class="nc" id="L218">	  int h = 0;</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">	  while(h &lt; consequences.size()){</span>
+<span class="nc" id="L220">	    RuleItem dummie = new RuleItem();</span>
+<span class="nc" id="L221">	    current = dummie.generateRuleItem(premise,(ItemSet)consequences.elementAt(h),instances,m_count,m_minRuleCount,m_midPoints,m_priors);</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">	    if(current != null){</span>
+<span class="nc" id="L223">	      allRuleItems.addElement(current);</span>
+<span class="nc" id="L224">	      h++;</span>
+	    }
+	    else
+<span class="nc" id="L227">	      consequences.removeElementAt(h);</span>
+	  }
+<span class="nc bnc" id="L229" title="All 2 branches missed.">	  if(index == i)</span>
+<span class="nc" id="L230">	    break;</span>
+<span class="nc" id="L231">	  consequencesMinusOne = consequences;</span>
+<span class="nc" id="L232">	  consequences = ItemSet.mergeAllItemSets(consequencesMinusOne, index, instances.numInstances());</span>
+<span class="nc" id="L233">	  hashtable = ItemSet.getHashtable(consequencesMinusOne, consequencesMinusOne.size());</span>
+<span class="nc" id="L234">	  consequences = ItemSet.pruneItemSets(consequences, hashtable);</span>
+<span class="nc" id="L235">	  index++;</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">	} while (consequences.size() &gt; 0); </span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">	for(int h = 0;h &lt; allRuleItems.size();h++){</span>
+<span class="nc" id="L238">	  current = (RuleItem)allRuleItems.elementAt(h);</span>
+<span class="nc" id="L239">	  m_count++;</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">	  if(m_best.size() &lt; numRules){</span>
+<span class="nc" id="L241">	    m_change =true;</span>
+<span class="nc" id="L242">	    redundant = removeRedundant(current);</span>
+	  }
+	  else{
+<span class="nc bnc" id="L245" title="All 2 branches missed.">	    if(current.accuracy() &gt; m_expectation){</span>
+<span class="nc" id="L246">	      m_expectation = ((RuleItem)(m_best.first())).accuracy();</span>
+<span class="nc" id="L247">	      boolean remove = m_best.remove(m_best.first());</span>
+<span class="nc" id="L248">	      m_change = true;</span>
+<span class="nc" id="L249">	      redundant = removeRedundant(current);</span>
+<span class="nc" id="L250">	      m_expectation = ((RuleItem)(m_best.first())).accuracy();</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">	      while(expectation((double)m_minRuleCount, (current.premise()).m_counter,m_midPoints,m_priors) &lt; m_expectation){</span>
+<span class="nc" id="L252">		m_minRuleCount++;</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">		if(m_minRuleCount &gt; (current.premise()).m_counter)</span>
+<span class="nc" id="L254">		  break;</span>
+	      }
+	    }  
+	  }
+	}   
+
+      }
+<span class="nc" id="L261">    }while(redundant); </span>
+<span class="nc" id="L262">    return m_best;</span>
+  }
+
+  /**
+   * Methods that decides whether or not rule a subsumes rule b.
+   * The defintion of subsumption is:
+   * Rule a subsumes rule b, if a subsumes b
+   * AND
+   * a has got least the same expected predictive accuracy as b.
+   * @param a an association rule stored as a RuleItem
+   * @param b an association rule stored as a RuleItem
+   * @return true if rule a subsumes rule b or false otherwise.
+   */  
+  public static boolean aSubsumesB(RuleItem a, RuleItem b){
+
+<span class="nc bnc" id="L277" title="All 2 branches missed.">    if(a.m_accuracy &lt; b.m_accuracy)</span>
+<span class="nc" id="L278">      return false;</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">    for(int k = 0; k &lt; a.premise().m_items.length;k++){</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">      if(a.premise().m_items[k] != b.premise().m_items[k]){</span>
+<span class="nc bnc" id="L281" title="All 6 branches missed.">	if((a.premise().m_items[k] != -1 &amp;&amp; b.premise().m_items[k] != -1) || b.premise().m_items[k] == -1)</span>
+<span class="nc" id="L282">	  return false;</span>
+      }
+<span class="nc bnc" id="L284" title="All 2 branches missed.">      if(a.consequence().m_items[k] != b.consequence().m_items[k]){</span>
+<span class="nc bnc" id="L285" title="All 6 branches missed.">	if((a.consequence().m_items[k] != -1 &amp;&amp; b.consequence().m_items[k] != -1) || a.consequence().m_items[k] == -1)</span>
+<span class="nc" id="L286">	  return false;</span>
+      }
+    }
+<span class="nc" id="L289">    return true;</span>
+
+  }
+
+  /**
+   * generates a consequence of length 1 for an association rule.
+   * @param instances the instances under consideration
+   * @param attNum an item that does not occur in the premise
+   * @param consequences FastVector that possibly already contains other consequences of length 1
+   * @return FastVector with consequences of length 1
+   */  
+  public static FastVector singleConsequence(Instances instances, int attNum, FastVector consequences){
+
+    ItemSet consequence;
+
+<span class="nc bnc" id="L304" title="All 2 branches missed.">    for (int i = 0; i &lt; instances.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">      if( i == attNum){</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">	for (int j = 0; j &lt; instances.attribute(i).numValues(); j++) {</span>
+<span class="nc" id="L307">	  consequence = new ItemSet(instances.numInstances());</span>
+<span class="nc" id="L308">	  consequence.m_items = new int[instances.numAttributes()];</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">	  for (int k = 0; k &lt; instances.numAttributes(); k++) </span>
+<span class="nc" id="L310">	    consequence.m_items[k] = -1;</span>
+<span class="nc" id="L311">	  consequence.m_items[i] = j;</span>
+<span class="nc" id="L312">	  consequences.addElement(consequence);</span>
+	}
+      }
+    }
+<span class="nc" id="L316">    return consequences;</span>
+
+  }
+
+  /**
+   * Method that removes redundant rules out of the list of the best rules.
+   * A rule is in that list if:
+   * the expected predictive accuracy of this rule is among the best and it is
+   * not subsumed by a rule with at least the same expected predictive accuracy
+   * @param toInsert the rule that should be inserted into the list
+   * @return true if the method has changed the list, false otherwise
+   */  
+  public boolean removeRedundant(RuleItem toInsert){
+
+<span class="nc" id="L330">    boolean redundant = false, fSubsumesT = false, tSubsumesF = false;</span>
+    RuleItem first;
+<span class="nc" id="L332">    int subsumes = 0;</span>
+<span class="nc" id="L333">    Object [] best = m_best.toArray();</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">    for(int i=0; i &lt; best.length; i++){</span>
+<span class="nc" id="L335">      first = (RuleItem)best[i];</span>
+<span class="nc" id="L336">      fSubsumesT = aSubsumesB(first,toInsert);</span>
+<span class="nc" id="L337">      tSubsumesF = aSubsumesB(toInsert, first);</span>
+<span class="nc bnc" id="L338" title="All 2 branches missed.">      if(fSubsumesT){</span>
+<span class="nc" id="L339">	subsumes = 1;</span>
+<span class="nc" id="L340">	break;</span>
+      }
+      else{
+<span class="nc bnc" id="L343" title="All 2 branches missed.">	if(tSubsumesF){</span>
+<span class="nc" id="L344">	  boolean remove = m_best.remove(first);</span>
+<span class="nc" id="L345">	  subsumes = 2;</span>
+<span class="nc" id="L346">	  redundant =true;</span>
+	}
+      }
+    }
+<span class="nc bnc" id="L350" title="All 4 branches missed.">    if(subsumes == 0 || subsumes == 2)</span>
+<span class="nc" id="L351">      m_best.add(toInsert);</span>
+<span class="nc" id="L352">    return redundant;</span>
+  }
+
+  /**
+   * Gets the actual maximum value of the generation time
+   * @return the actual maximum value of the generation time
+   */
+  public int count(){
+
+<span class="nc" id="L361">    return m_count;</span>
+  }
+
+  /**
+   * Gets if the list fo the best rules has been changed
+   * @return whether or not the list fo the best rules has been changed
+   */
+  public boolean change(){
+
+<span class="nc" id="L370">    return m_change;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L379">    return RevisionUtils.extract(&quot;$Revision: 1.4 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

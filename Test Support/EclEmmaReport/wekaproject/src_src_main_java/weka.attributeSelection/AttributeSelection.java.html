@@ -1,0 +1,1104 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>AttributeSelection.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">AttributeSelection.java</span></div><h1>AttributeSelection.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    AttributeSelection.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.attributeSelection;
+
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.converters.ConverterUtils.DataSource;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Remove;
+
+import java.beans.BeanInfo;
+import java.beans.IntrospectionException;
+import java.beans.Introspector;
+import java.beans.MethodDescriptor;
+import java.beans.PropertyDescriptor;
+import java.io.Serializable;
+import java.lang.reflect.Method;
+import java.util.Enumeration;
+import java.util.Random;
+
+/** 
+ * Attribute selection class. Takes the name of a search class and
+ * an evaluation class on the command line. &lt;p/&gt;
+ *
+ * Valid options are: &lt;p/&gt;
+ *
+ * -h &lt;br/&gt;
+ * Display help. &lt;p/&gt;
+ *
+ * -i &amp;lt;name of input file&amp;gt; &lt;br/&gt;
+ * Specify the training data file. &lt;p/&gt;
+ * 
+ * -c &amp;lt;class index&amp;gt; &lt;br/&gt;
+ * The index of the attribute to use as the class. &lt;p/&gt;
+ * 
+ * -s &amp;lt;search method&amp;gt; &lt;br/&gt;
+ * The full class name of the search method followed by search method options
+ * (if any).&lt;br/&gt;
+ * Eg. -s &quot;weka.attributeSelection.BestFirst -N 10&quot; &lt;p/&gt;
+ *
+ * -x &amp;lt;number of folds&amp;gt; &lt;br/&gt;
+ * Perform a cross validation. &lt;p/&gt;
+ *
+ * -n &amp;lt;random number seed&amp;gt; &lt;br/&gt;
+ * Specify a random number seed. Use in conjuction with -x. (Default = 1). &lt;p/&gt;
+ * 
+ * ------------------------------------------------------------------------ &lt;p/&gt;
+ * 
+ * Example usage as the main of an attribute evaluator (called FunkyEvaluator):
+ * &lt;pre&gt;
+ * public static void main(String [] args) {
+ *   runEvaluator(new FunkyEvaluator(), args);
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ *
+ * ------------------------------------------------------------------------ &lt;p/&gt;
+ *
+ * @author   Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version  $Revision: 7953 $
+ */
+public class AttributeSelection 
+  implements Serializable, RevisionHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = 4170171824147584330L;
+
+  /** the instances to select attributes from */
+  private Instances m_trainInstances;
+
+  /** the attribute/subset evaluator */
+  private ASEvaluation m_ASEvaluator;
+
+  /** the search method */
+  private ASSearch m_searchMethod;
+
+  /** the number of folds to use for cross validation */
+  private int m_numFolds;
+
+  /** holds a string describing the results of the attribute selection */
+  private StringBuffer m_selectionResults;
+
+  /** rank features (if allowed by the search method) */
+  private boolean m_doRank;
+  
+  /** do cross validation */
+  private boolean m_doXval;
+
+  /** seed used to randomly shuffle instances for cross validation */
+  private int m_seed;
+
+  /** number of attributes requested from ranked results */
+  private int m_numToSelect;
+  
+  /** the selected attributes */
+  private int [] m_selectedAttributeSet;
+
+  /** the attribute indexes and associated merits if a ranking is produced */
+  private double [][] m_attributeRanking;
+
+  /** if a feature selection run involves an attribute transformer */
+<span class="fc" id="L127">  private AttributeTransformer m_transformer = null;</span>
+  
+  /** the attribute filter for processing instances with respect to
+      the most recent feature selection run */
+<span class="fc" id="L131">  private Remove m_attributeFilter = null;</span>
+
+  /** hold statistics for repeated feature selection, such as
+      under cross validation */
+<span class="fc" id="L135">  private double [][] m_rankResults = null;</span>
+<span class="fc" id="L136">  private double [] m_subsetResults = null;</span>
+<span class="fc" id="L137">  private int m_trials = 0;</span>
+
+  /**
+   * Return the number of attributes selected from the most recent
+   * run of attribute selection
+   * @return the number of attributes selected
+   */
+  public int numberAttributesSelected() throws Exception {
+<span class="fc" id="L145">    int [] att = selectedAttributes();</span>
+<span class="fc" id="L146">    return att.length-1;</span>
+  }
+
+  /**
+   * get the final selected set of attributes.
+   * @return an array of attribute indexes
+   * @exception Exception if attribute selection has not been performed yet
+   */
+  public int [] selectedAttributes () throws Exception {
+<span class="pc bpc" id="L155" title="1 of 2 branches missed.">    if (m_selectedAttributeSet == null) {</span>
+<span class="nc" id="L156">      throw new Exception(&quot;Attribute selection has not been performed yet!&quot;);</span>
+    }
+<span class="fc" id="L158">    return m_selectedAttributeSet;</span>
+  }
+
+  /**
+   * get the final ranking of the attributes.
+   * @return a two dimensional array of ranked attribute indexes and their
+   * associated merit scores as doubles.
+   * @exception Exception if a ranking has not been produced
+   */
+  public double [][] rankedAttributes () throws Exception {
+<span class="nc bnc" id="L168" title="All 2 branches missed.">    if (m_attributeRanking == null) {</span>
+<span class="nc" id="L169">      throw new Exception(&quot;Ranking has not been performed&quot;);</span>
+    }
+<span class="nc" id="L171">    return m_attributeRanking;</span>
+  }
+
+  /**
+   * set the attribute/subset evaluator
+   * @param evaluator the evaluator to use
+   */
+  public void setEvaluator (ASEvaluation evaluator) {
+<span class="fc" id="L179">    m_ASEvaluator = evaluator;</span>
+<span class="fc" id="L180">  }</span>
+
+  /**
+   * set the search method
+   * @param search the search method to use
+   */
+  public void setSearch (ASSearch search) {
+<span class="fc" id="L187">    m_searchMethod = search;</span>
+
+<span class="fc bfc" id="L189" title="All 2 branches covered.">    if (m_searchMethod instanceof RankedOutputSearch) {</span>
+<span class="fc" id="L190">      setRanking(((RankedOutputSearch)m_searchMethod).getGenerateRanking());</span>
+    }
+<span class="fc" id="L192">  }</span>
+
+  /**
+   * set the number of folds for cross validation
+   * @param folds the number of folds
+   */
+  public void setFolds (int folds) {
+<span class="fc" id="L199">    m_numFolds = folds;</span>
+<span class="fc" id="L200">  }</span>
+
+  /**
+   * produce a ranking (if possible with the set search and evaluator)
+   * @param r true if a ranking is to be produced
+   */
+  public void setRanking (boolean r) {
+<span class="fc" id="L207">    m_doRank = r;</span>
+<span class="fc" id="L208">  }</span>
+
+  /**
+   * do a cross validation
+   * @param x true if a cross validation is to be performed
+   */
+  public void setXval (boolean x) {
+<span class="fc" id="L215">    m_doXval = x;</span>
+<span class="fc" id="L216">  }</span>
+
+  /**
+   * set the seed for use in cross validation
+   * @param s the seed
+   */
+  public void setSeed (int s) {
+<span class="fc" id="L223">    m_seed = s;</span>
+<span class="fc" id="L224">  }</span>
+
+  /**
+   * get a description of the attribute selection
+   * @return a String describing the results of attribute selection
+   */
+  public String toResultsString() {
+<span class="nc" id="L231">    return m_selectionResults.toString();</span>
+  }
+
+  /**
+   * reduce the dimensionality of a set of instances to include only those 
+   * attributes chosen by the last run of attribute selection.
+   * @param in the instances to be reduced
+   * @return a dimensionality reduced set of instances
+   * @exception Exception if the instances can't be reduced
+   */
+  public Instances reduceDimensionality(Instances in) throws Exception {
+<span class="pc bpc" id="L242" title="1 of 2 branches missed.">    if (m_attributeFilter == null) {</span>
+<span class="nc" id="L243">      throw new Exception(&quot;No feature selection has been performed yet!&quot;);</span>
+    }
+
+<span class="pc bpc" id="L246" title="1 of 2 branches missed.">    if (m_transformer != null) {</span>
+<span class="nc" id="L247">      Instances transformed = new Instances(m_transformer.transformedHeader(),</span>
+<span class="nc" id="L248">					    in.numInstances());</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">      for (int i=0;i&lt;in.numInstances();i++) {</span>
+<span class="nc" id="L250">	transformed.add(m_transformer.convertInstance(in.instance(i)));</span>
+      }
+<span class="nc" id="L252">      return Filter.useFilter(transformed, m_attributeFilter);</span>
+    }
+
+<span class="fc" id="L255">    return Filter.useFilter(in, m_attributeFilter);</span>
+  }
+
+  /**
+   * reduce the dimensionality of a single instance to include only those 
+   * attributes chosen by the last run of attribute selection.
+   * @param in the instance to be reduced
+   * @return a dimensionality reduced instance
+   * @exception Exception if the instance can't be reduced
+   */
+  public Instance reduceDimensionality(Instance in) throws Exception {
+<span class="pc bpc" id="L266" title="1 of 2 branches missed.">    if (m_attributeFilter == null) {</span>
+<span class="nc" id="L267">      throw new Exception(&quot;No feature selection has been performed yet!&quot;);</span>
+    }
+<span class="pc bpc" id="L269" title="1 of 2 branches missed.">    if (m_transformer != null) {</span>
+<span class="nc" id="L270">      in = m_transformer.convertInstance(in);</span>
+    }
+<span class="fc" id="L272">    m_attributeFilter.input(in);</span>
+<span class="fc" id="L273">    m_attributeFilter.batchFinished();</span>
+<span class="fc" id="L274">    Instance result = m_attributeFilter.output();</span>
+<span class="fc" id="L275">    return result;</span>
+  }
+
+  /**
+   * constructor. Sets defaults for each member varaible. Default
+   * attribute evaluator is CfsSubsetEval; default search method is
+   * BestFirst.
+   */
+<span class="fc" id="L283">  public AttributeSelection () {</span>
+<span class="fc" id="L284">    setFolds(10);</span>
+<span class="fc" id="L285">    setRanking(false);</span>
+<span class="fc" id="L286">    setXval(false);</span>
+<span class="fc" id="L287">    setSeed(1);</span>
+<span class="fc" id="L288">    setEvaluator(new CfsSubsetEval());</span>
+<span class="fc" id="L289">    setSearch(new GreedyStepwise());</span>
+<span class="fc" id="L290">    m_selectionResults = new StringBuffer();</span>
+<span class="fc" id="L291">    m_selectedAttributeSet = null;</span>
+<span class="fc" id="L292">    m_attributeRanking = null;</span>
+<span class="fc" id="L293">  }</span>
+
+  /**
+   * Perform attribute selection with a particular evaluator and
+   * a set of options specifying search method and input file etc.
+   *
+   * @param ASEvaluator an evaluator object
+   * @param options an array of options, not only for the evaluator
+   * but also the search method (if any) and an input data file
+   * @return the results of attribute selection as a String
+   * @exception Exception if no training file is set
+   */
+  public static String SelectAttributes (ASEvaluation ASEvaluator, 
+					 String[] options)
+    throws Exception {
+    String trainFileName, searchName;
+<span class="nc" id="L309">    Instances train = null;</span>
+<span class="nc" id="L310">    ASSearch searchMethod = null;</span>
+<span class="nc" id="L311">    String[] optionsTmp = (String[]) options.clone();</span>
+<span class="nc" id="L312">    boolean helpRequested = false;</span>
+
+    try {
+      // get basic options (options the same for all attribute selectors
+<span class="nc" id="L316">      trainFileName = Utils.getOption('i', options);</span>
+<span class="nc" id="L317">      helpRequested = Utils.getFlag('h', optionsTmp);</span>
+
+<span class="nc bnc" id="L319" title="All 4 branches missed.">      if (helpRequested || (trainFileName.length() == 0)) {</span>
+<span class="nc" id="L320">        searchName = Utils.getOption('s', optionsTmp);</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">        if (searchName.length() != 0) {</span>
+<span class="nc" id="L322">          String[] searchOptions = Utils.splitOptions(searchName);</span>
+<span class="nc" id="L323">          searchMethod = (ASSearch)Class.forName(searchOptions[0]).newInstance();</span>
+        }
+
+<span class="nc bnc" id="L326" title="All 2 branches missed.">        if (helpRequested)</span>
+<span class="nc" id="L327">          throw new Exception(&quot;Help requested.&quot;);</span>
+        else
+<span class="nc" id="L329">          throw new Exception(&quot;No training file given.&quot;);</span>
+      }
+    }
+<span class="nc" id="L332">    catch (Exception e) {</span>
+<span class="nc" id="L333">      throw  new Exception('\n' + e.getMessage() </span>
+<span class="nc" id="L334">			   + makeOptionString(ASEvaluator, searchMethod));</span>
+    }
+
+<span class="nc" id="L337">    DataSource source = new DataSource(trainFileName);</span>
+<span class="nc" id="L338">    train = source.getDataSet();</span>
+<span class="nc" id="L339">    return SelectAttributes(ASEvaluator, options, train);</span>
+  }
+
+  /**
+   * returns a string summarizing the results of repeated attribute
+   * selection runs on splits of a dataset.
+   * @return a summary of attribute selection results
+   * @exception Exception if no attribute selection has been performed.
+   */
+  public String CVResultsString () throws Exception {
+<span class="nc" id="L349">    StringBuffer CvString = new StringBuffer();</span>
+    
+<span class="nc bnc" id="L351" title="All 4 branches missed.">    if ((m_subsetResults == null &amp;&amp; m_rankResults == null) ||</span>
+<span class="nc bnc" id="L352" title="All 2 branches missed.">	( m_trainInstances == null)) {</span>
+<span class="nc" id="L353">      throw new Exception(&quot;Attribute selection has not been performed yet!&quot;);</span>
+    }
+
+<span class="nc" id="L356">    int fieldWidth = (int)(Math.log(m_trainInstances.numAttributes()) +1.0);</span>
+
+<span class="nc" id="L358">    CvString.append(&quot;\n\n=== Attribute selection &quot; + m_numFolds </span>
+<span class="nc" id="L359">		    + &quot; fold cross-validation &quot;);</span>
+
+<span class="nc bnc" id="L361" title="All 2 branches missed.">    if (!(m_ASEvaluator instanceof UnsupervisedSubsetEvaluator) &amp;&amp; </span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">	!(m_ASEvaluator instanceof UnsupervisedAttributeEvaluator) &amp;&amp;</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">	(m_trainInstances.classAttribute().isNominal())) {</span>
+<span class="nc" id="L364">	CvString.append(&quot;(stratified), seed: &quot;);</span>
+<span class="nc" id="L365">	CvString.append(m_seed+&quot; ===\n\n&quot;);</span>
+    }
+    else {
+<span class="nc" id="L368">      CvString.append(&quot;seed: &quot;+m_seed+&quot; ===\n\n&quot;);</span>
+    }
+
+<span class="nc bnc" id="L371" title="All 4 branches missed.">    if ((m_searchMethod instanceof RankedOutputSearch) &amp;&amp; (m_doRank == true)) {</span>
+<span class="nc" id="L372">      CvString.append(&quot;average merit      average rank  attribute\n&quot;);</span>
+
+      // calcualte means and std devs
+<span class="nc bnc" id="L375" title="All 2 branches missed.">      for (int i = 0; i &lt; m_rankResults[0].length; i++) {</span>
+<span class="nc" id="L376">	m_rankResults[0][i] /= m_numFolds; // mean merit</span>
+<span class="nc" id="L377">	double var = m_rankResults[0][i]*m_rankResults[0][i]*m_numFolds;</span>
+<span class="nc" id="L378">	var = (m_rankResults[2][i] - var);</span>
+<span class="nc" id="L379">	var /= m_numFolds;</span>
+
+<span class="nc bnc" id="L381" title="All 2 branches missed.">	if (var &lt;= 0.0) {</span>
+<span class="nc" id="L382">	  var = 0.0;</span>
+<span class="nc" id="L383">	  m_rankResults[2][i] = 0;</span>
+	}
+	else {
+<span class="nc" id="L386">	  m_rankResults[2][i] = Math.sqrt(var);</span>
+	}
+
+<span class="nc" id="L389">	m_rankResults[1][i] /= m_numFolds; // mean rank</span>
+<span class="nc" id="L390">	var = m_rankResults[1][i]*m_rankResults[1][i]*m_numFolds;</span>
+<span class="nc" id="L391">	var = (m_rankResults[3][i] - var);</span>
+<span class="nc" id="L392">	var /= m_numFolds;</span>
+
+<span class="nc bnc" id="L394" title="All 2 branches missed.">	if (var &lt;= 0.0) {</span>
+<span class="nc" id="L395">	  var = 0.0;</span>
+<span class="nc" id="L396">	  m_rankResults[3][i] = 0;</span>
+	}
+	else {
+<span class="nc" id="L399">	  m_rankResults[3][i] = Math.sqrt(var);</span>
+	}
+      }
+
+      // now sort them by mean rank
+<span class="nc" id="L404">      int[] s = Utils.sort(m_rankResults[1]);</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">      for (int i=0; i&lt;s.length; i++) {</span>
+<span class="nc bnc" id="L406" title="All 2 branches missed.">	if (m_rankResults[1][s[i]] &gt; 0) {</span>
+<span class="nc" id="L407">	  CvString.append(Utils.doubleToString(/*Math.</span>
+<span class="nc" id="L408">					       abs(*/m_rankResults[0][s[i]]/*)*/,</span>
+<span class="nc" id="L409">					       6, 3) </span>
+<span class="nc" id="L410">			  + &quot; +-&quot; </span>
+<span class="nc" id="L411">			  + Utils.doubleToString(m_rankResults[2][s[i]], 6, 3) </span>
+<span class="nc" id="L412">			  + &quot;   &quot; </span>
+<span class="nc" id="L413">			  + Utils.doubleToString(m_rankResults[1][s[i]],</span>
+<span class="nc" id="L414">						 fieldWidth+2, 1) </span>
+<span class="nc" id="L415">			  + &quot; +-&quot; </span>
+<span class="nc" id="L416">			  + Utils.doubleToString(m_rankResults[3][s[i]], 5, 2) </span>
+<span class="nc" id="L417">			+&quot;  &quot;</span>
+<span class="nc" id="L418">			  + Utils.doubleToString(((double)(s[i] + 1)), </span>
+<span class="nc" id="L419">						 fieldWidth, 0)</span>
+<span class="nc" id="L420">			  + &quot; &quot; </span>
+<span class="nc" id="L421">			  + m_trainInstances.attribute(s[i]).name() </span>
+<span class="nc" id="L422">			  + &quot;\n&quot;);</span>
+	}
+      }
+    }
+    else {
+<span class="nc" id="L427">      CvString.append(&quot;number of folds (%)  attribute\n&quot;);</span>
+
+<span class="nc bnc" id="L429" title="All 2 branches missed.">      for (int i = 0; i &lt; m_subsetResults.length; i++) {</span>
+<span class="nc bnc" id="L430" title="All 2 branches missed.">	if ((m_ASEvaluator instanceof UnsupervisedSubsetEvaluator) ||</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">	    (i != m_trainInstances.classIndex())) {</span>
+<span class="nc" id="L432">	  CvString.append(Utils.doubleToString(m_subsetResults[i], 12, 0) </span>
+<span class="nc" id="L433">			  + &quot;(&quot; </span>
+<span class="nc" id="L434">			  + Utils.doubleToString((m_subsetResults[i] / </span>
+<span class="nc" id="L435">						  m_numFolds * 100.0)</span>
+<span class="nc" id="L436">						 , 3, 0) </span>
+<span class="nc" id="L437">			  + &quot; %)  &quot; </span>
+<span class="nc" id="L438">			  + Utils.doubleToString(((double)(i + 1)),</span>
+<span class="nc" id="L439">						 fieldWidth, 0)</span>
+<span class="nc" id="L440">			  + &quot; &quot; </span>
+<span class="nc" id="L441">			  + m_trainInstances.attribute(i).name() </span>
+<span class="nc" id="L442">			  + &quot;\n&quot;);</span>
+	}
+      }
+    }
+
+<span class="nc" id="L447">    return CvString.toString();</span>
+  }
+
+  /**
+   * Select attributes for a split of the data. Calling this function
+   * updates the statistics on attribute selection. CVResultsString()
+   * returns a string summarizing the results of repeated calls to
+   * this function. Assumes that splits are from the same dataset---
+   * ie. have the same number and types of attributes as previous
+   * splits.
+   *
+   * @param split the instances to select attributes from
+   * @exception Exception if an error occurs
+   */
+  public void selectAttributesCVSplit(Instances split) throws Exception {
+<span class="nc" id="L462">    double[][] attributeRanking = null;</span>
+
+    // if the train instances are null then set equal to this split.
+    // If this is the case then this function is more than likely being
+    // called from outside this class in order to obtain CV statistics
+    // and all we need m_trainIstances for is to get at attribute names
+    // and types etc.
+<span class="nc bnc" id="L469" title="All 2 branches missed.">    if (m_trainInstances == null) {</span>
+<span class="nc" id="L470">      m_trainInstances = split;</span>
+    }
+
+    // create space to hold statistics
+<span class="nc bnc" id="L474" title="All 4 branches missed.">    if (m_rankResults == null &amp;&amp; m_subsetResults == null) {</span>
+<span class="nc" id="L475">      m_subsetResults = new double[split.numAttributes()];</span>
+<span class="nc" id="L476">      m_rankResults = new double[4][split.numAttributes()];</span>
+    }
+
+<span class="nc" id="L479">    m_ASEvaluator.buildEvaluator(split);</span>
+    // Do the search
+<span class="nc" id="L481">    int[] attributeSet = m_searchMethod.search(m_ASEvaluator, </span>
+<span class="nc" id="L482">					       split);</span>
+    // Do any postprocessing that a attribute selection method might 
+    // require
+<span class="nc" id="L485">    attributeSet = m_ASEvaluator.postProcess(attributeSet);</span>
+    
+<span class="nc bnc" id="L487" title="All 2 branches missed.">    if ((m_searchMethod instanceof RankedOutputSearch) &amp;&amp; </span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">	(m_doRank == true)) {</span>
+<span class="nc" id="L489">      attributeRanking = ((RankedOutputSearch)m_searchMethod).</span>
+<span class="nc" id="L490">	rankedAttributes();</span>
+      
+      // System.out.println(attributeRanking[0][1]);
+<span class="nc bnc" id="L493" title="All 2 branches missed.">      for (int j = 0; j &lt; attributeRanking.length; j++) {</span>
+	// merit
+<span class="nc" id="L495">	m_rankResults[0][(int)attributeRanking[j][0]] += </span>
+<span class="nc" id="L496">	  attributeRanking[j][1];</span>
+	// squared merit
+<span class="nc" id="L498">	m_rankResults[2][(int)attributeRanking[j][0]] += </span>
+<span class="nc" id="L499">	  (attributeRanking[j][1]*attributeRanking[j][1]);</span>
+	// rank
+<span class="nc" id="L501">	m_rankResults[1][(int)attributeRanking[j][0]] += (j + 1);</span>
+	// squared rank
+<span class="nc" id="L503">	m_rankResults[3][(int)attributeRanking[j][0]] += (j + 1)*(j + 1);</span>
+	// += (attributeRanking[j][0] * attributeRanking[j][0]);
+      }
+    } else {
+<span class="nc bnc" id="L507" title="All 2 branches missed.">      for (int j = 0; j &lt; attributeSet.length; j++) {</span>
+<span class="nc" id="L508">	m_subsetResults[attributeSet[j]]++;</span>
+      }
+    }
+
+<span class="nc" id="L512">    m_trials++;</span>
+<span class="nc" id="L513">  }</span>
+
+  /**
+   * Perform a cross validation for attribute selection. With subset
+   * evaluators the number of times each attribute is selected over
+   * the cross validation is reported. For attribute evaluators, the
+   * average merit and average ranking + std deviation is reported for
+   * each attribute.
+   *
+   * @return the results of cross validation as a String
+   * @exception Exception if an error occurs during cross validation
+   */
+  public String CrossValidateAttributes () throws Exception {
+<span class="nc" id="L526">    Instances cvData = new Instances(m_trainInstances);</span>
+    Instances train;
+
+<span class="nc" id="L529">    Random random = new Random(m_seed);</span>
+<span class="nc" id="L530">    cvData.randomize(random);</span>
+
+<span class="nc bnc" id="L532" title="All 2 branches missed.">    if (!(m_ASEvaluator instanceof UnsupervisedSubsetEvaluator) &amp;&amp; </span>
+<span class="nc bnc" id="L533" title="All 2 branches missed.">	!(m_ASEvaluator instanceof UnsupervisedAttributeEvaluator)) {</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">      if (cvData.classAttribute().isNominal()) {</span>
+<span class="nc" id="L535">	cvData.stratify(m_numFolds);</span>
+      }
+
+    }
+
+<span class="nc bnc" id="L540" title="All 2 branches missed.">    for (int i = 0; i &lt; m_numFolds; i++) {</span>
+      // Perform attribute selection
+<span class="nc" id="L542">      train = cvData.trainCV(m_numFolds, i, random);</span>
+<span class="nc" id="L543">      selectAttributesCVSplit(train);</span>
+    }
+
+<span class="nc" id="L546">    return  CVResultsString();</span>
+  }
+
+  /**
+   * Perform attribute selection on the supplied training instances.
+   *
+   * @param data the instances to select attributes from
+   * @exception Exception if there is a problem during selection
+   */
+  public void SelectAttributes (Instances data) throws Exception {
+    int [] attributeSet;
+    
+<span class="fc" id="L558">    m_transformer = null;</span>
+<span class="fc" id="L559">    m_attributeFilter = null;</span>
+<span class="fc" id="L560">    m_trainInstances = data;</span>
+    
+<span class="pc bpc" id="L562" title="3 of 4 branches missed.">    if (m_doXval == true &amp;&amp; (m_ASEvaluator instanceof AttributeTransformer)) {</span>
+<span class="nc" id="L563">      throw new Exception(&quot;Can't cross validate an attribute transformer.&quot;);</span>
+    }
+
+<span class="pc bpc" id="L566" title="1 of 2 branches missed.">    if (m_ASEvaluator instanceof SubsetEvaluator &amp;&amp;</span>
+<span class="pc bpc" id="L567" title="1 of 2 branches missed.">	m_searchMethod instanceof Ranker) {</span>
+<span class="nc" id="L568">      throw new Exception(m_ASEvaluator.getClass().getName()</span>
+<span class="nc" id="L569">			  +&quot; must use a search method other than Ranker&quot;);</span>
+    }
+
+<span class="pc bpc" id="L572" title="1 of 2 branches missed.">    if (m_ASEvaluator instanceof AttributeEvaluator &amp;&amp;</span>
+<span class="nc bnc" id="L573" title="All 2 branches missed.">	!(m_searchMethod instanceof Ranker)) {</span>
+      //      System.err.println(&quot;AttributeEvaluators must use a Ranker search &quot;
+      //			 +&quot;method. Switching to Ranker...&quot;);
+      //      m_searchMethod = new Ranker();
+<span class="nc" id="L577">      throw new Exception(&quot;AttributeEvaluators must use the Ranker search &quot;</span>
+			  + &quot;method&quot;);
+    }
+
+<span class="pc bpc" id="L581" title="1 of 2 branches missed.">    if (m_searchMethod instanceof RankedOutputSearch) {</span>
+<span class="nc" id="L582">      m_doRank = ((RankedOutputSearch)m_searchMethod).getGenerateRanking();</span>
+    }
+
+<span class="pc bpc" id="L585" title="1 of 2 branches missed.">    if (m_ASEvaluator instanceof UnsupervisedAttributeEvaluator ||</span>
+<span class="pc bpc" id="L586" title="1 of 2 branches missed.">	m_ASEvaluator instanceof UnsupervisedSubsetEvaluator) {</span>
+      // unset the class index
+      //      m_trainInstances.setClassIndex(-1);
+    } else {
+      // check that a class index has been set
+<span class="pc bpc" id="L591" title="1 of 2 branches missed.">      if (m_trainInstances.classIndex() &lt; 0) {</span>
+<span class="nc" id="L592">	m_trainInstances.setClassIndex(m_trainInstances.numAttributes()-1);</span>
+      }
+    }
+    
+    // Initialize the attribute evaluator
+<span class="fc" id="L597">    m_ASEvaluator.buildEvaluator(m_trainInstances);</span>
+<span class="pc bpc" id="L598" title="1 of 2 branches missed.">    if (m_ASEvaluator instanceof AttributeTransformer) {</span>
+<span class="nc" id="L599">      m_trainInstances = </span>
+<span class="nc" id="L600">	((AttributeTransformer)m_ASEvaluator).transformedHeader();</span>
+<span class="nc" id="L601">      m_transformer = (AttributeTransformer)m_ASEvaluator;</span>
+    }
+<span class="fc" id="L603">    int fieldWidth = (int)(Math.log(m_trainInstances.numAttributes()) +1.0);</span>
+
+    // Do the search
+<span class="fc" id="L606">    attributeSet = m_searchMethod.search(m_ASEvaluator, </span>
+<span class="fc" id="L607">					 m_trainInstances);</span>
+
+    // try and determine if the search method uses an attribute transformer---
+    // this is a bit of a hack to make things work properly with RankSearch
+    // using PrincipalComponents as its attribute ranker
+     try {
+<span class="fc" id="L613">       BeanInfo bi = Introspector.getBeanInfo(m_searchMethod.getClass());</span>
+       PropertyDescriptor properties[];
+       MethodDescriptor methods[];
+       //       methods = bi.getMethodDescriptors();
+<span class="fc" id="L617">       properties = bi.getPropertyDescriptors();</span>
+<span class="fc bfc" id="L618" title="All 2 branches covered.">       for (int i=0;i&lt;properties.length;i++) {</span>
+<span class="fc" id="L619">	 String name = properties[i].getDisplayName();</span>
+<span class="fc" id="L620">	 Method meth = properties[i].getReadMethod();</span>
+<span class="fc" id="L621">	 Object retType = meth.getReturnType();</span>
+<span class="pc bpc" id="L622" title="1 of 2 branches missed.">	 if (retType.equals(ASEvaluation.class)) {</span>
+<span class="nc" id="L623">	   Class args [] = { };</span>
+<span class="nc" id="L624">	   ASEvaluation tempEval = (ASEvaluation)(meth.invoke(m_searchMethod,</span>
+<span class="nc" id="L625">							      (Object[])args));</span>
+<span class="nc bnc" id="L626" title="All 2 branches missed.">	   if (tempEval instanceof AttributeTransformer) {</span>
+	     // grab the transformed data header
+<span class="nc" id="L628">	     m_trainInstances = </span>
+<span class="nc" id="L629">	       ((AttributeTransformer)tempEval).transformedHeader();</span>
+<span class="nc" id="L630">	     m_transformer = (AttributeTransformer)tempEval;</span>
+	   }
+	 }
+       }
+<span class="nc" id="L634">     } catch (IntrospectionException ex) {</span>
+<span class="nc" id="L635">       System.err.println(&quot;AttributeSelection: Couldn't &quot;</span>
+			  +&quot;introspect&quot;);
+     }
+     
+     
+     // Do any postprocessing that a attribute selection method might require
+<span class="fc" id="L641">     attributeSet = m_ASEvaluator.postProcess(attributeSet);</span>
+<span class="pc bpc" id="L642" title="1 of 2 branches missed.">     if (!m_doRank) {</span>
+<span class="fc" id="L643">       m_selectionResults.append(printSelectionResults());</span>
+     }
+     
+<span class="pc bpc" id="L646" title="3 of 4 branches missed.">    if ((m_searchMethod instanceof RankedOutputSearch) &amp;&amp; m_doRank == true) {</span>
+<span class="nc" id="L647">      m_attributeRanking = </span>
+<span class="nc" id="L648">	((RankedOutputSearch)m_searchMethod).rankedAttributes();</span>
+<span class="nc" id="L649">      m_selectionResults.append(printSelectionResults());</span>
+<span class="nc" id="L650">      m_selectionResults.append(&quot;Ranked attributes:\n&quot;);</span>
+
+      // retrieve the number of attributes to retain
+<span class="nc" id="L653">      m_numToSelect = </span>
+<span class="nc" id="L654">	((RankedOutputSearch)m_searchMethod).getCalculatedNumToSelect();</span>
+
+      // determine fieldwidth for merit
+<span class="nc" id="L657">      int f_p=0;</span>
+<span class="nc" id="L658">      int w_p=0;</span>
+     
+<span class="nc bnc" id="L660" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numToSelect; i++) {</span>
+<span class="nc" id="L661">	double precision = (Math.abs(m_attributeRanking[i][1]) - </span>
+<span class="nc" id="L662">			    (int)(Math.abs(m_attributeRanking[i][1])));</span>
+<span class="nc" id="L663">        double intPart = (int)(Math.abs(m_attributeRanking[i][1]));</span>
+
+<span class="nc bnc" id="L665" title="All 2 branches missed.">	if (precision &gt; 0) {</span>
+<span class="nc" id="L666">	  precision = Math.abs((Math.log(Math.abs(precision)) / </span>
+<span class="nc" id="L667">				Math.log(10)))+3;</span>
+	}
+<span class="nc bnc" id="L669" title="All 2 branches missed.">	if (precision &gt; f_p) {</span>
+<span class="nc" id="L670">	  f_p = (int)precision;</span>
+	}
+
+<span class="nc bnc" id="L673" title="All 2 branches missed.">        if (intPart == 0) {</span>
+<span class="nc bnc" id="L674" title="All 2 branches missed.">          if (w_p &lt; 2) {</span>
+<span class="nc" id="L675">            w_p = 2;</span>
+          }
+<span class="nc" id="L677">        } else if ((Math.abs((Math.log(Math.abs(m_attributeRanking[i][1])) </span>
+<span class="nc bnc" id="L678" title="All 2 branches missed.">		       / Math.log(10)))+1) &gt; w_p) {</span>
+<span class="nc bnc" id="L679" title="All 2 branches missed.">	  if (m_attributeRanking[i][1] &gt; 0) {</span>
+<span class="nc" id="L680">	    w_p = (int)Math.abs((Math.log(Math.abs(m_attributeRanking[i][1]))</span>
+<span class="nc" id="L681">				 / Math.log(10)))+1;</span>
+	  }
+	}
+      }
+
+<span class="nc bnc" id="L686" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numToSelect; i++) {</span>
+<span class="nc" id="L687">	m_selectionResults.</span>
+<span class="nc" id="L688">	  append(Utils.doubleToString(m_attributeRanking[i][1],</span>
+<span class="nc" id="L689">				      f_p+w_p+1,f_p) </span>
+<span class="nc" id="L690">		 + Utils.doubleToString((m_attributeRanking[i][0] + 1),</span>
+<span class="nc" id="L691">					fieldWidth+1,0) </span>
+<span class="nc" id="L692">		 + &quot; &quot; </span>
+<span class="nc" id="L693">		 + m_trainInstances.</span>
+<span class="nc" id="L694">		 attribute((int)m_attributeRanking[i][0]).name() </span>
+<span class="nc" id="L695">		 + &quot;\n&quot;);</span>
+      }
+       
+      // set up the selected attributes array - usable by a filter or
+      // whatever
+<span class="nc bnc" id="L700" title="All 2 branches missed.">      if (m_trainInstances.classIndex() &gt;= 0) {</span>
+<span class="nc bnc" id="L701" title="All 2 branches missed.">        if ((!(m_ASEvaluator instanceof UnsupervisedSubsetEvaluator)        </span>
+<span class="nc bnc" id="L702" title="All 2 branches missed.">             &amp;&amp; !(m_ASEvaluator instanceof UnsupervisedAttributeEvaluator)) ||</span>
+<span class="nc bnc" id="L703" title="All 2 branches missed.">            m_ASEvaluator instanceof AttributeTransformer) {</span>
+          // one more for the class
+<span class="nc" id="L705">          m_selectedAttributeSet = new int[m_numToSelect + 1];</span>
+<span class="nc" id="L706">          m_selectedAttributeSet[m_numToSelect] = </span>
+<span class="nc" id="L707">              m_trainInstances.classIndex();</span>
+        } else {
+<span class="nc" id="L709">          m_selectedAttributeSet = new int[m_numToSelect];</span>
+        }
+      } else {
+<span class="nc" id="L712">	m_selectedAttributeSet = new int[m_numToSelect];</span>
+      }
+
+<span class="nc" id="L715">      m_selectionResults.append(&quot;\nSelected attributes: &quot;);</span>
+
+<span class="nc bnc" id="L717" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numToSelect; i++) {</span>
+<span class="nc" id="L718">	m_selectedAttributeSet[i] = (int)m_attributeRanking[i][0];</span>
+	 
+<span class="nc bnc" id="L720" title="All 2 branches missed.">	if (i == m_numToSelect - 1) {</span>
+<span class="nc" id="L721">	  m_selectionResults.append(((int)m_attributeRanking[i][0] + 1) </span>
+<span class="nc" id="L722">				    + &quot; : &quot; </span>
+<span class="nc" id="L723">				    + (i + 1) </span>
+<span class="nc" id="L724">				    + &quot;\n&quot;);</span>
+	}
+	else {
+<span class="nc" id="L727">	  m_selectionResults.append(((int)m_attributeRanking[i][0] + 1));</span>
+<span class="nc" id="L728">	  m_selectionResults.append(&quot;,&quot;);</span>
+	}
+      }
+    } else {
+      // set up the selected attributes array - usable by a filter or
+      // whatever
+<span class="pc bpc" id="L734" title="1 of 2 branches missed.">      if ((!(m_ASEvaluator instanceof UnsupervisedSubsetEvaluator) </span>
+<span class="pc bpc" id="L735" title="1 of 2 branches missed.">	   &amp;&amp; !(m_ASEvaluator instanceof UnsupervisedAttributeEvaluator)) || </span>
+<span class="nc bnc" id="L736" title="All 2 branches missed.">	  m_trainInstances.classIndex() &gt;= 0) </span>
+	// one more for the class
+	{
+<span class="fc" id="L739">	  m_selectedAttributeSet = new int[attributeSet.length + 1];</span>
+<span class="fc" id="L740">	  m_selectedAttributeSet[attributeSet.length] = </span>
+<span class="fc" id="L741">	    m_trainInstances.classIndex();</span>
+	}
+      else {
+<span class="nc" id="L744">	m_selectedAttributeSet = new int[attributeSet.length];</span>
+      }
+      
+<span class="fc bfc" id="L747" title="All 2 branches covered.">      for (int i = 0; i &lt; attributeSet.length; i++) {</span>
+<span class="fc" id="L748">	m_selectedAttributeSet[i] = attributeSet[i];</span>
+      }
+
+<span class="fc" id="L751">      m_selectionResults.append(&quot;Selected attributes: &quot;);</span>
+
+<span class="fc bfc" id="L753" title="All 2 branches covered.">      for (int i = 0; i &lt; attributeSet.length; i++) {</span>
+<span class="fc bfc" id="L754" title="All 2 branches covered.">	if (i == (attributeSet.length - 1)) {</span>
+<span class="fc" id="L755">	  m_selectionResults.append((attributeSet[i] + 1) </span>
+<span class="fc" id="L756">				    + &quot; : &quot; </span>
+<span class="fc" id="L757">				    + attributeSet.length </span>
+<span class="fc" id="L758">				    + &quot;\n&quot;);</span>
+	}
+	else {
+<span class="fc" id="L761">	  m_selectionResults.append((attributeSet[i] + 1) + &quot;,&quot;);</span>
+	}
+      }
+
+<span class="fc bfc" id="L765" title="All 2 branches covered.">      for (int i=0;i&lt;attributeSet.length;i++) {</span>
+<span class="fc" id="L766">	m_selectionResults.append(&quot;                     &quot;</span>
+<span class="fc" id="L767">				  +m_trainInstances</span>
+<span class="fc" id="L768">				  .attribute(attributeSet[i]).name()</span>
+<span class="fc" id="L769">				  +&quot;\n&quot;);</span>
+      }
+    }
+
+    // Cross validation should be called from here
+<span class="pc bpc" id="L774" title="1 of 2 branches missed.">    if (m_doXval == true) {</span>
+<span class="nc" id="L775">      m_selectionResults.append(CrossValidateAttributes()); </span>
+    }
+
+    // set up the attribute filter with the selected attributes
+<span class="pc bpc" id="L779" title="2 of 4 branches missed.">    if (m_selectedAttributeSet != null &amp;&amp; !m_doXval) {</span>
+<span class="fc" id="L780">      m_attributeFilter = new Remove();</span>
+<span class="fc" id="L781">      m_attributeFilter.setAttributeIndicesArray(m_selectedAttributeSet);</span>
+<span class="fc" id="L782">      m_attributeFilter.setInvertSelection(true);</span>
+<span class="fc" id="L783">      m_attributeFilter.setInputFormat(m_trainInstances);  </span>
+    }
+
+    // Save space
+<span class="fc" id="L787">    m_trainInstances = new Instances(m_trainInstances, 0);</span>
+<span class="fc" id="L788">  }</span>
+
+  /**
+   * Perform attribute selection with a particular evaluator and
+   * a set of options specifying search method and options for the
+   * search method and evaluator.
+   *
+   * @param ASEvaluator an evaluator object
+   * @param options an array of options, not only for the evaluator
+   * but also the search method (if any) and an input data file
+   * @param train the input instances
+   * @return the results of attribute selection as a String
+   * @exception Exception if incorrect options are supplied
+   */
+  public static String SelectAttributes (ASEvaluation ASEvaluator, 
+					 String[] options, 
+					 Instances train)
+    throws Exception {
+<span class="nc" id="L806">    int seed = 1, folds = 10;</span>
+    String foldsString, seedString, searchName;
+    String classString;
+    String searchClassName;
+<span class="nc" id="L810">    String[] searchOptions = null; //new String [1];</span>
+<span class="nc" id="L811">    ASSearch searchMethod = null;</span>
+<span class="nc" id="L812">    boolean doCrossVal = false;</span>
+<span class="nc" id="L813">    int classIndex = -1;</span>
+<span class="nc" id="L814">    boolean helpRequested = false;</span>
+<span class="nc" id="L815">    AttributeSelection trainSelector = new AttributeSelection();</span>
+
+    try {
+<span class="nc bnc" id="L818" title="All 2 branches missed.">      if (Utils.getFlag('h', options)) {</span>
+<span class="nc" id="L819">	helpRequested = true;</span>
+      }
+
+      // does data already have a class attribute set?
+<span class="nc bnc" id="L823" title="All 2 branches missed.">      if (train.classIndex() != -1)</span>
+<span class="nc" id="L824">	classIndex = train.classIndex() + 1;</span>
+
+      // get basic options (options the same for all attribute selectors
+<span class="nc" id="L827">      classString = Utils.getOption('c', options);</span>
+
+<span class="nc bnc" id="L829" title="All 2 branches missed.">      if (classString.length() != 0) {</span>
+<span class="nc bnc" id="L830" title="All 2 branches missed.">	if (classString.equals(&quot;first&quot;)) {</span>
+<span class="nc" id="L831">	  classIndex = 1;</span>
+<span class="nc bnc" id="L832" title="All 2 branches missed.">	} else if (classString.equals(&quot;last&quot;)) {</span>
+<span class="nc" id="L833">	  classIndex = train.numAttributes();</span>
+	} else {
+<span class="nc" id="L835">	  classIndex = Integer.parseInt(classString);</span>
+	}
+      }
+
+<span class="nc bnc" id="L839" title="All 2 branches missed.">      if ((classIndex != -1) &amp;&amp; </span>
+<span class="nc bnc" id="L840" title="All 4 branches missed.">	  ((classIndex == 0) || (classIndex &gt; train.numAttributes()))) {</span>
+<span class="nc" id="L841">	throw  new Exception(&quot;Class index out of range.&quot;);</span>
+      }
+
+<span class="nc bnc" id="L844" title="All 2 branches missed.">      if (classIndex != -1) {</span>
+<span class="nc" id="L845">	train.setClassIndex(classIndex - 1);</span>
+      }
+      else {
+	//	classIndex = train.numAttributes();
+	//	train.setClassIndex(classIndex - 1);
+      }
+      
+<span class="nc" id="L852">      foldsString = Utils.getOption('x', options);</span>
+
+<span class="nc bnc" id="L854" title="All 2 branches missed.">      if (foldsString.length() != 0) {</span>
+<span class="nc" id="L855">	folds = Integer.parseInt(foldsString);</span>
+<span class="nc" id="L856">	doCrossVal = true;</span>
+      }
+      
+<span class="nc" id="L859">      trainSelector.setFolds(folds);</span>
+<span class="nc" id="L860">      trainSelector.setXval(doCrossVal);</span>
+
+<span class="nc" id="L862">      seedString = Utils.getOption('n', options);</span>
+
+<span class="nc bnc" id="L864" title="All 2 branches missed.">      if (seedString.length() != 0) {</span>
+<span class="nc" id="L865">	seed = Integer.parseInt(seedString);</span>
+      }
+
+<span class="nc" id="L868">      trainSelector.setSeed(seed);</span>
+
+<span class="nc" id="L870">      searchName = Utils.getOption('s', options);</span>
+
+<span class="nc bnc" id="L872" title="All 2 branches missed.">      if ((searchName.length() == 0) &amp;&amp; </span>
+<span class="nc bnc" id="L873" title="All 2 branches missed.">	  (!(ASEvaluator instanceof AttributeEvaluator))) {</span>
+<span class="nc" id="L874">	throw  new Exception(&quot;No search method given.&quot;);</span>
+      }
+
+<span class="nc bnc" id="L877" title="All 2 branches missed.">      if (searchName.length() != 0) {</span>
+<span class="nc" id="L878">	searchName = searchName.trim();</span>
+	// split off any search options
+<span class="nc" id="L880">	int breakLoc = searchName.indexOf(' ');</span>
+<span class="nc" id="L881">	searchClassName = searchName;</span>
+<span class="nc" id="L882">	String searchOptionsString = &quot;&quot;;</span>
+
+<span class="nc bnc" id="L884" title="All 2 branches missed.">	if (breakLoc != -1) {</span>
+<span class="nc" id="L885">	  searchClassName = searchName.substring(0, breakLoc);</span>
+<span class="nc" id="L886">	  searchOptionsString = searchName.substring(breakLoc).trim();</span>
+<span class="nc" id="L887">	  searchOptions = Utils.splitOptions(searchOptionsString);</span>
+	}
+      }
+      else {
+	try {
+<span class="nc" id="L892">	  searchClassName = new String(&quot;weka.attributeSelection.Ranker&quot;);</span>
+<span class="nc" id="L893">	  searchMethod = (ASSearch)Class.</span>
+<span class="nc" id="L894">	    forName(searchClassName).newInstance();</span>
+	}
+<span class="nc" id="L896">	catch (Exception e) {</span>
+<span class="nc" id="L897">	  throw  new Exception(&quot;Can't create Ranker object&quot;);</span>
+	}
+      }
+
+      // if evaluator is a subset evaluator
+      // create search method and set its options (if any)
+<span class="nc bnc" id="L903" title="All 2 branches missed.">      if (searchMethod == null) {</span>
+<span class="nc" id="L904">	searchMethod = ASSearch.forName(searchClassName, searchOptions);</span>
+      }
+
+      // set the search method
+<span class="nc" id="L908">      trainSelector.setSearch(searchMethod);</span>
+    }
+<span class="nc" id="L910">    catch (Exception e) {</span>
+<span class="nc" id="L911">      throw  new Exception('\n' + e.getMessage() </span>
+<span class="nc" id="L912">			   + makeOptionString(ASEvaluator, searchMethod));</span>
+    }
+
+    try {
+      // Set options for ASEvaluator
+<span class="nc bnc" id="L917" title="All 2 branches missed.">      if (ASEvaluator instanceof OptionHandler) {</span>
+<span class="nc" id="L918">	((OptionHandler)ASEvaluator).setOptions(options);</span>
+      }
+
+      /* // Set options for Search method
+	 if (searchMethod instanceof OptionHandler)
+	 {
+	 if (searchOptions != null)
+	 {
+	 ((OptionHandler)searchMethod).setOptions(searchOptions);
+	 }
+	 }
+	 Utils.checkForRemainingOptions(searchOptions); */
+    }
+<span class="nc" id="L931">    catch (Exception e) {</span>
+<span class="nc" id="L932">      throw  new Exception(&quot;\n&quot; + e.getMessage() </span>
+<span class="nc" id="L933">			   + makeOptionString(ASEvaluator, searchMethod));</span>
+    }
+
+    try {
+<span class="nc" id="L937">      Utils.checkForRemainingOptions(options);</span>
+    }
+<span class="nc" id="L939">    catch (Exception e) {</span>
+<span class="nc" id="L940">      throw  new Exception('\n' + e.getMessage() </span>
+<span class="nc" id="L941">			   + makeOptionString(ASEvaluator, searchMethod));</span>
+    }
+
+<span class="nc bnc" id="L944" title="All 2 branches missed.">    if (helpRequested) {</span>
+<span class="nc" id="L945">      System.out.println(makeOptionString(ASEvaluator, searchMethod));</span>
+<span class="nc" id="L946">      System.exit(0);</span>
+    }
+
+    // set the attribute evaluator
+<span class="nc" id="L950">    trainSelector.setEvaluator(ASEvaluator);</span>
+
+    // do the attribute selection
+<span class="nc" id="L953">    trainSelector.SelectAttributes(train);</span>
+
+    // return the results string
+<span class="nc" id="L956">    return trainSelector.toResultsString();</span>
+  }
+
+
+  /**
+   * Assembles a text description of the attribute selection results.
+   *
+   * @return a string describing the results of attribute selection.
+   */
+  private String printSelectionResults () {
+<span class="fc" id="L966">    StringBuffer text = new StringBuffer();</span>
+<span class="fc" id="L967">    text.append(&quot;\n\n=== Attribute Selection on all input data ===\n\n&quot; </span>
+		+ &quot;Search Method:\n&quot;);
+<span class="fc" id="L969">    text.append(m_searchMethod.toString());</span>
+<span class="fc" id="L970">    text.append(&quot;\nAttribute &quot;);</span>
+
+<span class="pc bpc" id="L972" title="1 of 2 branches missed.">    if (m_ASEvaluator instanceof SubsetEvaluator) {</span>
+<span class="fc" id="L973">      text.append(&quot;Subset Evaluator (&quot;);</span>
+    }
+    else {
+<span class="nc" id="L976">      text.append(&quot;Evaluator (&quot;);</span>
+    }
+
+<span class="pc bpc" id="L979" title="1 of 2 branches missed.">    if (!(m_ASEvaluator instanceof UnsupervisedSubsetEvaluator) </span>
+<span class="pc bpc" id="L980" title="1 of 2 branches missed.">	&amp;&amp; !(m_ASEvaluator instanceof UnsupervisedAttributeEvaluator)) {</span>
+<span class="fc" id="L981">      text.append(&quot;supervised, &quot;);</span>
+<span class="fc" id="L982">      text.append(&quot;Class (&quot;);</span>
+
+<span class="fc" id="L984">      if (m_trainInstances.attribute(m_trainInstances.classIndex())</span>
+<span class="fc bfc" id="L985" title="All 2 branches covered.">	  .isNumeric()) {</span>
+<span class="fc" id="L986">	text.append(&quot;numeric): &quot;);</span>
+      }
+      else {
+<span class="fc" id="L989">	text.append(&quot;nominal): &quot;);</span>
+      }
+
+<span class="fc" id="L992">      text.append((m_trainInstances.classIndex() + 1) </span>
+<span class="fc" id="L993">		  + &quot; &quot; </span>
+<span class="fc" id="L994">		  + m_trainInstances.attribute(m_trainInstances</span>
+<span class="fc" id="L995">					       .classIndex()).name() </span>
+<span class="fc" id="L996">		  + &quot;):\n&quot;);</span>
+    }
+    else {
+<span class="nc" id="L999">      text.append(&quot;unsupervised):\n&quot;);</span>
+    }
+
+<span class="fc" id="L1002">    text.append(m_ASEvaluator.toString() + &quot;\n&quot;);</span>
+<span class="fc" id="L1003">    return  text.toString();</span>
+  }
+
+
+  /**
+   * Make up the help string giving all the command line options
+   *
+   * @param ASEvaluator the attribute evaluator to include options for
+   * @param searchMethod the search method to include options for
+   * @return a string detailing the valid command line options
+   * @throws Exception if something goes wrong
+   */
+  private static String makeOptionString (ASEvaluation ASEvaluator, 
+					  ASSearch searchMethod)
+    throws Exception {
+    
+<span class="nc" id="L1019">    StringBuffer optionsText = new StringBuffer(&quot;&quot;);</span>
+    // General options
+<span class="nc" id="L1021">    optionsText.append(&quot;\n\nGeneral options:\n\n&quot;);</span>
+<span class="nc" id="L1022">    optionsText.append(&quot;-h\n\tdisplay this help\n&quot;);</span>
+<span class="nc" id="L1023">    optionsText.append(&quot;-i &lt;name of input file&gt;\n&quot;);</span>
+<span class="nc" id="L1024">    optionsText.append(&quot;\tSets training file.\n&quot;);</span>
+<span class="nc" id="L1025">    optionsText.append(&quot;-c &lt;class index&gt;\n&quot;);</span>
+<span class="nc" id="L1026">    optionsText.append(&quot;\tSets the class index for supervised attribute\n&quot;);</span>
+<span class="nc" id="L1027">    optionsText.append(&quot;\tselection. Default=last column.\n&quot;);</span>
+<span class="nc" id="L1028">    optionsText.append(&quot;-s &lt;class name&gt;\n&quot;);</span>
+<span class="nc" id="L1029">    optionsText.append(&quot;\tSets search method for subset evaluators.\n&quot;);</span>
+<span class="nc" id="L1030">    optionsText.append(&quot;-x &lt;number of folds&gt;\n&quot;);</span>
+<span class="nc" id="L1031">    optionsText.append(&quot;\tPerform a cross validation.\n&quot;);</span>
+<span class="nc" id="L1032">    optionsText.append(&quot;-n &lt;random number seed&gt;\n&quot;);</span>
+<span class="nc" id="L1033">    optionsText.append(&quot;\tUse in conjunction with -x.\n&quot;);</span>
+
+    // Get attribute evaluator-specific options
+<span class="nc bnc" id="L1036" title="All 2 branches missed.">    if (ASEvaluator instanceof OptionHandler) {</span>
+<span class="nc" id="L1037">      optionsText.append(&quot;\nOptions specific to &quot; </span>
+<span class="nc" id="L1038">			 + ASEvaluator.getClass().getName() </span>
+<span class="nc" id="L1039">			 + &quot;:\n\n&quot;);</span>
+<span class="nc" id="L1040">      Enumeration enu = ((OptionHandler)ASEvaluator).listOptions();</span>
+
+<span class="nc bnc" id="L1042" title="All 2 branches missed.">      while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L1043">	Option option = (Option)enu.nextElement();</span>
+<span class="nc" id="L1044">	optionsText.append(option.synopsis() + '\n');</span>
+<span class="nc" id="L1045">	optionsText.append(option.description() + &quot;\n&quot;);</span>
+      }
+    }
+
+<span class="nc bnc" id="L1049" title="All 2 branches missed.">    if (searchMethod != null) {</span>
+<span class="nc bnc" id="L1050" title="All 2 branches missed.">      if (searchMethod instanceof OptionHandler) {</span>
+<span class="nc" id="L1051">	optionsText.append(&quot;\nOptions specific to &quot; </span>
+<span class="nc" id="L1052">			   + searchMethod.getClass().getName() </span>
+<span class="nc" id="L1053">			   + &quot;:\n\n&quot;);</span>
+<span class="nc" id="L1054">	Enumeration enu = ((OptionHandler)searchMethod).listOptions();</span>
+
+<span class="nc bnc" id="L1056" title="All 2 branches missed.">	while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L1057">	  Option option = (Option)enu.nextElement();</span>
+<span class="nc" id="L1058">	  optionsText.append(option.synopsis() + '\n');</span>
+<span class="nc" id="L1059">	  optionsText.append(option.description() + &quot;\n&quot;);</span>
+	}
+      }
+    }
+    else {
+<span class="nc bnc" id="L1064" title="All 2 branches missed.">      if (ASEvaluator instanceof SubsetEvaluator) {</span>
+<span class="nc" id="L1065">	System.out.println(&quot;No search method given.&quot;);</span>
+      }
+    }
+
+<span class="nc" id="L1069">    return  optionsText.toString();</span>
+  }
+
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param args the options
+   */
+  public static void main (String[] args) {
+    try {
+<span class="nc bnc" id="L1080" title="All 2 branches missed.">      if (args.length == 0) {</span>
+<span class="nc" id="L1081">	throw  new Exception(&quot;The first argument must be the name of an &quot; </span>
+			     + &quot;attribute/subset evaluator&quot;);
+      }
+
+<span class="nc" id="L1085">      String EvaluatorName = args[0];</span>
+<span class="nc" id="L1086">      args[0] = &quot;&quot;;</span>
+<span class="nc" id="L1087">      ASEvaluation newEval = ASEvaluation.forName(EvaluatorName, null);</span>
+<span class="nc" id="L1088">      System.out.println(SelectAttributes(newEval, args));</span>
+    }
+<span class="nc" id="L1090">    catch (Exception e) {</span>
+<span class="nc" id="L1091">      System.out.println(e.getMessage());</span>
+    }
+<span class="nc" id="L1093">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1101">    return RevisionUtils.extract(&quot;$Revision: 7953 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

@@ -1,0 +1,1038 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>CSVLoader.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core.converters</a> &gt; <span class="el_source">CSVLoader.java</span></div><h1>CSVLoader.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    CSVLoader.java
+ *    Copyright (C) 2000 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.core.converters;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.StreamTokenizer;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.Vector;
+
+import weka.core.Attribute;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.Range;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+
+/**
+ &lt;!-- globalinfo-start --&gt; 
+ * Reads a source that is in comma separated or tab
+ * separated format. Assumes that the first row in the file determines the
+ * number of and names of the attributes.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- options-start --&gt; 
+ * Valid options are:
+ * &lt;p/&gt;
+ * 
+ * &lt;pre&gt;
+ * -N &amp;lt;range&amp;gt;
+ *  The range of attributes to force type to be NOMINAL.
+ *  'first' and 'last' are accepted as well.
+ *  Examples: &quot;first-last&quot;, &quot;1,4,5-27,50-last&quot;
+ *  (default: -none-)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -S &amp;lt;range&amp;gt;
+ *  The range of attribute to force type to be STRING.
+ *  'first' and 'last' are accepted as well.
+ *  Examples: &quot;first-last&quot;, &quot;1,4,5-27,50-last&quot;
+ *  (default: -none-)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -D &amp;lt;range&amp;gt;
+ *  The range of attribute to force type to be DATE.
+ *  'first' and 'last' are accepted as well.
+ *  Examples: &quot;first-last&quot;, &quot;1,4,5-27,50-last&quot;
+ *  (default: -none-)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -format &amp;lt;date format&amp;gt;
+ *  The date formatting string to use to parse date values.
+ *  (default: &quot;yyyy-MM-dd'T'HH:mm:ss&quot;)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -M &amp;lt;str&amp;gt;
+ *  The string representing a missing value.
+ *  (default: ?)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt;
+ * -E &amp;lt;enclosures&amp;gt;
+ *  The enclosure character(s) to use for strings.
+ *  Specify as a comma separated list (e.g. &quot;,' (default: '&quot;')
+ * &lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ * 
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version $Revision: 9280 $
+ * @see Loader
+ */
+<span class="fc" id="L108">public class CSVLoader extends AbstractFileLoader implements BatchConverter,</span>
+    OptionHandler {
+
+  /** for serialization. */
+  static final long serialVersionUID = 5607529739745491340L;
+
+  /** the file extension. */
+<span class="fc" id="L115">  public static String FILE_EXTENSION = &quot;.csv&quot;;</span>
+
+  /**
+   * A list of hash tables for accumulating nominal values during parsing.
+   */
+  protected FastVector m_cumulativeStructure;
+
+  /**
+   * Holds instances accumulated so far.
+   */
+  protected FastVector m_cumulativeInstances;
+
+  /** The reader for the data. */
+  protected transient BufferedReader m_sourceReader;
+
+  /** Tokenizer for the data. */
+  protected transient StreamTokenizer m_st;
+
+  /** The range of attributes to force to type nominal. */
+<span class="fc" id="L134">  protected Range m_NominalAttributes = new Range();</span>
+
+  /** The range of attributes to force to type string. */
+<span class="fc" id="L137">  protected Range m_StringAttributes = new Range();</span>
+
+  /** The range of attributes to force to type date */
+<span class="fc" id="L140">  protected Range m_dateAttributes = new Range();</span>
+
+  /** The formatting string to use to parse dates */
+<span class="fc" id="L143">  protected String m_dateFormat = &quot;&quot;;</span>
+
+  /** The formatter to use on dates */
+  protected SimpleDateFormat m_formatter;
+
+  /** The placeholder for missing values. */
+<span class="fc" id="L149">  protected String m_MissingValue = &quot;?&quot;;</span>
+
+  /** whether the first row has been read. */
+  protected boolean m_FirstCheck;
+
+  /** enclosure character(s) to use for strings */
+<span class="fc" id="L155">  protected String m_Enclosures = &quot;\&quot;,\'&quot;;</span>
+
+  /**
+   * default constructor.
+   */
+<span class="fc" id="L160">  public CSVLoader() {</span>
+    // No instances retrieved yet
+<span class="fc" id="L162">    setRetrieval(NONE);</span>
+<span class="fc" id="L163">  }</span>
+
+  /**
+   * Get the file extension used for arff files.
+   * 
+   * @return the file extension
+   */
+  public String getFileExtension() {
+<span class="fc" id="L171">    return FILE_EXTENSION;</span>
+  }
+
+  /**
+   * Returns a description of the file type.
+   * 
+   * @return a short file description
+   */
+  public String getFileDescription() {
+<span class="nc" id="L180">    return &quot;CSV data files&quot;;</span>
+  }
+
+  /**
+   * Gets all the file extensions used for this type of file.
+   * 
+   * @return the file extensions
+   */
+  public String[] getFileExtensions() {
+<span class="fc" id="L189">    return new String[] { getFileExtension() };</span>
+  }
+
+  /**
+   * Returns a string describing this attribute evaluator.
+   * 
+   * @return a description of the evaluator suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L199">    return &quot;Reads a source that is in comma separated or tab separated format. &quot;</span>
+        + &quot;Assumes that the first row in the file determines the number of &quot;
+        + &quot;and names of the attributes.&quot;;
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   * 
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L210">    Vector result = new Vector();</span>
+
+<span class="nc" id="L212">    result.addElement(new Option(</span>
+<span class="nc" id="L213">        &quot;\tThe range of attributes to force type to be NOMINAL.\n&quot;</span>
+            + &quot;\t'first' and 'last' are accepted as well.\n&quot;
+            + &quot;\tExamples: \&quot;first-last\&quot;, \&quot;1,4,5-27,50-last\&quot;\n&quot;
+<span class="nc" id="L216">            + &quot;\t(default: -none-)&quot;, &quot;N&quot;, 1, &quot;-N &lt;range&gt;&quot;));</span>
+
+<span class="nc" id="L218">    result.addElement(new Option(</span>
+<span class="nc" id="L219">        &quot;\tThe range of attribute to force type to be STRING.\n&quot;</span>
+            + &quot;\t'first' and 'last' are accepted as well.\n&quot;
+            + &quot;\tExamples: \&quot;first-last\&quot;, \&quot;1,4,5-27,50-last\&quot;\n&quot;
+<span class="nc" id="L222">            + &quot;\t(default: -none-)&quot;, &quot;S&quot;, 1, &quot;-S &lt;range&gt;&quot;));</span>
+
+<span class="nc" id="L224">    result.add(new Option(</span>
+<span class="nc" id="L225">        &quot;\tThe range of attribute to force type to be DATE.\n&quot;</span>
+            + &quot;\t'first' and 'last' are accepted as well.\n&quot;
+            + &quot;\tExamples: \&quot;first-last\&quot;, \&quot;1,4,5-27,50-last\&quot;\n&quot;
+<span class="nc" id="L228">            + &quot;\t(default: -none-)&quot;, &quot;D&quot;, 1, &quot;-D &lt;range&gt;&quot;));</span>
+
+<span class="nc" id="L230">    result.add(new Option(</span>
+<span class="nc" id="L231">        &quot;\tThe date formatting string to use to parse date values.\n&quot;</span>
+<span class="nc" id="L232">            + &quot;\t(default: \&quot;yyyy-MM-dd'T'HH:mm:ss\&quot;)&quot;, &quot;format&quot;, 1,</span>
+<span class="nc" id="L233">        &quot;-format &lt;date format&gt;&quot;));</span>
+
+<span class="nc" id="L235">    result.addElement(new Option(&quot;\tThe string representing a missing value.\n&quot;</span>
+<span class="nc" id="L236">        + &quot;\t(default: ?)&quot;, &quot;M&quot;, 1, &quot;-M &lt;str&gt;&quot;));</span>
+
+<span class="nc" id="L238">    result.addElement(new Option(</span>
+<span class="nc" id="L239">        &quot;\tThe enclosure character(s) to use for strings.\n&quot;</span>
+            + &quot;\tSpecify as a comma separated list (e.g. \&quot;,'&quot;
+<span class="nc" id="L241">            + &quot; (default: \&quot;,')&quot;, &quot;E&quot;, 1, &quot;-E &lt;enclosures&gt;&quot;));</span>
+
+<span class="nc" id="L243">    return result.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options.
+   * &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt; 
+   * Valid options are:
+   * &lt;p/&gt;
+   * 
+   * &lt;pre&gt;
+   * -N &amp;lt;range&amp;gt;
+   *  The range of attributes to force type to be NOMINAL.
+   *  'first' and 'last' are accepted as well.
+   *  Examples: &quot;first-last&quot;, &quot;1,4,5-27,50-last&quot;
+   *  (default: -none-)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -S &amp;lt;range&amp;gt;
+   *  The range of attribute to force type to be STRING.
+   *  'first' and 'last' are accepted as well.
+   *  Examples: &quot;first-last&quot;, &quot;1,4,5-27,50-last&quot;
+   *  (default: -none-)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -D &amp;lt;range&amp;gt;
+   *  The range of attribute to force type to be DATE.
+   *  'first' and 'last' are accepted as well.
+   *  Examples: &quot;first-last&quot;, &quot;1,4,5-27,50-last&quot;
+   *  (default: -none-)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -format &amp;lt;date format&amp;gt;
+   *  The date formatting string to use to parse date values.
+   *  (default: &quot;yyyy-MM-dd'T'HH:mm:ss&quot;)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -M &amp;lt;str&amp;gt;
+   *  The string representing a missing value.
+   *  (default: ?)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt;
+   * -E &amp;lt;enclosures&amp;gt;
+   *  The enclosure character(s) to use for strings.
+   *  Specify as a comma separated list (e.g. &quot;,' (default: '&quot;')
+   * &lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   * 
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    String tmpStr;
+
+<span class="nc" id="L304">    tmpStr = Utils.getOption('N', options);</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L306">      setNominalAttributes(tmpStr);</span>
+    else
+<span class="nc" id="L308">      setNominalAttributes(&quot;&quot;);</span>
+
+<span class="nc" id="L310">    tmpStr = Utils.getOption('S', options);</span>
+<span class="nc bnc" id="L311" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L312">      setStringAttributes(tmpStr);</span>
+    else
+<span class="nc" id="L314">      setStringAttributes(&quot;&quot;);</span>
+
+<span class="nc" id="L316">    tmpStr = Utils.getOption('M', options);</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">    if (tmpStr.length() != 0)</span>
+<span class="nc" id="L318">      setMissingValue(tmpStr);</span>
+    else
+<span class="nc" id="L320">      setMissingValue(&quot;?&quot;);</span>
+
+<span class="nc" id="L322">    tmpStr = Utils.getOption('D', options);</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">    if (tmpStr.length() &gt; 0) {</span>
+<span class="nc" id="L324">      setDateAttributes(tmpStr);</span>
+    }
+<span class="nc" id="L326">    tmpStr = Utils.getOption(&quot;format&quot;, options);</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">    if (tmpStr.length() &gt; 0) {</span>
+<span class="nc" id="L328">      setDateFormat(tmpStr);</span>
+    }
+<span class="nc" id="L330">    tmpStr = Utils.getOption(&quot;E&quot;, options);</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">    if (tmpStr.length() &gt; 0) {</span>
+<span class="nc" id="L332">      setEnclosureCharacters(tmpStr);</span>
+    }
+<span class="nc" id="L334">  }</span>
+
+  /**
+   * Gets the current settings of the Classifier.
+   * 
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    Vector&lt;String&gt; result;
+
+<span class="nc" id="L344">    result = new Vector&lt;String&gt;();</span>
+
+<span class="nc bnc" id="L346" title="All 2 branches missed.">    if (getNominalAttributes().length() &gt; 0) {</span>
+<span class="nc" id="L347">      result.add(&quot;-N&quot;);</span>
+<span class="nc" id="L348">      result.add(getNominalAttributes());</span>
+    }
+
+<span class="nc bnc" id="L351" title="All 2 branches missed.">    if (getStringAttributes().length() &gt; 0) {</span>
+<span class="nc" id="L352">      result.add(&quot;-S&quot;);</span>
+<span class="nc" id="L353">      result.add(getStringAttributes());</span>
+    }
+
+<span class="nc bnc" id="L356" title="All 2 branches missed.">    if (getDateAttributes().length() &gt; 0) {</span>
+<span class="nc" id="L357">      result.add(&quot;-D&quot;);</span>
+<span class="nc" id="L358">      result.add(getDateAttributes());</span>
+<span class="nc" id="L359">      result.add(&quot;-format&quot;);</span>
+<span class="nc" id="L360">      result.add(getDateFormat());</span>
+    }
+
+<span class="nc" id="L363">    result.add(&quot;-M&quot;);</span>
+<span class="nc" id="L364">    result.add(getMissingValue());</span>
+
+<span class="nc" id="L366">    result.add(&quot;-E&quot;);</span>
+<span class="nc" id="L367">    result.add(getEnclosureCharacters());</span>
+
+<span class="nc" id="L369">    return result.toArray(new String[result.size()]);</span>
+  }
+
+  /**
+   * Sets the attribute range to be forced to type nominal.
+   * 
+   * @param value the range
+   */
+  public void setNominalAttributes(String value) {
+<span class="nc" id="L378">    m_NominalAttributes.setRanges(value);</span>
+<span class="nc" id="L379">  }</span>
+
+  /**
+   * Returns the current attribute range to be forced to type nominal.
+   * 
+   * @return the range
+   */
+  public String getNominalAttributes() {
+<span class="nc" id="L387">    return m_NominalAttributes.getRanges();</span>
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String nominalAttributesTipText() {
+<span class="nc" id="L397">    return &quot;The range of attributes to force to be of type NOMINAL, example &quot;</span>
+        + &quot;ranges: 'first-last', '1,4,7-14,50-last'.&quot;;
+  }
+
+  /**
+   * Sets the attribute range to be forced to type string.
+   * 
+   * @param value the range
+   */
+  public void setStringAttributes(String value) {
+<span class="nc" id="L407">    m_StringAttributes.setRanges(value);</span>
+<span class="nc" id="L408">  }</span>
+
+  /**
+   * Returns the current attribute range to be forced to type string.
+   * 
+   * @return the range
+   */
+  public String getStringAttributes() {
+<span class="nc" id="L416">    return m_StringAttributes.getRanges();</span>
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String stringAttributesTipText() {
+<span class="nc" id="L426">    return &quot;The range of attributes to force to be of type STRING, example &quot;</span>
+        + &quot;ranges: 'first-last', '1,4,7-14,50-last'.&quot;;
+  }
+
+  /**
+   * Set the attribute range to be forced to type date.
+   * 
+   * @param value the range
+   */
+  public void setDateAttributes(String value) {
+<span class="nc" id="L436">    m_dateAttributes.setRanges(value);</span>
+<span class="nc" id="L437">  }</span>
+
+  /**
+   * Returns the current attribute range to be forced to type date.
+   * 
+   * @return the range.
+   */
+  public String getDateAttributes() {
+<span class="nc" id="L445">    return m_dateAttributes.getRanges();</span>
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String dateAttributesTipText() {
+<span class="nc" id="L455">    return &quot;The range of attributes to force to type STRING, example &quot;</span>
+        + &quot;ranges: 'first-last', '1,4,7-14, 50-last'.&quot;;
+  }
+
+  /**
+   * Set the format to use for parsing date values.
+   * 
+   * @param value the format to use.
+   */
+  public void setDateFormat(String value) {
+<span class="nc" id="L465">    m_dateFormat = value;</span>
+<span class="nc" id="L466">    m_formatter = null;</span>
+<span class="nc" id="L467">  }</span>
+
+  /**
+   * Get the format to use for parsing date values.
+   * 
+   * @return the format to use for parsing date values.
+   * 
+   */
+  public String getDateFormat() {
+<span class="nc" id="L476">    return m_dateFormat;</span>
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String dateFormatTipText() {
+<span class="nc" id="L486">    return &quot;The format to use for parsing date values.&quot;;</span>
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String enclosureCharactersTipText() {
+<span class="nc" id="L496">    return &quot;The characters to use as enclosures for strings. E.g. \&quot;,'&quot;;</span>
+  }
+
+  /**
+   * Set the character(s) to use/recognize as string enclosures
+   * 
+   * @param enclosure the characters to use as string enclosures
+   */
+  public void setEnclosureCharacters(String enclosure) {
+<span class="nc" id="L505">    m_Enclosures = enclosure;</span>
+<span class="nc" id="L506">  }</span>
+
+  /**
+   * Get the character(s) to use/recognize as string enclosures
+   * 
+   * @return the characters to use as string enclosures
+   */
+  public String getEnclosureCharacters() {
+<span class="nc" id="L514">    return m_Enclosures;</span>
+  }
+
+  /**
+   * Sets the placeholder for missing values.
+   * 
+   * @param value the placeholder
+   */
+  public void setMissingValue(String value) {
+<span class="nc" id="L523">    m_MissingValue = value;</span>
+<span class="nc" id="L524">  }</span>
+
+  /**
+   * Returns the current placeholder for missing values.
+   * 
+   * @return the placeholder
+   */
+  public String getMissingValue() {
+<span class="nc" id="L532">    return m_MissingValue;</span>
+  }
+
+  /**
+   * Returns the tip text for this property.
+   * 
+   * @return tip text for this property suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String missingValueTipText() {
+<span class="nc" id="L542">    return &quot;The placeholder for missing values, default is '?'.&quot;;</span>
+  }
+
+  /**
+   * Resets the Loader object and sets the source of the data set to be the
+   * supplied Stream object.
+   * 
+   * @param input the input stream
+   * @exception IOException if an error occurs
+   */
+  @Override
+  public void setSource(InputStream input) throws IOException {
+<span class="nc" id="L554">    m_structure = null;</span>
+<span class="nc" id="L555">    m_sourceFile = null;</span>
+<span class="nc" id="L556">    m_File = null;</span>
+<span class="nc" id="L557">    m_FirstCheck = true;</span>
+
+<span class="nc" id="L559">    m_sourceReader = new BufferedReader(new InputStreamReader(input));</span>
+<span class="nc" id="L560">  }</span>
+
+  /**
+   * Resets the Loader object and sets the source of the data set to be the
+   * supplied File object.
+   * 
+   * @param file the source file.
+   * @exception IOException if an error occurs
+   */
+  @Override
+  public void setSource(File file) throws IOException {
+<span class="nc" id="L571">    super.setSource(file);</span>
+<span class="nc" id="L572">  }</span>
+
+  /**
+   * Determines and returns (if possible) the structure (internally the header)
+   * of the data set as an empty set of instances.
+   * 
+   * @return the structure of the data set as an empty set of Instances
+   * @exception IOException if an error occurs
+   */
+  @Override
+  public Instances getStructure() throws IOException {
+<span class="nc bnc" id="L583" title="All 4 branches missed.">    if ((m_sourceFile == null) &amp;&amp; (m_sourceReader == null)) {</span>
+<span class="nc" id="L584">      throw new IOException(&quot;No source has been specified&quot;);</span>
+    }
+
+<span class="nc bnc" id="L587" title="All 2 branches missed.">    if (m_structure == null) {</span>
+      try {
+<span class="nc" id="L589">        m_st = new StreamTokenizer(m_sourceReader);</span>
+<span class="nc" id="L590">        initTokenizer(m_st);</span>
+<span class="nc" id="L591">        readStructure(m_st);</span>
+<span class="nc" id="L592">      } catch (FileNotFoundException ex) {</span>
+      }
+    }
+
+<span class="nc" id="L596">    return m_structure;</span>
+  }
+
+  /**
+   * reads the structure.
+   * 
+   * @param st the stream tokenizer to read from
+   * @throws IOException if reading fails
+   */
+  private void readStructure(StreamTokenizer st) throws IOException {
+<span class="nc" id="L606">    readHeader(st);</span>
+<span class="nc" id="L607">  }</span>
+
+  /**
+   * Return the full data set. If the structure hasn't yet been determined by a
+   * call to getStructure then method should do so before processing the rest of
+   * the data set.
+   * 
+   * @return the structure of the data set as an empty set of Instances
+   * @exception IOException if there is no source or parsing fails
+   */
+  @Override
+  public Instances getDataSet() throws IOException {
+<span class="nc bnc" id="L619" title="All 4 branches missed.">    if ((m_sourceFile == null) &amp;&amp; (m_sourceReader == null)) {</span>
+<span class="nc" id="L620">      throw new IOException(&quot;No source has been specified&quot;);</span>
+    }
+
+<span class="nc bnc" id="L623" title="All 2 branches missed.">    if (m_structure == null) {</span>
+<span class="nc" id="L624">      getStructure();</span>
+    }
+
+<span class="nc bnc" id="L627" title="All 2 branches missed.">    if (m_st == null) {</span>
+<span class="nc" id="L628">      m_st = new StreamTokenizer(m_sourceReader);</span>
+<span class="nc" id="L629">      initTokenizer(m_st);</span>
+    }
+
+<span class="nc" id="L632">    m_st.ordinaryChar(',');</span>
+<span class="nc" id="L633">    m_st.ordinaryChar('\t');</span>
+
+<span class="nc" id="L635">    m_cumulativeStructure = new FastVector(m_structure.numAttributes());</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">    for (int i = 0; i &lt; m_structure.numAttributes(); i++) {</span>
+<span class="nc" id="L637">      m_cumulativeStructure.addElement(new Hashtable());</span>
+    }
+
+<span class="nc" id="L640">    m_cumulativeInstances = new FastVector();</span>
+    FastVector current;
+<span class="nc bnc" id="L642" title="All 2 branches missed.">    while ((current = getInstance(m_st)) != null) {</span>
+<span class="nc" id="L643">      m_cumulativeInstances.addElement(current);</span>
+    }
+
+<span class="nc" id="L646">    FastVector atts = new FastVector(m_structure.numAttributes());</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">    for (int i = 0; i &lt; m_structure.numAttributes(); i++) {</span>
+<span class="nc" id="L648">      String attname = m_structure.attribute(i).name();</span>
+<span class="nc" id="L649">      Hashtable tempHash = ((Hashtable) m_cumulativeStructure.elementAt(i));</span>
+<span class="nc bnc" id="L650" title="All 2 branches missed.">      if (tempHash.size() == 0) {</span>
+<span class="nc bnc" id="L651" title="All 2 branches missed.">        if (m_dateAttributes.isInRange(i)) {</span>
+<span class="nc" id="L652">          atts.addElement(new Attribute(attname, m_dateFormat));</span>
+        } else {
+<span class="nc" id="L654">          atts.addElement(new Attribute(attname));</span>
+        }
+      } else {
+<span class="nc bnc" id="L657" title="All 2 branches missed.">        if (m_StringAttributes.isInRange(i)) {</span>
+<span class="nc" id="L658">          atts.addElement(new Attribute(attname, (FastVector) null));</span>
+        } else {
+<span class="nc" id="L660">          FastVector values = new FastVector(tempHash.size());</span>
+          // add dummy objects in order to make the FastVector's size ==
+          // capacity
+<span class="nc bnc" id="L663" title="All 2 branches missed.">          for (int z = 0; z &lt; tempHash.size(); z++) {</span>
+<span class="nc" id="L664">            values.addElement(&quot;dummy&quot;);</span>
+          }
+<span class="nc" id="L666">          Enumeration e = tempHash.keys();</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">          while (e.hasMoreElements()) {</span>
+<span class="nc" id="L668">            Object ob = e.nextElement();</span>
+            // if (ob instanceof Double) {
+<span class="nc" id="L670">            int index = ((Integer) tempHash.get(ob)).intValue();</span>
+<span class="nc" id="L671">            String s = ob.toString();</span>
+<span class="nc bnc" id="L672" title="All 4 branches missed.">            if (s.startsWith(&quot;'&quot;) || s.startsWith(&quot;\&quot;&quot;))</span>
+<span class="nc" id="L673">              s = s.substring(1, s.length() - 1);</span>
+<span class="nc" id="L674">            values.setElementAt(new String(s), index);</span>
+            // }
+          }
+<span class="nc" id="L677">          atts.addElement(new Attribute(attname, values));</span>
+        }
+      }
+    }
+
+    // make the instances
+    String relationName;
+<span class="nc bnc" id="L684" title="All 2 branches missed.">    if (m_sourceFile != null)</span>
+<span class="nc" id="L685">      relationName = (m_sourceFile.getName())</span>
+<span class="nc" id="L686">          .replaceAll(&quot;\\.[cC][sS][vV]$&quot;, &quot;&quot;);</span>
+    else
+<span class="nc" id="L688">      relationName = &quot;stream&quot;;</span>
+<span class="nc" id="L689">    Instances dataSet = new Instances(relationName, atts,</span>
+<span class="nc" id="L690">        m_cumulativeInstances.size());</span>
+
+<span class="nc bnc" id="L692" title="All 2 branches missed.">    for (int i = 0; i &lt; m_cumulativeInstances.size(); i++) {</span>
+<span class="nc" id="L693">      current = ((FastVector) m_cumulativeInstances.elementAt(i));</span>
+<span class="nc" id="L694">      double[] vals = new double[dataSet.numAttributes()];</span>
+<span class="nc bnc" id="L695" title="All 2 branches missed.">      for (int j = 0; j &lt; current.size(); j++) {</span>
+<span class="nc" id="L696">        Object cval = current.elementAt(j);</span>
+<span class="nc bnc" id="L697" title="All 2 branches missed.">        if (cval instanceof String) {</span>
+<span class="nc bnc" id="L698" title="All 2 branches missed.">          if (((String) cval).compareTo(m_MissingValue) == 0) {</span>
+<span class="nc" id="L699">            vals[j] = Instance.missingValue();</span>
+          } else {
+<span class="nc bnc" id="L701" title="All 2 branches missed.">            if (dataSet.attribute(j).isString()) {</span>
+<span class="nc" id="L702">              vals[j] = dataSet.attribute(j).addStringValue((String) cval);</span>
+<span class="nc bnc" id="L703" title="All 2 branches missed.">            } else if (dataSet.attribute(j).isNominal()) {</span>
+              // find correct index
+<span class="nc" id="L705">              Hashtable lookup = (Hashtable) m_cumulativeStructure.elementAt(j);</span>
+<span class="nc" id="L706">              int index = ((Integer) lookup.get(cval)).intValue();</span>
+<span class="nc" id="L707">              vals[j] = index;</span>
+            } else {
+<span class="nc" id="L709">              throw new IllegalStateException(</span>
+<span class="nc" id="L710">                  &quot;Wrong attribute type at position &quot; + (i + 1) + &quot;!!!&quot;);</span>
+            }
+          }
+<span class="nc bnc" id="L713" title="All 2 branches missed.">        } else if (dataSet.attribute(j).isNominal()) {</span>
+          // find correct index
+<span class="nc" id="L715">          Hashtable lookup = (Hashtable) m_cumulativeStructure.elementAt(j);</span>
+<span class="nc" id="L716">          int index = ((Integer) lookup.get(cval)).intValue();</span>
+<span class="nc" id="L717">          vals[j] = index;</span>
+<span class="nc bnc" id="L718" title="All 2 branches missed.">        } else if (dataSet.attribute(j).isString()) {</span>
+<span class="nc" id="L719">          vals[j] = dataSet.attribute(j).addStringValue(&quot;&quot; + cval);</span>
+        } else {
+<span class="nc" id="L721">          vals[j] = ((Double) cval).doubleValue();</span>
+        }
+      }
+<span class="nc" id="L724">      dataSet.add(new Instance(1.0, vals));</span>
+    }
+<span class="nc" id="L726">    m_structure = new Instances(dataSet, 0);</span>
+<span class="nc" id="L727">    setRetrieval(BATCH);</span>
+<span class="nc" id="L728">    m_cumulativeStructure = null; // conserve memory</span>
+<span class="nc" id="L729">    m_cumulativeInstances = null;</span>
+
+    // close the stream
+<span class="nc" id="L732">    m_sourceReader.close();</span>
+
+<span class="nc" id="L734">    return dataSet;</span>
+  }
+
+  /**
+   * CSVLoader is unable to process a data set incrementally.
+   * 
+   * @param structure ignored
+   * @return never returns without throwing an exception
+   * @exception IOException always. CSVLoader is unable to process a data set
+   *              incrementally.
+   */
+  @Override
+  public Instance getNextInstance(Instances structure) throws IOException {
+<span class="nc" id="L747">    throw new IOException(&quot;CSVLoader can't read data sets incrementally.&quot;);</span>
+  }
+
+  /**
+   * Attempts to parse a line of the data set.
+   * 
+   * @param tokenizer the tokenizer
+   * @return a FastVector containg String and Double objects representing the
+   *         values of the instance.
+   * @exception IOException if an error occurs
+   * 
+   *              &lt;pre&gt;
+   * &lt;jml&gt;
+   *    private_normal_behavior
+   *      requires: tokenizer != null;
+   *      ensures: \result  != null;
+   *  also
+   *    private_exceptional_behavior
+   *      requires: tokenizer == null
+   *                || (* unsucessful parse *);
+   *      signals: (IOException);
+   * &lt;/jml&gt;
+   * &lt;/pre&gt;
+   */
+  private FastVector getInstance(StreamTokenizer tokenizer) throws IOException {
+
+<span class="nc" id="L773">    FastVector current = new FastVector();</span>
+
+    // Check if end of file reached.
+<span class="nc" id="L776">    ConverterUtils.getFirstToken(tokenizer);</span>
+<span class="nc bnc" id="L777" title="All 2 branches missed.">    if (tokenizer.ttype == StreamTokenizer.TT_EOF) {</span>
+<span class="nc" id="L778">      return null;</span>
+    }
+<span class="nc" id="L780">    boolean first = true;</span>
+    boolean wasSep;
+
+<span class="nc bnc" id="L783" title="All 2 branches missed.">    while (tokenizer.ttype != StreamTokenizer.TT_EOL</span>
+<span class="nc bnc" id="L784" title="All 2 branches missed.">        &amp;&amp; tokenizer.ttype != StreamTokenizer.TT_EOF) {</span>
+
+      // Get next token
+<span class="nc bnc" id="L787" title="All 2 branches missed.">      if (!first) {</span>
+<span class="nc" id="L788">        ConverterUtils.getToken(tokenizer);</span>
+      }
+
+<span class="nc bnc" id="L791" title="All 4 branches missed.">      if (tokenizer.ttype == ',' || tokenizer.ttype == '\t'</span>
+<span class="nc bnc" id="L792" title="All 2 branches missed.">          || tokenizer.ttype == StreamTokenizer.TT_EOL) {</span>
+<span class="nc" id="L793">        current.addElement(m_MissingValue);</span>
+<span class="nc" id="L794">        wasSep = true;</span>
+      } else {
+<span class="nc" id="L796">        wasSep = false;</span>
+<span class="nc bnc" id="L797" title="All 2 branches missed.">        if (tokenizer.sval.equals(m_MissingValue)) {</span>
+<span class="nc" id="L798">          current.addElement(new String(m_MissingValue));</span>
+        } else {
+          // try to parse as a number
+          try {
+<span class="nc" id="L802">            double val = Double.valueOf(tokenizer.sval).doubleValue();</span>
+<span class="nc" id="L803">            current.addElement(new Double(val));</span>
+<span class="nc" id="L804">          } catch (NumberFormatException e) {</span>
+            // otherwise assume its an enumerated value
+<span class="nc" id="L806">            current.addElement(new String(tokenizer.sval));</span>
+          }
+        }
+      }
+
+<span class="nc bnc" id="L811" title="All 2 branches missed.">      if (!wasSep) {</span>
+<span class="nc" id="L812">        ConverterUtils.getToken(tokenizer);</span>
+      }
+<span class="nc" id="L814">      first = false;</span>
+    }
+
+    // check number of values read
+<span class="nc bnc" id="L818" title="All 2 branches missed.">    if (current.size() != m_structure.numAttributes()) {</span>
+<span class="nc" id="L819">      ConverterUtils.errms(tokenizer,</span>
+<span class="nc" id="L820">          &quot;wrong number of values. Read &quot; + current.size() + &quot;, expected &quot;</span>
+<span class="nc" id="L821">              + m_structure.numAttributes());</span>
+    }
+
+    // check for structure update
+    try {
+<span class="nc" id="L826">      checkStructure(current);</span>
+<span class="nc" id="L827">    } catch (Exception ex) {</span>
+<span class="nc" id="L828">      ex.printStackTrace();</span>
+    }
+
+<span class="nc" id="L831">    return current;</span>
+  }
+
+  /**
+   * Checks the current instance against what is known about the structure of
+   * the data set so far. If there is a nominal value for an attribute that was
+   * beleived to be numeric then all previously seen values for this attribute
+   * are stored in a Hashtable.
+   * 
+   * @param current a &lt;code&gt;FastVector&lt;/code&gt; value
+   * @exception Exception if an error occurs
+   * 
+   *              &lt;pre&gt;
+   * &lt;jml&gt;
+   *    private_normal_behavior
+   *      requires: current != null;
+   *  also
+   *    private_exceptional_behavior
+   *      requires: current == null
+   *                || (* unrecognized object type in current *);
+   *      signals: (Exception);
+   * &lt;/jml&gt;
+   * &lt;/pre&gt;
+   */
+  private void checkStructure(FastVector current) throws Exception {
+<span class="nc bnc" id="L856" title="All 2 branches missed.">    if (current == null) {</span>
+<span class="nc" id="L857">      throw new Exception(&quot;current shouldn't be null in checkStructure&quot;);</span>
+    }
+
+    // initialize ranges, if necessary
+<span class="nc bnc" id="L861" title="All 2 branches missed.">    if (m_FirstCheck) {</span>
+<span class="nc" id="L862">      m_NominalAttributes.setUpper(current.size() - 1);</span>
+<span class="nc" id="L863">      m_StringAttributes.setUpper(current.size() - 1);</span>
+<span class="nc" id="L864">      m_dateAttributes.setUpper(current.size() - 1);</span>
+<span class="nc" id="L865">      m_FirstCheck = false;</span>
+    }
+
+<span class="nc bnc" id="L868" title="All 2 branches missed.">    for (int i = 0; i &lt; current.size(); i++) {</span>
+<span class="nc" id="L869">      Object ob = current.elementAt(i);</span>
+<span class="nc bnc" id="L870" title="All 4 branches missed.">      if ((ob instanceof String) || (m_NominalAttributes.isInRange(i))</span>
+<span class="nc bnc" id="L871" title="All 4 branches missed.">          || (m_StringAttributes.isInRange(i)) || m_dateAttributes.isInRange(i)) {</span>
+<span class="nc bnc" id="L872" title="All 2 branches missed.">        if (ob.toString().compareTo(m_MissingValue) == 0) {</span>
+          // do nothing
+        } else {
+
+<span class="nc" id="L876">          boolean notDate = true;</span>
+<span class="nc bnc" id="L877" title="All 2 branches missed.">          if (m_dateAttributes.isInRange(i)) {</span>
+            // try to parse date string
+<span class="nc bnc" id="L879" title="All 2 branches missed.">            if (m_formatter == null) {</span>
+<span class="nc" id="L880">              m_formatter = new SimpleDateFormat(m_dateFormat);</span>
+            }
+
+            try {
+<span class="nc" id="L884">              long time = m_formatter.parse(ob.toString()).getTime();</span>
+<span class="nc" id="L885">              Double timeL = new Double(time);</span>
+<span class="nc" id="L886">              current.setElementAt(timeL, i);</span>
+<span class="nc" id="L887">              notDate = false;</span>
+<span class="nc" id="L888">            } catch (ParseException e) {</span>
+<span class="nc" id="L889">              notDate = true;</span>
+            }
+          }
+
+<span class="nc bnc" id="L893" title="All 2 branches missed.">          if (notDate) {</span>
+<span class="nc" id="L894">            Hashtable tempHash = (Hashtable) m_cumulativeStructure.elementAt(i);</span>
+<span class="nc bnc" id="L895" title="All 2 branches missed.">            if (!tempHash.containsKey(ob)) {</span>
+              // may have found a nominal value in what was previously thought
+              // to
+              // be a numeric variable.
+<span class="nc bnc" id="L899" title="All 2 branches missed.">              if (tempHash.size() == 0) {</span>
+<span class="nc bnc" id="L900" title="All 2 branches missed.">                for (int j = 0; j &lt; m_cumulativeInstances.size(); j++) {</span>
+<span class="nc" id="L901">                  FastVector tempUpdate = ((FastVector) m_cumulativeInstances</span>
+<span class="nc" id="L902">                      .elementAt(j));</span>
+<span class="nc" id="L903">                  Object tempO = tempUpdate.elementAt(i);</span>
+<span class="nc bnc" id="L904" title="All 2 branches missed.">                  if (tempO instanceof String) {</span>
+                    // must have been a missing value
+                  } else {
+<span class="nc bnc" id="L907" title="All 2 branches missed.">                    if (!tempHash.containsKey(tempO)) {</span>
+<span class="nc" id="L908">                      tempHash.put(new Double(((Double) tempO).doubleValue()),</span>
+<span class="nc" id="L909">                          new Integer(tempHash.size()));</span>
+                    }
+                  }
+                }
+              }
+<span class="nc" id="L914">              int newIndex = tempHash.size();</span>
+<span class="nc" id="L915">              tempHash.put(ob, new Integer(newIndex));</span>
+            }
+          }
+        }
+<span class="nc bnc" id="L919" title="All 2 branches missed.">      } else if (ob instanceof Double) {</span>
+<span class="nc" id="L920">        Hashtable tempHash = (Hashtable) m_cumulativeStructure.elementAt(i);</span>
+<span class="nc bnc" id="L921" title="All 2 branches missed.">        if (tempHash.size() != 0) {</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">          if (!tempHash.containsKey(ob)) {</span>
+<span class="nc" id="L923">            int newIndex = tempHash.size();</span>
+<span class="nc" id="L924">            tempHash.put(new Double(((Double) ob).doubleValue()), new Integer(</span>
+<span class="nc" id="L925">                newIndex));</span>
+          }
+        }
+      } else {
+<span class="nc" id="L929">        throw new Exception(&quot;Wrong object type in checkStructure!&quot;);</span>
+      }
+    }
+<span class="nc" id="L932">  }</span>
+
+  /**
+   * Assumes the first line of the file contains the attribute names. Assumes
+   * all attributes are String attributes (Reading the full data set with
+   * getDataSet will establish the true structure).
+   * 
+   * @param tokenizer a &lt;code&gt;StreamTokenizer&lt;/code&gt; value
+   * @exception IOException if an error occurs
+   * 
+   *              &lt;pre&gt;
+   * &lt;jml&gt;
+   *    private_normal_behavior
+   *      requires: tokenizer != null;
+   *      modifiable: m_structure;
+   *      ensures: m_structure != null;
+   *  also
+   *    private_exceptional_behavior
+   *      requires: tokenizer == null
+   *                || (* unsucessful parse *);
+   *      signals: (IOException);
+   * &lt;/jml&gt;
+   * &lt;/pre&gt;
+   */
+  private void readHeader(StreamTokenizer tokenizer) throws IOException {
+
+<span class="nc" id="L958">    FastVector attribNames = new FastVector();</span>
+<span class="nc" id="L959">    ConverterUtils.getFirstToken(tokenizer);</span>
+<span class="nc bnc" id="L960" title="All 2 branches missed.">    if (tokenizer.ttype == StreamTokenizer.TT_EOF) {</span>
+<span class="nc" id="L961">      ConverterUtils.errms(tokenizer, &quot;premature end of file&quot;);</span>
+    }
+
+<span class="nc bnc" id="L964" title="All 2 branches missed.">    while (tokenizer.ttype != StreamTokenizer.TT_EOL) {</span>
+<span class="nc" id="L965">      attribNames.addElement(new Attribute(tokenizer.sval, (FastVector) null));</span>
+<span class="nc" id="L966">      ConverterUtils.getToken(tokenizer);</span>
+    }
+    String relationName;
+<span class="nc bnc" id="L969" title="All 2 branches missed.">    if (m_sourceFile != null)</span>
+<span class="nc" id="L970">      relationName = (m_sourceFile.getName())</span>
+<span class="nc" id="L971">          .replaceAll(&quot;\\.[cC][sS][vV]$&quot;, &quot;&quot;);</span>
+    else
+<span class="nc" id="L973">      relationName = &quot;stream&quot;;</span>
+<span class="nc" id="L974">    m_structure = new Instances(relationName, attribNames, 0);</span>
+<span class="nc" id="L975">  }</span>
+
+  /**
+   * Initializes the stream tokenizer.
+   * 
+   * @param tokenizer the tokenizer to initialize
+   */
+  private void initTokenizer(StreamTokenizer tokenizer) {
+<span class="nc" id="L983">    tokenizer.resetSyntax();</span>
+<span class="nc" id="L984">    tokenizer.whitespaceChars(0, (' ' - 1));</span>
+<span class="nc" id="L985">    tokenizer.wordChars(' ', '\u00FF');</span>
+<span class="nc" id="L986">    tokenizer.whitespaceChars(',', ',');</span>
+<span class="nc" id="L987">    tokenizer.whitespaceChars('\t', '\t');</span>
+<span class="nc" id="L988">    tokenizer.commentChar('%');</span>
+
+<span class="nc" id="L990">    String[] parts = m_Enclosures.split(&quot;,&quot;);</span>
+<span class="nc bnc" id="L991" title="All 2 branches missed.">    for (String e : parts) {</span>
+<span class="nc bnc" id="L992" title="All 4 branches missed.">      if (e.length() &gt; 1 || e.length() == 0) {</span>
+<span class="nc" id="L993">        throw new IllegalArgumentException(</span>
+<span class="nc" id="L994">            &quot;Enclosures can only be single characters&quot;);</span>
+      }
+<span class="nc" id="L996">      tokenizer.quoteChar(e.charAt(0));</span>
+    }
+
+<span class="nc" id="L999">    tokenizer.eolIsSignificant(true);</span>
+<span class="nc" id="L1000">  }</span>
+
+  /**
+   * Resets the Loader ready to read a new data set or the same data set again.
+   * 
+   * @throws IOException if something goes wrong
+   */
+  @Override
+  public void reset() throws IOException {
+<span class="nc" id="L1009">    m_structure = null;</span>
+<span class="nc" id="L1010">    m_cumulativeStructure = null;</span>
+<span class="nc" id="L1011">    m_cumulativeInstances = null;</span>
+<span class="nc" id="L1012">    m_st = null;</span>
+<span class="nc" id="L1013">    setRetrieval(NONE);</span>
+
+<span class="nc bnc" id="L1015" title="All 2 branches missed.">    if (m_File != null) {</span>
+<span class="nc" id="L1016">      setFile(new File(m_File));</span>
+    }
+<span class="nc" id="L1018">  }</span>
+
+  /**
+   * Returns the revision string.
+   * 
+   * @return the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1026">    return RevisionUtils.extract(&quot;$Revision: 9280 $&quot;);</span>
+  }
+
+  /**
+   * Main method.
+   * 
+   * @param args should contain the name of an input file.
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L1035">    runFileLoader(new CSVLoader(), args);</span>
+<span class="nc" id="L1036">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

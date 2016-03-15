@@ -1,0 +1,900 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Clusterer.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui.beans</a> &gt; <span class="el_source">Clusterer.java</span></div><h1>Clusterer.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Clusterer.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.gui.beans;
+
+import weka.clusterers.EM;
+import weka.core.Instances;
+import weka.core.OptionHandler;
+import weka.core.Utils;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Remove;
+import weka.gui.Logger;
+import weka.gui.ExtensionFileFilter;
+
+import java.awt.BorderLayout;
+import java.beans.EventSetDescriptor;
+import java.io.*;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.Vector;
+
+import javax.swing.JPanel;
+import javax.swing.JOptionPane;
+import javax.swing.JFileChooser;
+
+import javax.swing.JPanel;
+
+/**
+ * Bean that wraps around weka.clusterers
+ *
+ * @author &lt;a href=&quot;mailto:mutter@cs.waikato.ac.nz&quot;&gt;Stefan Mutter&lt;/a&gt;
+ * @version $Revision: 7059 $
+ * @see JPanel
+ * @see BeanCommon
+ * @see Visible
+ * @see WekaWrapper
+ * @see Serializable
+ * @see UserRequestAcceptor
+ * @see TrainingSetListener
+ * @see TestSetListener
+ */
+<span class="nc" id="L61">public class Clusterer</span>
+  extends JPanel
+  implements BeanCommon, Visible, WekaWrapper, EventConstraints, 
+             UserRequestAcceptor, TrainingSetListener, TestSetListener{
+
+  /** for serialization */
+  private static final long serialVersionUID = 7729795159836843810L;
+
+<span class="nc" id="L69">  protected BeanVisual m_visual = </span>
+<span class="nc" id="L70">    new BeanVisual(&quot;Clusterer&quot;,</span>
+<span class="nc" id="L71">		   BeanVisual.ICON_PATH+&quot;EM.gif&quot;,</span>
+<span class="nc" id="L72">		   BeanVisual.ICON_PATH+&quot;EM_animated.gif&quot;);</span>
+
+<span class="nc" id="L74">  private static int IDLE = 0;</span>
+<span class="nc" id="L75">  private static int BUILDING_MODEL = 1;</span>
+<span class="nc" id="L76">  private static int CLUSTERING = 2;</span>
+
+<span class="nc" id="L78">  private int m_state = IDLE;</span>
+
+<span class="nc" id="L80">  private Thread m_buildThread = null;</span>
+
+  /**
+   * Global info for the wrapped classifier (if it exists).
+   */
+  protected String m_globalInfo;
+
+  /**
+   * Objects talking to us
+   */
+<span class="nc" id="L90">  private Hashtable m_listenees = new Hashtable();</span>
+
+  /**
+   * Objects listening for batch clusterer events
+   */
+<span class="nc" id="L95">  private Vector m_batchClustererListeners = new Vector();</span>
+
+
+  /**
+   * Objects listening for graph events
+   */
+<span class="nc" id="L101">  private Vector m_graphListeners = new Vector();</span>
+
+  /**
+   * Objects listening for text events
+   */
+<span class="nc" id="L106">  private Vector m_textListeners = new Vector();</span>
+
+  /**
+   * Holds training instances for batch training. 
+   */
+  private Instances m_trainingSet;
+  private transient Instances m_testingSet;
+<span class="nc" id="L113">  private weka.clusterers.Clusterer m_Clusterer = new EM();</span>
+  
+
+<span class="nc" id="L116">  private transient Logger m_log = null;</span>
+
+<span class="nc" id="L118">  private Double m_dummy = new Double(0.0);</span>
+
+<span class="nc" id="L120">  private transient JFileChooser m_fileChooser = null;</span>
+
+  /**
+   * Global info (if it exists) for the wrapped classifier
+   *
+   * @return the global info
+   */
+  public String globalInfo() {
+<span class="nc" id="L128">    return m_globalInfo;</span>
+  }
+
+  /**
+   * Creates a new &lt;code&gt;Clusterer&lt;/code&gt; instance.
+   */
+<span class="nc" id="L134">  public Clusterer() {</span>
+<span class="nc" id="L135">    setLayout(new BorderLayout());</span>
+<span class="nc" id="L136">    add(m_visual, BorderLayout.CENTER);</span>
+<span class="nc" id="L137">    setClusterer(m_Clusterer);</span>
+<span class="nc" id="L138">  }</span>
+
+  /**
+   * Set a custom (descriptive) name for this bean
+   * 
+   * @param name the name to use
+   */
+  public void setCustomName(String name) {
+<span class="nc" id="L146">    m_visual.setText(name);</span>
+<span class="nc" id="L147">  }</span>
+
+  /**
+   * Get the custom (descriptive) name for this bean (if one has been set)
+   * 
+   * @return the custom name (or the default name)
+   */
+  public String getCustomName() {
+<span class="nc" id="L155">    return m_visual.getText();</span>
+  }
+
+  /**
+   * Set the clusterer for this wrapper
+   *
+   * @param c a &lt;code&gt;weka.clusterers.Clusterer&lt;/code&gt; value
+   */
+  public void setClusterer(weka.clusterers.Clusterer c) {
+<span class="nc" id="L164">    boolean loadImages = true;</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">    if (c.getClass().getName().</span>
+<span class="nc" id="L166">	compareTo(m_Clusterer.getClass().getName()) == 0) {</span>
+<span class="nc" id="L167">      loadImages = false;</span>
+    } else {
+      // clusterer has changed so any batch training status is now
+      // invalid
+<span class="nc" id="L171">      m_trainingSet = null;</span>
+    }
+<span class="nc" id="L173">    m_Clusterer = c;</span>
+<span class="nc" id="L174">    String clustererName = c.getClass().toString();</span>
+<span class="nc" id="L175">    clustererName = clustererName.substring(clustererName.</span>
+<span class="nc" id="L176">					      lastIndexOf('.')+1, </span>
+<span class="nc" id="L177">					      clustererName.length());</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">    if (loadImages) {</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">      if (!m_visual.loadIcons(BeanVisual.ICON_PATH+clustererName+&quot;.gif&quot;,</span>
+<span class="nc" id="L180">		       BeanVisual.ICON_PATH+clustererName+&quot;_animated.gif&quot;)) {</span>
+<span class="nc" id="L181">	useDefaultVisual();</span>
+      }
+    }
+<span class="nc" id="L184">    m_visual.setText(clustererName);</span>
+
+    // get global info
+<span class="nc" id="L187">    m_globalInfo = KnowledgeFlowApp.getGlobalInfo(m_Clusterer);</span>
+<span class="nc" id="L188">  }</span>
+
+
+  /**
+   * Returns true if this clusterer has an incoming connection that is
+   * a batch set of instances
+   *
+   * @return a &lt;code&gt;boolean&lt;/code&gt; value
+   */
+  public boolean hasIncomingBatchInstances() {
+<span class="nc bnc" id="L198" title="All 2 branches missed.">    if (m_listenees.size() == 0) {</span>
+<span class="nc" id="L199">      return false;</span>
+    }
+<span class="nc bnc" id="L201" title="All 2 branches missed.">    if (m_listenees.containsKey(&quot;trainingSet&quot;) ||</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">	m_listenees.containsKey(&quot;testSet&quot;) ||</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        m_listenees.containsKey(&quot;dataSet&quot;)) {</span>
+<span class="nc" id="L204">      return true;</span>
+    }
+<span class="nc" id="L206">    return false;</span>
+  }
+
+  /**
+   * Get the clusterer currently set for this wrapper
+   *
+   * @return a &lt;code&gt;weka.clusterers.Clusterer&lt;/code&gt; value
+   */
+  public weka.clusterers.Clusterer getClusterer() {
+<span class="nc" id="L215">    return m_Clusterer;</span>
+  }
+
+  /**
+   * Sets the algorithm (clusterer) for this bean
+   *
+   * @param algorithm an &lt;code&gt;Object&lt;/code&gt; value
+   * @exception IllegalArgumentException if an error occurs
+   */
+  public void setWrappedAlgorithm(Object algorithm) 
+    {
+
+<span class="nc bnc" id="L227" title="All 2 branches missed.">    if (!(algorithm instanceof weka.clusterers.Clusterer)) { </span>
+<span class="nc" id="L228">      throw new IllegalArgumentException(algorithm.getClass() + Messages.getInstance().getString(&quot;Clusterer_SetWrappedAlgorithm_IllegalArgumentException_Text&quot;));</span>
+    }
+<span class="nc" id="L230">    setClusterer((weka.clusterers.Clusterer)algorithm);</span>
+<span class="nc" id="L231">  }</span>
+
+  /**
+   * Returns the wrapped clusterer
+   *
+   * @return an &lt;code&gt;Object&lt;/code&gt; value
+   */
+  public Object getWrappedAlgorithm() {
+<span class="nc" id="L239">    return getClusterer();</span>
+  }
+
+
+  /**
+   * Accepts a training set and builds batch clusterer
+   *
+   * @param e a &lt;code&gt;TrainingSetEvent&lt;/code&gt; value
+   */
+  public void acceptTrainingSet(final TrainingSetEvent e) {
+<span class="nc bnc" id="L249" title="All 2 branches missed.">    if (e.isStructureOnly()) {</span>
+      // no need to build a clusterer, instead just generate a dummy
+      // BatchClustererEvent in order to pass on instance structure to
+      // any listeners 
+<span class="nc" id="L253">      BatchClustererEvent ce = </span>
+<span class="nc" id="L254">	new BatchClustererEvent(this, m_Clusterer, </span>
+<span class="nc" id="L255">				 new DataSetEvent(this, e.getTrainingSet()),</span>
+<span class="nc" id="L256">				 e.getSetNumber(), e.getMaxSetNumber(),1);</span>
+
+<span class="nc" id="L258">      notifyBatchClustererListeners(ce);</span>
+<span class="nc" id="L259">      return;</span>
+    }
+<span class="nc bnc" id="L261" title="All 2 branches missed.">    if (m_buildThread == null) {</span>
+      try {
+<span class="nc bnc" id="L263" title="All 2 branches missed.">	if (m_state == IDLE) {</span>
+<span class="nc" id="L264">	  synchronized (this) {</span>
+<span class="nc" id="L265">	    m_state = BUILDING_MODEL;</span>
+	  }
+<span class="nc" id="L267">	  m_trainingSet = e.getTrainingSet();</span>
+//	  final String oldText = m_visual.getText();
+<span class="nc" id="L269">	  m_buildThread = new Thread() {</span>
+	      public void run() {
+		try {
+<span class="nc bnc" id="L272" title="All 2 branches missed.">		  if (m_trainingSet != null) {  </span>
+<span class="nc" id="L273">		    m_visual.setAnimated();</span>
+//		    m_visual.setText(&quot;Building clusters...&quot;);
+<span class="nc bnc" id="L275" title="All 2 branches missed.">		    if (m_log != null) {</span>
+<span class="nc" id="L276">		      m_log.statusMessage(statusMessagePrefix() </span>
+<span class="nc" id="L277">		          + Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_LogMessage_Text&quot;));</span>
+		    }
+<span class="nc" id="L279">		    buildClusterer();</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">                    if(m_batchClustererListeners.size() &gt; 0){</span>
+<span class="nc" id="L281">                        BatchClustererEvent ce = </span>
+<span class="nc" id="L282">                            new BatchClustererEvent(this, m_Clusterer, </span>
+<span class="nc" id="L283">				 new DataSetEvent(this, e.getTrainingSet()),</span>
+<span class="nc" id="L284">				 e.getSetNumber(), e.getMaxSetNumber(),1);</span>
+<span class="nc" id="L285">                        notifyBatchClustererListeners(ce);</span>
+                    }
+<span class="nc bnc" id="L287" title="All 2 branches missed.">		    if (m_Clusterer instanceof weka.core.Drawable &amp;&amp; </span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">			m_graphListeners.size() &gt; 0) {</span>
+<span class="nc" id="L289">		      String grphString = </span>
+<span class="nc" id="L290">			((weka.core.Drawable)m_Clusterer).graph();</span>
+<span class="nc" id="L291">                      int grphType = ((weka.core.Drawable)m_Clusterer).graphType();</span>
+<span class="nc" id="L292">		      String grphTitle = m_Clusterer.getClass().getName();</span>
+<span class="nc" id="L293">		      grphTitle = grphTitle.substring(grphTitle.</span>
+<span class="nc" id="L294">						      lastIndexOf('.')+1, </span>
+<span class="nc" id="L295">						      grphTitle.length());</span>
+<span class="nc" id="L296">		      grphTitle = Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_GrphTitle_Text_First&quot;) + e.getSetNumber() + &quot; (&quot;</span>
+<span class="nc" id="L297">			+e.getTrainingSet().relationName() + &quot;) &quot;</span>
+<span class="nc" id="L298">			+grphTitle;</span>
+		      
+<span class="nc" id="L300">		      GraphEvent ge = new GraphEvent(Clusterer.this, </span>
+<span class="nc" id="L301">						     grphString, </span>
+<span class="nc" id="L302">						     grphTitle,</span>
+<span class="nc" id="L303">                                                     grphType);</span>
+<span class="nc" id="L304">		      notifyGraphListeners(ge);</span>
+		    }
+
+<span class="nc bnc" id="L307" title="All 2 branches missed.">		    if (m_textListeners.size() &gt; 0) {</span>
+<span class="nc" id="L308">		      String modelString = m_Clusterer.toString();</span>
+<span class="nc" id="L309">		      String titleString = m_Clusterer.getClass().getName();</span>
+		      
+<span class="nc" id="L311">		      titleString = titleString.</span>
+<span class="nc" id="L312">			substring(titleString.lastIndexOf('.') + 1,</span>
+<span class="nc" id="L313">				  titleString.length());</span>
+<span class="nc" id="L314">		      modelString = Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_ModelString_Text_First&quot;) + titleString +</span>
+<span class="nc" id="L315">		      Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_ModelString_Text_Second&quot;) + m_trainingSet.relationName() + </span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">			((e.getMaxSetNumber() &gt; 1) </span>
+<span class="nc" id="L317">			 ? Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_ModelString_Text_Third&quot;) + e.getSetNumber()</span>
+<span class="nc" id="L318">			 :&quot;&quot;)</span>
+<span class="nc" id="L319">			+ &quot;\n\n&quot;</span>
+<span class="nc" id="L320">			+ modelString;</span>
+<span class="nc" id="L321">		      titleString = Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_TitleString_Text&quot;) + titleString;</span>
+
+<span class="nc" id="L323">		      TextEvent nt = new TextEvent(Clusterer.this,</span>
+<span class="nc" id="L324">						   modelString,</span>
+<span class="nc" id="L325">						   titleString);</span>
+<span class="nc" id="L326">		      notifyTextListeners(nt);</span>
+		    }
+		  }
+<span class="nc" id="L329">		} catch (Exception ex) {</span>
+<span class="nc" id="L330">		  Clusterer.this.stop(); // stop processing</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">		  if (m_log != null) {</span>
+<span class="nc" id="L332">		    m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L333">		        + Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_StatusMessage_Text_First&quot;));</span>
+<span class="nc" id="L334">		    m_log.logMessage(Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_LogMessage_Text_First&quot;) + statusMessagePrefix()</span>
+<span class="nc" id="L335">		        + Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_LogMessage_Text_First_Alpha&quot;) + ex.getMessage());</span>
+		  }
+<span class="nc" id="L337">		  ex.printStackTrace();</span>
+<span class="nc" id="L338">		} finally {</span>
+//		  m_visual.setText(oldText);
+<span class="nc" id="L340">		  m_visual.setStatic();</span>
+<span class="nc" id="L341">		  m_state = IDLE;</span>
+<span class="nc bnc" id="L342" title="All 6 branches missed.">		  if (isInterrupted()) {</span>
+		    // prevent any clusterer events from being fired
+<span class="nc" id="L344">		    m_trainingSet = null;</span>
+<span class="nc bnc" id="L345" title="All 6 branches missed.">		    if (m_log != null) {</span>
+<span class="nc" id="L346">		      m_log.logMessage(Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_LogMessage_Text_First&quot;) + statusMessagePrefix() </span>
+<span class="nc" id="L347">		          + Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_LogMessage_Text_Second&quot;));</span>
+<span class="nc" id="L348">		      m_log.statusMessage(statusMessagePrefix() </span>
+<span class="nc" id="L349">		          + Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_StatusMessage_Text_Second&quot;));</span>
+		    }
+		  } else {
+		    // save header
+<span class="nc" id="L353">		    m_trainingSet = new Instances(m_trainingSet, 0);</span>
+<span class="nc bnc" id="L354" title="All 6 branches missed.">		    if (m_log != null) {</span>
+<span class="nc" id="L355">		      m_log.statusMessage(statusMessagePrefix() + Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_StatusMessage_Text_Third&quot;));</span>
+		    }
+		  }
+<span class="nc" id="L358">		  block(false);</span>
+<span class="nc" id="L359">		}</span>
+<span class="nc" id="L360">	      }	</span>
+	    };
+<span class="nc" id="L362">	  m_buildThread.setPriority(Thread.MIN_PRIORITY);</span>
+<span class="nc" id="L363">	  m_buildThread.start();</span>
+	  // make sure the thread is still running before we block
+	  //	  if (m_buildThread.isAlive()) {
+<span class="nc" id="L366">	  block(true);</span>
+	    //	  }
+<span class="nc" id="L368">	  m_buildThread = null;</span>
+<span class="nc" id="L369">	  m_state = IDLE;</span>
+	}
+<span class="nc" id="L371">      } catch (Exception ex) {</span>
+<span class="nc" id="L372">	ex.printStackTrace();</span>
+      }
+    }
+<span class="nc" id="L375">  }</span>
+
+  /**
+   * Accepts a test set for a batch trained clusterer
+   *
+   * @param e a &lt;code&gt;TestSetEvent&lt;/code&gt; value
+   */
+  public void acceptTestSet(TestSetEvent e) {
+
+<span class="nc bnc" id="L384" title="All 2 branches missed.">    if (m_trainingSet != null) {</span>
+      try {
+<span class="nc bnc" id="L386" title="All 2 branches missed.">	if (m_state == IDLE) {</span>
+<span class="nc" id="L387">	  synchronized(this) {</span>
+<span class="nc" id="L388">	    m_state = CLUSTERING;</span>
+	  }
+<span class="nc" id="L390">          m_testingSet = e.getTestSet();</span>
+<span class="nc bnc" id="L391" title="All 2 branches missed.">	  if (m_trainingSet.equalHeaders(m_testingSet)) {</span>
+<span class="nc" id="L392">	    BatchClustererEvent ce = </span>
+<span class="nc" id="L393">	      new BatchClustererEvent(this, m_Clusterer, </span>
+<span class="nc" id="L394">				       new DataSetEvent(this, e.getTestSet()),</span>
+<span class="nc" id="L395">				  e.getSetNumber(), e.getMaxSetNumber(),0);</span>
+
+<span class="nc" id="L397">	    notifyBatchClustererListeners(ce);</span>
+	    
+	  }
+<span class="nc" id="L400">	  m_state = IDLE;</span>
+	}
+<span class="nc" id="L402">      } catch (Exception ex) {</span>
+<span class="nc" id="L403">        stop(); // stop any processing</span>
+<span class="nc bnc" id="L404" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L405">          m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L406">              + Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_StatusMessage_Text_Fourth&quot;));</span>
+<span class="nc" id="L407">          m_log.logMessage(Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_LogMessage_Text_Third&quot;) + statusMessagePrefix()</span>
+<span class="nc" id="L408">              + Messages.getInstance().getString(&quot;Clusterer_AcceptTrainingSet_LogMessage_Text_Fourth&quot;) + ex.getMessage());</span>
+        }
+<span class="nc" id="L410">	ex.printStackTrace();</span>
+      }
+    }
+<span class="nc" id="L413">  }</span>
+
+/**
+   * Builds the clusters
+   */
+  private void buildClusterer() throws Exception {
+<span class="nc bnc" id="L419" title="All 2 branches missed.">      if(m_trainingSet.classIndex() &lt; 0)  </span>
+<span class="nc" id="L420">        m_Clusterer.buildClusterer(m_trainingSet);</span>
+      else{ //class based evaluation if class attribute is set
+<span class="nc" id="L422">        Remove removeClass = new Remove();</span>
+<span class="nc" id="L423">	removeClass.setAttributeIndices(&quot;&quot;+(m_trainingSet.classIndex()+1));</span>
+<span class="nc" id="L424">	removeClass.setInvertSelection(false);</span>
+<span class="nc" id="L425">	removeClass.setInputFormat(m_trainingSet);</span>
+<span class="nc" id="L426">	Instances clusterTrain = Filter.useFilter(m_trainingSet, removeClass);</span>
+<span class="nc" id="L427">	m_Clusterer.buildClusterer(clusterTrain);</span>
+      }
+<span class="nc" id="L429">  }</span>
+
+  /**
+   * Sets the visual appearance of this wrapper bean
+   *
+   * @param newVisual a &lt;code&gt;BeanVisual&lt;/code&gt; value
+   */
+  public void setVisual(BeanVisual newVisual) {
+<span class="nc" id="L437">    m_visual = newVisual;</span>
+<span class="nc" id="L438">  }</span>
+
+  /**
+   * Gets the visual appearance of this wrapper bean
+   */
+  public BeanVisual getVisual() {
+<span class="nc" id="L444">    return m_visual;</span>
+  }
+
+  /**
+   * Use the default visual appearance for this bean
+   */
+  public void useDefaultVisual() {
+<span class="nc" id="L451">    m_visual.loadIcons(BeanVisual.ICON_PATH+&quot;DefaultClusterer.gif&quot;,</span>
+<span class="nc" id="L452">		       BeanVisual.ICON_PATH+&quot;DefaultClusterer_animated.gif&quot;);</span>
+<span class="nc" id="L453">  }</span>
+
+  /**
+   * Add a batch clusterer listener
+   *
+   * @param cl a &lt;code&gt;BatchClustererListener&lt;/code&gt; value
+   */
+  public synchronized void 
+    addBatchClustererListener(BatchClustererListener cl) {
+<span class="nc" id="L462">    m_batchClustererListeners.addElement(cl);</span>
+<span class="nc" id="L463">  }</span>
+
+  /**
+   * Remove a batch clusterer listener
+   *
+   * @param cl a &lt;code&gt;BatchClustererListener&lt;/code&gt; value
+   */
+  public synchronized void 
+    removeBatchClustererListener(BatchClustererListener cl) {
+<span class="nc" id="L472">    m_batchClustererListeners.remove(cl);</span>
+<span class="nc" id="L473">  }</span>
+
+  /**
+   * Notify all batch clusterer listeners of a batch clusterer event
+   *
+   * @param ce a &lt;code&gt;BatchClustererEvent&lt;/code&gt; value
+   */
+  private void notifyBatchClustererListeners(BatchClustererEvent ce) {
+    Vector l;
+<span class="nc" id="L482">    synchronized (this) {</span>
+<span class="nc" id="L483">      l = (Vector)m_batchClustererListeners.clone();</span>
+    }
+<span class="nc bnc" id="L485" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L486" title="All 2 branches missed.">      for(int i = 0; i &lt; l.size(); i++) {</span>
+<span class="nc" id="L487">	((BatchClustererListener)l.elementAt(i)).acceptClusterer(ce);</span>
+      }
+    }
+<span class="nc" id="L490">  }</span>
+
+  /**
+   * Add a graph listener
+   *
+   * @param cl a &lt;code&gt;GraphListener&lt;/code&gt; value
+   */
+  public synchronized void addGraphListener(GraphListener cl) {
+<span class="nc" id="L498">    m_graphListeners.addElement(cl);</span>
+<span class="nc" id="L499">  }</span>
+
+  /**
+   * Remove a graph listener
+   *
+   * @param cl a &lt;code&gt;GraphListener&lt;/code&gt; value
+   */
+  public synchronized void removeGraphListener(GraphListener cl) {
+<span class="nc" id="L507">    m_graphListeners.remove(cl);</span>
+<span class="nc" id="L508">  }</span>
+
+  /**
+   * Notify all graph listeners of a graph event
+   *
+   * @param ge a &lt;code&gt;GraphEvent&lt;/code&gt; value
+   */
+  private void notifyGraphListeners(GraphEvent ge) {
+    Vector l;
+<span class="nc" id="L517">    synchronized (this) {</span>
+<span class="nc" id="L518">      l = (Vector)m_graphListeners.clone();</span>
+    }
+<span class="nc bnc" id="L520" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">      for(int i = 0; i &lt; l.size(); i++) {</span>
+<span class="nc" id="L522">	((GraphListener)l.elementAt(i)).acceptGraph(ge);</span>
+      }
+    }
+<span class="nc" id="L525">  }</span>
+
+  /**
+   * Add a text listener
+   *
+   * @param cl a &lt;code&gt;TextListener&lt;/code&gt; value
+   */
+  public synchronized void addTextListener(TextListener cl) {
+<span class="nc" id="L533">    m_textListeners.addElement(cl);</span>
+<span class="nc" id="L534">  }</span>
+
+  /**
+   * Remove a text listener
+   *
+   * @param cl a &lt;code&gt;TextListener&lt;/code&gt; value
+   */
+  public synchronized void removeTextListener(TextListener cl) {
+<span class="nc" id="L542">    m_textListeners.remove(cl);</span>
+<span class="nc" id="L543">  }</span>
+
+  /**
+   * Notify all text listeners of a text event
+   *
+   * @param ge a &lt;code&gt;TextEvent&lt;/code&gt; value
+   */
+  private void notifyTextListeners(TextEvent ge) {
+    Vector l;
+<span class="nc" id="L552">    synchronized (this) {</span>
+<span class="nc" id="L553">      l = (Vector)m_textListeners.clone();</span>
+    }
+<span class="nc bnc" id="L555" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L556" title="All 2 branches missed.">      for(int i = 0; i &lt; l.size(); i++) {</span>
+<span class="nc" id="L557">	((TextListener)l.elementAt(i)).acceptText(ge);</span>
+      }
+    }
+<span class="nc" id="L560">  }</span>
+
+
+  /**
+   * Returns true if, at this time, 
+   * the object will accept a connection with respect to the named event
+   *
+   * @param eventName the event
+   * @return true if the object will accept a connection
+   */
+  public boolean connectionAllowed(String eventName) {
+    /*    if (eventName.compareTo(&quot;instance&quot;) == 0) {
+      if (!(m_Clusterer instanceof weka.classifiers.UpdateableClassifier)) {
+	return false;
+      }
+      } */
+<span class="nc bnc" id="L576" title="All 2 branches missed.">    if (m_listenees.containsKey(eventName)) {</span>
+<span class="nc" id="L577">      return false;</span>
+    }
+<span class="nc" id="L579">    return true;</span>
+  }
+
+  /**
+   * Returns true if, at this time, 
+   * the object will accept a connection according to the supplied
+   * EventSetDescriptor
+   *
+   * @param esd the EventSetDescriptor
+   * @return true if the object will accept a connection
+   */
+  public boolean connectionAllowed(EventSetDescriptor esd) {
+<span class="nc" id="L591">    return connectionAllowed(esd.getName());</span>
+  }
+
+  /**
+   * Notify this object that it has been registered as a listener with
+   * a source with respect to the named event
+   *
+   * @param eventName the event
+   * @param source the source with which this object has been registered as
+   * a listener
+   */
+  public synchronized void connectionNotification(String eventName,
+						  Object source) {
+
+<span class="nc bnc" id="L605" title="All 2 branches missed.">    if (connectionAllowed(eventName)) {</span>
+<span class="nc" id="L606">      m_listenees.put(eventName, source);</span>
+      /*      if (eventName.compareTo(&quot;instance&quot;) == 0) {
+	startIncrementalHandler();
+	} */
+    }
+<span class="nc" id="L611">  }</span>
+
+  /**
+   * Notify this object that it has been deregistered as a listener with
+   * a source with respect to the supplied event name
+   *
+   * @param eventName the event
+   * @param source the source with which this object has been registered as
+   * a listener
+   */
+  public synchronized void disconnectionNotification(String eventName,
+						     Object source) {
+<span class="nc" id="L623">    m_listenees.remove(eventName);</span>
+<span class="nc" id="L624">  }</span>
+
+  /**
+   * Function used to stop code that calls acceptTrainingSet. This is 
+   * needed as clusterer construction is performed inside a separate
+   * thread of execution.
+   *
+   * @param tf a &lt;code&gt;boolean&lt;/code&gt; value
+   */
+  private synchronized void block(boolean tf) {
+
+<span class="nc bnc" id="L635" title="All 2 branches missed.">    if (tf) {</span>
+      try {
+	  // only block if thread is still doing something useful!
+<span class="nc bnc" id="L638" title="All 4 branches missed.">	if (m_buildThread.isAlive() &amp;&amp; m_state != IDLE) {</span>
+<span class="nc" id="L639">	  wait();</span>
+	  }
+<span class="nc" id="L641">      } catch (InterruptedException ex) {</span>
+      }
+    } else {
+<span class="nc" id="L644">      notifyAll();</span>
+    }
+<span class="nc" id="L646">  }</span>
+
+  /**
+   * Returns true if. at this time, the bean is busy with some
+   * (i.e. perhaps a worker thread is performing some calculation).
+   * 
+   * @return true if the bean is busy.
+   */
+  public boolean isBusy() {
+<span class="nc bnc" id="L655" title="All 2 branches missed.">    return (m_buildThread != null);</span>
+  }
+  
+  /**
+   * Stop any clusterer action
+   */
+  public void stop() {
+    // tell all listenees (upstream beans) to stop
+<span class="nc" id="L663">    Enumeration en = m_listenees.keys();</span>
+<span class="nc bnc" id="L664" title="All 2 branches missed.">    while (en.hasMoreElements()) {</span>
+<span class="nc" id="L665">      Object tempO = m_listenees.get(en.nextElement());</span>
+<span class="nc bnc" id="L666" title="All 2 branches missed.">      if (tempO instanceof BeanCommon) {</span>
+<span class="nc" id="L667">	((BeanCommon)tempO).stop();</span>
+      }
+    }
+
+    // stop the build thread
+<span class="nc bnc" id="L672" title="All 2 branches missed.">    if (m_buildThread != null) {</span>
+<span class="nc" id="L673">      m_buildThread.interrupt();</span>
+<span class="nc" id="L674">      m_buildThread.stop();</span>
+<span class="nc" id="L675">      m_buildThread = null;</span>
+<span class="nc" id="L676">      m_visual.setStatic();</span>
+    }
+<span class="nc" id="L678">  }</span>
+
+  /**
+   * Set a logger
+   *
+   * @param logger a &lt;code&gt;Logger&lt;/code&gt; value
+   */
+  public void setLog(Logger logger) {
+<span class="nc" id="L686">    m_log = logger;</span>
+<span class="nc" id="L687">  }</span>
+
+  public void saveModel() {
+    try {
+<span class="nc bnc" id="L691" title="All 2 branches missed.">      if (m_fileChooser == null) {</span>
+        // i.e. after de-serialization
+<span class="nc" id="L693">        m_fileChooser = </span>
+<span class="nc" id="L694">          new JFileChooser(new File(System.getProperty(&quot;user.dir&quot;)));</span>
+<span class="nc" id="L695">        ExtensionFileFilter ef = new ExtensionFileFilter(&quot;model&quot;, &quot;Serialized weka clusterer&quot;);</span>
+<span class="nc" id="L696">      m_fileChooser.setFileFilter(ef);</span>
+      }
+<span class="nc" id="L698">      int returnVal = m_fileChooser.showSaveDialog(this);</span>
+<span class="nc bnc" id="L699" title="All 2 branches missed.">      if (returnVal == JFileChooser.APPROVE_OPTION) {</span>
+<span class="nc" id="L700">        File saveTo = m_fileChooser.getSelectedFile();</span>
+<span class="nc" id="L701">        String fn = saveTo.getAbsolutePath();</span>
+<span class="nc bnc" id="L702" title="All 2 branches missed.">        if (!fn.endsWith(&quot;.model&quot;)) {</span>
+<span class="nc" id="L703">          fn += &quot;.model&quot;;</span>
+<span class="nc" id="L704">          saveTo = new File(fn);</span>
+        }
+<span class="nc" id="L706">        ObjectOutputStream os = </span>
+<span class="nc" id="L707">          new ObjectOutputStream(new BufferedOutputStream(</span>
+<span class="nc" id="L708">                                                          new FileOutputStream(saveTo)));</span>
+<span class="nc" id="L709">        os.writeObject(m_Clusterer);</span>
+<span class="nc bnc" id="L710" title="All 2 branches missed.">        if (m_trainingSet != null) {</span>
+<span class="nc" id="L711">          Instances header = new Instances(m_trainingSet, 0);</span>
+<span class="nc" id="L712">          os.writeObject(header);</span>
+        }
+<span class="nc" id="L714">        os.close();</span>
+<span class="nc bnc" id="L715" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L716">          m_log.logMessage(Messages.getInstance().getString(&quot;Clusterer_SaveModel_LogMessage_Text_Fourth&quot;) + getCustomName());</span>
+        }
+      }
+<span class="nc" id="L719">    } catch (Exception ex) {</span>
+<span class="nc" id="L720">      JOptionPane.showMessageDialog(Clusterer.this,</span>
+<span class="nc" id="L721">    		  Messages.getInstance().getString(&quot;Clusterer_SaveModel_JOptionPane_ShowMessageDialog_Text_First&quot;),</span>
+<span class="nc" id="L722">    		  Messages.getInstance().getString(&quot;Clusterer_SaveModel_JOptionPane_ShowMessageDialog_Text_Second&quot;),</span>
+<span class="nc" id="L723">                                    JOptionPane.ERROR_MESSAGE);</span>
+<span class="nc bnc" id="L724" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L725">        m_log.logMessage(Messages.getInstance().getString(&quot;Clusterer_SaveModel_LogMessage_Text_Fifth&quot;) </span>
+<span class="nc" id="L726">            + getCustomName() + ex.getMessage());</span>
+      }
+    }
+<span class="nc" id="L729">  }</span>
+
+  public void loadModel() {
+    try {
+<span class="nc bnc" id="L733" title="All 2 branches missed.">      if (m_fileChooser == null) {</span>
+        // i.e. after de-serialization
+<span class="nc" id="L735">        m_fileChooser = </span>
+<span class="nc" id="L736">          new JFileChooser(new File(System.getProperty(&quot;user.dir&quot;)));</span>
+<span class="nc" id="L737">        ExtensionFileFilter ef = new ExtensionFileFilter(&quot;model&quot;, &quot;Serialized weka clusterer&quot;);</span>
+<span class="nc" id="L738">        m_fileChooser.setFileFilter(ef);</span>
+      }
+<span class="nc" id="L740">      int returnVal = m_fileChooser.showOpenDialog(this);</span>
+<span class="nc bnc" id="L741" title="All 2 branches missed.">      if (returnVal == JFileChooser.APPROVE_OPTION) {</span>
+<span class="nc" id="L742">        File loadFrom = m_fileChooser.getSelectedFile();</span>
+<span class="nc" id="L743">        ObjectInputStream is = </span>
+<span class="nc" id="L744">          new ObjectInputStream(new BufferedInputStream(</span>
+<span class="nc" id="L745">                                new FileInputStream(loadFrom)));</span>
+        // try and read the model
+<span class="nc" id="L747">        weka.clusterers.Clusterer temp = (weka.clusterers.Clusterer)is.readObject();</span>
+
+        // Update name and icon
+<span class="nc" id="L750">        setClusterer(temp);</span>
+        
+        // try and read the header (if present)
+        try {
+<span class="nc" id="L754">          m_trainingSet = (Instances)is.readObject();</span>
+<span class="nc" id="L755">        } catch (Exception ex) {</span>
+          // quietly ignore
+        }
+<span class="nc" id="L758">        is.close();</span>
+<span class="nc bnc" id="L759" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L760">          m_log.logMessage(Messages.getInstance().getString(&quot;Clusterer_LoadModel_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L761">                           + m_Clusterer.getClass().toString());</span>
+        }
+      }
+<span class="nc" id="L764">    } catch (Exception ex) {</span>
+<span class="nc" id="L765">      JOptionPane.showMessageDialog(Clusterer.this,</span>
+<span class="nc" id="L766">    		  Messages.getInstance().getString(&quot;Clusterer_LoadModel_JOptionPane_ShowMessageDialog_Text_First&quot;),</span>
+<span class="nc" id="L767">    		  Messages.getInstance().getString(&quot;Clusterer_LoadModel_JOptionPane_ShowMessageDialog_Text_Second&quot;),</span>
+<span class="nc" id="L768">                                    JOptionPane.ERROR_MESSAGE);</span>
+<span class="nc bnc" id="L769" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L770">        m_log.logMessage(Messages.getInstance().getString(&quot;Clusterer_LoadModel_LogMessage_Text_Second&quot;) </span>
+<span class="nc" id="L771">            + ex.getMessage());</span>
+      }
+    }
+<span class="nc" id="L774">  }</span>
+
+  /**
+   * Return an enumeration of requests that can be made by the user
+   *
+   * @return an &lt;code&gt;Enumeration&lt;/code&gt; value
+   */
+  public Enumeration enumerateRequests() {
+<span class="nc" id="L782">    Vector newVector = new Vector(0);</span>
+<span class="nc bnc" id="L783" title="All 2 branches missed.">    if (m_buildThread != null) {</span>
+<span class="nc" id="L784">      newVector.addElement(&quot;Stop&quot;);</span>
+    }
+
+<span class="nc bnc" id="L787" title="All 2 branches missed.">    if (m_buildThread == null &amp;&amp;</span>
+<span class="nc bnc" id="L788" title="All 2 branches missed.">        m_Clusterer != null) {</span>
+<span class="nc" id="L789">      newVector.addElement(&quot;Save model&quot;);</span>
+    }
+
+<span class="nc bnc" id="L792" title="All 2 branches missed.">    if (m_buildThread == null) {</span>
+<span class="nc" id="L793">      newVector.addElement(&quot;Load model&quot;);</span>
+    }
+    
+<span class="nc" id="L796">    return newVector.elements();</span>
+  }
+
+  /**
+   * Perform a particular request
+   *
+   * @param request the request to perform
+   * @exception IllegalArgumentException if an error occurs
+   */
+  public void performRequest(String request) {
+<span class="nc bnc" id="L806" title="All 2 branches missed.">    if (request.compareTo(&quot;Stop&quot;) == 0) {</span>
+<span class="nc" id="L807">      stop();</span>
+<span class="nc bnc" id="L808" title="All 2 branches missed.">    }  else if (request.compareTo(&quot;Save model&quot;) == 0) {</span>
+<span class="nc" id="L809">      saveModel();</span>
+<span class="nc bnc" id="L810" title="All 2 branches missed.">    } else if (request.compareTo(&quot;Load model&quot;) == 0) {</span>
+<span class="nc" id="L811">      loadModel();</span>
+    } else {
+<span class="nc" id="L813">      throw new IllegalArgumentException(request + &quot; not supported (Clusterer)&quot;);</span>
+    }
+<span class="nc" id="L815">  }</span>
+
+  /**
+   * Returns true, if at the current time, the event described by the
+   * supplied event descriptor could be generated.
+   *
+   * @param esd an &lt;code&gt;EventSetDescriptor&lt;/code&gt; value
+   * @return a &lt;code&gt;boolean&lt;/code&gt; value
+   */
+  public boolean eventGeneratable(EventSetDescriptor esd) {
+<span class="nc" id="L825">    String eventName = esd.getName();</span>
+<span class="nc" id="L826">    return eventGeneratable(eventName);</span>
+  }
+
+  /**
+   * Returns true, if at the current time, the named event could
+   * be generated. Assumes that the supplied event name is
+   * an event that could be generated by this bean
+   *
+   * @param eventName the name of the event in question
+   * @return true if the named event could be generated at this point in
+   * time
+   */
+  public boolean eventGeneratable(String eventName) {
+<span class="nc bnc" id="L839" title="All 2 branches missed.">    if (eventName.compareTo(&quot;graph&quot;) == 0) {</span>
+      // can't generate a GraphEvent if clusterer is not drawable
+<span class="nc bnc" id="L841" title="All 2 branches missed.">      if (!(m_Clusterer instanceof weka.core.Drawable)) {</span>
+<span class="nc" id="L842">	return false;</span>
+      }
+      // need to have a training set before the clusterer
+      // can generate a graph!
+<span class="nc bnc" id="L846" title="All 2 branches missed.">      if (!m_listenees.containsKey(&quot;trainingSet&quot;)) {</span>
+<span class="nc" id="L847">	return false;</span>
+      }
+      // Source needs to be able to generate a trainingSet
+      // before we can generate a graph
+<span class="nc" id="L851">      Object source = m_listenees.get(&quot;trainingSet&quot;);</span>
+<span class="nc bnc" id="L852" title="All 2 branches missed.">       if (source instanceof EventConstraints) {</span>
+<span class="nc bnc" id="L853" title="All 2 branches missed.">	if (!((EventConstraints)source).eventGeneratable(&quot;trainingSet&quot;)) {</span>
+<span class="nc" id="L854">	  return false;</span>
+	}
+      }
+    }
+
+<span class="nc bnc" id="L859" title="All 2 branches missed.">    if (eventName.compareTo(&quot;batchClusterer&quot;) == 0) {</span>
+<span class="nc bnc" id="L860" title="All 2 branches missed.">      if (!m_listenees.containsKey(&quot;trainingSet&quot;)) {</span>
+<span class="nc" id="L861">	return false;</span>
+      }
+     
+<span class="nc" id="L864">      Object source = m_listenees.get(&quot;trainingSet&quot;);</span>
+<span class="nc bnc" id="L865" title="All 4 branches missed.">      if (source != null &amp;&amp; source instanceof EventConstraints) {</span>
+<span class="nc bnc" id="L866" title="All 2 branches missed.">	if (!((EventConstraints)source).eventGeneratable(&quot;trainingSet&quot;)) {</span>
+<span class="nc" id="L867">	  return false;</span>
+	}
+      }
+    }
+
+<span class="nc bnc" id="L872" title="All 2 branches missed.">    if (eventName.compareTo(&quot;text&quot;) == 0) {</span>
+<span class="nc bnc" id="L873" title="All 2 branches missed.">      if (!m_listenees.containsKey(&quot;trainingSet&quot;)){ </span>
+<span class="nc" id="L874">	return false;</span>
+      }
+<span class="nc" id="L876">      Object source = m_listenees.get(&quot;trainingSet&quot;);</span>
+<span class="nc bnc" id="L877" title="All 4 branches missed.">      if (source != null &amp;&amp; source instanceof EventConstraints) {</span>
+<span class="nc bnc" id="L878" title="All 2 branches missed.">	if (!((EventConstraints)source).eventGeneratable(&quot;trainingSet&quot;)) {</span>
+<span class="nc" id="L879">	  return false;</span>
+	}
+      }
+    }
+
+<span class="nc bnc" id="L884" title="All 2 branches missed.">    if (eventName.compareTo(&quot;batchClassifier&quot;) == 0)</span>
+<span class="nc" id="L885">        return false;</span>
+<span class="nc bnc" id="L886" title="All 2 branches missed.">    if (eventName.compareTo(&quot;incrementalClassifier&quot;) == 0)</span>
+<span class="nc" id="L887">        return false;</span>
+    
+<span class="nc" id="L889">    return true;</span>
+  }
+  
+  private String statusMessagePrefix() {
+<span class="nc" id="L893">    return getCustomName() + &quot;$&quot; + hashCode() + &quot;|&quot;</span>
+<span class="nc bnc" id="L894" title="All 2 branches missed.">    + ((m_Clusterer instanceof OptionHandler &amp;&amp;</span>
+<span class="nc bnc" id="L895" title="All 2 branches missed.">        Utils.joinOptions(((OptionHandler)m_Clusterer).getOptions()).length() &gt; 0)</span>
+<span class="nc" id="L896">        ? Utils.joinOptions(((OptionHandler)m_Clusterer).getOptions()) + &quot;|&quot;</span>
+<span class="nc" id="L897">            : &quot;&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

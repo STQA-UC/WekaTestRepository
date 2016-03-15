@@ -1,0 +1,711 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>SerializedModelSaver.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui.beans</a> &gt; <span class="el_source">SerializedModelSaver.java</span></div><h1>SerializedModelSaver.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    SerializedModelSaver.java
+ *    Copyright (C) 2008 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.gui.beans;
+
+import java.io.ObjectInputStream;
+import java.io.Serializable;
+import java.io.File;
+import java.io.ObjectOutputStream;
+import java.io.FileOutputStream;
+import java.io.BufferedOutputStream;
+import java.io.IOException;
+import java.awt.BorderLayout;
+import java.beans.EventSetDescriptor;
+import java.util.ArrayList;
+import java.util.Vector;
+import javax.swing.JPanel;
+
+import weka.classifiers.Classifier;
+import weka.core.Instances;
+import weka.core.Environment;
+import weka.core.EnvironmentHandler;
+import weka.core.xml.KOML;
+import weka.core.xml.XStream;
+import weka.core.Tag;
+import weka.core.Utils;
+
+/**
+ * A bean that saves serialized models
+ *
+ * @author Mark Hall (mhall{[at]}pentaho{[dot]}org
+ * @version $Revision: 7878 $
+ */
+<span class="nc" id="L53">public class SerializedModelSaver</span>
+  extends JPanel
+  implements BeanCommon, Visible, BatchClassifierListener, 
+             IncrementalClassifierListener, BatchClustererListener,
+	     EnvironmentHandler, Serializable {
+
+  /** for serialization */
+  private static final long serialVersionUID = 3956528599473814287L;
+
+  /**
+   * Default visual for data sources
+   */
+<span class="nc" id="L65">  protected BeanVisual m_visual = </span>
+<span class="nc" id="L66">    new BeanVisual(&quot;AbstractDataSink&quot;, </span>
+<span class="nc" id="L67">		   BeanVisual.ICON_PATH+&quot;SerializedModelSaver.gif&quot;,</span>
+<span class="nc" id="L68">		   BeanVisual.ICON_PATH+&quot;SerializedModelSaver_animated.gif&quot;);</span>
+
+  /**
+   * Non null if this object is a target for any events.
+   * Provides for the simplest case when only one incomming connection
+   * is allowed.
+   */
+<span class="nc" id="L75">  protected Object m_listenee = null;</span>
+
+  /**
+   * The log for this bean
+   */
+<span class="nc" id="L80">  protected transient weka.gui.Logger m_logger = null;</span>
+
+  /**
+   * The prefix for the file name (model + training set info will be appended)
+   */
+<span class="nc" id="L85">  private String m_filenamePrefix = &quot;&quot;;</span>
+
+  /**
+   * The directory to hold the saved model(s)
+   */
+<span class="nc" id="L90">  private File m_directory = new File(System.getProperty(&quot;user.dir&quot;));</span>
+
+  /**
+   * File format stuff
+   */
+  private Tag m_fileFormat;
+
+  public final static int BINARY = 0;
+  public final static int KOMLV = 1;
+  public final static int XSTREAM = 2;
+
+  /** the extension for serialized models (binary Java serialization) */
+  public final static String FILE_EXTENSION = &quot;model&quot;;
+
+  /** relative path for the directory (relative to the user.dir (startup directory))? */
+<span class="nc" id="L105">  private boolean m_useRelativePath = false;</span>
+
+  /**
+   * Available file formats. Reflection is used to check if classes
+   * are available for deep object serialization to XML
+   */
+  public static ArrayList&lt;Tag&gt; s_fileFormatsAvailable;
+  static {
+<span class="nc" id="L113">    s_fileFormatsAvailable = new ArrayList&lt;Tag&gt;();</span>
+<span class="nc" id="L114">    s_fileFormatsAvailable.add(new Tag(BINARY, Messages.getInstance().getString(&quot;SerializedModelSaver_FileFormatsAvailable_Text_First&quot;)</span>
+<span class="nc" id="L115">                                       + FILE_EXTENSION + Messages.getInstance().getString(&quot;SerializedModelSaver_FileFormatsAvailable_Text_Second&quot;), &quot;&quot;, false));</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">    if (KOML.isPresent()) {</span>
+<span class="nc" id="L117">      s_fileFormatsAvailable.add(new Tag(KOMLV,</span>
+<span class="nc" id="L118">    		  Messages.getInstance().getString(&quot;SerializedModelSaver_FileFormatsAvailable_Text_Third&quot;)</span>
+<span class="nc" id="L119">                                         + KOML.FILE_EXTENSION + FILE_EXTENSION + Messages.getInstance().getString(&quot;SerializedModelSaver_FileFormatsAvailable_Text_Fourth&quot;), &quot;&quot;, false));</span>
+    }
+
+<span class="nc bnc" id="L122" title="All 2 branches missed.">    if (XStream.isPresent()) {</span>
+<span class="nc" id="L123">      s_fileFormatsAvailable.add(new Tag(XSTREAM,</span>
+<span class="nc" id="L124">    		  Messages.getInstance().getString(&quot;SerializedModelSaver_FileFormatsAvailable_Text_Fifth&quot;)</span>
+<span class="nc" id="L125">                                         + XStream.FILE_EXTENSION + FILE_EXTENSION + Messages.getInstance().getString(&quot;SerializedModelSaver_FileFormatsAvailable_Text_Sixth&quot;), &quot;&quot;, false));</span>
+    }
+  }
+  
+  /**
+   * The environment variables.
+   */
+  protected transient Environment m_env;
+
+  /**
+   * Constructor.
+   */
+<span class="nc" id="L137">  public SerializedModelSaver() {</span>
+<span class="nc" id="L138">    useDefaultVisual();</span>
+<span class="nc" id="L139">    setLayout(new BorderLayout());</span>
+<span class="nc" id="L140">    add(m_visual, BorderLayout.CENTER);</span>
+<span class="nc" id="L141">    m_fileFormat = s_fileFormatsAvailable.get(0);</span>
+    
+<span class="nc" id="L143">    m_env = Environment.getSystemWide();</span>
+<span class="nc" id="L144">  }</span>
+
+  /**
+   * Set a custom (descriptive) name for this bean
+   * 
+   * @param name the name to use
+   */
+  public void setCustomName(String name) {
+<span class="nc" id="L152">    m_visual.setText(name);</span>
+<span class="nc" id="L153">  }</span>
+
+  /**
+   * Get the custom (descriptive) name for this bean (if one has been set)
+   * 
+   * @return the custom name (or the default name)
+   */
+  public String getCustomName() {
+<span class="nc" id="L161">    return m_visual.getText();</span>
+  }
+
+  /**
+   * Use the default images for this bean.
+   *
+   */
+  public void useDefaultVisual() {
+<span class="nc" id="L169">    m_visual.loadIcons(BeanVisual.ICON_PATH+&quot;SerializedModelSaver.gif&quot;,</span>
+<span class="nc" id="L170">		       BeanVisual.ICON_PATH+&quot;SerializedModelSaver_animated.gif&quot;);</span>
+<span class="nc" id="L171">    m_visual.setText(&quot;SerializedModelSaver&quot;);</span>
+<span class="nc" id="L172">  }</span>
+
+  /**
+   * Set the visual for this data source.
+   *
+   * @param newVisual a &lt;code&gt;BeanVisual&lt;/code&gt; value
+   */
+  public void setVisual(BeanVisual newVisual) {
+<span class="nc" id="L180">    m_visual = newVisual;</span>
+<span class="nc" id="L181">  }</span>
+
+  /**
+   * Get the visual being used by this data source.
+   *
+   */
+  public BeanVisual getVisual() {
+<span class="nc" id="L188">    return m_visual;</span>
+  }
+
+  /**
+   * Returns true if, at this time, 
+   * the object will accept a connection according to the supplied
+   * EventSetDescriptor.
+   *
+   * @param esd the EventSetDescriptor
+   * @return true if the object will accept a connection
+   */
+  public boolean connectionAllowed(EventSetDescriptor esd) {
+<span class="nc" id="L200">    return connectionAllowed(esd.getName());</span>
+  }
+
+  /**
+   * Returns true if, at this time, 
+   * the object will accept a connection according to the supplied
+   * event name.
+   *
+   * @param eventName the event
+   * @return true if the object will accept a connection
+   */
+  public boolean connectionAllowed(String eventName) {
+<span class="nc bnc" id="L212" title="All 2 branches missed.">    return (m_listenee == null);</span>
+  }
+
+  /**
+   * Notify this object that it has been registered as a listener with
+   * a source with respect to the supplied event name.
+   *
+   * @param eventName the event
+   * @param source the source with which this object has been registered as
+   * a listener
+   */
+  public synchronized void connectionNotification(String eventName,
+						  Object source) {
+<span class="nc bnc" id="L225" title="All 2 branches missed.">    if (connectionAllowed(eventName)) {</span>
+<span class="nc" id="L226">      m_listenee = source;</span>
+    }
+<span class="nc" id="L228">  }</span>
+
+  /**
+   * Notify this object that it has been deregistered as a listener with
+   * a source with respect to the supplied event name.
+   *
+   * @param eventName the event
+   * @param source the source with which this object has been registered as
+   * a listener
+   */
+  public synchronized void disconnectionNotification(String eventName,
+						     Object source) {
+<span class="nc bnc" id="L240" title="All 2 branches missed.">    if (m_listenee == source) {</span>
+<span class="nc" id="L241">      m_listenee = null;</span>
+    }
+<span class="nc" id="L243">  }</span>
+  
+  /**
+   * Set a log for this bean.
+   *
+   * @param logger a &lt;code&gt;weka.gui.Logger&lt;/code&gt; value
+   */
+  public void setLog(weka.gui.Logger logger) {
+<span class="nc" id="L251">    m_logger = logger;</span>
+<span class="nc" id="L252">  }</span>
+
+  /**
+   * Stop any processing that the bean might be doing.
+   */
+  public void stop() {
+    // tell the listenee (upstream bean) to stop
+<span class="nc bnc" id="L259" title="All 2 branches missed.">    if (m_listenee instanceof BeanCommon) {</span>
+<span class="nc" id="L260">      ((BeanCommon)m_listenee).stop();</span>
+    }
+<span class="nc" id="L262">  }</span>
+  
+  /**
+   * Returns true if. at this time, the bean is busy with some
+   * (i.e. perhaps a worker thread is performing some calculation).
+   * 
+   * @return true if the bean is busy.
+   */
+  public boolean isBusy() {
+<span class="nc" id="L271">    return false;</span>
+  }
+
+  /**
+   * makes sure that the filename is valid, i.e., replaces slashes,
+   * backslashes and colons with underscores (&quot;_&quot;).
+   * 
+   * @param filename	the filename to cleanse
+   * @return		the cleansed filename
+   */
+  protected String sanitizeFilename(String filename) {
+<span class="nc" id="L282">    return filename.replaceAll(&quot;\\\\&quot;, &quot;_&quot;).replaceAll(&quot;:&quot;, &quot;_&quot;).replaceAll(&quot;/&quot;, &quot;_&quot;);</span>
+  }
+
+  /**
+   * Accept and save a batch trained clusterer.
+   *
+   * @param ce a &lt;code&gt;BatchClassifierEvent&lt;/code&gt; value
+   */
+  public void acceptClusterer(BatchClustererEvent ce) {
+<span class="nc bnc" id="L291" title="All 2 branches missed.">    if (ce.getTestSet() == null || </span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">        ce.getTestOrTrain() == BatchClustererEvent.TEST ||</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">        ce.getTestSet().isStructureOnly()) {</span>
+<span class="nc" id="L294">      return;</span>
+    }
+
+<span class="nc" id="L297">    Instances trainHeader = ce.getTestSet().getDataSet().stringFreeStructure();</span>
+<span class="nc" id="L298">    String titleString = ce.getClusterer().getClass().getName();		      </span>
+<span class="nc" id="L299">    titleString = titleString.</span>
+<span class="nc" id="L300">      substring(titleString.lastIndexOf('.') + 1,</span>
+<span class="nc" id="L301">                titleString.length());</span>
+
+<span class="nc" id="L303">    String prefix = &quot;&quot;;</span>
+    try {
+<span class="nc" id="L305">      prefix = m_env.substitute(m_filenamePrefix);</span>
+<span class="nc" id="L306">    } catch (Exception ex) {</span>
+<span class="nc" id="L307">      stop(); // stop all processing</span>
+<span class="nc" id="L308">      String message = Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClusterer_Message_Text_First&quot;) </span>
+<span class="nc" id="L309">        + statusMessagePrefix() </span>
+<span class="nc" id="L310">        + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClusterer_Message_Text_Second&quot;)</span>
+<span class="nc" id="L311">        + ex.getMessage();</span>
+<span class="nc bnc" id="L312" title="All 2 branches missed.">      if (m_logger != null) {</span>
+<span class="nc" id="L313">        m_logger.logMessage(message);</span>
+<span class="nc" id="L314">        m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L315">            + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClusterer_StatusMessage_Text_First&quot;));</span>
+      } else {
+<span class="nc" id="L317">        System.err.println(message);</span>
+      }
+<span class="nc" id="L319">      return;</span>
+    }
+<span class="nc" id="L321">    String fileName = &quot;&quot; </span>
+<span class="nc" id="L322">      + prefix</span>
+<span class="nc" id="L323">      + titleString</span>
+<span class="nc" id="L324">      + &quot;_&quot;</span>
+<span class="nc" id="L325">      + ce.getSetNumber() </span>
+<span class="nc" id="L326">      + &quot;_&quot; + ce.getMaxSetNumber();</span>
+<span class="nc" id="L327">    fileName = sanitizeFilename(fileName);</span>
+    
+<span class="nc" id="L329">    String dirName = m_directory.getPath();</span>
+    try {
+<span class="nc" id="L331">      dirName = m_env.substitute(dirName);</span>
+<span class="nc" id="L332">    } catch (Exception ex) {</span>
+<span class="nc" id="L333">      stop(); // stop all processing</span>
+<span class="nc" id="L334">      String message = Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClusterer_Message_Text_Third&quot;)</span>
+<span class="nc" id="L335">        + statusMessagePrefix() + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClusterer_Message_Text_Fourth&quot;) </span>
+<span class="nc" id="L336">                           + ex.getMessage();</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">      if (m_logger != null) {</span>
+<span class="nc" id="L338">        m_logger.logMessage(message);</span>
+<span class="nc" id="L339">        m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L340">            + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClusterer_StatusMessage_Text_Second&quot;));</span>
+      } else {
+<span class="nc" id="L342">        System.err.println(message);</span>
+      }
+<span class="nc" id="L344">      return;</span>
+    }
+<span class="nc" id="L346">    File tempFile = new File(dirName);</span>
+<span class="nc" id="L347">    fileName = tempFile.getAbsolutePath() </span>
+<span class="nc" id="L348">      + File.separator</span>
+<span class="nc" id="L349">      + fileName;</span>
+
+<span class="nc" id="L351">    saveModel(fileName, trainHeader, ce.getClusterer());</span>
+<span class="nc" id="L352">  }</span>
+
+  /**
+   * Accept and save an incrementally trained classifier.
+   *
+   * @param ce the BatchClassifierEvent containing the classifier
+   */
+  public void acceptClassifier(final IncrementalClassifierEvent ce) {
+<span class="nc bnc" id="L360" title="All 2 branches missed.">    if (ce.getStatus() == IncrementalClassifierEvent.BATCH_FINISHED) {</span>
+      // Only save model when the end of the stream is reached
+<span class="nc" id="L362">      Instances header = ce.getStructure();</span>
+<span class="nc" id="L363">      String titleString = ce.getClassifier().getClass().getName();		      </span>
+<span class="nc" id="L364">      titleString = titleString.</span>
+<span class="nc" id="L365">        substring(titleString.lastIndexOf('.') + 1,</span>
+<span class="nc" id="L366">                  titleString.length());</span>
+
+<span class="nc" id="L368">      String prefix = &quot;&quot;;</span>
+      try {
+<span class="nc" id="L370">        prefix = m_env.substitute(m_filenamePrefix);</span>
+<span class="nc" id="L371">      } catch (Exception ex) {</span>
+<span class="nc" id="L372">        stop(); // stop processing</span>
+<span class="nc" id="L373">        String message = Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_Message_Text_First&quot;)</span>
+<span class="nc" id="L374">          + statusMessagePrefix() + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_Message_Text_Second&quot;) </span>
+<span class="nc" id="L375">          + ex.getMessage();</span>
+<span class="nc bnc" id="L376" title="All 2 branches missed.">        if (m_logger != null) {</span>
+<span class="nc" id="L377">          m_logger.logMessage(message);</span>
+<span class="nc" id="L378">          m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L379">              + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_StatusMessage_Text_First&quot;));</span>
+        } else {
+<span class="nc" id="L381">          System.err.println(message);</span>
+        }
+<span class="nc" id="L383">        return;</span>
+      }
+      
+<span class="nc" id="L386">      String fileName = &quot;&quot; + prefix + titleString;</span>
+<span class="nc" id="L387">      fileName = sanitizeFilename(fileName);</span>
+
+<span class="nc" id="L389">      String dirName = m_directory.getPath();</span>
+      try {
+<span class="nc" id="L391">        dirName = m_env.substitute(dirName);</span>
+<span class="nc" id="L392">      } catch (Exception ex) {</span>
+<span class="nc" id="L393">        stop(); // stop processing</span>
+<span class="nc" id="L394">        String message = Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_Message_Text_Third&quot;)</span>
+<span class="nc" id="L395">          + statusMessagePrefix() + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_Message_Text_Fourth&quot;) </span>
+<span class="nc" id="L396">          + ex.getMessage();</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">        if (m_logger != null) {</span>
+<span class="nc" id="L398">          m_logger.logMessage(message);</span>
+<span class="nc" id="L399">          m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L400">              + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_StatusMessage_Text_Second&quot;));</span>
+        } else {
+<span class="nc" id="L402">          System.err.println(message);</span>
+        }
+<span class="nc" id="L404">        return;</span>
+      }
+<span class="nc" id="L406">      File tempFile = new File(dirName);</span>
+
+<span class="nc" id="L408">      fileName = tempFile.getAbsolutePath() </span>
+<span class="nc" id="L409">        + File.separator</span>
+<span class="nc" id="L410">        + fileName;</span>
+      
+<span class="nc" id="L412">      saveModel(fileName, header, ce.getClassifier());</span>
+    }
+<span class="nc" id="L414">  }</span>
+  
+  /**
+   * Accept and save a batch trained classifier.
+   *
+   * @param ce the BatchClassifierEvent containing the classifier
+   */
+  public void acceptClassifier(final BatchClassifierEvent ce) {
+<span class="nc bnc" id="L422" title="All 2 branches missed.">    if (ce.getTrainSet() == null || </span>
+<span class="nc bnc" id="L423" title="All 2 branches missed.">        ce.getTrainSet().isStructureOnly()) {</span>
+<span class="nc" id="L424">      return;</span>
+    }
+<span class="nc" id="L426">    Instances trainHeader = new Instances(ce.getTrainSet().getDataSet(), 0);</span>
+<span class="nc" id="L427">    String titleString = ce.getClassifier().getClass().getName();		      </span>
+<span class="nc" id="L428">    titleString = titleString.</span>
+<span class="nc" id="L429">      substring(titleString.lastIndexOf('.') + 1,</span>
+<span class="nc" id="L430">                titleString.length());</span>
+
+<span class="nc" id="L432">    String prefix = &quot;&quot;;</span>
+    try {
+<span class="nc" id="L434">      prefix = m_env.substitute(m_filenamePrefix);</span>
+<span class="nc" id="L435">    } catch (Exception ex) {</span>
+<span class="nc" id="L436">      stop(); // stop processing</span>
+<span class="nc" id="L437">      String message = Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_Message_Text_Fifth&quot;)</span>
+<span class="nc" id="L438">        + statusMessagePrefix() + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_Message_Text_Sixth&quot;) </span>
+<span class="nc" id="L439">        + ex.getMessage();</span>
+<span class="nc bnc" id="L440" title="All 2 branches missed.">      if (m_logger != null) {</span>
+<span class="nc" id="L441">        m_logger.logMessage(message);</span>
+<span class="nc" id="L442">        m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L443">            + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_StatusMessage_Text_Third&quot;));</span>
+      } else {
+<span class="nc" id="L445">        System.err.println(message);</span>
+      }
+<span class="nc" id="L447">      return;</span>
+    }
+
+<span class="nc" id="L450">    String fileName = &quot;&quot; </span>
+<span class="nc" id="L451">      + prefix</span>
+<span class="nc" id="L452">      + titleString</span>
+<span class="nc" id="L453">      + &quot;_&quot;</span>
+<span class="nc" id="L454">      + ce.getSetNumber() </span>
+<span class="nc" id="L455">      + &quot;_&quot; + ce.getMaxSetNumber();</span>
+<span class="nc" id="L456">    fileName = sanitizeFilename(fileName);</span>
+    
+<span class="nc" id="L458">    String dirName = m_directory.getPath();</span>
+    try {
+<span class="nc" id="L460">      dirName = m_env.substitute(dirName);</span>
+<span class="nc" id="L461">    } catch (Exception ex) {</span>
+<span class="nc" id="L462">      stop(); // stop processing</span>
+<span class="nc" id="L463">      String message = Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_Message_Text_Seventh&quot;)</span>
+<span class="nc" id="L464">        + statusMessagePrefix() + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_Message_Text_Eighth&quot;) </span>
+<span class="nc" id="L465">                           + ex.getMessage();</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">      if (m_logger != null) {</span>
+<span class="nc" id="L467">        m_logger.logMessage(message);</span>
+<span class="nc" id="L468">        m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L469">            + Messages.getInstance().getString(&quot;SerializedModelSaver_AcceptClassifier_StatusMessage_Text_Fourth&quot;));</span>
+      } else {
+<span class="nc" id="L471">        System.err.println(message);</span>
+      }
+<span class="nc" id="L473">      return;</span>
+    }
+<span class="nc" id="L475">    File tempFile = new File(dirName);</span>
+
+<span class="nc" id="L477">    fileName = tempFile.getAbsolutePath() </span>
+<span class="nc" id="L478">      + File.separator</span>
+<span class="nc" id="L479">      + fileName;</span>
+
+<span class="nc" id="L481">    saveModel(fileName, trainHeader, ce.getClassifier());</span>
+<span class="nc" id="L482">  }</span>
+
+  /**
+   * Helper routine to actually save the models.
+   */
+  
+  
+  private void saveModel(String fileName, Instances trainHeader, Object model) {
+<span class="nc" id="L490">    m_fileFormat = validateFileFormat(m_fileFormat);</span>
+<span class="nc bnc" id="L491" title="All 2 branches missed.">    if (m_fileFormat == null) {</span>
+      // default to binary if validation fails
+<span class="nc" id="L493">      m_fileFormat = s_fileFormatsAvailable.get(0);</span>
+    }
+    try {
+<span class="nc bnc" id="L496" title="All 3 branches missed.">      switch (m_fileFormat.getID()) {</span>
+      case KOMLV:
+<span class="nc" id="L498">        fileName = fileName + KOML.FILE_EXTENSION + FILE_EXTENSION;</span>
+<span class="nc" id="L499">        saveKOML(new File(fileName), model, trainHeader);</span>
+<span class="nc" id="L500">        break;</span>
+      case XSTREAM:
+<span class="nc" id="L502">        fileName = fileName + XStream.FILE_EXTENSION + FILE_EXTENSION;</span>
+<span class="nc" id="L503">        saveXStream(new File(fileName), model, trainHeader);</span>
+<span class="nc" id="L504">        break;</span>
+      default:
+<span class="nc" id="L506">        fileName = fileName + &quot;.&quot; + FILE_EXTENSION;</span>
+<span class="nc" id="L507">        saveBinary(new File(fileName), model, trainHeader);</span>
+<span class="nc" id="L508">        break;</span>
+      }        
+<span class="nc" id="L510">    } catch (Exception ex) {</span>
+<span class="nc" id="L511">      stop(); // stop all processing</span>
+<span class="nc" id="L512">      System.err.println(Messages.getInstance().getString(&quot;SerializedModelSaver_SaveModel_Error_Text&quot;));</span>
+<span class="nc bnc" id="L513" title="All 2 branches missed.">      if (m_logger != null) {</span>
+<span class="nc" id="L514">        m_logger.logMessage(Messages.getInstance().getString(&quot;SerializedModelSaver_SaveModel_LogMessage_Text_First&quot;)</span>
+<span class="nc" id="L515">            + statusMessagePrefix() + Messages.getInstance().getString(&quot;SerializedModelSaver_SaveModel_LogMessage_Text_Second&quot;));</span>
+<span class="nc" id="L516">        m_logger.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L517">            + Messages.getInstance().getString(&quot;SerializedModelSaver_SaveModel_StatusMessage_Text&quot;));</span>
+      }
+    }
+<span class="nc" id="L520">  }</span>
+
+  /**
+   * Save a model in binary form.
+   *
+   * @param saveTo the file name to save to
+   * @param model the model to save
+   * @param header the header of the data that was used to train the model (optional)
+   */
+  public static void saveBinary(File saveTo, Object model, Instances header) throws IOException {
+<span class="nc" id="L530">    ObjectOutputStream os =</span>
+<span class="nc" id="L531">      new ObjectOutputStream(new BufferedOutputStream(</span>
+<span class="nc" id="L532">                             new FileOutputStream(saveTo)));</span>
+<span class="nc" id="L533">    os.writeObject(model);</span>
+    // now the header
+<span class="nc bnc" id="L535" title="All 2 branches missed.">    if (header != null) {</span>
+<span class="nc" id="L536">      os.writeObject(header);</span>
+    }
+<span class="nc" id="L538">    os.close();</span>
+<span class="nc" id="L539">  }</span>
+
+  /**
+   * Save a model in KOML deep object serialized XML form.
+   *
+   * @param saveTo the file name to save to
+   * @param model the model to save
+   * @param header the header of the data that was used to train the model (optional)
+   */
+  public static void saveKOML(File saveTo, Object model, Instances header) throws Exception {
+<span class="nc" id="L549">    Vector v = new Vector();</span>
+<span class="nc" id="L550">    v.add(model);</span>
+<span class="nc bnc" id="L551" title="All 2 branches missed.">    if (header != null) {</span>
+<span class="nc" id="L552">      v.add(header);</span>
+    }
+<span class="nc" id="L554">    v.trimToSize();</span>
+<span class="nc" id="L555">    KOML.write(saveTo.getAbsolutePath(), v);</span>
+<span class="nc" id="L556">  }</span>
+
+  /**
+   * Save a model in XStream deep object serialized XML form.
+   *
+   * @param saveTo the file name to save to
+   * @param model the model to save
+   * @param header the header of the data that was used to train the model (optional)
+   */
+  public static void saveXStream(File saveTo, Object model, Instances header) throws Exception {
+<span class="nc" id="L566">    Vector v = new Vector();</span>
+<span class="nc" id="L567">    v.add(model);</span>
+<span class="nc bnc" id="L568" title="All 2 branches missed.">    if (header != null) {</span>
+<span class="nc" id="L569">      v.add(header);</span>
+    }
+<span class="nc" id="L571">    v.trimToSize();</span>
+<span class="nc" id="L572">    XStream.write(saveTo.getAbsolutePath(), v);</span>
+<span class="nc" id="L573">  }</span>
+
+  /**
+   * Get the directory that the model(s) will be saved into
+   *
+   * @return the directory to save to
+   */
+  public File getDirectory() {
+<span class="nc" id="L581">    return m_directory;</span>
+  }
+  
+  /**
+   * Set the directory that the model(s) will be saved into.
+   *
+   * @param d the directory to save to
+   */
+  public void setDirectory(File d) {
+<span class="nc" id="L590">    m_directory = d;</span>
+<span class="nc bnc" id="L591" title="All 2 branches missed.">    if (m_useRelativePath) {</span>
+      try {
+<span class="nc" id="L593">        m_directory = Utils.convertToRelativePath(m_directory);</span>
+<span class="nc" id="L594">      } catch (Exception ex) {</span>
+      }
+    }
+<span class="nc" id="L597">  }</span>
+
+  /**
+   * Set whether to use relative paths for the directory.
+   * I.e. relative to the startup (user.dir) directory
+   *
+   * @param rp true if relative paths are to be used
+   */
+  public void setUseRelativePath(boolean rp) {
+<span class="nc" id="L606">    m_useRelativePath = rp;</span>
+<span class="nc" id="L607">  }</span>
+  
+  /**
+   * Get whether to use relative paths for the directory.
+   * I.e. relative to the startup (user.dir) directory
+   *
+   * @return true if relative paths are to be used
+   */
+  public boolean getUseRelativePath() {
+<span class="nc" id="L616">    return m_useRelativePath;</span>
+  }
+
+  /**
+   * Get the prefix to prepend to the model file names.
+   *
+   * @return the prefix to prepend
+   */
+  public String getPrefix() {
+<span class="nc" id="L625">    return m_filenamePrefix;</span>
+  }
+
+  /**
+   * Set the prefix to prepend to the model file names.
+   *
+   * @param p the prefix to prepend
+   */
+  public void setPrefix(String p) {
+<span class="nc" id="L634">    m_filenamePrefix = p;</span>
+<span class="nc" id="L635">  }</span>
+
+  /**
+   * Global info for this bean. Gets displayed in the GUI.
+   *
+   * @return information about this bean.
+   */
+  public String globalInfo() {
+<span class="nc" id="L643">    return Messages.getInstance().getString(&quot;SerializedModelSaver_GlobalInfo_Text&quot;);</span>
+  }
+
+  /**
+   * Set the file format to use for saving.
+   *
+   * @param ff the file format to use
+   */
+  public void setFileFormat(Tag ff) {
+<span class="nc" id="L652">    m_fileFormat = ff;</span>
+<span class="nc" id="L653">  }</span>
+
+  /**
+   * Get the file format to use for saving.
+   *
+   * @return the file format to use
+   */
+  public Tag getFileFormat() {
+<span class="nc" id="L661">    return m_fileFormat;</span>
+  }
+
+  /**
+   * Validate the file format. After this bean is deserialized, classes for
+   * XML serialization may not be in the classpath any more.
+   *
+   * @param ff the current file format to validate
+   */
+  public Tag validateFileFormat(Tag ff) {
+<span class="nc" id="L671">    Tag r = ff;</span>
+<span class="nc bnc" id="L672" title="All 2 branches missed.">    if (ff.getID() == BINARY) {</span>
+<span class="nc" id="L673">      return ff;</span>
+    }
+
+<span class="nc bnc" id="L676" title="All 4 branches missed.">    if (ff.getID() == KOMLV &amp;&amp; !KOML.isPresent()) {</span>
+<span class="nc" id="L677">      r = null;</span>
+    }
+
+<span class="nc bnc" id="L680" title="All 4 branches missed.">    if (ff.getID() == XSTREAM &amp;&amp; !XStream.isPresent()) {</span>
+<span class="nc" id="L681">      r = null;</span>
+    }
+
+<span class="nc" id="L684">    return r;</span>
+  }
+  
+  private String statusMessagePrefix() {
+<span class="nc" id="L688">    return getCustomName() + &quot;$&quot; + hashCode() + &quot;|&quot;;</span>
+  }
+  
+  /**
+   * Set environment variables to use.
+   * 
+   * @param env the environment variables to
+   * use
+   */
+  public void setEnvironment(Environment env) {
+<span class="nc" id="L698">    m_env = env;</span>
+<span class="nc" id="L699">  }</span>
+  
+  // Custom de-serialization in order to set default
+  // environment variables on de-serialization
+  private void readObject(ObjectInputStream aStream) 
+    throws IOException, ClassNotFoundException {
+<span class="nc" id="L705">    aStream.defaultReadObject();</span>
+    
+    // set a default environment to use
+<span class="nc" id="L708">    m_env = Environment.getSystemWide();</span>
+<span class="nc" id="L709">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

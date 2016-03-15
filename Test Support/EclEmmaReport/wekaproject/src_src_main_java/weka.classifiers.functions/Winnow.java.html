@@ -1,0 +1,869 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Winnow.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.functions</a> &gt; <span class="el_source">Winnow.java</span></div><h1>Winnow.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Winnow.java
+ *    Copyright (C) 2002 J. Lindgren
+ *
+ */
+package weka.classifiers.functions;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.UpdateableClassifier;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.NominalToBinary;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Implements Winnow and Balanced Winnow algorithms by Littlestone.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see&lt;br/&gt;
+ * &lt;br/&gt;
+ * N. Littlestone (1988). Learning quickly when irrelevant attributes are abound: A new linear threshold algorithm. Machine Learning. 2:285-318.&lt;br/&gt;
+ * &lt;br/&gt;
+ * N. Littlestone (1989). Mistake bounds and logarithmic linear-threshold learning algorithms. University of California, Santa Cruz.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Does classification for problems with nominal attributes (which it converts into binary attributes).
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;article{Littlestone1988,
+ *    author = {N. Littlestone},
+ *    journal = {Machine Learning},
+ *    pages = {285-318},
+ *    title = {Learning quickly when irrelevant attributes are abound: A new linear threshold algorithm},
+ *    volume = {2},
+ *    year = {1988}
+ * }
+ * 
+ * &amp;#64;techreport{Littlestone1989,
+ *    address = {University of California, Santa Cruz},
+ *    author = {N. Littlestone},
+ *    institution = {University of California},
+ *    note = {Technical Report UCSC-CRL-89-11},
+ *    title = {Mistake bounds and logarithmic linear-threshold learning algorithms},
+ *    year = {1989}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -L
+ *  Use the baLanced version
+ *  (default false)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -I &amp;lt;int&amp;gt;
+ *  The number of iterations to be performed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A &amp;lt;double&amp;gt;
+ *  Promotion coefficient alpha.
+ *  (default 2.0)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;double&amp;gt;
+ *  Demotion coefficient beta.
+ *  (default 0.5)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -H &amp;lt;double&amp;gt;
+ *  Prediction threshold.
+ *  (default -1.0 == number of attributes)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;double&amp;gt;
+ *  Starting weights.
+ *  (default 2.0)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;int&amp;gt;
+ *  Default random seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author J. Lindgren (jtlindgr at cs.helsinki.fi)
+ * @version $Revision: 5523 $ 
+*/
+<span class="fc" id="L119">public class Winnow </span>
+  extends Classifier 
+  implements UpdateableClassifier, TechnicalInformationHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = 3543770107994321324L;
+  
+  /** Use the balanced variant? **/
+  protected boolean m_Balanced;
+ 
+  /** The number of iterations **/
+<span class="fc" id="L130">  protected int m_numIterations = 1;</span>
+
+  /** The promotion coefficient **/
+<span class="fc" id="L133">  protected double m_Alpha = 2.0;</span>
+
+  /** The demotion coefficient **/
+<span class="fc" id="L136">  protected double m_Beta = 0.5;</span>
+
+  /** Prediction threshold, &lt;0 == numAttributes **/
+<span class="fc" id="L139">  protected double m_Threshold = -1.0;</span>
+  
+  /** Random seed used for shuffling the dataset, -1 == disable **/
+<span class="fc" id="L142">  protected int m_Seed = 1;</span>
+
+  /** Accumulated mistake count (for statistics) **/
+  protected int m_Mistakes;
+
+  /** Starting weights for the prediction vector(s) **/
+<span class="fc" id="L148">  protected double m_defaultWeight = 2.0;</span>
+  
+  /** The weight vector for prediction (pos) */
+<span class="fc" id="L151">  private double[] m_predPosVector = null;</span>
+  
+  /** The weight vector for prediction (neg) */
+<span class="fc" id="L154">  private double[] m_predNegVector = null;</span>
+
+  /** The true threshold used for prediction **/
+  private double m_actualThreshold;
+
+  /** The training instances */
+<span class="fc" id="L160">  private Instances m_Train = null;</span>
+
+  /** The filter used to make attributes numeric. */
+  private NominalToBinary m_NominalToBinary;
+
+  /** The filter used to get rid of missing values. */
+  private ReplaceMissingValues m_ReplaceMissingValues;
+
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L175">    return  &quot;Implements Winnow and Balanced Winnow algorithms by &quot;</span>
+      + &quot;Littlestone.\n\n&quot;
+      + &quot;For more information, see\n\n&quot;
+<span class="nc" id="L178">      + getTechnicalInformation().toString()</span>
+<span class="nc" id="L179">      + &quot;\n\n&quot;</span>
+<span class="nc" id="L180">      + &quot;Does classification for problems with nominal attributes &quot;</span>
+<span class="nc" id="L181">      + &quot;(which it converts into binary attributes).&quot;;</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    TechnicalInformation 	additional;
+    
+<span class="nc" id="L195">    result = new TechnicalInformation(Type.ARTICLE);</span>
+<span class="nc" id="L196">    result.setValue(Field.AUTHOR, &quot;N. Littlestone&quot;);</span>
+<span class="nc" id="L197">    result.setValue(Field.YEAR, &quot;1988&quot;);</span>
+<span class="nc" id="L198">    result.setValue(Field.TITLE, &quot;Learning quickly when irrelevant attributes are abound: A new linear threshold algorithm&quot;);</span>
+<span class="nc" id="L199">    result.setValue(Field.JOURNAL, &quot;Machine Learning&quot;);</span>
+<span class="nc" id="L200">    result.setValue(Field.VOLUME, &quot;2&quot;);</span>
+<span class="nc" id="L201">    result.setValue(Field.PAGES, &quot;285-318&quot;);</span>
+    
+<span class="nc" id="L203">    additional = result.add(Type.TECHREPORT);</span>
+<span class="nc" id="L204">    additional.setValue(Field.AUTHOR, &quot;N. Littlestone&quot;);</span>
+<span class="nc" id="L205">    additional.setValue(Field.YEAR, &quot;1989&quot;);</span>
+<span class="nc" id="L206">    additional.setValue(Field.TITLE, &quot;Mistake bounds and logarithmic linear-threshold learning algorithms&quot;);</span>
+<span class="nc" id="L207">    additional.setValue(Field.INSTITUTION, &quot;University of California&quot;);</span>
+<span class="nc" id="L208">    additional.setValue(Field.ADDRESS, &quot;University of California, Santa Cruz&quot;);</span>
+<span class="nc" id="L209">    additional.setValue(Field.NOTE, &quot;Technical Report UCSC-CRL-89-11&quot;);</span>
+    
+<span class="nc" id="L211">    return result;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options
+   *
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+
+<span class="fc" id="L221">    Vector newVector = new Vector(7);</span>
+    
+<span class="fc" id="L223">    newVector.addElement(new Option(&quot;\tUse the baLanced version\n&quot;</span>
+				    + &quot;\t(default false)&quot;,
+<span class="fc" id="L225">				    &quot;L&quot;, 0, &quot;-L&quot;));</span>
+<span class="fc" id="L226">    newVector.addElement(new Option(&quot;\tThe number of iterations to be performed.\n&quot;</span>
+				    + &quot;\t(default 1)&quot;,
+<span class="fc" id="L228">				    &quot;I&quot;, 1, &quot;-I &lt;int&gt;&quot;));</span>
+<span class="fc" id="L229">    newVector.addElement(new Option(&quot;\tPromotion coefficient alpha.\n&quot;</span>
+				    + &quot;\t(default 2.0)&quot;,
+<span class="fc" id="L231">				    &quot;A&quot;, 1, &quot;-A &lt;double&gt;&quot;));</span>
+<span class="fc" id="L232">    newVector.addElement(new Option(&quot;\tDemotion coefficient beta.\n&quot;</span>
+				    + &quot;\t(default 0.5)&quot;,
+<span class="fc" id="L234">				    &quot;B&quot;, 1, &quot;-B &lt;double&gt;&quot;));</span>
+<span class="fc" id="L235">    newVector.addElement(new Option(&quot;\tPrediction threshold.\n&quot;</span>
+				    + &quot;\t(default -1.0 == number of attributes)&quot;,
+<span class="fc" id="L237">				    &quot;H&quot;, 1, &quot;-H &lt;double&gt;&quot;));</span>
+<span class="fc" id="L238">    newVector.addElement(new Option(&quot;\tStarting weights.\n&quot;</span>
+				    + &quot;\t(default 2.0)&quot;,
+<span class="fc" id="L240">				    &quot;W&quot;, 1, &quot;-W &lt;double&gt;&quot;));</span>
+<span class="fc" id="L241">    newVector.addElement(new Option(&quot;\tDefault random seed.\n&quot;</span>
+				    + &quot;\t(default 1)&quot;,
+<span class="fc" id="L243">				    &quot;S&quot;, 1, &quot;-S &lt;int&gt;&quot;));</span>
+
+<span class="fc" id="L245">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options.&lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -L
+   *  Use the baLanced version
+   *  (default false)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -I &amp;lt;int&amp;gt;
+   *  The number of iterations to be performed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -A &amp;lt;double&amp;gt;
+   *  Promotion coefficient alpha.
+   *  (default 2.0)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -B &amp;lt;double&amp;gt;
+   *  Demotion coefficient beta.
+   *  (default 0.5)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -H &amp;lt;double&amp;gt;
+   *  Prediction threshold.
+   *  (default -1.0 == number of attributes)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;double&amp;gt;
+   *  Starting weights.
+   *  (default 2.0)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;int&amp;gt;
+   *  Default random seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    
+<span class="fc" id="L289">    m_Balanced = Utils.getFlag('L', options);</span>
+	
+<span class="fc" id="L291">    String iterationsString = Utils.getOption('I', options);</span>
+<span class="fc bfc" id="L292" title="All 2 branches covered.">    if (iterationsString.length() != 0) {</span>
+<span class="fc" id="L293">      m_numIterations = Integer.parseInt(iterationsString);</span>
+    }
+<span class="fc" id="L295">    String alphaString = Utils.getOption('A', options);</span>
+<span class="fc bfc" id="L296" title="All 2 branches covered.">    if (alphaString.length() != 0) { </span>
+<span class="fc" id="L297">      m_Alpha = (new Double(alphaString)).doubleValue();</span>
+    }
+<span class="fc" id="L299">    String betaString = Utils.getOption('B', options);</span>
+<span class="fc bfc" id="L300" title="All 2 branches covered.">    if (betaString.length() != 0) {</span>
+<span class="fc" id="L301">      m_Beta = (new Double(betaString)).doubleValue();</span>
+    }
+<span class="fc" id="L303">    String tString = Utils.getOption('H', options);</span>
+<span class="fc bfc" id="L304" title="All 2 branches covered.">    if (tString.length() != 0) {</span>
+<span class="fc" id="L305">      m_Threshold = (new Double(tString)).doubleValue();</span>
+    }
+<span class="fc" id="L307">    String wString = Utils.getOption('W', options);</span>
+<span class="fc bfc" id="L308" title="All 2 branches covered.">    if (wString.length() != 0) {</span>
+<span class="fc" id="L309">      m_defaultWeight = (new Double(wString)).doubleValue();</span>
+    }
+<span class="fc" id="L311">    String rString = Utils.getOption('S', options);</span>
+<span class="fc bfc" id="L312" title="All 2 branches covered.">    if (rString.length() != 0) {</span>
+<span class="fc" id="L313">      m_Seed = Integer.parseInt(rString);</span>
+    }
+<span class="fc" id="L315">  }</span>
+
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+
+<span class="fc" id="L324">    String[] options = new String [20];</span>
+<span class="fc" id="L325">    int current = 0;</span>
+
+<span class="pc bpc" id="L327" title="1 of 2 branches missed.">    if(m_Balanced) {</span>
+<span class="nc" id="L328">      options[current++] = &quot;-L&quot;; </span>
+    }
+    
+<span class="fc" id="L331">    options[current++] = &quot;-I&quot;; options[current++] = &quot;&quot; + m_numIterations;</span>
+<span class="fc" id="L332">    options[current++] = &quot;-A&quot;; options[current++] = &quot;&quot; + m_Alpha;</span>
+<span class="fc" id="L333">    options[current++] = &quot;-B&quot;; options[current++] = &quot;&quot; + m_Beta;</span>
+<span class="fc" id="L334">    options[current++] = &quot;-H&quot;; options[current++] = &quot;&quot; + m_Threshold;</span>
+<span class="fc" id="L335">    options[current++] = &quot;-W&quot;; options[current++] = &quot;&quot; + m_defaultWeight;</span>
+<span class="fc" id="L336">    options[current++] = &quot;-S&quot;; options[current++] = &quot;&quot; + m_Seed;</span>
+<span class="fc bfc" id="L337" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc" id="L338">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="fc" id="L340">    return options;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L349">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L350">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L353">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L354">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L357">    result.enable(Capability.BINARY_CLASS);</span>
+<span class="fc" id="L358">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+
+    // instances
+<span class="fc" id="L361">    result.setMinimumNumberInstances(0);</span>
+    
+<span class="fc" id="L363">    return result;</span>
+  }
+
+  /**
+   * Builds the classifier
+   *
+   * @param insts the data to train the classifier with
+   * @throws Exception if something goes wrong during building
+   */
+  public void buildClassifier(Instances insts) throws Exception {
+
+    // can classifier handle the data?
+<span class="fc" id="L375">    getCapabilities().testWithFail(insts);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L378">    insts = new Instances(insts);</span>
+<span class="fc" id="L379">    insts.deleteWithMissingClass();</span>
+    
+    // Filter data
+<span class="fc" id="L382">    m_Train = new Instances(insts);</span>
+    
+<span class="fc" id="L384">    m_ReplaceMissingValues = new ReplaceMissingValues();</span>
+<span class="fc" id="L385">    m_ReplaceMissingValues.setInputFormat(m_Train);</span>
+<span class="fc" id="L386">    m_Train = Filter.useFilter(m_Train, m_ReplaceMissingValues);</span>
+<span class="fc" id="L387">    m_NominalToBinary = new NominalToBinary();</span>
+<span class="fc" id="L388">    m_NominalToBinary.setInputFormat(m_Train);</span>
+<span class="fc" id="L389">    m_Train = Filter.useFilter(m_Train, m_NominalToBinary);</span>
+
+    /** Randomize training data */
+<span class="pc bpc" id="L392" title="1 of 2 branches missed.">    if(m_Seed != -1) {</span>
+<span class="fc" id="L393">      m_Train.randomize(new Random(m_Seed));</span>
+    }
+
+    /** Make space to store weights */
+<span class="fc" id="L397">    m_predPosVector = new double[m_Train.numAttributes()];</span>
+
+<span class="pc bpc" id="L399" title="1 of 2 branches missed.">    if(m_Balanced) {</span>
+<span class="nc" id="L400">      m_predNegVector = new double[m_Train.numAttributes()];</span>
+    }
+
+    /** Initialize the weights to starting values **/
+<span class="fc bfc" id="L404" title="All 2 branches covered.">    for(int i = 0; i &lt; m_Train.numAttributes(); i++)</span>
+<span class="fc" id="L405">      m_predPosVector[i] = m_defaultWeight;</span>
+
+<span class="pc bpc" id="L407" title="1 of 2 branches missed.">    if(m_Balanced) {</span>
+<span class="nc bnc" id="L408" title="All 2 branches missed.">      for(int i = 0; i &lt; m_Train.numAttributes(); i++) {</span>
+<span class="nc" id="L409">	m_predNegVector[i] = m_defaultWeight;</span>
+      }
+    }
+	
+    /** Set actual prediction threshold **/
+<span class="pc bpc" id="L414" title="1 of 2 branches missed.">    if(m_Threshold&lt;0) {</span>
+<span class="fc" id="L415">      m_actualThreshold = (double)m_Train.numAttributes()-1;</span>
+    } else {
+<span class="nc" id="L417">      m_actualThreshold = m_Threshold;</span>
+    }
+
+<span class="fc" id="L420">    m_Mistakes=0;</span>
+
+    /** Compute the weight vectors **/
+<span class="pc bpc" id="L423" title="1 of 2 branches missed.">    if(m_Balanced) {</span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">      for (int it = 0; it &lt; m_numIterations; it++) {</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">	for (int i = 0; i &lt; m_Train.numInstances(); i++) {</span>
+<span class="nc" id="L426">	  actualUpdateClassifierBalanced(m_Train.instance(i));</span>
+	}
+      }
+    } else {
+<span class="fc bfc" id="L430" title="All 2 branches covered.">      for (int it = 0; it &lt; m_numIterations; it++) {</span>
+<span class="fc bfc" id="L431" title="All 2 branches covered.">	for (int i = 0; i &lt; m_Train.numInstances(); i++) {</span>
+<span class="fc" id="L432">	  actualUpdateClassifier(m_Train.instance(i));</span>
+	}
+      }
+    }
+<span class="fc" id="L436">  }</span>
+  
+  /**
+   * Updates the classifier with a new learning example
+   *
+   * @param instance the instance to update the classifier with
+   * @throws Exception if something goes wrong
+   */
+  public void updateClassifier(Instance instance) throws Exception {
+	
+<span class="fc" id="L446">    m_ReplaceMissingValues.input(instance);</span>
+<span class="fc" id="L447">    m_ReplaceMissingValues.batchFinished();</span>
+<span class="fc" id="L448">    Instance filtered = m_ReplaceMissingValues.output();</span>
+<span class="fc" id="L449">    m_NominalToBinary.input(filtered);</span>
+<span class="fc" id="L450">    m_NominalToBinary.batchFinished();</span>
+<span class="fc" id="L451">    filtered = m_NominalToBinary.output();</span>
+
+<span class="pc bpc" id="L453" title="1 of 2 branches missed.">    if(m_Balanced) {</span>
+<span class="nc" id="L454">      actualUpdateClassifierBalanced(filtered);</span>
+    } else {
+<span class="fc" id="L456">      actualUpdateClassifier(filtered);</span>
+    }
+<span class="fc" id="L458">  }</span>
+  
+  /**
+   * Actual update routine for prefiltered instances
+   *
+   * @param inst the instance to update the classifier with
+   * @throws Exception if something goes wrong
+   */
+  private void actualUpdateClassifier(Instance inst) throws Exception {
+    
+    double posmultiplier;
+	
+<span class="pc bpc" id="L470" title="1 of 2 branches missed.">    if (!inst.classIsMissing()) {</span>
+<span class="fc" id="L471">      double prediction = makePrediction(inst);</span>
+   
+<span class="fc bfc" id="L473" title="All 2 branches covered.">      if (prediction != inst.classValue()) {</span>
+<span class="fc" id="L474">	m_Mistakes++;</span>
+
+<span class="fc bfc" id="L476" title="All 2 branches covered.">	if(prediction == 0) {</span>
+	  /* false neg: promote */
+<span class="fc" id="L478">	  posmultiplier=m_Alpha;</span>
+	} else {
+	  /* false pos: demote */
+<span class="fc" id="L481">	  posmultiplier=m_Beta;</span>
+	}
+<span class="fc" id="L483">	int n1 = inst.numValues(); int classIndex = m_Train.classIndex();</span>
+<span class="fc bfc" id="L484" title="All 2 branches covered.">	for(int l = 0 ; l &lt; n1 ; l++) {</span>
+<span class="fc bfc" id="L485" title="All 4 branches covered.">	  if(inst.index(l) != classIndex &amp;&amp; inst.valueSparse(l)==1) {</span>
+<span class="fc" id="L486">	    m_predPosVector[inst.index(l)]*=posmultiplier;</span>
+	  }
+	}
+	//Utils.normalize(m_predPosVector);
+      }
+    }
+    else {
+<span class="nc" id="L493">      System.out.println(&quot;CLASS MISSING&quot;);</span>
+    }
+<span class="fc" id="L495">  }</span>
+  
+  /**
+   * Actual update routine (balanced) for prefiltered instances
+   *
+   * @param inst the instance to update the classifier with
+   * @throws Exception if something goes wrong
+   */
+  private void actualUpdateClassifierBalanced(Instance inst) throws Exception {
+    
+    double posmultiplier,negmultiplier;
+
+<span class="nc bnc" id="L507" title="All 2 branches missed.">    if (!inst.classIsMissing()) {</span>
+<span class="nc" id="L508">      double prediction = makePredictionBalanced(inst);</span>
+        
+<span class="nc bnc" id="L510" title="All 2 branches missed.">      if (prediction != inst.classValue()) {</span>
+<span class="nc" id="L511">	m_Mistakes++;</span>
+	
+<span class="nc bnc" id="L513" title="All 2 branches missed.">	if(prediction == 0) {</span>
+	  /* false neg: promote positive, demote negative*/
+<span class="nc" id="L515">	  posmultiplier=m_Alpha;</span>
+<span class="nc" id="L516">	  negmultiplier=m_Beta;</span>
+	} else {
+	  /* false pos: demote positive, promote negative */
+<span class="nc" id="L519">	  posmultiplier=m_Beta;</span>
+<span class="nc" id="L520">	  negmultiplier=m_Alpha;</span>
+	}
+<span class="nc" id="L522">	int n1 = inst.numValues(); int classIndex = m_Train.classIndex();</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">	for(int l = 0 ; l &lt; n1 ; l++) {</span>
+<span class="nc bnc" id="L524" title="All 4 branches missed.">	  if(inst.index(l) != classIndex &amp;&amp; inst.valueSparse(l)==1) {</span>
+<span class="nc" id="L525">	    m_predPosVector[inst.index(l)]*=posmultiplier;</span>
+<span class="nc" id="L526">	    m_predNegVector[inst.index(l)]*=negmultiplier;</span>
+	  }
+	}
+	//Utils.normalize(m_predPosVector);
+	//Utils.normalize(m_predNegVector);
+      }
+    }
+    else {
+<span class="nc" id="L534">      System.out.println(&quot;CLASS MISSING&quot;);</span>
+    }
+<span class="nc" id="L536">  }</span>
+
+  /**
+   * Outputs the prediction for the given instance.
+   *
+   * @param inst the instance for which prediction is to be computed
+   * @return the prediction
+   * @throws Exception if something goes wrong
+   */
+  public double classifyInstance(Instance inst) throws Exception {
+
+<span class="fc" id="L547">    m_ReplaceMissingValues.input(inst);</span>
+<span class="fc" id="L548">    m_ReplaceMissingValues.batchFinished();</span>
+<span class="fc" id="L549">    Instance filtered = m_ReplaceMissingValues.output();</span>
+<span class="fc" id="L550">    m_NominalToBinary.input(filtered);</span>
+<span class="fc" id="L551">    m_NominalToBinary.batchFinished();</span>
+<span class="fc" id="L552">    filtered = m_NominalToBinary.output();</span>
+
+<span class="pc bpc" id="L554" title="1 of 2 branches missed.">    if(m_Balanced) {</span>
+<span class="nc" id="L555">      return(makePredictionBalanced(filtered));</span>
+    } else {
+<span class="fc" id="L557">      return(makePrediction(filtered));</span>
+    }
+  }
+  
+  /** 
+   * Compute the actual prediction for prefiltered instance
+   *
+   * @param inst the instance for which prediction is to be computed
+   * @return the prediction
+   * @throws Exception if something goes wrong
+   */
+  private double makePrediction(Instance inst) throws Exception {
+
+<span class="fc" id="L570">    double total = 0;</span>
+
+<span class="fc" id="L572">    int n1 = inst.numValues(); int classIndex = m_Train.classIndex();</span>
+	
+<span class="fc bfc" id="L574" title="All 2 branches covered.">    for(int i=0;i&lt;n1;i++) {</span>
+<span class="fc bfc" id="L575" title="All 4 branches covered.">      if(inst.index(i) != classIndex &amp;&amp; inst.valueSparse(i)==1) {</span>
+<span class="fc" id="L576">	total+=m_predPosVector[inst.index(i)];</span>
+      }
+    }
+    
+<span class="fc bfc" id="L580" title="All 2 branches covered.">    if(total &gt; m_actualThreshold) {</span>
+<span class="fc" id="L581">      return(1);</span>
+    } else {
+<span class="fc" id="L583">      return(0);</span>
+    }
+  }
+  
+  /** 
+   * Compute our prediction (Balanced) for prefiltered instance 
+   *
+   * @param inst the instance for which prediction is to be computed
+   * @return the prediction
+   * @throws Exception if something goes wrong
+   */
+  private double makePredictionBalanced(Instance inst) throws Exception {
+<span class="nc" id="L595">    double total=0;</span>
+	
+<span class="nc" id="L597">    int n1 = inst.numValues(); int classIndex = m_Train.classIndex();</span>
+<span class="nc bnc" id="L598" title="All 2 branches missed.">    for(int i=0;i&lt;n1;i++) {</span>
+<span class="nc bnc" id="L599" title="All 4 branches missed.">      if(inst.index(i) != classIndex &amp;&amp; inst.valueSparse(i)==1) {</span>
+<span class="nc" id="L600">	total+=(m_predPosVector[inst.index(i)]-m_predNegVector[inst.index(i)]);</span>
+      }
+    }
+     
+<span class="nc bnc" id="L604" title="All 2 branches missed.">    if(total &gt; m_actualThreshold) {</span>
+<span class="nc" id="L605">      return(1);</span>
+    } else {
+<span class="nc" id="L607">      return(0);</span>
+    }
+  }
+
+  /**
+   * Returns textual description of the classifier.
+   * 
+   * @return textual description of the classifier
+   */
+  public String toString() {
+
+<span class="pc bpc" id="L618" title="1 of 2 branches missed.">    if(m_predPosVector==null)</span>
+<span class="fc" id="L619">      return(&quot;Winnow: No model built yet.&quot;);</span>
+	   
+<span class="nc" id="L621">    String result = &quot;Winnow\n\nAttribute weights\n\n&quot;;</span>
+	
+<span class="nc" id="L623">    int classIndex = m_Train.classIndex();</span>
+
+<span class="nc bnc" id="L625" title="All 2 branches missed.">    if(!m_Balanced) {</span>
+<span class="nc bnc" id="L626" title="All 2 branches missed.">      for( int i = 0 ; i &lt; m_Train.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L627" title="All 2 branches missed.">	if(i!=classIndex)</span>
+<span class="nc" id="L628">	  result += &quot;w&quot; + i + &quot; &quot; + m_predPosVector[i] + &quot;\n&quot;;</span>
+      }
+    } else {
+<span class="nc bnc" id="L631" title="All 2 branches missed.">      for( int i = 0 ; i &lt; m_Train.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L632" title="All 2 branches missed.">	if(i!=classIndex) {</span>
+<span class="nc" id="L633">	  result += &quot;w&quot; + i + &quot; p &quot; + m_predPosVector[i];</span>
+<span class="nc" id="L634">	  result += &quot; n &quot; + m_predNegVector[i];</span>
+	  
+<span class="nc" id="L636">	  double wdiff=m_predPosVector[i]-m_predNegVector[i];</span>
+	  
+<span class="nc" id="L638">	  result += &quot; d &quot; + wdiff + &quot;\n&quot;;</span>
+	}
+      }
+    }
+<span class="nc" id="L642">    result += &quot;\nCumulated mistake count: &quot; + m_Mistakes + &quot;\n\n&quot;;</span>
+	
+<span class="nc" id="L644">    return(result);</span>
+  }
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String balancedTipText() {
+<span class="nc" id="L653">    return &quot;Whether to use the balanced version of the algorithm.&quot;;</span>
+  }
+
+  /**
+   * Get the value of Balanced.
+   *
+   * @return Value of Balanced.
+   */
+  public boolean getBalanced() {
+    
+<span class="nc" id="L663">    return m_Balanced;</span>
+  }
+  
+  /**
+   * Set the value of Balanced.
+   *
+   * @param b  Value to assign to Balanced.
+   */
+  public void setBalanced(boolean b) {
+    
+<span class="nc" id="L673">    m_Balanced = b;</span>
+<span class="nc" id="L674">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String alphaTipText() {
+<span class="nc" id="L682">    return &quot;Promotion coefficient alpha.&quot;;</span>
+  }
+  
+  /**
+   * Get the value of Alpha.
+   *
+   * @return Value of Alpha.
+   */
+  public double getAlpha() {
+    
+<span class="nc" id="L692">    return(m_Alpha);</span>
+  }
+  
+  /**
+   * Set the value of Alpha.
+   *
+   * @param a  Value to assign to Alpha.
+   */
+  public void setAlpha(double a) {
+    
+<span class="nc" id="L702">    m_Alpha = a;</span>
+<span class="nc" id="L703">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String betaTipText() {
+<span class="nc" id="L711">    return &quot;Demotion coefficient beta.&quot;;</span>
+  }
+  
+  /**
+   * Get the value of Beta.
+   *
+   * @return Value of Beta.
+   */
+  public double getBeta() {
+    
+<span class="nc" id="L721">    return(m_Beta);</span>
+  }
+  
+  /**
+   * Set the value of Beta.
+   *
+   * @param b  Value to assign to Beta.
+   */
+  public void setBeta(double b) {
+    
+<span class="nc" id="L731">    m_Beta = b;</span>
+<span class="nc" id="L732">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String thresholdTipText() {
+<span class="nc" id="L740">    return &quot;Prediction threshold (-1 means: set to number of attributes).&quot;;</span>
+  }
+  
+  /**
+   * Get the value of Threshold.
+   *
+   * @return Value of Threshold.
+   */
+  public double getThreshold() {
+    
+<span class="nc" id="L750">    return m_Threshold;</span>
+  }
+  
+  /**
+   * Set the value of Threshold.
+   *
+   * @param t  Value to assign to Threshold.
+   */
+  public void setThreshold(double t) {
+    
+<span class="nc" id="L760">    m_Threshold = t;</span>
+<span class="nc" id="L761">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String defaultWeightTipText() {
+<span class="nc" id="L769">    return &quot;Initial value of weights/coefficients.&quot;;</span>
+  }
+  
+  /**
+   * Get the value of defaultWeight.
+   *
+   * @return Value of defaultWeight.
+   */
+  public double getDefaultWeight() {
+    
+<span class="nc" id="L779">    return m_defaultWeight;</span>
+  }
+  
+  /**
+   * Set the value of defaultWeight.
+   *
+   * @param w  Value to assign to defaultWeight.
+   */
+  public void setDefaultWeight(double w) {
+    
+<span class="nc" id="L789">    m_defaultWeight = w;</span>
+<span class="nc" id="L790">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numIterationsTipText() {
+<span class="nc" id="L798">    return &quot;The number of iterations to be performed.&quot;;</span>
+  }
+  
+  /**
+   * Get the value of numIterations.
+   *
+   * @return Value of numIterations.
+   */
+  public int getNumIterations() {
+    
+<span class="nc" id="L808">    return m_numIterations;</span>
+  }
+  
+  /**
+   * Set the value of numIterations.
+   *
+   * @param v  Value to assign to numIterations.
+   */
+  public void setNumIterations(int v) {
+    
+<span class="nc" id="L818">    m_numIterations = v;</span>
+<span class="nc" id="L819">  }</span>
+     
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String seedTipText() {
+<span class="nc" id="L827">    return &quot;Random number seed used for data shuffling (-1 means no &quot;</span>
+      + &quot;randomization).&quot;;
+  }
+
+  /**
+   * Get the value of Seed.
+   *
+   * @return Value of Seed.
+   */
+  public int getSeed() {
+    
+<span class="nc" id="L838">    return m_Seed;</span>
+  }
+  
+  /**
+   * Set the value of Seed.
+   *
+   * @param v  Value to assign to Seed.
+   */
+  public void setSeed(int v) {
+    
+<span class="nc" id="L848">    m_Seed = v;</span>
+<span class="nc" id="L849">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L857">    return RevisionUtils.extract(&quot;$Revision: 5523 $&quot;);</span>
+  }
+  
+  /**
+   * Main method.
+   * 
+   * @param argv the commandline options
+   */
+  public static void main(String[] argv) {
+<span class="nc" id="L866">    runClassifier(new Winnow(), argv);</span>
+<span class="nc" id="L867">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

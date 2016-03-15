@@ -1,0 +1,1109 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>RuleNode.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees.m5</a> &gt; <span class="el_source">RuleNode.java</span></div><h1>RuleNode.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    RuleNode.java
+ *    Copyright (C) 2000 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.trees.m5;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.Evaluation;
+import weka.classifiers.functions.LinearRegression;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Remove;
+
+/**
+ * Constructs a node for use in an m5 tree or rule
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version $Revision: 1.13 $
+ */
+public class RuleNode 
+  extends Classifier {
+
+  /** for serialization */
+  static final long serialVersionUID = 1979807611124337144L;
+  
+  /**
+   * instances reaching this node
+   */
+  private Instances	   m_instances;
+
+  /**
+   * the class index
+   */
+  private int		   m_classIndex;
+
+  /**
+   * the number of instances reaching this node
+   */
+  protected int		   m_numInstances;
+
+  /**
+   * the number of attributes
+   */
+  private int		   m_numAttributes;
+
+  /**
+   * Node is a leaf
+   */
+  private boolean	   m_isLeaf;
+
+  /**
+   * attribute this node splits on
+   */
+  private int		   m_splitAtt;
+
+  /**
+   * the value of the split attribute
+   */
+  private double	   m_splitValue;
+
+  /**
+   * the linear model at this node
+   */
+  private PreConstructedLinearModel m_nodeModel;
+
+  /**
+   * the number of paramters in the chosen model for this node---either
+   * the subtree model or the linear model.
+   * The constant term is counted as a paramter---this is for pruning
+   * purposes
+   */
+  public int		   m_numParameters;
+
+  /**
+   * the mean squared error of the model at this node (either linear or
+   * subtree)
+   */
+  private double	   m_rootMeanSquaredError;
+
+  /**
+   * left child node
+   */
+  protected RuleNode	   m_left;
+
+  /**
+   * right child node
+   */
+  protected RuleNode	   m_right;
+
+  /**
+   * the parent of this node
+   */
+  private RuleNode	   m_parent;
+
+  /**
+   * a node will not be split if it contains less then m_splitNum instances
+   */
+<span class="fc" id="L120">  private double	   m_splitNum = 4;</span>
+
+  /**
+   * a node will not be split if its class standard deviation is less
+   * than 5% of the class standard deviation of all the instances
+   */
+<span class="fc" id="L126">  private double	   m_devFraction = 0.05;</span>
+<span class="fc" id="L127">  private double	   m_pruningMultiplier = 2;</span>
+
+  /**
+   * the number assigned to the linear model if this node is a leaf.
+   * = 0 if this node is not a leaf
+   */
+  private int		   m_leafModelNum;
+
+  /**
+   * a node will not be split if the class deviation of its
+   * instances is less than m_devFraction of the deviation of the
+   * global class
+   */
+  private double	   m_globalDeviation;
+
+  /**
+   * the absolute deviation of the global class
+   */
+  private double	   m_globalAbsDeviation;
+
+  /**
+   * Indices of the attributes to be used in generating a linear model
+   * at this node
+   */
+  private int [] m_indices;
+    
+  /**
+   * Constant used in original m5 smoothing calculation
+   */
+  private static final double	   SMOOTHING_CONSTANT = 15.0;
+
+  /**
+   * Node id.
+   */
+  private int m_id;
+
+  /**
+   * Save the instances at each node (for visualizing in the
+   * Explorer's treevisualizer.
+   */
+<span class="fc" id="L167">  private boolean m_saveInstances = false;</span>
+
+  /**
+   * Make a regression tree instead of a model tree
+   */
+  private boolean m_regressionTree;
+
+  /**
+   * Creates a new &lt;code&gt;RuleNode&lt;/code&gt; instance.
+   *
+   * @param globalDev the global standard deviation of the class
+   * @param globalAbsDev the global absolute deviation of the class
+   * @param parent the parent of this node
+   */
+<span class="fc" id="L181">  public RuleNode(double globalDev, double globalAbsDev, RuleNode parent) {</span>
+<span class="fc" id="L182">    m_nodeModel = null;</span>
+<span class="fc" id="L183">    m_right = null;</span>
+<span class="fc" id="L184">    m_left = null;</span>
+<span class="fc" id="L185">    m_parent = parent;</span>
+<span class="fc" id="L186">    m_globalDeviation = globalDev;</span>
+<span class="fc" id="L187">    m_globalAbsDeviation = globalAbsDev;</span>
+<span class="fc" id="L188">  }</span>
+
+    
+  /**
+   * Build this node (find an attribute and split point)
+   *
+   * @param data the instances on which to build this node
+   * @throws Exception if an error occurs
+   */
+  public void buildClassifier(Instances data) throws Exception {
+
+<span class="fc" id="L199">    m_rootMeanSquaredError = Double.MAX_VALUE;</span>
+    //    m_instances = new Instances(data);
+<span class="fc" id="L201">    m_instances = data;</span>
+<span class="fc" id="L202">    m_classIndex = m_instances.classIndex();</span>
+<span class="fc" id="L203">    m_numInstances = m_instances.numInstances();</span>
+<span class="fc" id="L204">    m_numAttributes = m_instances.numAttributes();</span>
+<span class="fc" id="L205">    m_nodeModel = null;</span>
+<span class="fc" id="L206">    m_right = null;</span>
+<span class="fc" id="L207">    m_left = null;</span>
+
+<span class="fc bfc" id="L209" title="All 2 branches covered.">    if ((m_numInstances &lt; m_splitNum) </span>
+<span class="fc" id="L210">	|| (Rule.stdDev(m_classIndex, m_instances) </span>
+<span class="fc bfc" id="L211" title="All 2 branches covered.">	    &lt; (m_globalDeviation * m_devFraction))) {</span>
+<span class="fc" id="L212">      m_isLeaf = true;</span>
+    } else {
+<span class="fc" id="L214">      m_isLeaf = false;</span>
+    } 
+
+<span class="fc" id="L217">    split();</span>
+<span class="fc" id="L218">  } </span>
+ 
+  /**
+   * Classify an instance using this node. Recursively calls classifyInstance
+   * on child nodes.
+   *
+   * @param inst the instance to classify
+   * @return the prediction for this instance
+   * @throws Exception if an error occurs
+   */
+  public double classifyInstance(Instance inst) throws Exception {
+<span class="fc bfc" id="L229" title="All 2 branches covered.">    if (m_isLeaf) {</span>
+<span class="pc bpc" id="L230" title="1 of 2 branches missed.">      if (m_nodeModel == null) {</span>
+<span class="nc" id="L231">	throw new Exception(&quot;Classifier has not been built correctly.&quot;);</span>
+      } 
+
+<span class="fc" id="L234">      return m_nodeModel.classifyInstance(inst);</span>
+    }
+
+<span class="fc bfc" id="L237" title="All 2 branches covered.">    if (inst.value(m_splitAtt) &lt;= m_splitValue) {</span>
+<span class="fc" id="L238">      return m_left.classifyInstance(inst);</span>
+    } else {
+<span class="fc" id="L240">      return m_right.classifyInstance(inst);</span>
+    } 
+  } 
+
+  /**
+   * Applies the m5 smoothing procedure to a prediction
+   *
+   * @param n number of instances in selected child of this node
+   * @param pred the prediction so far
+   * @param supportPred the prediction of the linear model at this node
+   * @return the current prediction smoothed with the prediction of the
+   * linear model at this node
+   * @throws Exception if an error occurs
+   */
+  protected static double smoothingOriginal(double n, double pred, 
+					    double supportPred) 
+    throws Exception {
+    double   smoothed;
+
+<span class="nc" id="L259">    smoothed = </span>
+<span class="nc" id="L260">      ((n * pred) + (SMOOTHING_CONSTANT * supportPred)) /</span>
+<span class="nc" id="L261">      (n + SMOOTHING_CONSTANT);</span>
+
+<span class="nc" id="L263">    return smoothed;</span>
+  } 
+
+
+  /**
+   * Finds an attribute and split point for this node
+   *
+   * @throws Exception if an error occurs
+   */
+  public void split() throws Exception {
+    int		  i;
+    Instances     leftSubset, rightSubset;
+    SplitEvaluate bestSplit, currentSplit;
+    boolean[]     attsBelow;
+
+<span class="fc bfc" id="L278" title="All 2 branches covered.">    if (!m_isLeaf) {</span>
+     
+<span class="fc" id="L280">      bestSplit = new YongSplitInfo(0, m_numInstances - 1, -1);</span>
+<span class="fc" id="L281">      currentSplit = new YongSplitInfo(0, m_numInstances - 1, -1);</span>
+
+      // find the best attribute to split on
+<span class="fc bfc" id="L284" title="All 2 branches covered.">      for (i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="fc bfc" id="L285" title="All 2 branches covered.">	if (i != m_classIndex) {</span>
+
+	  // sort the instances by this attribute
+<span class="fc" id="L288">	  m_instances.sort(i);</span>
+<span class="fc" id="L289">	  currentSplit.attrSplit(i, m_instances);</span>
+
+<span class="fc" id="L291">	  if ((Math.abs(currentSplit.maxImpurity() - </span>
+<span class="fc bfc" id="L292" title="All 2 branches covered.">			bestSplit.maxImpurity()) &gt; 1.e-6) </span>
+<span class="fc" id="L293">	      &amp;&amp; (currentSplit.maxImpurity() </span>
+<span class="fc bfc" id="L294" title="All 2 branches covered.">		  &gt; bestSplit.maxImpurity() + 1.e-6)) {</span>
+<span class="fc" id="L295">	    bestSplit = currentSplit.copy();</span>
+	  } 
+	} 
+      } 
+
+      // cant find a good split or split point?
+<span class="pc bpc" id="L301" title="1 of 4 branches missed.">      if (bestSplit.splitAttr() &lt; 0 || bestSplit.position() &lt; 1 </span>
+<span class="pc bpc" id="L302" title="1 of 2 branches missed.">	  || bestSplit.position() &gt; m_numInstances - 1) {</span>
+<span class="fc" id="L303">	m_isLeaf = true;</span>
+      } else {
+<span class="fc" id="L305">	m_splitAtt = bestSplit.splitAttr();</span>
+<span class="fc" id="L306">	m_splitValue = bestSplit.splitValue();</span>
+<span class="fc" id="L307">	leftSubset = new Instances(m_instances, m_numInstances);</span>
+<span class="fc" id="L308">	rightSubset = new Instances(m_instances, m_numInstances);</span>
+
+<span class="fc bfc" id="L310" title="All 2 branches covered.">	for (i = 0; i &lt; m_numInstances; i++) {</span>
+<span class="fc bfc" id="L311" title="All 2 branches covered.">	  if (m_instances.instance(i).value(m_splitAtt) &lt;= m_splitValue) {</span>
+<span class="fc" id="L312">	    leftSubset.add(m_instances.instance(i));</span>
+	  } else {
+<span class="fc" id="L314">	    rightSubset.add(m_instances.instance(i));</span>
+	  } 
+	} 
+
+<span class="fc" id="L318">	leftSubset.compactify();</span>
+<span class="fc" id="L319">	rightSubset.compactify();</span>
+
+	// build left and right nodes
+<span class="fc" id="L322">	m_left = new RuleNode(m_globalDeviation, m_globalAbsDeviation, this);</span>
+<span class="fc" id="L323">	m_left.setMinNumInstances(m_splitNum);</span>
+<span class="fc" id="L324">	m_left.setRegressionTree(m_regressionTree);</span>
+<span class="fc" id="L325">	m_left.setSaveInstances(m_saveInstances);</span>
+<span class="fc" id="L326">	m_left.buildClassifier(leftSubset);</span>
+
+<span class="fc" id="L328">	m_right = new RuleNode(m_globalDeviation, m_globalAbsDeviation, this);</span>
+<span class="fc" id="L329">	m_right.setMinNumInstances(m_splitNum);</span>
+<span class="fc" id="L330">	m_right.setRegressionTree(m_regressionTree);</span>
+<span class="fc" id="L331">	m_right.setSaveInstances(m_saveInstances);</span>
+<span class="fc" id="L332">	m_right.buildClassifier(rightSubset);</span>
+
+	// now find out what attributes are tested in the left and right
+	// subtrees and use them to learn a linear model for this node
+<span class="pc bpc" id="L336" title="1 of 2 branches missed.">	if (!m_regressionTree) {</span>
+<span class="fc" id="L337">	  attsBelow = attsTestedBelow();</span>
+<span class="fc" id="L338">	  attsBelow[m_classIndex] = true;</span>
+<span class="fc" id="L339">	  int count = 0, j;</span>
+
+<span class="fc bfc" id="L341" title="All 2 branches covered.">	  for (j = 0; j &lt; m_numAttributes; j++) {</span>
+<span class="fc bfc" id="L342" title="All 2 branches covered.">	    if (attsBelow[j]) {</span>
+<span class="fc" id="L343">	      count++;</span>
+	    } 
+	  } 
+	  
+<span class="fc" id="L347">	  int[] indices = new int[count];</span>
+
+<span class="fc" id="L349">	  count = 0;</span>
+	  
+<span class="fc bfc" id="L351" title="All 2 branches covered.">	  for (j = 0; j &lt; m_numAttributes; j++) {</span>
+<span class="fc bfc" id="L352" title="All 4 branches covered.">	    if (attsBelow[j] &amp;&amp; (j != m_classIndex)) {</span>
+<span class="fc" id="L353">	      indices[count++] = j;</span>
+	    } 
+	  } 
+	  
+<span class="fc" id="L357">	  indices[count] = m_classIndex;</span>
+<span class="fc" id="L358">	  m_indices = indices;</span>
+	} else {
+<span class="nc" id="L360">	  m_indices = new int [1];</span>
+<span class="nc" id="L361">	  m_indices[0] = m_classIndex;</span>
+<span class="nc" id="L362">	  m_numParameters = 1;</span>
+	}
+      } 
+    } 
+
+<span class="fc bfc" id="L367" title="All 2 branches covered.">    if (m_isLeaf) {</span>
+<span class="fc" id="L368">      int [] indices = new int [1];</span>
+<span class="fc" id="L369">      indices[0] = m_classIndex;</span>
+<span class="fc" id="L370">      m_indices = indices;</span>
+<span class="fc" id="L371">      m_numParameters = 1;</span>
+     
+      // need to evaluate the model here if want correct stats for unpruned
+      // tree
+    } 
+<span class="fc" id="L376">  } </span>
+
+  /**
+   * Build a linear model for this node using those attributes
+   * specified in indices.
+   *
+   * @param indices an array of attribute indices to include in the linear
+   * model
+   * @throws Exception if something goes wrong
+   */
+  private void buildLinearModel(int [] indices) throws Exception {
+    // copy the training instances and remove all but the tested
+    // attributes
+<span class="fc" id="L389">    Instances reducedInst = new Instances(m_instances);</span>
+<span class="fc" id="L390">    Remove attributeFilter = new Remove();</span>
+    
+<span class="fc" id="L392">    attributeFilter.setInvertSelection(true);</span>
+<span class="fc" id="L393">    attributeFilter.setAttributeIndicesArray(indices);</span>
+<span class="fc" id="L394">    attributeFilter.setInputFormat(reducedInst);</span>
+
+<span class="fc" id="L396">    reducedInst = Filter.useFilter(reducedInst, attributeFilter);</span>
+    
+    // build a linear regression for the training data using the
+    // tested attributes
+<span class="fc" id="L400">    LinearRegression temp = new LinearRegression();</span>
+<span class="fc" id="L401">    temp.buildClassifier(reducedInst);</span>
+
+<span class="fc" id="L403">    double [] lmCoeffs = temp.coefficients();</span>
+<span class="fc" id="L404">    double [] coeffs = new double [m_instances.numAttributes()];</span>
+
+<span class="fc bfc" id="L406" title="All 2 branches covered.">    for (int i = 0; i &lt; lmCoeffs.length - 1; i++) {</span>
+<span class="fc bfc" id="L407" title="All 2 branches covered.">      if (indices[i] != m_classIndex) {</span>
+<span class="fc" id="L408">	coeffs[indices[i]] = lmCoeffs[i];</span>
+      }
+    }
+<span class="fc" id="L411">    m_nodeModel = new PreConstructedLinearModel(coeffs, lmCoeffs[lmCoeffs.length - 1]);</span>
+<span class="fc" id="L412">    m_nodeModel.buildClassifier(m_instances);</span>
+<span class="fc" id="L413">  }</span>
+
+  /**
+   * Returns an array containing the indexes of attributes used in tests
+   * above this node
+   *
+   * @return an array of attribute indexes
+   */
+  private boolean[] attsTestedAbove() {
+<span class="nc" id="L422">    boolean[] atts = new boolean[m_numAttributes];</span>
+<span class="nc" id="L423">    boolean[] attsAbove = null;</span>
+
+<span class="nc bnc" id="L425" title="All 2 branches missed.">    if (m_parent != null) {</span>
+<span class="nc" id="L426">      attsAbove = m_parent.attsTestedAbove();</span>
+    } 
+
+<span class="nc bnc" id="L429" title="All 2 branches missed.">    if (attsAbove != null) {</span>
+<span class="nc bnc" id="L430" title="All 2 branches missed.">      for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="nc" id="L431">	atts[i] = attsAbove[i];</span>
+      } 
+    } 
+
+<span class="nc" id="L435">    atts[m_splitAtt] = true;</span>
+<span class="nc" id="L436">    return atts;</span>
+  } 
+
+  /**
+   * Returns an array containing the indexes of attributes used in tests
+   * below this node
+   *
+   * @return an array of attribute indexes
+   */
+  private boolean[] attsTestedBelow() {
+<span class="fc" id="L446">    boolean[] attsBelow = new boolean[m_numAttributes];</span>
+<span class="fc" id="L447">    boolean[] attsBelowLeft = null;</span>
+<span class="fc" id="L448">    boolean[] attsBelowRight = null;</span>
+
+<span class="fc bfc" id="L450" title="All 2 branches covered.">    if (m_right != null) {</span>
+<span class="fc" id="L451">      attsBelowRight = m_right.attsTestedBelow();</span>
+    } 
+
+<span class="fc bfc" id="L454" title="All 2 branches covered.">    if (m_left != null) {</span>
+<span class="fc" id="L455">      attsBelowLeft = m_left.attsTestedBelow();</span>
+    } 
+
+<span class="fc bfc" id="L458" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numAttributes; i++) {</span>
+<span class="fc bfc" id="L459" title="All 2 branches covered.">      if (attsBelowLeft != null) {</span>
+<span class="pc bpc" id="L460" title="1 of 4 branches missed.">	attsBelow[i] = (attsBelow[i] || attsBelowLeft[i]);</span>
+      } 
+
+<span class="fc bfc" id="L463" title="All 2 branches covered.">      if (attsBelowRight != null) {</span>
+<span class="fc bfc" id="L464" title="All 4 branches covered.">	attsBelow[i] = (attsBelow[i] || attsBelowRight[i]);</span>
+      } 
+    } 
+
+<span class="fc bfc" id="L468" title="All 2 branches covered.">    if (!m_isLeaf) {</span>
+<span class="fc" id="L469">      attsBelow[m_splitAtt] = true;</span>
+    } 
+<span class="fc" id="L471">    return attsBelow;</span>
+  } 
+
+  /**
+   * Sets the leaves' numbers
+   * @param leafCounter the number of leaves counted
+   * @return the number of the total leaves under the node
+   */
+  public int numLeaves(int leafCounter) {
+
+<span class="fc bfc" id="L481" title="All 2 branches covered.">    if (!m_isLeaf) {</span>
+      // node
+<span class="fc" id="L483">      m_leafModelNum = 0;</span>
+
+<span class="pc bpc" id="L485" title="1 of 2 branches missed.">      if (m_left != null) {</span>
+<span class="fc" id="L486">	leafCounter = m_left.numLeaves(leafCounter);</span>
+      } 
+
+<span class="pc bpc" id="L489" title="1 of 2 branches missed.">      if (m_right != null) {</span>
+<span class="fc" id="L490">	leafCounter = m_right.numLeaves(leafCounter);</span>
+      } 
+    } else {
+      // leaf
+<span class="fc" id="L494">      leafCounter++;</span>
+<span class="fc" id="L495">      m_leafModelNum = leafCounter;</span>
+    } 
+<span class="fc" id="L497">    return leafCounter;</span>
+  } 
+
+  /**
+   * print the linear model at this node
+   * 
+   * @return the linear model
+   */
+  public String toString() {
+<span class="nc" id="L506">    return printNodeLinearModel();</span>
+  } 
+
+  /**
+   * print the linear model at this node
+   * 
+   * @return the linear model at this node
+   */
+  public String printNodeLinearModel() {
+<span class="nc" id="L515">    return m_nodeModel.toString();</span>
+  } 
+
+  /**
+   * print all leaf models
+   * 
+   * @return the leaf models
+   */
+  public String printLeafModels() {
+<span class="nc" id="L524">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc bnc" id="L526" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L527">      text.append(&quot;\nLM num: &quot; + m_leafModelNum);</span>
+<span class="nc" id="L528">      text.append(m_nodeModel.toString());</span>
+<span class="nc" id="L529">      text.append(&quot;\n&quot;);</span>
+    } else {
+<span class="nc" id="L531">      text.append(m_left.printLeafModels());</span>
+<span class="nc" id="L532">      text.append(m_right.printLeafModels());</span>
+    } 
+<span class="nc" id="L534">    return text.toString();</span>
+  } 
+
+  /**
+   * Returns a description of this node (debugging purposes)
+   *
+   * @return a string describing this node
+   */
+  public String nodeToString() {
+<span class="nc" id="L543">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc" id="L545">    System.out.println(&quot;In to string&quot;);</span>
+<span class="nc" id="L546">    text.append(&quot;Node:\n\tnum inst: &quot; + m_numInstances);</span>
+
+<span class="nc bnc" id="L548" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L549">      text.append(&quot;\n\tleaf&quot;);</span>
+    } else {
+<span class="nc" id="L551">      text.append(&quot;\tnode&quot;);</span>
+    }
+
+<span class="nc" id="L554">    text.append(&quot;\n\tSplit att: &quot; + m_instances.attribute(m_splitAtt).name());</span>
+<span class="nc" id="L555">    text.append(&quot;\n\tSplit val: &quot; + Utils.doubleToString(m_splitValue, 1, 3));</span>
+<span class="nc" id="L556">    text.append(&quot;\n\tLM num: &quot; + m_leafModelNum);</span>
+<span class="nc" id="L557">    text.append(&quot;\n\tLinear model\n&quot; + m_nodeModel.toString());</span>
+<span class="nc" id="L558">    text.append(&quot;\n\n&quot;);</span>
+
+<span class="nc bnc" id="L560" title="All 2 branches missed.">    if (m_left != null) {</span>
+<span class="nc" id="L561">      text.append(m_left.nodeToString());</span>
+    } 
+
+<span class="nc bnc" id="L564" title="All 2 branches missed.">    if (m_right != null) {</span>
+<span class="nc" id="L565">      text.append(m_right.nodeToString());</span>
+    } 
+
+<span class="nc" id="L568">    return text.toString();</span>
+  } 
+
+  /**
+   * Recursively builds a textual description of the tree
+   *
+   * @param level the level of this node
+   * @return string describing the tree
+   */
+  public String treeToString(int level) {
+    int		 i;
+<span class="nc" id="L579">    StringBuffer text = new StringBuffer();</span>
+
+<span class="nc bnc" id="L581" title="All 2 branches missed.">    if (!m_isLeaf) {</span>
+<span class="nc" id="L582">      text.append(&quot;\n&quot;);</span>
+
+<span class="nc bnc" id="L584" title="All 2 branches missed.">      for (i = 1; i &lt;= level; i++) {</span>
+<span class="nc" id="L585">	text.append(&quot;|   &quot;);</span>
+      } 
+
+<span class="nc bnc" id="L588" title="All 2 branches missed.">      if (m_instances.attribute(m_splitAtt).name().charAt(0) != '[') {</span>
+<span class="nc" id="L589">	text.append(m_instances.attribute(m_splitAtt).name() + &quot; &lt;= &quot; </span>
+<span class="nc" id="L590">		    + Utils.doubleToString(m_splitValue, 1, 3) + &quot; : &quot;);</span>
+      } else {
+<span class="nc" id="L592">	text.append(m_instances.attribute(m_splitAtt).name() + &quot; false : &quot;);</span>
+      } 
+
+<span class="nc bnc" id="L595" title="All 2 branches missed.">      if (m_left != null) {</span>
+<span class="nc" id="L596">	text.append(m_left.treeToString(level + 1));</span>
+      } else {
+<span class="nc" id="L598">	text.append(&quot;NULL\n&quot;);</span>
+      }
+
+<span class="nc bnc" id="L601" title="All 2 branches missed.">      for (i = 1; i &lt;= level; i++) {</span>
+<span class="nc" id="L602">	text.append(&quot;|   &quot;);</span>
+      } 
+
+<span class="nc bnc" id="L605" title="All 2 branches missed.">      if (m_instances.attribute(m_splitAtt).name().charAt(0) != '[') {</span>
+<span class="nc" id="L606">	text.append(m_instances.attribute(m_splitAtt).name() + &quot; &gt;  &quot; </span>
+<span class="nc" id="L607">		    + Utils.doubleToString(m_splitValue, 1, 3) + &quot; : &quot;);</span>
+      } else {
+<span class="nc" id="L609">	text.append(m_instances.attribute(m_splitAtt).name() + &quot; true : &quot;);</span>
+      } 
+
+<span class="nc bnc" id="L612" title="All 2 branches missed.">      if (m_right != null) {</span>
+<span class="nc" id="L613">	text.append(m_right.treeToString(level + 1));</span>
+      } else {
+<span class="nc" id="L615">	text.append(&quot;NULL\n&quot;);</span>
+      }
+    } else {
+<span class="nc" id="L618">      text.append(&quot;LM&quot; + m_leafModelNum);</span>
+
+<span class="nc bnc" id="L620" title="All 2 branches missed.">      if (m_globalDeviation &gt; 0.0) {</span>
+<span class="nc" id="L621">	text</span>
+<span class="nc" id="L622">	  .append(&quot; (&quot; + m_numInstances + &quot;/&quot; </span>
+<span class="nc" id="L623">		  + Utils.doubleToString((100.0 * m_rootMeanSquaredError /</span>
+<span class="nc" id="L624">					     m_globalDeviation), 1, 3) </span>
+<span class="nc" id="L625">		  + &quot;%)\n&quot;);</span>
+      } else {
+<span class="nc" id="L627">	text.append(&quot; (&quot; + m_numInstances + &quot;)\n&quot;);</span>
+      } 
+    } 
+<span class="nc" id="L630">    return text.toString();</span>
+  } 
+
+  /**
+   * Traverses the tree and installs linear models at each node.
+   * This method must be called if pruning is not to be performed.
+   *
+   * @throws Exception if an error occurs
+   */
+  public void installLinearModels() throws Exception {
+    Evaluation nodeModelEval;
+<span class="nc bnc" id="L641" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L642">      buildLinearModel(m_indices);</span>
+    } else {
+<span class="nc bnc" id="L644" title="All 2 branches missed.">      if (m_left != null) {</span>
+<span class="nc" id="L645">	m_left.installLinearModels();</span>
+      }
+
+<span class="nc bnc" id="L648" title="All 2 branches missed.">      if (m_right != null) {</span>
+<span class="nc" id="L649">	m_right.installLinearModels();</span>
+      }
+<span class="nc" id="L651">      buildLinearModel(m_indices);</span>
+    }
+<span class="nc" id="L653">    nodeModelEval = new Evaluation(m_instances);</span>
+<span class="nc" id="L654">    nodeModelEval.evaluateModel(m_nodeModel, m_instances);</span>
+<span class="nc" id="L655">    m_rootMeanSquaredError = nodeModelEval.rootMeanSquaredError();</span>
+    // save space
+<span class="nc bnc" id="L657" title="All 2 branches missed.">    if (!m_saveInstances) {</span>
+<span class="nc" id="L658">      m_instances = new Instances(m_instances, 0);</span>
+    }
+<span class="nc" id="L660">  }</span>
+
+  /**
+   * 
+   * @throws Exception
+   */
+  public void installSmoothedModels() throws Exception {
+
+<span class="fc bfc" id="L668" title="All 2 branches covered.">    if (m_isLeaf) {</span>
+<span class="fc" id="L669">      double [] coefficients = new double [m_numAttributes];</span>
+      double intercept;
+<span class="fc" id="L671">      double  [] coeffsUsedByLinearModel = m_nodeModel.coefficients();</span>
+<span class="fc" id="L672">      RuleNode current = this;</span>
+      
+      // prime array with leaf node coefficients
+<span class="fc bfc" id="L675" title="All 2 branches covered.">      for (int i = 0; i &lt; coeffsUsedByLinearModel.length; i++) {</span>
+<span class="fc bfc" id="L676" title="All 2 branches covered.">	if (i != m_classIndex) {</span>
+<span class="fc" id="L677">	  coefficients[i] = coeffsUsedByLinearModel[i];</span>
+	}
+      }
+      // intercept
+<span class="fc" id="L681">      intercept = m_nodeModel.intercept();</span>
+
+      do {
+<span class="fc bfc" id="L684" title="All 2 branches covered.">	if (current.m_parent != null) {</span>
+<span class="fc" id="L685">	  double n = current.m_numInstances;</span>
+	  // contribution of the model below
+<span class="fc bfc" id="L687" title="All 2 branches covered.">	  for (int i = 0; i &lt; coefficients.length; i++) {</span>
+<span class="fc" id="L688">	    coefficients[i] = ((coefficients[i] * n) / (n + SMOOTHING_CONSTANT));</span>
+	  }
+<span class="fc" id="L690">	  intercept =  ((intercept * n) / (n + SMOOTHING_CONSTANT));</span>
+
+	  // contribution of this model
+<span class="fc" id="L693">	  coeffsUsedByLinearModel = current.m_parent.getModel().coefficients();</span>
+<span class="fc bfc" id="L694" title="All 2 branches covered.">	  for (int i = 0; i &lt; coeffsUsedByLinearModel.length; i++) {</span>
+<span class="fc bfc" id="L695" title="All 2 branches covered.">	    if (i != m_classIndex) {</span>
+	      // smooth in these coefficients (at this node)
+<span class="fc" id="L697">	      coefficients[i] += </span>
+<span class="fc" id="L698">		((SMOOTHING_CONSTANT * coeffsUsedByLinearModel[i]) /</span>
+<span class="fc" id="L699">		 (n + SMOOTHING_CONSTANT));</span>
+	    }
+	  }
+	  // smooth in the intercept
+<span class="fc" id="L703">	  intercept += </span>
+<span class="fc" id="L704">	    ((SMOOTHING_CONSTANT * </span>
+<span class="fc" id="L705">	      current.m_parent.getModel().intercept()) /</span>
+<span class="fc" id="L706">	     (n + SMOOTHING_CONSTANT));</span>
+<span class="fc" id="L707">	  current = current.m_parent;</span>
+	}
+<span class="fc bfc" id="L709" title="All 2 branches covered.">      } while (current.m_parent != null);</span>
+<span class="fc" id="L710">      m_nodeModel = </span>
+<span class="fc" id="L711">	new PreConstructedLinearModel(coefficients, intercept);</span>
+<span class="fc" id="L712">      m_nodeModel.buildClassifier(m_instances);</span>
+    }
+<span class="fc bfc" id="L714" title="All 2 branches covered.">    if (m_left != null) {</span>
+<span class="fc" id="L715">      m_left.installSmoothedModels();</span>
+    }
+<span class="fc bfc" id="L717" title="All 2 branches covered.">    if (m_right != null) {</span>
+<span class="fc" id="L718">      m_right.installSmoothedModels();</span>
+    }
+<span class="fc" id="L720">  }</span>
+    
+  /**
+   * Recursively prune the tree
+   *
+   * @throws Exception if an error occurs
+   */
+  public void prune() throws Exception {
+<span class="fc" id="L728">    Evaluation nodeModelEval = null;</span>
+
+<span class="fc bfc" id="L730" title="All 2 branches covered.">    if (m_isLeaf) {</span>
+<span class="fc" id="L731">      buildLinearModel(m_indices);</span>
+<span class="fc" id="L732">      nodeModelEval = new Evaluation(m_instances);</span>
+
+      // count the constant term as a paramter for a leaf
+      // Evaluate the model
+<span class="fc" id="L736">      nodeModelEval.evaluateModel(m_nodeModel, m_instances);</span>
+
+<span class="fc" id="L738">      m_rootMeanSquaredError = nodeModelEval.rootMeanSquaredError();</span>
+    } else {
+
+      // Prune the left and right subtrees
+<span class="pc bpc" id="L742" title="1 of 2 branches missed.">      if (m_left != null) {</span>
+<span class="fc" id="L743">	m_left.prune();</span>
+      } 
+
+<span class="pc bpc" id="L746" title="1 of 2 branches missed.">      if (m_right != null) {</span>
+<span class="fc" id="L747">	m_right.prune();	</span>
+      } 
+      
+<span class="fc" id="L750">      buildLinearModel(m_indices);</span>
+<span class="fc" id="L751">      nodeModelEval = new Evaluation(m_instances);</span>
+
+      double rmsModel;
+      double adjustedErrorModel;
+
+<span class="fc" id="L756">      nodeModelEval.evaluateModel(m_nodeModel, m_instances);</span>
+
+<span class="fc" id="L758">      rmsModel = nodeModelEval.rootMeanSquaredError();</span>
+<span class="fc" id="L759">      adjustedErrorModel = rmsModel </span>
+<span class="fc" id="L760">	* pruningFactor(m_numInstances, </span>
+<span class="fc" id="L761">			m_nodeModel.numParameters() + 1);</span>
+
+      // Evaluate this node (ie its left and right subtrees)
+<span class="fc" id="L764">      Evaluation nodeEval = new Evaluation(m_instances);</span>
+      double     rmsSubTree;
+      double     adjustedErrorNode;
+<span class="fc" id="L767">      int	 l_params = 0, r_params = 0;</span>
+
+<span class="fc" id="L769">      nodeEval.evaluateModel(this, m_instances);</span>
+
+<span class="fc" id="L771">      rmsSubTree = nodeEval.rootMeanSquaredError();</span>
+
+<span class="pc bpc" id="L773" title="1 of 2 branches missed.">      if (m_left != null) {</span>
+<span class="fc" id="L774">	l_params = m_left.numParameters();</span>
+      } 
+
+<span class="pc bpc" id="L777" title="1 of 2 branches missed.">      if (m_right != null) {</span>
+<span class="fc" id="L778">	r_params = m_right.numParameters();</span>
+      } 
+
+<span class="fc" id="L781">      adjustedErrorNode = rmsSubTree </span>
+<span class="fc" id="L782">	* pruningFactor(m_numInstances, </span>
+<span class="fc" id="L783">			(l_params + r_params + 1));</span>
+
+<span class="fc bfc" id="L785" title="All 2 branches covered.">      if ((adjustedErrorModel &lt;= adjustedErrorNode) </span>
+<span class="fc bfc" id="L786" title="All 2 branches covered.">	  || (adjustedErrorModel &lt; (m_globalDeviation * 0.00001))) {</span>
+
+	// Choose linear model for this node rather than subtree model
+<span class="fc" id="L789">	m_isLeaf = true;</span>
+<span class="fc" id="L790">	m_right = null;</span>
+<span class="fc" id="L791">	m_left = null;</span>
+<span class="fc" id="L792">	m_numParameters = m_nodeModel.numParameters() + 1;</span>
+<span class="fc" id="L793">	m_rootMeanSquaredError = rmsModel;</span>
+      } else {
+<span class="fc" id="L795">	m_numParameters = (l_params + r_params + 1);</span>
+<span class="fc" id="L796">	m_rootMeanSquaredError = rmsSubTree;</span>
+      } 
+    }
+    // save space
+<span class="pc bpc" id="L800" title="1 of 2 branches missed.">    if (!m_saveInstances) {</span>
+<span class="fc" id="L801">      m_instances = new Instances(m_instances, 0);</span>
+    }
+<span class="fc" id="L803">  } </span>
+
+
+  /**
+   * Compute the pruning factor
+   *
+   * @param num_instances number of instances
+   * @param num_params number of parameters in the model
+   * @return the pruning factor
+   */
+  private double pruningFactor(int num_instances, int num_params) {
+<span class="pc bpc" id="L814" title="1 of 2 branches missed.">    if (num_instances &lt;= num_params) {</span>
+<span class="nc" id="L815">      return 10.0;    // Caution says Yong in his code</span>
+    } 
+
+<span class="fc" id="L818">    return ((double) (num_instances + m_pruningMultiplier * num_params) </span>
+<span class="fc" id="L819">	    / (double) (num_instances - num_params));</span>
+  } 
+
+  /**
+   * Find the leaf with greatest coverage
+   *
+   * @param maxCoverage the greatest coverage found so far
+   * @param bestLeaf the leaf with the greatest coverage
+   */
+  public void findBestLeaf(double[] maxCoverage, RuleNode[] bestLeaf) {
+<span class="fc bfc" id="L829" title="All 2 branches covered.">    if (!m_isLeaf) {</span>
+<span class="pc bpc" id="L830" title="1 of 2 branches missed.">      if (m_left != null) {</span>
+<span class="fc" id="L831">	m_left.findBestLeaf(maxCoverage, bestLeaf);</span>
+      } 
+
+<span class="pc bpc" id="L834" title="1 of 2 branches missed.">      if (m_right != null) {</span>
+<span class="fc" id="L835">	m_right.findBestLeaf(maxCoverage, bestLeaf);</span>
+      } 
+    } else {
+<span class="fc bfc" id="L838" title="All 2 branches covered.">      if (m_numInstances &gt; maxCoverage[0]) {</span>
+<span class="fc" id="L839">	maxCoverage[0] = m_numInstances;</span>
+<span class="fc" id="L840">	bestLeaf[0] = this;</span>
+      } 
+    } 
+<span class="fc" id="L843">  } </span>
+
+  /**
+   * Return a list containing all the leaves in the tree
+   *
+   * @param v a single element array containing a vector of leaves
+   */
+  public void returnLeaves(FastVector[] v) {
+<span class="nc bnc" id="L851" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L852">      v[0].addElement(this);</span>
+    } else {
+<span class="nc bnc" id="L854" title="All 2 branches missed.">      if (m_left != null) {</span>
+<span class="nc" id="L855">	m_left.returnLeaves(v);</span>
+      } 
+
+<span class="nc bnc" id="L858" title="All 2 branches missed.">      if (m_right != null) {</span>
+<span class="nc" id="L859">	m_right.returnLeaves(v);</span>
+      } 
+    } 
+<span class="nc" id="L862">  } </span>
+
+  /**
+   * Get the parent of this node
+   *
+   * @return the parent of this node
+   */
+  public RuleNode parentNode() {
+<span class="fc" id="L870">    return m_parent;</span>
+  } 
+
+  /**
+   * Get the left child of this node
+   *
+   * @return the left child of this node
+   */
+  public RuleNode leftNode() {
+<span class="fc" id="L879">    return m_left;</span>
+  } 
+
+  /**
+   * Get the right child of this node
+   *
+   * @return the right child of this node
+   */
+  public RuleNode rightNode() {
+<span class="nc" id="L888">    return m_right;</span>
+  } 
+
+  /**
+   * Get the index of the splitting attribute for this node
+   *
+   * @return the index of the splitting attribute
+   */
+  public int splitAtt() {
+<span class="fc" id="L897">    return m_splitAtt;</span>
+  } 
+
+  /**
+   * Get the split point for this node
+   *
+   * @return the split point for this node
+   */
+  public double splitVal() {
+<span class="fc" id="L906">    return m_splitValue;</span>
+  } 
+
+  /**
+   * Get the number of linear models in the tree
+   *
+   * @return the number of linear models
+   */
+  public int numberOfLinearModels() {
+<span class="nc bnc" id="L915" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L916">      return 1;</span>
+    } else {
+<span class="nc" id="L918">      return m_left.numberOfLinearModels() + m_right.numberOfLinearModels();</span>
+    } 
+  } 
+
+  /**
+   * Return true if this node is a leaf
+   *
+   * @return true if this node is a leaf
+   */
+  public boolean isLeaf() {
+<span class="nc" id="L928">    return m_isLeaf;</span>
+  } 
+
+  /**
+   * Get the root mean squared error at this node
+   *
+   * @return the root mean squared error
+   */
+  protected double rootMeanSquaredError() {
+<span class="nc" id="L937">    return m_rootMeanSquaredError;</span>
+  } 
+
+  /**
+   * Get the linear model at this node
+   *
+   * @return the linear model at this node
+   */
+  public PreConstructedLinearModel getModel() {
+<span class="fc" id="L946">    return m_nodeModel;</span>
+  }
+
+  /**
+   * Return the number of instances that reach this node.
+   *
+   * @return the number of instances at this node.
+   */
+  public int getNumInstances() {
+<span class="nc" id="L955">    return m_numInstances;</span>
+  }
+
+  /**
+   * Get the number of parameters in the model at this node
+   *
+   * @return the number of parameters in the model at this node
+   */
+  private int numParameters() {
+<span class="fc" id="L964">    return m_numParameters;</span>
+  } 
+
+  /**
+   * Get the value of regressionTree.
+   *
+   * @return Value of regressionTree.
+   */
+  public boolean getRegressionTree() {
+    
+<span class="nc" id="L974">    return m_regressionTree;</span>
+  }
+
+  /**
+   * Set the minumum number of instances to allow at a leaf node
+   *
+   * @param minNum the minimum number of instances
+   */
+  public void setMinNumInstances(double minNum) {
+<span class="fc" id="L983">    m_splitNum = minNum;</span>
+<span class="fc" id="L984">  }</span>
+
+  /**
+   * Get the minimum number of instances to allow at a leaf node
+   *
+   * @return a &lt;code&gt;double&lt;/code&gt; value
+   */
+  public double getMinNumInstances() {
+<span class="nc" id="L992">    return m_splitNum;</span>
+  }
+  
+  /**
+   * Set the value of regressionTree.
+   *
+   * @param newregressionTree Value to assign to regressionTree.
+   */
+  public void setRegressionTree(boolean newregressionTree) {
+    
+<span class="fc" id="L1002">    m_regressionTree = newregressionTree;</span>
+<span class="fc" id="L1003">  }</span>
+							  
+  /**
+   * Print all the linear models at the learf (debugging purposes)
+   */
+  public void printAllModels() {
+<span class="nc bnc" id="L1009" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L1010">      System.out.println(m_nodeModel.toString());</span>
+    } else {
+<span class="nc" id="L1012">      System.out.println(m_nodeModel.toString());</span>
+<span class="nc" id="L1013">      m_left.printAllModels();</span>
+<span class="nc" id="L1014">      m_right.printAllModels();</span>
+    } 
+<span class="nc" id="L1016">  } </span>
+
+  /**
+   * Assigns a unique identifier to each node in the tree
+   *
+   * @param lastID last id number used
+   * @return ID after processing child nodes
+   */
+  protected int assignIDs(int lastID) {
+<span class="nc" id="L1025">    int currLastID = lastID + 1;</span>
+<span class="nc" id="L1026">    m_id = currLastID;</span>
+
+<span class="nc bnc" id="L1028" title="All 2 branches missed.">    if (m_left != null) {</span>
+<span class="nc" id="L1029">      currLastID = m_left.assignIDs(currLastID);</span>
+    }
+
+<span class="nc bnc" id="L1032" title="All 2 branches missed.">    if (m_right != null) {</span>
+<span class="nc" id="L1033">      currLastID = m_right.assignIDs(currLastID);</span>
+    }
+<span class="nc" id="L1035">    return currLastID;</span>
+  }
+
+  /**
+   * Assign a unique identifier to each node in the tree and then
+   * calls graphTree
+   *
+   * @param text a &lt;code&gt;StringBuffer&lt;/code&gt; value
+   */
+  public void graph(StringBuffer text) {
+<span class="nc" id="L1045">    assignIDs(-1);</span>
+<span class="nc" id="L1046">    graphTree(text);</span>
+<span class="nc" id="L1047">  }</span>
+
+  /**
+   * Return a dotty style string describing the tree
+   *
+   * @param text a &lt;code&gt;StringBuffer&lt;/code&gt; value
+   */
+  protected void graphTree(StringBuffer text) {
+<span class="nc" id="L1055">    text.append(&quot;N&quot; + m_id</span>
+<span class="nc bnc" id="L1056" title="All 2 branches missed.">		+ (m_isLeaf </span>
+<span class="nc" id="L1057">		   ? &quot; [label=\&quot;LM &quot; + m_leafModelNum</span>
+<span class="nc" id="L1058">		   : &quot; [label=\&quot;&quot; + m_instances.attribute(m_splitAtt).name())</span>
+<span class="nc bnc" id="L1059" title="All 2 branches missed.">		+ (m_isLeaf</span>
+<span class="nc bnc" id="L1060" title="All 2 branches missed.">		 ? &quot; (&quot; + ((m_globalDeviation &gt; 0.0) </span>
+<span class="nc" id="L1061">			  ?  m_numInstances + &quot;/&quot; </span>
+<span class="nc" id="L1062">			     + Utils.doubleToString((100.0 * </span>
+<span class="nc" id="L1063">						     m_rootMeanSquaredError /</span>
+<span class="nc" id="L1064">						     m_globalDeviation), </span>
+<span class="nc" id="L1065">						    1, 3) </span>
+<span class="nc" id="L1066">			     + &quot;%)&quot;</span>
+<span class="nc" id="L1067">			   : m_numInstances + &quot;)&quot;)</span>
+<span class="nc" id="L1068">		    + &quot;\&quot; shape=box style=filled &quot;</span>
+<span class="nc" id="L1069">		   : &quot;\&quot;&quot;)</span>
+<span class="nc bnc" id="L1070" title="All 2 branches missed.">		+ (m_saveInstances</span>
+<span class="nc" id="L1071">		   ? &quot;data=\n&quot; + m_instances + &quot;\n,\n&quot;</span>
+<span class="nc" id="L1072">		   : &quot;&quot;)</span>
+<span class="nc" id="L1073">		+ &quot;]\n&quot;);</span>
+		
+<span class="nc bnc" id="L1075" title="All 2 branches missed.">    if (m_left != null) {</span>
+<span class="nc" id="L1076">      text.append(&quot;N&quot; + m_id + &quot;-&gt;&quot; + &quot;N&quot; + m_left.m_id + &quot; [label=\&quot;&lt;=&quot;</span>
+<span class="nc" id="L1077">		  + Utils.doubleToString(m_splitValue, 1, 3)</span>
+<span class="nc" id="L1078">		  + &quot;\&quot;]\n&quot;);</span>
+<span class="nc" id="L1079">      m_left.graphTree(text);</span>
+    }
+     
+<span class="nc bnc" id="L1082" title="All 2 branches missed.">    if (m_right != null) {</span>
+<span class="nc" id="L1083">      text.append(&quot;N&quot; + m_id + &quot;-&gt;&quot; + &quot;N&quot; + m_right.m_id + &quot; [label=\&quot;&gt;&quot;</span>
+<span class="nc" id="L1084">		  + Utils.doubleToString(m_splitValue, 1, 3)</span>
+<span class="nc" id="L1085">		  + &quot;\&quot;]\n&quot;);</span>
+<span class="nc" id="L1086">      m_right.graphTree(text);</span>
+    }
+<span class="nc" id="L1088">  }</span>
+
+  /**
+   * Set whether to save instances for visualization purposes.
+   * Default is to save memory.
+   *
+   * @param save a &lt;code&gt;boolean&lt;/code&gt; value
+   */
+  protected void setSaveInstances(boolean save) {
+<span class="fc" id="L1097">    m_saveInstances = save;</span>
+<span class="fc" id="L1098">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1106">    return RevisionUtils.extract(&quot;$Revision: 1.13 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

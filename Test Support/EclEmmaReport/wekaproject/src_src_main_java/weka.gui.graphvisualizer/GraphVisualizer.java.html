@@ -1,0 +1,1446 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>GraphVisualizer.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui.graphvisualizer</a> &gt; <span class="el_source">GraphVisualizer.java</span></div><h1>GraphVisualizer.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    GraphVisualizer.java
+ *    Copyright (C) 2003 University of Waikato, Hamilton, New Zealand
+ *
+ */
+package weka.gui.graphvisualizer;
+
+import weka.core.FastVector;
+import weka.gui.ExtensionFileFilter;
+import weka.gui.visualize.PrintablePanel;
+
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Container;
+import java.awt.Dialog.ModalityType;
+import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Frame;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
+import java.awt.LayoutManager;
+import java.awt.Rectangle;
+import java.awt.RenderingHints;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseMotionAdapter;
+import java.io.FileInputStream;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Reader;
+
+import javax.swing.BorderFactory;
+import javax.swing.ImageIcon;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JDialog;
+import javax.swing.JFileChooser;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTable;
+import javax.swing.JTextField;
+import javax.swing.JToolBar;
+import javax.swing.table.AbstractTableModel;
+
+/**
+ * This class displays the graph we want to visualize. It should
+ * be sufficient to use only this class in weka.gui.graphvisulizer
+ * package to visualize a graph. The description of a graph should
+ * be provided as a string argument using readBIF or readDOT method
+ * in either XMLBIF03 or DOT format. Alternatively, an InputStream
+ * in XMLBIF03 can also be provided to another variation of readBIF.
+ * It would be necessary in case input is in DOT format to call the
+ * layoutGraph() method to display the graph correctly after the call
+ * to readDOT. It is also necessary to do so if readBIF is called and
+ * the graph description doesn't have x y positions for nodes.
+ * &lt;p&gt; The graph's data is held in two FastVectors, nodes are stored as
+ * objects of GraphNode class and edges as objects of GraphEdge class.
+ * &lt;p&gt; The graph is displayed by positioning and drawing each node
+ * according to its x y position and then drawing all the edges coming
+ * out of it give by its edges[][] array, the arrow heads are ofcourse
+ * marked in the opposite(ie original direction) or both directions if
+ * the edge is reversed or is in both directions. The graph is centered
+ * if it is smaller than it's display area. The edges are drawn from the
+ * bottom of the current node to the top of the node given by edges[][]
+ * array in GraphNode class, to avoid edges crossing over other nodes.
+ * This might need to be changed if another layout engine is added or
+ * the current Hierarchical engine is updated to avoid such crossings
+ * over nodes.
+ *
+ * @author Ashraf M. Kibriya (amk14@cs.waikato.ac.nz)
+ * @version $Revision: 7899 $
+ */
+public class GraphVisualizer
+  extends JPanel
+  implements GraphConstants, LayoutCompleteEventListener {
+
+  /** for serialization */
+  private static final long serialVersionUID = -2038911085935515624L;
+
+  /** Vector containing nodes */
+<span class="nc" id="L107">  protected FastVector m_nodes=new FastVector();</span>
+  /** Vector containing edges */
+<span class="nc" id="L109">  protected FastVector m_edges=new FastVector();</span>
+  /** The current LayoutEngine  */
+  protected LayoutEngine m_le;
+  /** Panel actually displaying the graph */
+  protected GraphPanel m_gp;
+  /** String containing graph's name */
+  protected String graphID;
+
+  /**
+   * Save button to save the current graph in DOT or XMLBIF format.
+   * The graph should be layed out again to get the original form
+   * if reloaded from command line, as the formats do not allow
+   * saving specific information for a properly layed out graph.
+   */
+  protected JButton m_jBtSave;
+
+  /** path for icons */
+<span class="nc" id="L126">  private final String ICONPATH = &quot;weka/gui/graphvisualizer/icons/&quot;;</span>
+
+<span class="nc" id="L128">  private FontMetrics fm = this.getFontMetrics( this.getFont() );</span>
+<span class="nc" id="L129">  private double scale = 1;   //current zoom</span>
+<span class="nc" id="L130">  private int nodeHeight = 2*fm.getHeight(), nodeWidth = 24;</span>
+<span class="nc" id="L131">  private int paddedNodeWidth = 24+8;</span>
+  /** TextField for node's width */
+<span class="nc" id="L133">  private final JTextField jTfNodeWidth = new JTextField(3);</span>
+  /** TextField for nodes height */
+<span class="nc" id="L135">  private final JTextField jTfNodeHeight = new JTextField(3);</span>
+  /** Button for laying out the graph again, necessary after changing node's
+   * size or some other property of the layout engine
+   */
+  private final JButton jBtLayout;
+  /** used for setting appropriate node size */
+<span class="nc" id="L141">  private int maxStringWidth=0;</span>
+  /** used when using zoomIn and zoomOut buttons */
+<span class="nc" id="L143">  private int [] zoomPercents = { 10, 25, 50, 75, 100, 125, 150, 175, 200, 225,</span>
+<span class="nc" id="L144">  250, 275, 300, 350, 400, 450, 500, 550, 600, 650, 700, 800, 900, 999 };</span>
+  /** this contains the m_gp GraphPanel */
+  JScrollPane m_js;
+
+  /**
+   * Constructor&lt;br&gt;
+   * Sets up the gui and initializes all the other previously
+   * uninitialized variables.
+   */
+<span class="nc" id="L153">  public GraphVisualizer() {</span>
+<span class="nc" id="L154">    m_gp = new GraphPanel();</span>
+<span class="nc" id="L155">    m_js = new JScrollPane(m_gp);</span>
+
+    //creating a new layout engine and adding this class as its listener
+    // to receive layoutComplete events
+<span class="nc" id="L159">    m_le=new HierarchicalBCEngine(m_nodes, m_edges,</span>
+<span class="nc" id="L160">                                  paddedNodeWidth, nodeHeight);</span>
+<span class="nc" id="L161">    m_le.addLayoutCompleteEventListener(this);</span>
+
+<span class="nc" id="L163">    m_jBtSave = new JButton();</span>
+<span class="nc" id="L164">    java.net.URL tempURL = ClassLoader.getSystemResource(ICONPATH+&quot;save.gif&quot;);</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">    if(tempURL!=null)</span>
+<span class="nc" id="L166">      m_jBtSave.setIcon(new ImageIcon(tempURL) );</span>
+    else
+<span class="nc" id="L168">      System.err.println(ICONPATH+ Messages.getInstance().getString(&quot;GraphVisualizer_Error_Text_First&quot;));</span>
+<span class="nc" id="L169">    m_jBtSave.setToolTipText(Messages.getInstance().getString(&quot;GraphVisualizer_JBtSave_SetToolTipText_Text&quot;));</span>
+<span class="nc" id="L170">    m_jBtSave.addActionListener( new ActionListener() {</span>
+      public void actionPerformed(ActionEvent ae) {
+<span class="nc" id="L172">        JFileChooser fc = new JFileChooser(System.getProperty(&quot;user.dir&quot;));</span>
+<span class="nc" id="L173">        ExtensionFileFilter ef1 = new ExtensionFileFilter(&quot;.dot&quot;, Messages.getInstance().getString(&quot;GraphVisualizer_EF1_ExtensionFileFilter_Text&quot;));</span>
+<span class="nc" id="L174">        ExtensionFileFilter ef2 = new ExtensionFileFilter(&quot;.xml&quot;,</span>
+<span class="nc" id="L175">        		Messages.getInstance().getString(&quot;GraphVisualizer_EF2_ExtensionFileFilter_Text&quot;));</span>
+<span class="nc" id="L176">        fc.addChoosableFileFilter(ef1);</span>
+<span class="nc" id="L177">        fc.addChoosableFileFilter(ef2);</span>
+<span class="nc" id="L178">        fc.setDialogTitle(Messages.getInstance().getString(&quot;GraphVisualizer_FC_SetDialogTitle_Text&quot;));</span>
+<span class="nc" id="L179">        int rval = fc.showSaveDialog(GraphVisualizer.this);</span>
+
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        if (rval == JFileChooser.APPROVE_OPTION) {</span>
+          //System.out.println(&quot;Saving to file \&quot;&quot;+
+          //                   f.getAbsoluteFile().toString()+&quot;\&quot;&quot;);
+<span class="nc bnc" id="L184" title="All 2 branches missed.">          if(fc.getFileFilter()==ef2) {</span>
+<span class="nc" id="L185">            String filename = fc.getSelectedFile().toString();</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            if(!filename.endsWith(&quot;.xml&quot;))</span>
+<span class="nc" id="L187">              filename = filename.concat(&quot;.xml&quot;);</span>
+<span class="nc" id="L188">            BIFParser.writeXMLBIF03(filename, graphID, m_nodes, m_edges);</span>
+          }
+          else {
+<span class="nc" id="L191">            String filename = fc.getSelectedFile().toString();</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">            if(!filename.endsWith(&quot;.dot&quot;))</span>
+<span class="nc" id="L193">              filename = filename.concat(&quot;.dot&quot;);</span>
+<span class="nc" id="L194">            DotParser.writeDOT(filename, graphID, m_nodes, m_edges);</span>
+          }
+        }
+<span class="nc" id="L197">      }</span>
+    });
+
+<span class="nc" id="L200">    final JButton jBtZoomIn = new JButton();</span>
+<span class="nc" id="L201">    tempURL = ClassLoader.getSystemResource(ICONPATH+&quot;zoomin.gif&quot;);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">    if(tempURL!=null)</span>
+<span class="nc" id="L203">      jBtZoomIn.setIcon(new ImageIcon(tempURL) );</span>
+    else
+<span class="nc" id="L205">      System.err.println(ICONPATH+</span>
+<span class="nc" id="L206">    		  Messages.getInstance().getString(&quot;GraphVisualizer_Error_Text_Second&quot;));</span>
+<span class="nc" id="L207">    jBtZoomIn.setToolTipText(Messages.getInstance().getString(&quot;GraphVisualizer_JBtZoomIn_SetToolTipText_Text&quot;));</span>
+
+<span class="nc" id="L209">    final JButton jBtZoomOut = new JButton();</span>
+<span class="nc" id="L210">    tempURL = ClassLoader.getSystemResource(ICONPATH+&quot;zoomout.gif&quot;);</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">    if(tempURL!=null)</span>
+<span class="nc" id="L212">      jBtZoomOut.setIcon(new ImageIcon(tempURL) );</span>
+    else
+<span class="nc" id="L214">      System.err.println(ICONPATH+</span>
+<span class="nc" id="L215">    		  Messages.getInstance().getString(&quot;GraphVisualizer_Error_Text_Third&quot;));</span>
+<span class="nc" id="L216">    jBtZoomOut.setToolTipText(Messages.getInstance().getString(&quot;GraphVisualizer_JBtZoomOut_SetToolTipText_Text&quot;));</span>
+
+<span class="nc" id="L218">    final JTextField jTfZoom = new JTextField(&quot;100%&quot;);</span>
+<span class="nc" id="L219">    jTfZoom.setMinimumSize( jTfZoom.getPreferredSize() );</span>
+<span class="nc" id="L220">    jTfZoom.setHorizontalAlignment(JTextField.CENTER);</span>
+<span class="nc" id="L221">    jTfZoom.setToolTipText(Messages.getInstance().getString(&quot;GraphVisualizer_JBtZoom_SetToolTipText_Text&quot;));</span>
+
+<span class="nc" id="L223">    jTfZoom.addActionListener( new ActionListener() {</span>
+      public void actionPerformed(ActionEvent ae) {
+<span class="nc" id="L225">        JTextField jt = (JTextField)ae.getSource();</span>
+        try {
+<span class="nc" id="L227">          int i=-1;</span>
+<span class="nc" id="L228">          i = jt.getText().indexOf('%');</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">          if(i==-1)</span>
+<span class="nc" id="L230">            i = Integer.parseInt(jt.getText());</span>
+          else
+<span class="nc" id="L232">            i = Integer.parseInt(jt.getText().substring(0,i));</span>
+
+<span class="nc bnc" id="L234" title="All 2 branches missed.">          if(i&lt;=999)</span>
+<span class="nc" id="L235">            scale = i/100D;</span>
+
+<span class="nc" id="L237">          jt.setText((int)(scale*100)+&quot;%&quot;);</span>
+
+<span class="nc bnc" id="L239" title="All 2 branches missed.">          if(scale&gt;0.1){</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">            if(!jBtZoomOut.isEnabled())</span>
+<span class="nc" id="L241">              jBtZoomOut.setEnabled(true);</span>
+          }
+          else
+<span class="nc" id="L244">            jBtZoomOut.setEnabled(false);</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">          if(scale&lt;9.99) {</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">            if(!jBtZoomIn.isEnabled())</span>
+<span class="nc" id="L247">              jBtZoomIn.setEnabled(true);</span>
+          }
+          else
+<span class="nc" id="L250">            jBtZoomIn.setEnabled(false);</span>
+
+<span class="nc" id="L252">          setAppropriateSize();</span>
+          //m_gp.clearBuffer();
+<span class="nc" id="L254">          m_gp.repaint();</span>
+<span class="nc" id="L255">          m_gp.invalidate();</span>
+<span class="nc" id="L256">          m_js.revalidate();</span>
+<span class="nc" id="L257">        } catch(NumberFormatException ne) {</span>
+<span class="nc" id="L258">          JOptionPane.showMessageDialog(GraphVisualizer.this.getParent(),</span>
+<span class="nc" id="L259">        		  Messages.getInstance().getString(&quot;GraphVisualizer_JOptionPaneShowMessageDialog_Text_First&quot;),</span>
+<span class="nc" id="L260">        		  Messages.getInstance().getString(&quot;GraphVisualizer_JOptionPaneShowMessageDialog_Text_Second&quot;),</span>
+<span class="nc" id="L261">          JOptionPane.ERROR_MESSAGE);</span>
+<span class="nc" id="L262">          jt.setText((scale*100)+&quot;%&quot;);</span>
+        }
+<span class="nc" id="L264">      }</span>
+    });
+
+
+<span class="nc" id="L268">    jBtZoomIn.addActionListener( new ActionListener() {</span>
+      public void actionPerformed(ActionEvent ae) {
+<span class="nc" id="L270">        int i=0, s = (int)(scale*100);</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">        if(s&lt;300)</span>
+<span class="nc" id="L272">          i = s/25;</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">        else if(s&lt;700)</span>
+<span class="nc" id="L274">          i = 6 +  s/50;</span>
+        else
+<span class="nc" id="L276">          i = 13 +s/100;</span>
+
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        if(s&gt;=999) {</span>
+<span class="nc" id="L279">          JButton b = (JButton)ae.getSource();</span>
+<span class="nc" id="L280">          b.setEnabled(false);</span>
+<span class="nc" id="L281">          return;</span>
+        }
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        else if(s&gt;=10){</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">          if(i&gt;=22) {</span>
+<span class="nc" id="L285">            JButton b = (JButton)ae.getSource();</span>
+<span class="nc" id="L286">            b.setEnabled(false);</span>
+          }
+<span class="nc bnc" id="L288" title="All 4 branches missed.">          if(s==10 &amp;&amp; !jBtZoomOut.isEnabled())</span>
+<span class="nc" id="L289">            jBtZoomOut.setEnabled(true);</span>
+          //System.out.println(&quot;i: &quot;+i+&quot;Zoom is: &quot;+zoomPercents[i+1]);
+<span class="nc" id="L291">          jTfZoom.setText(zoomPercents[i+1]+&quot;%&quot;);</span>
+<span class="nc" id="L292">          scale = zoomPercents[i+1]/100D;</span>
+        }
+        else {
+<span class="nc bnc" id="L295" title="All 2 branches missed.">          if(!jBtZoomOut.isEnabled())</span>
+<span class="nc" id="L296">            jBtZoomOut.setEnabled(true);</span>
+          //System.out.println(&quot;i: &quot;+i+&quot;Zoom is: &quot;+zoomPercents[0]);
+<span class="nc" id="L298">          jTfZoom.setText(zoomPercents[0]+&quot;%&quot;);</span>
+<span class="nc" id="L299">          scale = zoomPercents[0]/100D;</span>
+        }
+<span class="nc" id="L301">        setAppropriateSize();</span>
+<span class="nc" id="L302">        m_gp.repaint();</span>
+<span class="nc" id="L303">        m_gp.invalidate();</span>
+<span class="nc" id="L304">        m_js.revalidate();</span>
+<span class="nc" id="L305">      }</span>
+    });
+
+
+<span class="nc" id="L309">    jBtZoomOut.addActionListener( new ActionListener() {</span>
+      public void actionPerformed(ActionEvent ae) {
+<span class="nc" id="L311">        int i=0, s = (int)(scale*100);</span>
+<span class="nc bnc" id="L312" title="All 2 branches missed.">        if(s&lt;300)</span>
+<span class="nc" id="L313">          i = (int) Math.ceil(s/25D);</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">        else if(s&lt;700)</span>
+<span class="nc" id="L315">          i = 6 +  (int) Math.ceil(s/50D);</span>
+        else
+<span class="nc" id="L317">          i = 13 + (int) Math.ceil(s/100D);</span>
+
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        if(s&lt;=10) {</span>
+<span class="nc" id="L320">          JButton b = (JButton)ae.getSource();</span>
+<span class="nc" id="L321">          b.setEnabled(false);</span>
+        }
+<span class="nc bnc" id="L323" title="All 2 branches missed.">        else if(s&lt;999) {</span>
+<span class="nc bnc" id="L324" title="All 2 branches missed.">          if(i&lt;=1) {</span>
+<span class="nc" id="L325">            JButton b = (JButton)ae.getSource();</span>
+<span class="nc" id="L326">            b.setEnabled(false);</span>
+          }
+          //System.out.println(&quot;i: &quot;+i+&quot;Zoom is: &quot;+zoomPercents[i-1]);
+<span class="nc" id="L329">          jTfZoom.setText(zoomPercents[i-1]+&quot;%&quot;);</span>
+<span class="nc" id="L330">          scale = zoomPercents[i-1]/100D;</span>
+        }
+        else{
+<span class="nc bnc" id="L333" title="All 2 branches missed.">          if(!jBtZoomIn.isEnabled())</span>
+<span class="nc" id="L334">            jBtZoomIn.setEnabled(true);</span>
+          //System.out.println(&quot;i: &quot;+i+&quot;Zoom is: &quot;+zoomPercents[22]);
+<span class="nc" id="L336">          jTfZoom.setText(zoomPercents[22]+&quot;%&quot;);</span>
+<span class="nc" id="L337">          scale = zoomPercents[22]/100D;</span>
+        }
+<span class="nc" id="L339">        setAppropriateSize();</span>
+<span class="nc" id="L340">        m_gp.repaint();</span>
+<span class="nc" id="L341">        m_gp.invalidate();</span>
+<span class="nc" id="L342">        m_js.revalidate();</span>
+<span class="nc" id="L343">      }</span>
+    });
+
+
+    //This button pops out the extra controls
+<span class="nc" id="L348">    JButton jBtExtraControls = new JButton();</span>
+<span class="nc" id="L349">    tempURL = ClassLoader.getSystemResource(ICONPATH+&quot;extra.gif&quot;);</span>
+<span class="nc bnc" id="L350" title="All 2 branches missed.">    if(tempURL!=null)</span>
+<span class="nc" id="L351">      jBtExtraControls.setIcon(new ImageIcon(tempURL) );</span>
+    else
+<span class="nc" id="L353">      System.err.println(ICONPATH+</span>
+<span class="nc" id="L354">    		  Messages.getInstance().getString(&quot;GraphVisualizer_Error_Text_Fourth&quot;));</span>
+<span class="nc" id="L355">    jBtExtraControls.setToolTipText(Messages.getInstance().getString(&quot;GraphVisualizer_JBtExtraControls_SetToolTipText_Text&quot;));</span>
+
+
+<span class="nc" id="L358">    final JCheckBox jCbCustomNodeSize = new JCheckBox(Messages.getInstance().getString(&quot;GraphVisualizer_JCbCustomNodeSize_JCheckBox_Text&quot;));</span>
+<span class="nc" id="L359">    final JLabel jLbNodeWidth = new JLabel(Messages.getInstance().getString(&quot;GraphVisualizer_JLbNodeWidth_JLabel_Text&quot;));</span>
+<span class="nc" id="L360">    final JLabel jLbNodeHeight = new JLabel(Messages.getInstance().getString(&quot;GraphVisualizer_JLbNodeHeight_JLabel_Text&quot;));</span>
+
+<span class="nc" id="L362">    jTfNodeWidth.setHorizontalAlignment(JTextField.CENTER);</span>
+<span class="nc" id="L363">    jTfNodeWidth.setText(&quot;&quot;+nodeWidth);</span>
+<span class="nc" id="L364">    jTfNodeHeight.setHorizontalAlignment(JTextField.CENTER);</span>
+<span class="nc" id="L365">    jTfNodeHeight.setText(&quot;&quot;+nodeHeight);</span>
+<span class="nc" id="L366">    jLbNodeWidth.setEnabled(false);</span>
+<span class="nc" id="L367">    jTfNodeWidth.setEnabled(false);</span>
+<span class="nc" id="L368">    jLbNodeHeight.setEnabled(false);</span>
+<span class="nc" id="L369">    jTfNodeHeight.setEnabled(false);</span>
+
+<span class="nc" id="L371">    jCbCustomNodeSize.addActionListener( new ActionListener() {</span>
+      public void actionPerformed(ActionEvent ae) {
+<span class="nc bnc" id="L373" title="All 2 branches missed.">        if( ((JCheckBox)ae.getSource()).isSelected() ) {</span>
+<span class="nc" id="L374">          jLbNodeWidth.setEnabled(true);</span>
+<span class="nc" id="L375">          jTfNodeWidth.setEnabled(true);</span>
+<span class="nc" id="L376">          jLbNodeHeight.setEnabled(true);</span>
+<span class="nc" id="L377">          jTfNodeHeight.setEnabled(true);</span>
+        }
+        else {
+<span class="nc" id="L380">          jLbNodeWidth.setEnabled(false);</span>
+<span class="nc" id="L381">          jTfNodeWidth.setEnabled(false);</span>
+<span class="nc" id="L382">          jLbNodeHeight.setEnabled(false);</span>
+<span class="nc" id="L383">          jTfNodeHeight.setEnabled(false);</span>
+<span class="nc" id="L384">          setAppropriateNodeSize();</span>
+        }
+<span class="nc" id="L386">      }</span>
+    });
+
+
+<span class="nc" id="L390">    jBtLayout  = new JButton(Messages.getInstance().getString(&quot;GraphVisualizer_JBtLayout_JButton_Text&quot;));</span>
+<span class="nc" id="L391">    jBtLayout.addActionListener( new ActionListener() {</span>
+      public void actionPerformed(ActionEvent ae) {
+        int tmpW, tmpH;
+
+<span class="nc bnc" id="L395" title="All 2 branches missed.">        if(jCbCustomNodeSize.isSelected()) {</span>
+<span class="nc" id="L396">          try{ tmpW = Integer.parseInt(jTfNodeWidth.getText()); }</span>
+<span class="nc" id="L397">          catch(NumberFormatException ne) {</span>
+<span class="nc" id="L398">            JOptionPane.showMessageDialog(GraphVisualizer.this.getParent(),</span>
+<span class="nc" id="L399">            		Messages.getInstance().getString(&quot;GraphVisualizer_JOptionPaneShowMessageDialog_Text_First&quot;),</span>
+<span class="nc" id="L400">            		Messages.getInstance().getString(&quot;GraphVisualizer_JOptionPaneShowMessageDialog_Text_Second&quot;),</span>
+<span class="nc" id="L401">            JOptionPane.ERROR_MESSAGE);</span>
+<span class="nc" id="L402">            tmpW = nodeWidth;</span>
+<span class="nc" id="L403">            jTfNodeWidth.setText(&quot;&quot;+nodeWidth);</span>
+
+          }
+<span class="nc" id="L406">          try{ tmpH = Integer.parseInt(jTfNodeHeight.getText()); }</span>
+<span class="nc" id="L407">          catch(NumberFormatException ne) {</span>
+<span class="nc" id="L408">            JOptionPane.showMessageDialog(GraphVisualizer.this.getParent(),</span>
+<span class="nc" id="L409">            		Messages.getInstance().getString(&quot;GraphVisualizer_JOptionPaneShowMessageDialog_Text_Third&quot;),</span>
+<span class="nc" id="L410">            		Messages.getInstance().getString(&quot;GraphVisualizer_JOptionPaneShowMessageDialog_Text_Fourth&quot;),</span>
+<span class="nc" id="L411">            JOptionPane.ERROR_MESSAGE);</span>
+<span class="nc" id="L412">            tmpH = nodeHeight;</span>
+<span class="nc" id="L413">            jTfNodeWidth.setText(&quot;&quot;+nodeHeight);</span>
+          }
+
+<span class="nc bnc" id="L416" title="All 4 branches missed.">          if(tmpW!=nodeWidth || tmpH!=nodeHeight) {</span>
+<span class="nc" id="L417">            nodeWidth = tmpW; paddedNodeWidth = nodeWidth+8; nodeHeight = tmpH;</span>
+          }
+        }
+<span class="nc" id="L420">        JButton bt = (JButton)ae.getSource();</span>
+<span class="nc" id="L421">        bt.setEnabled(false);</span>
+<span class="nc" id="L422">        m_le.setNodeSize(paddedNodeWidth, nodeHeight);</span>
+<span class="nc" id="L423">        m_le.layoutGraph();</span>
+<span class="nc" id="L424">      }</span>
+    });
+
+
+<span class="nc" id="L428">    GridBagConstraints gbc = new GridBagConstraints();</span>
+
+<span class="nc" id="L430">    final JPanel p = new JPanel(new GridBagLayout());</span>
+<span class="nc" id="L431">    gbc.gridwidth = gbc.REMAINDER;</span>
+<span class="nc" id="L432">    gbc.anchor = gbc.NORTHWEST;</span>
+<span class="nc" id="L433">    gbc.fill = gbc.NONE;</span>
+<span class="nc" id="L434">    p.add( m_le.getControlPanel(), gbc);</span>
+<span class="nc" id="L435">    gbc.gridwidth = 1;</span>
+<span class="nc" id="L436">    gbc.insets = new Insets(8,0,0,0);</span>
+<span class="nc" id="L437">    gbc.anchor = gbc.NORTHWEST;</span>
+<span class="nc" id="L438">    gbc.gridwidth = gbc.REMAINDER;</span>
+
+<span class="nc" id="L440">    p.add( jCbCustomNodeSize, gbc );</span>
+<span class="nc" id="L441">    gbc.insets = new Insets(0,0,0,0);</span>
+<span class="nc" id="L442">    gbc.gridwidth = gbc.REMAINDER;</span>
+<span class="nc" id="L443">    Container c = new Container();</span>
+<span class="nc" id="L444">    c.setLayout( new GridBagLayout() );</span>
+<span class="nc" id="L445">    gbc.gridwidth = gbc.RELATIVE;</span>
+<span class="nc" id="L446">    c.add(jLbNodeWidth, gbc);</span>
+<span class="nc" id="L447">    gbc.gridwidth = gbc.REMAINDER;</span>
+<span class="nc" id="L448">    c.add(jTfNodeWidth, gbc);</span>
+<span class="nc" id="L449">    gbc.gridwidth = gbc.RELATIVE;</span>
+<span class="nc" id="L450">    c.add(jLbNodeHeight, gbc);</span>
+<span class="nc" id="L451">    gbc.gridwidth = gbc.REMAINDER;</span>
+<span class="nc" id="L452">    c.add(jTfNodeHeight, gbc);</span>
+<span class="nc" id="L453">    gbc.fill = gbc.HORIZONTAL;</span>
+<span class="nc" id="L454">    p.add( c, gbc );</span>
+
+<span class="nc" id="L456">    gbc.anchor = gbc.NORTHWEST;</span>
+<span class="nc" id="L457">    gbc.insets = new Insets(8,0,0,0);</span>
+<span class="nc" id="L458">    gbc.fill = gbc.HORIZONTAL;</span>
+<span class="nc" id="L459">    p.add( jBtLayout, gbc );</span>
+<span class="nc" id="L460">    gbc.fill = gbc.NONE;</span>
+<span class="nc" id="L461">    p.setBorder(BorderFactory.createCompoundBorder(</span>
+<span class="nc" id="L462">    BorderFactory.createTitledBorder(Messages.getInstance().getString(&quot;GraphVisualizer_P_BorderFactoryCreateTitledBorder_Text&quot;)),</span>
+<span class="nc" id="L463">    BorderFactory.createEmptyBorder(4,4,4,4)</span>
+    ) );
+<span class="nc" id="L465">    p.setPreferredSize( new Dimension(0, 0) );</span>
+
+<span class="nc" id="L467">    final JToolBar jTbTools = new JToolBar();</span>
+<span class="nc" id="L468">    jTbTools.setFloatable(false);</span>
+<span class="nc" id="L469">    jTbTools.setLayout( new GridBagLayout() );</span>
+<span class="nc" id="L470">    gbc.anchor = gbc.NORTHWEST;</span>
+<span class="nc" id="L471">    gbc.gridwidth = gbc.REMAINDER;</span>
+<span class="nc" id="L472">    gbc.insets = new Insets(0,0,0,0);</span>
+<span class="nc" id="L473">    jTbTools.add(p,gbc);</span>
+<span class="nc" id="L474">    gbc.gridwidth = 1;</span>
+<span class="nc" id="L475">    jTbTools.add(m_jBtSave, gbc);</span>
+<span class="nc" id="L476">    jTbTools.addSeparator(new Dimension(2,2));</span>
+<span class="nc" id="L477">    jTbTools.add(jBtZoomIn, gbc);</span>
+
+<span class="nc" id="L479">    gbc.fill = gbc.VERTICAL;</span>
+<span class="nc" id="L480">    gbc.weighty = 1;</span>
+<span class="nc" id="L481">    JPanel p2 = new JPanel(new BorderLayout());</span>
+<span class="nc" id="L482">    p2.setPreferredSize( jTfZoom.getPreferredSize() );</span>
+<span class="nc" id="L483">    p2.setMinimumSize( jTfZoom.getPreferredSize() );</span>
+<span class="nc" id="L484">    p2.add(jTfZoom, BorderLayout.CENTER);</span>
+<span class="nc" id="L485">    jTbTools.add(p2, gbc);</span>
+<span class="nc" id="L486">    gbc.weighty =0;</span>
+<span class="nc" id="L487">    gbc.fill = gbc.NONE;</span>
+
+<span class="nc" id="L489">    jTbTools.add(jBtZoomOut, gbc);</span>
+<span class="nc" id="L490">    jTbTools.addSeparator(new Dimension(2,2));</span>
+<span class="nc" id="L491">    jTbTools.add(jBtExtraControls, gbc);</span>
+<span class="nc" id="L492">    jTbTools.addSeparator(new Dimension(4,2));</span>
+<span class="nc" id="L493">    gbc.weightx = 1;</span>
+<span class="nc" id="L494">    gbc.fill = gbc.BOTH;</span>
+<span class="nc" id="L495">    jTbTools.add(m_le.getProgressBar(), gbc);</span>
+
+<span class="nc" id="L497">    jBtExtraControls.addActionListener( new ActionListener() {</span>
+      public void actionPerformed(ActionEvent ae) {
+<span class="nc" id="L499">        Dimension d = p.getPreferredSize();</span>
+<span class="nc bnc" id="L500" title="All 4 branches missed.">        if(d.width==0 || d.height==0) {</span>
+<span class="nc" id="L501">          LayoutManager lm = p.getLayout();</span>
+<span class="nc" id="L502">          Dimension d2 = lm.preferredLayoutSize(p);</span>
+<span class="nc" id="L503">          p.setPreferredSize(d2); jTbTools.revalidate();</span>
+          /*
+          // this piece of code adds in an animation
+          // for popping out the extra controls panel
+          Thread th = new Thread() {
+            int h = 0, w = 0;
+            LayoutManager lm = p.getLayout();
+            Dimension d2 = lm.preferredLayoutSize(p);
+
+            int tow = (int)d2.getWidth(), toh = (int)d2.getHeight();
+            //toh = (int)d2.getHeight();
+            //tow = (int)d2.getWidth();
+
+            public void run() {
+              while(h&lt;toh || w&lt;tow) {
+                if((h+10)&lt;toh)
+                  h += 10;
+                else if(h&lt;toh)
+                  h = toh;
+                if((w+10)&lt;tow)
+                  w += 10;
+                else if(w&lt;tow)
+                  w = tow;
+                p.setPreferredSize(new Dimension(w, h));
+                //p.invalidate();
+                jTbTools.revalidate();
+                //paint(Temp4.this.getGraphics());
+                try {this.sleep(30);}
+                catch(InterruptedException ie) {ie.printStackTrace(); break;}
+              }
+              p.setPreferredSize(new Dimension(tow,toh)); jTbTools.revalidate();
+            }
+          };
+          th.start();
+           */
+        }
+        else {
+<span class="nc" id="L540">          p.setPreferredSize( new Dimension(0,0) );</span>
+<span class="nc" id="L541">          jTbTools.revalidate();</span>
+          /*
+          Thread th = new Thread() {
+            int h = p.getHeight(), w = p.getWidth();
+            LayoutManager lm = p.getLayout();
+            int tow = 0, toh = 0;
+
+            public void run() {
+              while(h&gt;toh || w&gt;tow) {
+                if((h-10)&gt;toh)
+                  h -= 10;
+                else if(h&gt;toh)
+                  h = toh;
+                if((w-10)&gt;tow)
+                  w -= 10;
+                else if(w&gt;tow)
+                  w = tow;
+
+                p.setPreferredSize(new Dimension(w, h));
+                //p.invalidate();
+                jTbTools.revalidate();
+                //paint(Temp4.this.getGraphics());
+                try {this.sleep(30);}
+                catch(InterruptedException ie) {ie.printStackTrace(); break;}
+              }
+              p.setPreferredSize(new Dimension(tow,toh)); jTbTools.revalidate();
+            }
+          };
+          th.start();
+           */
+        }
+<span class="nc" id="L572">      }</span>
+    });
+<span class="nc" id="L574">    this.setLayout( new BorderLayout() );</span>
+<span class="nc" id="L575">    this.add(jTbTools, BorderLayout.NORTH);</span>
+<span class="nc" id="L576">    this.add(m_js, BorderLayout.CENTER);</span>
+<span class="nc" id="L577">  }</span>
+
+
+  /**
+   * This method sets the node size that is appropriate
+   * considering the maximum label size that is present.
+   * It is used internally when custom node size checkbox
+   * is unchecked.
+   */
+  protected void setAppropriateNodeSize() {
+    int strWidth;
+<span class="nc bnc" id="L588" title="All 2 branches missed.">    if(maxStringWidth==0)</span>
+<span class="nc bnc" id="L589" title="All 2 branches missed.">      for(int i=0; i&lt;m_nodes.size(); i++) {</span>
+<span class="nc" id="L590">        strWidth = fm.stringWidth(((GraphNode)m_nodes.elementAt(i)).lbl);</span>
+<span class="nc bnc" id="L591" title="All 2 branches missed.">        if(strWidth&gt;maxStringWidth)</span>
+<span class="nc" id="L592">          maxStringWidth=strWidth;</span>
+      }
+<span class="nc" id="L594">    nodeWidth = maxStringWidth+4;</span>
+<span class="nc" id="L595">    paddedNodeWidth = nodeWidth+8;</span>
+<span class="nc" id="L596">    jTfNodeWidth.setText(&quot;&quot;+nodeWidth);</span>
+
+<span class="nc" id="L598">    nodeHeight = 2*fm.getHeight();</span>
+<span class="nc" id="L599">    jTfNodeHeight.setText(&quot;&quot;+nodeHeight);</span>
+<span class="nc" id="L600">  }</span>
+
+  /**
+   * Sets the preferred size for m_gp GraphPanel to the
+   * minimum size that is neccessary to display the graph.
+   */
+  protected void setAppropriateSize() {
+<span class="nc" id="L607">    int maxX=0, maxY=0;</span>
+
+<span class="nc" id="L609">    m_gp.setScale(scale, scale);</span>
+
+<span class="nc bnc" id="L611" title="All 2 branches missed.">    for(int i=0; i&lt;m_nodes.size(); i++) {</span>
+<span class="nc" id="L612">      GraphNode n = (GraphNode)m_nodes.elementAt(i);</span>
+<span class="nc bnc" id="L613" title="All 2 branches missed.">      if(maxX&lt;n.x)</span>
+<span class="nc" id="L614">        maxX=n.x;</span>
+<span class="nc bnc" id="L615" title="All 2 branches missed.">      if(maxY&lt;n.y)</span>
+<span class="nc" id="L616">        maxY=n.y;</span>
+    }
+    //System.out.println(&quot;Scale: &quot;+scale+&quot; paddedWidth: &quot;+paddedNodeWidth+
+    //                   &quot; nodeHeight: &quot;+nodeHeight+&quot;\nmaxX: &quot;+maxX+&quot; maxY: &quot;+
+    //                   maxY+&quot; final: &quot;+(int)((maxX+paddedNodeWidth+2)*scale)+
+    //                   &quot;,&quot;+(int)((maxY+nodeHeight+2)*scale) );
+<span class="nc" id="L622">    m_gp.setPreferredSize(new Dimension((int)((maxX+paddedNodeWidth+2)*scale),</span>
+<span class="nc" id="L623">    (int)((maxY+nodeHeight+2)*scale)));</span>
+    //System.out.println(&quot;Size set to &quot;+this.getPreferredSize());
+<span class="nc" id="L625">  }</span>
+
+
+  /**
+   * This method is an implementation for LayoutCompleteEventListener
+   * class. It sets the size appropriate for m_gp GraphPanel and
+   * and revalidates it's container JScrollPane once a
+   * LayoutCompleteEvent is received from the LayoutEngine.
+   */
+  public void layoutCompleted(LayoutCompleteEvent le) {
+<span class="nc" id="L635">    setAppropriateSize();</span>
+    //m_gp.clearBuffer();
+<span class="nc" id="L637">    m_gp.invalidate();</span>
+<span class="nc" id="L638">    m_js.revalidate();</span>
+<span class="nc" id="L639">    m_gp.repaint();</span>
+<span class="nc" id="L640">    jBtLayout.setEnabled(true);</span>
+<span class="nc" id="L641">  }</span>
+
+
+  /**
+   * This method lays out the graph by calling the
+   * LayoutEngine's layoutGraph() method. This method
+   * should be called to display the graph nicely, unless
+   * the input XMLBIF03 already contains some layout
+   * information (ie the x,y positions of nodes.
+   */
+  public void layoutGraph() {
+<span class="nc bnc" id="L652" title="All 2 branches missed.">    if(m_le!=null)</span>
+<span class="nc" id="L653">      m_le.layoutGraph();</span>
+
+<span class="nc" id="L655">  }</span>
+
+  /*********************************************************
+   *
+   *  BIF reader&lt;br&gt;
+   *  Reads a graph description in XMLBIF03 from a string
+   *
+   *********************************************************
+   */
+  public void readBIF(String instring) throws BIFFormatException {
+<span class="nc" id="L665">    BIFParser bp = new BIFParser(instring, m_nodes, m_edges);</span>
+    try {
+<span class="nc" id="L667">      graphID = bp.parse();</span>
+<span class="nc" id="L668">    } catch(BIFFormatException bf) {</span>
+<span class="nc" id="L669">      System.out.println(Messages.getInstance().getString(&quot;GraphVisualizer_ReadBIF_Error_Text_First&quot;));</span>
+<span class="nc" id="L670">      bf.printStackTrace();</span>
+    }
+<span class="nc" id="L672">    catch(Exception ex) { ex.printStackTrace(); return; }</span>
+
+<span class="nc" id="L674">    setAppropriateNodeSize();</span>
+<span class="nc bnc" id="L675" title="All 2 branches missed.">    if(m_le!=null) {</span>
+<span class="nc" id="L676">      m_le.setNodeSize(paddedNodeWidth, nodeHeight);</span>
+    }
+<span class="nc" id="L678">  } //end readBIF1</span>
+
+  /**
+   *
+   *  BIF reader&lt;br&gt;
+   *  Reads a graph description in XMLBIF03 from an InputStrem
+   *
+   *
+   */
+  public void readBIF(InputStream instream) throws BIFFormatException {
+<span class="nc" id="L688">    BIFParser bp = new BIFParser(instream, m_nodes, m_edges);</span>
+    try {
+<span class="nc" id="L690">      graphID = bp.parse();</span>
+<span class="nc" id="L691">    } catch(BIFFormatException bf) {</span>
+<span class="nc" id="L692">      System.out.println(Messages.getInstance().getString(&quot;GraphVisualizer_ReadBIF_Error_Text_Second&quot;));</span>
+<span class="nc" id="L693">      bf.printStackTrace();</span>
+    }
+<span class="nc" id="L695">    catch(Exception ex) { ex.printStackTrace(); return; }</span>
+
+<span class="nc" id="L697">    setAppropriateNodeSize();</span>
+<span class="nc bnc" id="L698" title="All 2 branches missed.">    if(m_le!=null) {</span>
+<span class="nc" id="L699">      m_le.setNodeSize(paddedNodeWidth, nodeHeight);</span>
+    }
+<span class="nc" id="L701">    setAppropriateSize();</span>
+<span class="nc" id="L702">  } //end readBIF2</span>
+
+
+  /*********************************************************
+   *
+   *  Dot reader&lt;br&gt;
+   *  Reads a graph description in DOT format from a string
+   *
+   *********************************************************
+   */
+  public void readDOT(Reader input) {
+<span class="nc" id="L713">    DotParser dp = new DotParser(input, m_nodes, m_edges);</span>
+<span class="nc" id="L714">    graphID = dp.parse();</span>
+
+<span class="nc" id="L716">    setAppropriateNodeSize();</span>
+<span class="nc bnc" id="L717" title="All 2 branches missed.">    if(m_le!=null) {</span>
+<span class="nc" id="L718">      m_le.setNodeSize(paddedNodeWidth, nodeHeight);</span>
+<span class="nc" id="L719">      jBtLayout.setEnabled(false);</span>
+<span class="nc" id="L720">      layoutGraph();</span>
+    }
+<span class="nc" id="L722">  }</span>
+
+  /**
+   * The panel which contains the actual graph.
+   */
+  private class GraphPanel
+    extends PrintablePanel {
+
+    /** for serialization */
+    private static final long serialVersionUID = -3562813603236753173L;
+
+    public GraphPanel() {
+<span class="nc" id="L734">      super();</span>
+<span class="nc" id="L735">      this.addMouseListener( new GraphVisualizerMouseListener() );</span>
+<span class="nc" id="L736">      this.addMouseMotionListener( new GraphVisualizerMouseMotionListener() );</span>
+<span class="nc" id="L737">      this.setToolTipText(&quot;&quot;);</span>
+<span class="nc" id="L738">    }</span>
+
+    public String getToolTipText(MouseEvent me) {
+      int x, y, nx, ny;
+      Rectangle r;
+      GraphNode n;
+<span class="nc" id="L744">      Dimension d = m_gp.getPreferredSize();</span>
+      //System.out.println(&quot;Preferred Size: &quot;+this.getPreferredSize()+
+      //                   &quot; Actual Size: &quot;+this.getSize());
+<span class="nc" id="L747">      x=y=nx=ny=0;</span>
+
+<span class="nc bnc" id="L749" title="All 2 branches missed.">      if(d.width &lt; m_gp.getWidth())</span>
+<span class="nc" id="L750">        nx = (int)((nx + m_gp.getWidth()/2 - d.width/2)/scale);</span>
+<span class="nc bnc" id="L751" title="All 2 branches missed.">      if(d.height &lt; m_gp.getHeight())</span>
+<span class="nc" id="L752">        ny = (int)((ny + m_gp.getHeight()/2 - d.height/2)/scale);</span>
+
+<span class="nc" id="L754">      r = new Rectangle(0, 0,</span>
+<span class="nc" id="L755">                       (int)(paddedNodeWidth*scale), (int)(nodeHeight*scale));</span>
+<span class="nc" id="L756">      x += me.getX(); y += me.getY();</span>
+
+      int i;
+<span class="nc bnc" id="L759" title="All 2 branches missed.">      for(i=0; i&lt;m_nodes.size(); i++) {</span>
+<span class="nc" id="L760">        n = (GraphNode) m_nodes.elementAt(i);</span>
+<span class="nc bnc" id="L761" title="All 2 branches missed.">        if(n.nodeType!=NORMAL)</span>
+<span class="nc" id="L762">          return null;</span>
+<span class="nc" id="L763">        r.x = (int)((nx+n.x)*scale); r.y = (int)((ny+n.y)*scale);</span>
+<span class="nc bnc" id="L764" title="All 2 branches missed.">        if(r.contains(x,y)) {</span>
+<span class="nc bnc" id="L765" title="All 2 branches missed.">          if(n.probs==null)</span>
+<span class="nc" id="L766">            return n.lbl;</span>
+          else
+<span class="nc" id="L768">            return n.lbl+Messages.getInstance().getString(&quot;GraphVisualizer_GetToolTipText_Text&quot;);</span>
+        }
+      }
+<span class="nc" id="L771">      return null;</span>
+    }
+
+
+    public void paintComponent(Graphics gr) {
+<span class="nc" id="L776">      Graphics2D g = (Graphics2D)gr;</span>
+<span class="nc" id="L777">      RenderingHints rh = new RenderingHints(RenderingHints.KEY_ANTIALIASING,</span>
+<span class="nc" id="L778">      RenderingHints.VALUE_ANTIALIAS_ON);</span>
+<span class="nc" id="L779">      rh.put(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_SPEED);</span>
+<span class="nc" id="L780">      g.setRenderingHints(rh);</span>
+<span class="nc" id="L781">      g.scale(scale, scale);</span>
+<span class="nc" id="L782">      Rectangle r = g.getClipBounds();</span>
+<span class="nc" id="L783">      g.clearRect(r.x,r.y,r.width,r.height);</span>
+      //g.setColor(this.getBackground());
+      //g.fillRect(0, 0, width+5, height+5);
+<span class="nc" id="L786">      int x=0, y=0;</span>
+<span class="nc" id="L787">      Dimension d = this.getPreferredSize();</span>
+      //System.out.println(&quot;Preferred Size: &quot;+this.getPreferredSize()+
+      //                   &quot; Actual Size: &quot;+this.getSize());
+
+      //initializing x &amp; y to display the graph in the middle
+      //if the display area is larger than the graph
+<span class="nc bnc" id="L793" title="All 2 branches missed.">      if(d.width &lt; this.getWidth())</span>
+<span class="nc" id="L794">        x = (int)((x + this.getWidth()/2 - d.width/2)/scale);</span>
+<span class="nc bnc" id="L795" title="All 2 branches missed.">      if(d.height &lt; this.getHeight())</span>
+<span class="nc" id="L796">        y = (int)((y + this.getHeight()/2 - d.height/2)/scale);</span>
+
+<span class="nc bnc" id="L798" title="All 2 branches missed.">      for(int index=0; index&lt;m_nodes.size(); index++) {</span>
+<span class="nc" id="L799">        GraphNode n = (GraphNode) m_nodes.elementAt(index);</span>
+<span class="nc bnc" id="L800" title="All 2 branches missed.">        if( n.nodeType==NORMAL) {</span>
+<span class="nc" id="L801">          g.setColor( this.getBackground().darker().darker() );</span>
+<span class="nc" id="L802">          g.fillOval(x+n.x+paddedNodeWidth-nodeWidth-</span>
+<span class="nc" id="L803">                          (paddedNodeWidth-nodeWidth)/2,</span>
+<span class="nc" id="L804">                     y+n.y,</span>
+<span class="nc" id="L805">                     nodeWidth, nodeHeight);</span>
+
+<span class="nc" id="L807">          g.setColor(Color.white);</span>
+          //g.setColor(Color.black);
+          //System.out.println(&quot;drawing &quot;+
+          //                   ((GraphNode)m_nodes.elementAt(index)).ID+
+          //                   &quot; at &quot;+&quot; x: &quot;+ (x+n.x+paddedNodeWidth/2-
+          //      fm.stringWidth( ((GraphNode)m_nodes.elementAt(index)).ID )/2)+
+          //		       &quot; y: &quot;+(y+n.y+nodeHeight/2+fm.getHeight()/2-2) );
+
+
+          //Draw the node's label if it can fit inside the node's current
+          // width otherwise display its ID or otherwise just display its
+          // idx in the FastVector (to distinguish it from others)
+          // if any can fit in node's current width
+<span class="nc bnc" id="L820" title="All 2 branches missed.">          if(fm.stringWidth(n.lbl)&lt;=nodeWidth)</span>
+<span class="nc" id="L821">            g.drawString( n.lbl,</span>
+<span class="nc" id="L822">            x+n.x+paddedNodeWidth/2</span>
+<span class="nc" id="L823">            -fm.stringWidth( n.lbl )/2,</span>
+<span class="nc" id="L824">            y+n.y+nodeHeight/2+fm.getHeight()/2-2 );</span>
+<span class="nc bnc" id="L825" title="All 2 branches missed.">          else if(fm.stringWidth(n.ID)&lt;=nodeWidth)</span>
+<span class="nc" id="L826">            g.drawString( n.ID,</span>
+<span class="nc" id="L827">            x+n.x+paddedNodeWidth/2</span>
+<span class="nc" id="L828">            -fm.stringWidth( n.ID )/2,</span>
+<span class="nc" id="L829">            y+n.y+nodeHeight/2+fm.getHeight()/2-2 );</span>
+<span class="nc bnc" id="L830" title="All 2 branches missed.">          else if(fm.stringWidth( Integer.toString(index) )&lt;=nodeWidth)</span>
+<span class="nc" id="L831">            g.drawString( Integer.toString(index),</span>
+<span class="nc" id="L832">            x+n.x+paddedNodeWidth/2</span>
+<span class="nc" id="L833">            -fm.stringWidth( Integer.toString(index) )/2,</span>
+<span class="nc" id="L834">            y+n.y+nodeHeight/2+fm.getHeight()/2-2 );</span>
+
+<span class="nc" id="L836">          g.setColor(Color.black);</span>
+        }
+        else {
+          //g.draw( new java.awt.geom.QuadCurve2D.Double(n.x+paddedNodeWidth/2,
+          //                                             n.y,
+          //				n.x+paddedNodeWidth-nodeSize
+          //                                   -(paddedNodeWidth-nodeSize)/2,
+          //                                  n.y+nodeHeight/2,
+          //                           n.x+paddedNodeWidth/2, n.y+nodeHeight) );
+<span class="nc" id="L845">          g.drawLine(x+n.x+paddedNodeWidth/2, y+n.y,</span>
+<span class="nc" id="L846">                     x+n.x+paddedNodeWidth/2, y+n.y+nodeHeight);</span>
+
+        }
+
+        GraphNode n2;
+        int x1, y1, x2, y2;
+        //System.out.println(&quot;Drawing edges of &quot;+n.lbl);
+
+        //Drawing all the edges coming out from the node,
+        //including reversed and double ones
+<span class="nc bnc" id="L856" title="All 2 branches missed.">        if(n.edges!=null)</span>
+<span class="nc bnc" id="L857" title="All 2 branches missed.">          for(int k=0; k&lt;n.edges.length; k++) {</span>
+<span class="nc bnc" id="L858" title="All 2 branches missed.">            if(n.edges[k][1]&gt;0) {</span>
+<span class="nc" id="L859">              n2 = (GraphNode) m_nodes.elementAt(n.edges[k][0]); //m_nodes.elementAt(k);</span>
+              //System.out.println(&quot;  --&gt;to &quot;+n2.lbl);
+<span class="nc" id="L861">              x1=n.x+paddedNodeWidth/2; y1=n.y+nodeHeight;</span>
+<span class="nc" id="L862">              x2=n2.x+paddedNodeWidth/2; y2=n2.y;</span>
+<span class="nc" id="L863">              g.drawLine(x+x1, y+y1, x+x2, y+y2);</span>
+<span class="nc bnc" id="L864" title="All 2 branches missed.">              if(n.edges[k][1]==DIRECTED) {</span>
+<span class="nc bnc" id="L865" title="All 2 branches missed.">                if(n2.nodeType==n2.NORMAL)</span>
+<span class="nc" id="L866">                  drawArrow(g, x+x1, y+y1, x+x2, y+y2);</span>
+              }
+<span class="nc bnc" id="L868" title="All 2 branches missed.">              else if(n.edges[k][1]==REVERSED) {</span>
+<span class="nc bnc" id="L869" title="All 2 branches missed.">                if(n.nodeType==NORMAL)</span>
+<span class="nc" id="L870">                  drawArrow(g, x+x2, y+y2, x+x1, y+y1);</span>
+              }
+<span class="nc bnc" id="L872" title="All 2 branches missed.">              else if(n.edges[k][1]==DOUBLE) {</span>
+<span class="nc bnc" id="L873" title="All 2 branches missed.">                if(n.nodeType==NORMAL)</span>
+<span class="nc" id="L874">                  drawArrow(g, x+x2, y+y2, x+x1, y+y1);</span>
+<span class="nc bnc" id="L875" title="All 2 branches missed.">                if(n2.nodeType==NORMAL)</span>
+<span class="nc" id="L876">                  drawArrow(g, x+x1, y+y1, x+x2, y+y2);</span>
+              }
+            }
+          }
+      }
+<span class="nc" id="L881">    }</span>
+
+    /**
+     * This method draws an arrow on a line from (x1,y1)
+     * to (x2,y2). The arrow head is seated on (x2,y2) and
+     * is in the direction of the line.
+     * If the arrow is needed to be drawn in the opposite
+     * direction then simply swap the order of (x1, y1)
+     * and (x2, y2) when calling this function.
+     */
+    protected void drawArrow(Graphics g, int x1, int y1, int x2, int y2) {
+
+<span class="nc bnc" id="L893" title="All 2 branches missed.">      if(x1==x2) {</span>
+<span class="nc bnc" id="L894" title="All 2 branches missed.">        if(y1&lt;y2) {</span>
+<span class="nc" id="L895">          g.drawLine(x2, y2, x2+4, y2-8);</span>
+<span class="nc" id="L896">          g.drawLine(x2, y2, x2-4, y2-8);</span>
+        }
+        else {
+<span class="nc" id="L899">          g.drawLine(x2, y2, x2+4, y2+8);</span>
+<span class="nc" id="L900">          g.drawLine(x2, y2, x2-4, y2+8);</span>
+        }
+      }
+      else {
+        //theta=line's angle from base, beta=angle of arrow's side from line
+<span class="nc" id="L905">        double hyp=0, base=0, perp=0, theta, beta;</span>
+<span class="nc" id="L906">        int x3=0, y3=0;</span>
+
+<span class="nc bnc" id="L908" title="All 2 branches missed.">        if(x2&lt;x1) {</span>
+<span class="nc" id="L909">          base = x1-x2; hyp = Math.sqrt( (x2-x1)*(x2-x1) + (y2-y1)*(y2-y1) );</span>
+<span class="nc" id="L910">          theta = Math.acos( base/hyp );</span>
+        }
+        else { //x1&gt;x2 as we already checked x1==x2 before
+<span class="nc" id="L913">          base = x1-x2; hyp = Math.sqrt( (x2-x1)*(x2-x1) + (y2-y1)*(y2-y1) );</span>
+<span class="nc" id="L914">          theta = Math.acos( base/hyp );</span>
+        }
+<span class="nc" id="L916">        beta = 30*Math.PI/180;</span>
+        //System.out.println(&quot;Original base &quot;+base+&quot; perp &quot;+perp+&quot; hyp &quot;+hyp+
+        //                   &quot;\ntheta &quot;+theta+&quot; beta &quot;+beta);
+
+<span class="nc" id="L920">        hyp = 8;</span>
+<span class="nc" id="L921">        base = Math.cos(theta-beta)*hyp;</span>
+<span class="nc" id="L922">        perp = Math.sin(theta-beta)*hyp;</span>
+
+<span class="nc" id="L924">        x3 = (int)(x2+base);</span>
+<span class="nc bnc" id="L925" title="All 2 branches missed.">        if(y1&lt;y2)</span>
+<span class="nc" id="L926">          y3 = (int)(y2-perp);</span>
+        else
+<span class="nc" id="L928">          y3 = (int)(y2+perp);</span>
+
+        //System.out.println(&quot;Drawing 1 from &quot;+x2+&quot;,&quot;+y2+&quot; to &quot;+x3+&quot;,&quot;+y3+
+        //                   &quot; x1,y1 is &quot;+x1+&quot;,&quot;+y1+&quot; base &quot;+base+
+        //		     &quot; perp &quot;+perp+&quot; cos(theta-beta) &quot;+
+        //                   Math.cos(theta-beta));
+<span class="nc" id="L934">        g.drawLine(x2, y2, x3, y3);</span>
+
+<span class="nc" id="L936">        base = Math.cos(theta+beta)*hyp;</span>
+<span class="nc" id="L937">        perp = Math.sin(theta+beta)*hyp;</span>
+
+<span class="nc" id="L939">        x3 = (int)(x2+base);</span>
+<span class="nc bnc" id="L940" title="All 2 branches missed.">        if(y1&lt;y2)</span>
+<span class="nc" id="L941">          y3 = (int)(y2-perp);</span>
+        else
+<span class="nc" id="L943">          y3 = (int)(y2+perp);</span>
+        //System.out.println(&quot;Drawing 2 from &quot;+x2+&quot;,&quot;+y2+&quot; to &quot;+x3+&quot;,&quot;+y3+
+        //                   &quot; x1,y1 is &quot;+x1+&quot;,&quot;+y1+&quot; base &quot;+base+
+        //		     &quot; perp &quot;+perp);
+<span class="nc" id="L947">        g.drawLine(x2, y2, x3, y3);</span>
+      }
+<span class="nc" id="L949">    }</span>
+
+    /**
+     * This method highlights a given node and all its children
+     * and the edges coming out of it.
+     */
+    public void highLight(GraphNode n) {
+<span class="nc" id="L956">      Graphics2D g = (Graphics2D) this.getGraphics();</span>
+<span class="nc" id="L957">      RenderingHints rh = new RenderingHints(RenderingHints.KEY_ANTIALIASING,</span>
+<span class="nc" id="L958">      RenderingHints.VALUE_ANTIALIAS_ON);</span>
+<span class="nc" id="L959">      rh.put(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_SPEED);</span>
+<span class="nc" id="L960">      g.setRenderingHints(rh);</span>
+<span class="nc" id="L961">      g.setPaintMode();</span>
+<span class="nc" id="L962">      g.scale(scale, scale);</span>
+<span class="nc" id="L963">      int x=0, y=0;</span>
+<span class="nc" id="L964">      Dimension d = this.getPreferredSize();</span>
+      //System.out.println(&quot;Preferred Size: &quot;+this.getPreferredSize()+
+      //                   &quot; Actual Size: &quot;+this.getSize());
+
+      //initializing x &amp; y to display the graph in the middle
+      //if the display area is larger than the graph
+<span class="nc bnc" id="L970" title="All 2 branches missed.">      if(d.width &lt; this.getWidth())</span>
+<span class="nc" id="L971">        x = (int)((x + this.getWidth()/2 - d.width/2)/scale);</span>
+<span class="nc bnc" id="L972" title="All 2 branches missed.">      if(d.height &lt; this.getHeight())</span>
+<span class="nc" id="L973">        y = (int)((y + this.getHeight()/2 - d.height/2)/scale);</span>
+
+      //if the node is of type NORMAL only then highlight
+<span class="nc bnc" id="L976" title="All 2 branches missed.">      if(n.nodeType==NORMAL) {</span>
+
+<span class="nc" id="L978">        g.setXORMode(Color.green); //g.setColor(Color.green);</span>
+
+<span class="nc" id="L980">        g.fillOval(x+n.x+paddedNodeWidth-nodeWidth-</span>
+<span class="nc" id="L981">        (paddedNodeWidth-nodeWidth)/2,</span>
+<span class="nc" id="L982">        y+n.y, nodeWidth, nodeHeight);</span>
+<span class="nc" id="L983">        g.setXORMode(Color.red);</span>
+
+        //Draw the node's label if it can fit inside the node's current
+        // width otherwise display its ID or otherwise just display its
+        // idx in the FastVector (to distinguish it from others)
+        // if any can fit in node's current width
+<span class="nc bnc" id="L989" title="All 2 branches missed.">        if(fm.stringWidth(n.lbl)&lt;=nodeWidth)</span>
+<span class="nc" id="L990">          g.drawString( n.lbl,</span>
+<span class="nc" id="L991">          x+n.x+paddedNodeWidth/2</span>
+<span class="nc" id="L992">          -fm.stringWidth( n.lbl )/2,</span>
+<span class="nc" id="L993">          y+n.y+nodeHeight/2+fm.getHeight()/2-2 );</span>
+<span class="nc bnc" id="L994" title="All 2 branches missed.">        else if(fm.stringWidth(n.ID)&lt;=nodeWidth)</span>
+<span class="nc" id="L995">          g.drawString( n.ID,</span>
+<span class="nc" id="L996">          x+n.x+paddedNodeWidth/2</span>
+<span class="nc" id="L997">          -fm.stringWidth( n.ID )/2,</span>
+<span class="nc" id="L998">          y+n.y+nodeHeight/2+fm.getHeight()/2-2 );</span>
+<span class="nc" id="L999">        else if( fm.stringWidth( Integer.toString(m_nodes.indexOf(n)) ) &lt;=</span>
+<span class="nc bnc" id="L1000" title="All 2 branches missed.">        nodeWidth )</span>
+<span class="nc" id="L1001">          g.drawString( Integer.toString(m_nodes.indexOf(n)),</span>
+<span class="nc" id="L1002">          x+n.x+paddedNodeWidth/2</span>
+<span class="nc" id="L1003">          -fm.stringWidth( Integer.toString(m_nodes.indexOf(n)) )/2,</span>
+<span class="nc" id="L1004">          y+n.y+nodeHeight/2+fm.getHeight()/2-2 );</span>
+
+<span class="nc" id="L1006">        g.setXORMode(Color.green);</span>
+
+
+        GraphNode n2;
+        int x1, y1, x2, y2;
+        //System.out.println(&quot;Drawing edges of &quot;+n.lbl);
+<span class="nc bnc" id="L1012" title="All 2 branches missed.">        if(n.edges!=null)</span>
+          //Drawing all the edges from and upward ones coming to the node
+<span class="nc bnc" id="L1014" title="All 2 branches missed.">          for(int k=0; k&lt;n.edges.length; k++) {</span>
+<span class="nc bnc" id="L1015" title="All 4 branches missed.">            if(n.edges[k][1]==DIRECTED || n.edges[k][1]==DOUBLE) {</span>
+<span class="nc" id="L1016">              n2 = (GraphNode) m_nodes.elementAt(n.edges[k][0]); //m_nodes.elementAt(k);</span>
+              //System.out.println(&quot;  --&gt;to &quot;+n2.lbl);
+<span class="nc" id="L1018">              x1=n.x+paddedNodeWidth/2; y1=n.y+nodeHeight;</span>
+<span class="nc" id="L1019">              x2=n2.x+paddedNodeWidth/2; y2=n2.y;</span>
+<span class="nc" id="L1020">              g.drawLine(x+x1, y+y1, x+x2, y+y2);</span>
+<span class="nc bnc" id="L1021" title="All 2 branches missed.">              if(n.edges[k][1]==DIRECTED) {</span>
+<span class="nc bnc" id="L1022" title="All 2 branches missed.">                if(n2.nodeType==n2.NORMAL) //!n2.dummy)</span>
+<span class="nc" id="L1023">                  drawArrow(g, x+x1, y+y1, x+x2, y+y2);</span>
+              }
+<span class="nc bnc" id="L1025" title="All 2 branches missed.">              else if(n.edges[k][1]==DOUBLE) {</span>
+<span class="nc bnc" id="L1026" title="All 2 branches missed.">                if(n.nodeType==NORMAL) //!n.dummy)</span>
+<span class="nc" id="L1027">                  drawArrow(g, x+x2, y+y2, x+x1, y+y1);</span>
+<span class="nc bnc" id="L1028" title="All 2 branches missed.">                if(n2.nodeType==NORMAL) //!n2.dummy)</span>
+<span class="nc" id="L1029">                  drawArrow(g, x+x1, y+y1, x+x2, y+y2);</span>
+              }
+<span class="nc bnc" id="L1031" title="All 2 branches missed.">              if(n2.nodeType==NORMAL)</span>
+<span class="nc" id="L1032">                g.fillOval(x+n2.x+paddedNodeWidth-nodeWidth-</span>
+<span class="nc" id="L1033">                (paddedNodeWidth-nodeWidth)/2,</span>
+<span class="nc" id="L1034">                y+n2.y, nodeWidth, nodeHeight);</span>
+
+              //If n2 is not of NORMAL type
+              // then carry on drawing all the edges and add all the
+              // dummy nodes encountered in a Vector until no
+              // more dummy nodes are found and all the child nodes(node n2)
+              // are of type normal
+<span class="nc" id="L1041">              java.util.Vector t = new java.util.Vector();</span>
+<span class="nc bnc" id="L1042" title="All 4 branches missed.">              while(n2.nodeType!=NORMAL || t.size()&gt;0) { //n2.dummy==true) {</span>
+                //System.out.println(&quot;in while processing &quot;+n2.ID);
+<span class="nc bnc" id="L1044" title="All 2 branches missed.">                if(t.size()&gt;0)</span>
+<span class="nc" id="L1045">                { n2 = (GraphNode)t.elementAt(0);</span>
+<span class="nc" id="L1046">                  t.removeElementAt(0); }</span>
+<span class="nc bnc" id="L1047" title="All 2 branches missed.">                if(n2.nodeType!=NORMAL) {</span>
+<span class="nc" id="L1048">                  g.drawLine(x+n2.x+paddedNodeWidth/2, y+n2.y,</span>
+<span class="nc" id="L1049">                  x+n2.x+paddedNodeWidth/2, y+n2.y+nodeHeight);</span>
+<span class="nc" id="L1050">                  x1=n2.x+paddedNodeWidth/2; y1=n2.y+nodeHeight;</span>
+                  //System.out.println(&quot;Drawing from &quot;+n2.lbl);
+<span class="nc bnc" id="L1052" title="All 2 branches missed.">                  for(int m=0; m&lt;n2.edges.length; m++) {</span>
+                    //System.out.println(&quot; to &quot;+n2.lbl+&quot;, &quot;+
+                    //                   graphMatrix[tmpIndex][m]);
+<span class="nc bnc" id="L1055" title="All 2 branches missed.">                    if(n2.edges[m][1]&gt;0) {</span>
+<span class="nc" id="L1056">                      GraphNode n3 =</span>
+<span class="nc" id="L1057">                      (GraphNode) m_nodes.elementAt(n2.edges[m][0]); //m_nodes.elementAt(m);</span>
+<span class="nc" id="L1058">                      g.drawLine(x+x1, y+y1, x+n3.x+paddedNodeWidth/2, y+n3.y);</span>
+
+<span class="nc bnc" id="L1060" title="All 2 branches missed.">                      if(n3.nodeType==NORMAL){ //!n2.dummy)</span>
+<span class="nc" id="L1061">                        g.fillOval(x+n3.x+paddedNodeWidth-nodeWidth-</span>
+<span class="nc" id="L1062">                        (paddedNodeWidth-nodeWidth)/2,</span>
+<span class="nc" id="L1063">                        y+n3.y, nodeWidth, nodeHeight);</span>
+<span class="nc" id="L1064">                        drawArrow(g, x+x1, y+y1,</span>
+<span class="nc" id="L1065">                        x+n3.x+paddedNodeWidth/2, y+n3.y);</span>
+                      }
+                      //if(n3.nodeType!=n3.NORMAL)
+<span class="nc" id="L1068">                      t.addElement(n3);</span>
+                      //break;
+                    }
+                  }
+                }
+              }
+            }
+<span class="nc bnc" id="L1075" title="All 4 branches missed.">            else if(n.edges[k][1]==-REVERSED || n.edges[k][1]==-DOUBLE) {</span>
+              //Drawing all the reversed and double edges which are going
+              //upwards in the drawing.
+<span class="nc" id="L1078">              n2 = (GraphNode) m_nodes.elementAt(n.edges[k][0]); //m_nodes.elementAt(k);</span>
+              //System.out.println(&quot;  --&gt;to &quot;+n2.lbl);
+<span class="nc" id="L1080">              x1=n.x+paddedNodeWidth/2; y1=n.y;</span>
+<span class="nc" id="L1081">              x2=n2.x+paddedNodeWidth/2; y2=n2.y+nodeHeight;</span>
+<span class="nc" id="L1082">              g.drawLine(x+x1, y+y1, x+x2, y+y2);</span>
+
+<span class="nc bnc" id="L1084" title="All 2 branches missed.">              if(n.edges[k][1]==-DOUBLE) {</span>
+<span class="nc" id="L1085">                drawArrow(g, x+x2, y+y2, x+x1, y+y1);</span>
+<span class="nc bnc" id="L1086" title="All 2 branches missed.">                if(n2.nodeType!=SINGULAR_DUMMY) //!n2.dummy)</span>
+<span class="nc" id="L1087">                  drawArrow(g, x+x1, y+y1, x+x2, y+y2);</span>
+              }
+
+<span class="nc" id="L1090">              int tmpIndex=k;</span>
+<span class="nc bnc" id="L1091" title="All 2 branches missed.">              while(n2.nodeType!=NORMAL) { //n2.dummy==true) {</span>
+<span class="nc" id="L1092">                g.drawLine(x+n2.x+paddedNodeWidth/2,</span>
+<span class="nc" id="L1093">                y+n2.y+nodeHeight, x+n2.x+paddedNodeWidth/2, y+n2.y);</span>
+<span class="nc" id="L1094">                x1=n2.x+paddedNodeWidth/2; y1=n2.y;</span>
+<span class="nc bnc" id="L1095" title="All 2 branches missed.">                for(int m=0; m&lt;n2.edges.length; m++) {</span>
+<span class="nc bnc" id="L1096" title="All 2 branches missed.">                  if(n2.edges[m][1]&lt;0) {</span>
+<span class="nc" id="L1097">                    n2 = (GraphNode) m_nodes.elementAt(n2.edges[m][0]); //m_nodes.elementAt(m);</span>
+<span class="nc" id="L1098">                    g.drawLine(x+x1, y+y1,</span>
+<span class="nc" id="L1099">                    x+n2.x+paddedNodeWidth/2, y+n2.y+nodeHeight);</span>
+<span class="nc" id="L1100">                    tmpIndex=m;</span>
+<span class="nc bnc" id="L1101" title="All 2 branches missed.">                    if(n2.nodeType!=SINGULAR_DUMMY) //!n2.dummy)</span>
+<span class="nc" id="L1102">                      drawArrow(g, x+x1, y+y1,</span>
+<span class="nc" id="L1103">                      x+n2.x+paddedNodeWidth/2, y+n2.y+nodeHeight);</span>
+<span class="nc" id="L1104">                    break;</span>
+                  }
+                }
+              }
+            }
+          }
+      }
+<span class="nc" id="L1111">    }</span>
+  }
+
+
+  /**
+   * Table Model for the Table that shows the probability
+   * distribution for a node
+   */
+  private class GraphVisualizerTableModel
+    extends AbstractTableModel {
+
+    /** for serialization */
+    private static final long serialVersionUID = -4789813491347366596L;
+
+    final String[] columnNames;
+    final double[][] data;
+
+
+<span class="nc" id="L1129">    public GraphVisualizerTableModel(double[][] d, String[] c) {</span>
+<span class="nc" id="L1130">      data = d;</span>
+<span class="nc" id="L1131">      columnNames = c;</span>
+<span class="nc" id="L1132">    }</span>
+
+    public int getColumnCount() {
+<span class="nc" id="L1135">      return columnNames.length;</span>
+    }
+
+    public int getRowCount() {
+<span class="nc" id="L1139">      return data.length;</span>
+    }
+
+    public String getColumnName(int col) {
+<span class="nc" id="L1143">      return columnNames[col];</span>
+    }
+
+    public Object getValueAt(int row, int col) {
+<span class="nc" id="L1147">      return new Double(data[row][col]);</span>
+    }
+
+   /*
+    * JTable uses this method to determine the default renderer/
+    * editor for each cell.
+    */
+    public Class getColumnClass(int c) {
+<span class="nc" id="L1155">      return getValueAt(0, c).getClass();</span>
+    }
+
+    /*
+     * Implemented this to make sure the table is uneditable.
+     */
+    public boolean isCellEditable(int row, int col) {
+<span class="nc" id="L1162">      return false;</span>
+    }
+  }
+
+
+
+  /**
+   * Listener class for processing mouseClicked
+   */
+<span class="nc" id="L1171">  private class GraphVisualizerMouseListener extends MouseAdapter {</span>
+    int x, y, nx, ny; Rectangle r;
+
+    /**
+     * If the mouse is clicked on a node then this method
+     * displays a dialog box with the probability distribution
+     * table for that node IF it exists
+     */
+    public void mouseClicked(MouseEvent me) {
+      GraphNode n;
+<span class="nc" id="L1181">      Dimension d = m_gp.getPreferredSize();</span>
+      //System.out.println(&quot;Preferred Size: &quot;+this.getPreferredSize()+
+      //                   &quot; Actual Size: &quot;+this.getSize());
+<span class="nc" id="L1184">      x=y=nx=ny=0;</span>
+
+<span class="nc bnc" id="L1186" title="All 2 branches missed.">      if(d.width &lt; m_gp.getWidth())</span>
+<span class="nc" id="L1187">        nx = (int)((nx + m_gp.getWidth()/2 - d.width/2)/scale);</span>
+<span class="nc bnc" id="L1188" title="All 2 branches missed.">      if(d.height &lt; m_gp.getHeight())</span>
+<span class="nc" id="L1189">        ny = (int)((ny + m_gp.getHeight()/2 - d.height/2)/scale);</span>
+
+<span class="nc" id="L1191">      r=new Rectangle(0, 0,</span>
+<span class="nc" id="L1192">                     (int)(paddedNodeWidth*scale), (int)(nodeHeight*scale));</span>
+<span class="nc" id="L1193">      x += me.getX(); y += me.getY();</span>
+
+      int i;
+<span class="nc bnc" id="L1196" title="All 2 branches missed.">      for(i=0; i&lt;m_nodes.size(); i++) {</span>
+<span class="nc" id="L1197">        n = (GraphNode) m_nodes.elementAt(i);</span>
+<span class="nc" id="L1198">        r.x = (int)((nx+n.x)*scale); r.y = (int)((ny+n.y)*scale);</span>
+<span class="nc bnc" id="L1199" title="All 2 branches missed.">        if(r.contains(x,y)) {</span>
+<span class="nc bnc" id="L1200" title="All 2 branches missed.">          if(n.probs==null)</span>
+<span class="nc" id="L1201">            return;</span>
+
+<span class="nc" id="L1203">          int noOfPrntsOutcomes = 1;</span>
+<span class="nc bnc" id="L1204" title="All 2 branches missed.">          if(n.prnts!=null) {</span>
+<span class="nc bnc" id="L1205" title="All 2 branches missed.">            for(int j=0; j&lt;n.prnts.length; j++) {</span>
+<span class="nc" id="L1206">              GraphNode n2 = (GraphNode)m_nodes.elementAt(n.prnts[j]);</span>
+<span class="nc" id="L1207">              noOfPrntsOutcomes *= n2.outcomes.length;</span>
+            }
+<span class="nc bnc" id="L1209" title="All 2 branches missed.">            if(noOfPrntsOutcomes&gt;511) {</span>
+<span class="nc" id="L1210">              System.err.println(Messages.getInstance().getString(&quot;GraphVisualizer_GraphVisualizerMouseListener_MouseClicked_Error_Text_First&quot;) + noOfPrntsOutcomes+</span>
+<span class="nc" id="L1211">            		  Messages.getInstance().getString(&quot;GraphVisualizer_GraphVisualizerMouseListener_MouseClicked_Error_Text_Second&quot;));</span>
+<span class="nc" id="L1212">              return;</span>
+            }
+          }
+
+<span class="nc" id="L1216">          GraphVisualizerTableModel tm =</span>
+<span class="nc" id="L1217">                             new GraphVisualizerTableModel(n.probs, n.outcomes);</span>
+
+<span class="nc" id="L1219">          JTable jTblProbs = new JTable(tm); //JTable(probabilities, (Object[])n.outcomes);</span>
+
+<span class="nc" id="L1221">          JScrollPane js = new JScrollPane(jTblProbs);</span>
+
+<span class="nc bnc" id="L1223" title="All 2 branches missed.">          if(n.prnts!=null) {</span>
+<span class="nc" id="L1224">            GridBagConstraints gbc = new GridBagConstraints();</span>
+<span class="nc" id="L1225">            JPanel jPlRowHeader = new JPanel( new GridBagLayout() );</span>
+
+            //indices of the parent nodes in the Vector
+<span class="nc" id="L1228">            int [] idx = new int[n.prnts.length];</span>
+            //max length of values of each parent
+<span class="nc" id="L1230">            int [] lengths = new int[n.prnts.length];</span>
+
+            //System.out.println(&quot;n.probs.length &quot;+n.probs.length+
+            //                   &quot; should be &quot;+noOfPrntsOutcomes);
+            //System.out.println(&quot;n.probs[0].length &quot;+n.probs[0].length+
+            //                   &quot; should be &quot;+n.outcomes.length);
+            //System.out.println(&quot;probabilities are: &quot;);
+            //for(int j=0; j&lt;probabilities.length; j++) {
+            //    for(int k=0; k&lt;probabilities[j].length; k++)
+            //	   System.out.print(probabilities[j][k]+&quot; &quot;);
+            //     System.out.println(&quot;&quot;);
+            //}
+
+            //Adding labels for rows
+<span class="nc" id="L1244">            gbc.anchor = gbc.NORTHWEST;</span>
+<span class="nc" id="L1245">            gbc.fill = gbc.HORIZONTAL;</span>
+<span class="nc" id="L1246">            gbc.insets = new Insets(0,1,0,0);</span>
+<span class="nc" id="L1247">            int addNum=0, temp=0;</span>
+<span class="nc" id="L1248">            boolean dark=false;</span>
+            while(true){
+              GraphNode n2;
+<span class="nc" id="L1251">              gbc.gridwidth = 1;</span>
+<span class="nc bnc" id="L1252" title="All 2 branches missed.">              for(int k=0; k&lt;n.prnts.length; k++) {</span>
+<span class="nc" id="L1253">                n2 = (GraphNode)m_nodes.elementAt(n.prnts[k]);</span>
+<span class="nc" id="L1254">                JLabel lb = new JLabel(n2.outcomes[idx[k]]);</span>
+<span class="nc" id="L1255">                lb.setFont( new Font(&quot;Dialog&quot;, Font.PLAIN, 12) );</span>
+<span class="nc" id="L1256">                lb.setOpaque( true );</span>
+<span class="nc" id="L1257">                lb.setBorder( BorderFactory.createEmptyBorder( 1,2,1,1 ) );</span>
+<span class="nc" id="L1258">                lb.setHorizontalAlignment( JLabel.CENTER );</span>
+<span class="nc bnc" id="L1259" title="All 2 branches missed.">                if(dark) {</span>
+<span class="nc" id="L1260">                  lb.setBackground( lb.getBackground().darker() );</span>
+<span class="nc" id="L1261">                  lb.setForeground( Color.white );</span>
+                }
+                else
+<span class="nc" id="L1264">                  lb.setForeground( Color.black );</span>
+
+<span class="nc" id="L1266">                temp = lb.getPreferredSize().width;</span>
+                //System.out.println(&quot;Preferred width &quot;+temp+
+                //                   &quot; for &quot;+n2.outcomes[idx[k]]);
+<span class="nc" id="L1269">                lb.setPreferredSize(</span>
+<span class="nc" id="L1270">                                 new Dimension(temp, jTblProbs.getRowHeight())</span>
+                                 );
+<span class="nc bnc" id="L1272" title="All 2 branches missed.">                if(lengths[k]&lt;temp)</span>
+<span class="nc" id="L1273">                  lengths[k] = temp;</span>
+<span class="nc" id="L1274">                temp=0;</span>
+
+<span class="nc bnc" id="L1276" title="All 2 branches missed.">                if(k==n.prnts.length-1) {</span>
+<span class="nc" id="L1277">                  gbc.gridwidth = gbc.REMAINDER;</span>
+<span class="nc bnc" id="L1278" title="All 2 branches missed.">                  dark = (dark==true) ?  false:true;</span>
+                }
+<span class="nc" id="L1280">                jPlRowHeader.add(lb, gbc);</span>
+<span class="nc" id="L1281">                addNum++;</span>
+              }
+
+<span class="nc bnc" id="L1284" title="All 2 branches missed.">              for(int k=n.prnts.length-1; k&gt;=0; k--) {</span>
+<span class="nc" id="L1285">                n2 = (GraphNode) m_nodes.elementAt(n.prnts[k]);</span>
+<span class="nc bnc" id="L1286" title="All 4 branches missed.">                if(idx[k]==n2.outcomes.length-1 &amp;&amp; k!=0) {</span>
+<span class="nc" id="L1287">                  idx[k]=0;</span>
+<span class="nc" id="L1288">                  continue;</span>
+                }
+                else {
+<span class="nc" id="L1291">                  idx[k]++;</span>
+<span class="nc" id="L1292">                  break;</span>
+                }
+              }
+
+<span class="nc" id="L1296">              n2 = (GraphNode) m_nodes.elementAt(n.prnts[0]);</span>
+<span class="nc bnc" id="L1297" title="All 2 branches missed.">              if(idx[0]==n2.outcomes.length) {</span>
+<span class="nc" id="L1298">                JLabel lb= (JLabel) jPlRowHeader.getComponent(addNum-1);</span>
+<span class="nc" id="L1299">                jPlRowHeader.remove(addNum-1);</span>
+<span class="nc" id="L1300">                lb.setPreferredSize( new Dimension(lb.getPreferredSize().width,</span>
+<span class="nc" id="L1301">                                                   jTblProbs.getRowHeight()) );</span>
+<span class="nc" id="L1302">                gbc.gridwidth = gbc.REMAINDER;</span>
+<span class="nc" id="L1303">                gbc.weighty = 1;</span>
+<span class="nc" id="L1304">                jPlRowHeader.add(lb, gbc);</span>
+<span class="nc" id="L1305">                gbc.weighty=0;</span>
+                break;
+              }
+            }
+
+<span class="nc" id="L1310">            gbc.gridwidth = 1;</span>
+            //The following panel contains the names of the parents
+            //and is displayed above the row names to identify
+            //which value belongs to which parent
+<span class="nc" id="L1314">            JPanel jPlRowNames = new JPanel(new GridBagLayout());</span>
+<span class="nc bnc" id="L1315" title="All 2 branches missed.">            for(int j=0; j&lt;n.prnts.length; j++) {</span>
+              JLabel lb2;
+<span class="nc" id="L1317">              JLabel lb1 =</span>
+<span class="nc" id="L1318">                   new JLabel( ((GraphNode)m_nodes.elementAt(n.prnts[j])).lbl );</span>
+<span class="nc" id="L1319">              lb1.setBorder( BorderFactory.createEmptyBorder( 1,2,1,1 ) );</span>
+<span class="nc" id="L1320">              Dimension tempd = lb1.getPreferredSize();</span>
+              //System.out.println(&quot;lengths[j]: &quot;+lengths[j]+
+              //                   &quot; tempd.width: &quot;+tempd.width);
+<span class="nc bnc" id="L1323" title="All 2 branches missed.">              if(tempd.width&lt;lengths[j]) {</span>
+<span class="nc" id="L1324">                lb1.setPreferredSize( new Dimension(lengths[j], tempd.height) );</span>
+<span class="nc" id="L1325">                lb1.setHorizontalAlignment( JLabel.CENTER );</span>
+<span class="nc" id="L1326">                lb1.setMinimumSize( new Dimension(lengths[j], tempd.height) );</span>
+              }
+<span class="nc bnc" id="L1328" title="All 2 branches missed.">              else if(tempd.width&gt;lengths[j]) {</span>
+<span class="nc" id="L1329">                lb2 = (JLabel) jPlRowHeader.getComponent(j);</span>
+<span class="nc" id="L1330">                lb2.setPreferredSize( new Dimension(tempd.width,</span>
+<span class="nc" id="L1331">                                               lb2.getPreferredSize().height) );</span>
+              }
+<span class="nc" id="L1333">              jPlRowNames.add(lb1, gbc);</span>
+              //System.out.println(&quot;After adding &quot;+lb1.getPreferredSize());
+            }
+<span class="nc" id="L1336">            js.setRowHeaderView(jPlRowHeader);</span>
+<span class="nc" id="L1337">            js.setCorner( JScrollPane.UPPER_LEFT_CORNER, jPlRowNames );</span>
+          }
+
+<span class="nc" id="L1340">          JDialog jd =</span>
+<span class="nc" id="L1341">                new JDialog((Frame)GraphVisualizer.this.getTopLevelAncestor(),</span>
+<span class="nc" id="L1342">                		Messages.getInstance().getString(&quot;GraphVisualizer_Main_Jd_JDialog_Text&quot;) + n.lbl, ModalityType.DOCUMENT_MODAL);</span>
+<span class="nc" id="L1343">          jd.setSize(500, 400);</span>
+<span class="nc" id="L1344">          jd.setLocation(GraphVisualizer.this.getLocation().x+</span>
+<span class="nc" id="L1345">                            GraphVisualizer.this.getWidth()/2-250,</span>
+<span class="nc" id="L1346">                         GraphVisualizer.this.getLocation().y+</span>
+<span class="nc" id="L1347">                            GraphVisualizer.this.getHeight()/2-200 );</span>
+
+<span class="nc" id="L1349">          jd.getContentPane().setLayout( new BorderLayout() );</span>
+<span class="nc" id="L1350">          jd.getContentPane().add(js, BorderLayout.CENTER);</span>
+<span class="nc" id="L1351">          jd.setVisible(true);</span>
+
+<span class="nc" id="L1353">          return;</span>
+        }
+      }
+<span class="nc" id="L1356">    }</span>
+
+  }
+
+
+  /**
+   * private class for handling mouseMoved events
+   * to highlight nodes if the the mouse is moved on
+   * one
+   */
+<span class="nc" id="L1366">  private class GraphVisualizerMouseMotionListener extends MouseMotionAdapter {</span>
+    int x, y, nx, ny; Rectangle r;
+    GraphNode lastNode;
+
+    public void mouseMoved(MouseEvent me) {
+      GraphNode n;
+<span class="nc" id="L1372">      Dimension d = m_gp.getPreferredSize();</span>
+      //System.out.println(&quot;Preferred Size: &quot;+this.getPreferredSize()+
+      //                   &quot; Actual Size: &quot;+this.getSize());
+<span class="nc" id="L1375">      x=y=nx=ny=0;</span>
+
+<span class="nc bnc" id="L1377" title="All 2 branches missed.">      if(d.width &lt; m_gp.getWidth())</span>
+<span class="nc" id="L1378">        nx = (int)((nx + m_gp.getWidth()/2 - d.width/2)/scale);</span>
+<span class="nc bnc" id="L1379" title="All 2 branches missed.">      if(d.height &lt; m_gp.getHeight())</span>
+<span class="nc" id="L1380">        ny = (int)((ny + m_gp.getHeight()/2 - d.height/2)/scale);</span>
+
+<span class="nc" id="L1382">      r=new Rectangle(0, 0,</span>
+<span class="nc" id="L1383">                     (int)(paddedNodeWidth*scale), (int)(nodeHeight*scale));</span>
+<span class="nc" id="L1384">      x += me.getX(); y += me.getY();</span>
+
+      int i;
+<span class="nc bnc" id="L1387" title="All 2 branches missed.">      for(i=0; i&lt;m_nodes.size(); i++) {</span>
+<span class="nc" id="L1388">        n = (GraphNode) m_nodes.elementAt(i);</span>
+<span class="nc" id="L1389">        r.x = (int)((nx+n.x)*scale); r.y = (int)((ny+n.y)*scale);</span>
+<span class="nc bnc" id="L1390" title="All 2 branches missed.">        if(r.contains(x,y)) {</span>
+<span class="nc bnc" id="L1391" title="All 2 branches missed.">          if(n!=lastNode) {</span>
+<span class="nc" id="L1392">            m_gp.highLight(n);</span>
+<span class="nc bnc" id="L1393" title="All 2 branches missed.">            if(lastNode!=null)</span>
+<span class="nc" id="L1394">              m_gp.highLight(lastNode);</span>
+<span class="nc" id="L1395">            lastNode = n; //lastIndex = i;</span>
+          }
+<span class="nc" id="L1397">          break;</span>
+        }
+      }
+<span class="nc bnc" id="L1400" title="All 4 branches missed.">      if(i==m_nodes.size()  &amp;&amp; lastNode!=null) {</span>
+<span class="nc" id="L1401">        m_gp.repaint();</span>
+        //m_gp.highLight(lastNode);
+<span class="nc" id="L1403">        lastNode=null;</span>
+      }
+<span class="nc" id="L1405">    }</span>
+  }
+
+  /**
+   * Main method to load a text file with the
+   * description of a graph from the command
+   * line
+   */
+  public static void main(String [] args) {
+<span class="nc" id="L1414">    weka.core.logging.Logger.log(weka.core.logging.Logger.Level.INFO, Messages.getInstance().getString(&quot;GraphVisualizer_Main_Logger_Text&quot;));</span>
+<span class="nc" id="L1415">    JFrame jf = new JFrame(Messages.getInstance().getString(&quot;GraphVisualizer_Main_JFrame_Text&quot;));</span>
+<span class="nc" id="L1416">    GraphVisualizer g = new GraphVisualizer();</span>
+
+    try{
+<span class="nc bnc" id="L1419" title="All 2 branches missed.">      if(args[0].endsWith(&quot;.xml&quot;)) {</span>
+        //StringBuffer sb = new StringBuffer();
+        //FileReader infile = new FileReader(args[0]);
+        //int i;
+        //while( (i=infile.read())!=-1) {
+        //    sb.append((char)i);
+        //}
+        //System.out.println(sb.toString());
+        //g.readBIF(sb.toString() );
+<span class="nc" id="L1428">        g.readBIF( new FileInputStream(args[0]) );</span>
+      }
+      else {
+        //BufferedReader infile=new BufferedReader();
+<span class="nc" id="L1432">        g.readDOT(new FileReader(args[0])); //infile);</span>
+      }
+    }
+<span class="nc" id="L1435">    catch(IOException ex) { ex.printStackTrace(); }</span>
+<span class="nc" id="L1436">    catch(BIFFormatException bf) { bf.printStackTrace(); System.exit(-1); }</span>
+
+<span class="nc" id="L1438">    jf.getContentPane().add(g);</span>
+    //RepaintManager.currentManager(jf.getRootPane()).setDoubleBufferingEnabled(false);
+<span class="nc" id="L1440">    jf.setDefaultCloseOperation( jf.EXIT_ON_CLOSE );</span>
+<span class="nc" id="L1441">    jf.setSize(800,600);</span>
+    //jf.pack();
+<span class="nc" id="L1443">    jf.setVisible(true);</span>
+<span class="nc" id="L1444">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

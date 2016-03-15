@@ -1,0 +1,643 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>HierarchyPropertyParser.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui</a> &gt; <span class="el_source">HierarchyPropertyParser.java</span></div><h1>HierarchyPropertyParser.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    HierarchyPropertyParser.java
+ *    Copyright (C) 2001 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.gui;
+
+import java.io.Serializable;
+import java.util.StringTokenizer;
+import java.util.Vector;
+
+/**
+ * This class implements a parser to read properties that have
+ * a hierarchy(i.e. tree) structure.  Conceptually it's similar to 
+ * the XML DOM/SAX parser but of course is much simpler and 
+ * uses dot as the seperator of levels instead of back-slash.&lt;br&gt;
+ * It provides interfaces to both build a parser tree and traverse
+ * the tree. &lt;br&gt;
+ * Note that this implementation does not lock the tree when different
+ * threads are traversing it simultaneously, i.e. it's NOT synchronized
+ * and multi-thread safe.  It is recommended that later implementation
+ * extending this class provide a locking scheme and override the 
+ * functions with the &quot;synchronized&quot; modifier (most of them are 
+ * goToXXX() and information accessing functions).&lt;p&gt;
+ *
+ * @author Xin Xu (xx5@cs.waikato.ac.nz)
+ * @version $Revision: 9917 $
+ */
+public class HierarchyPropertyParser
+    implements Serializable {
+
+    /** for serialization */
+    private static final long serialVersionUID = -4151103338506077544L;
+
+    /** Keep track of the root of the tree */
+    private TreeNode m_Root;
+    
+    /** Keep track of the current node when traversing the tree */
+    private TreeNode m_Current;
+
+    /** The level separate in the path */
+<span class="nc" id="L59">    private String m_Seperator = &quot;.&quot;;</span>
+    
+    /** The depth of the tree */
+<span class="nc" id="L62">    private int m_Depth = 0;</span>
+	
+    /** 
+     * The inner class implementing a single tree node.
+     * All fields are made public simply for convenient access,
+     * Although a severe violation of OO Design principle.
+     */
+<span class="nc" id="L69">    private class TreeNode{</span>
+	/** The parent of this node */
+<span class="nc" id="L71">	public TreeNode parent = null;</span>
+	
+	/** The value of this node.  Always String  */
+<span class="nc" id="L74">	public String value = null;</span>
+
+	/** The children of this node */
+<span class="nc" id="L77">	public Vector children = null;	</span>
+
+	/** The level of this node */
+<span class="nc" id="L80">	public int level = 0;</span>
+
+	/** The context of this node */
+<span class="nc" id="L83">	public String context = null;</span>
+    }
+    
+    /** Default constructor */
+<span class="nc" id="L87">    public HierarchyPropertyParser(){</span>
+<span class="nc" id="L88">	m_Root = new TreeNode();</span>
+<span class="nc" id="L89">	m_Root.parent = null;</span>
+<span class="nc" id="L90">	m_Root.children = new Vector();</span>
+<span class="nc" id="L91">	goToRoot();</span>
+<span class="nc" id="L92">    }</span>
+    
+    /**
+     * Constructor that builds a tree from the given property with
+     * the given delimitor
+     *
+     * @param p the given property string
+     * @param delim the given dilimitor
+     */
+    public HierarchyPropertyParser(String p, String delim) throws Exception {
+<span class="nc" id="L102">	this();		</span>
+<span class="nc" id="L103">	build(p, delim);</span>
+<span class="nc" id="L104">    }</span>
+    
+    /**
+     * Set the seperator between levels.  Default is dot.
+     *
+     * @param s the seperator symbol
+     */
+    public void setSeperator(String s){
+<span class="nc" id="L112">	m_Seperator = s;</span>
+<span class="nc" id="L113">    }</span>
+
+    /**
+     * Get the seperator between levels.  Default is dot.
+     *
+     * @return the seperator symbol
+     */
+<span class="nc" id="L120">    public String getSeperator(){ return m_Seperator; }</span>
+   
+    /** 
+     * Build a tree from the given property with the given delimitor
+     *
+     * @param p the given property
+     * @param delim the given delimitor
+     */
+    public void build(String p, String delim) throws Exception {
+<span class="nc" id="L129">	StringTokenizer st = new StringTokenizer(p, delim);</span>
+	//System.err.println(&quot;delim: &quot;+delim);
+<span class="nc bnc" id="L131" title="All 2 branches missed.">	while(st.hasMoreTokens()){</span>
+<span class="nc" id="L132">	    String property = st.nextToken().trim();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">	    if(!isHierachic(property))</span>
+<span class="nc" id="L134">		throw new Exception(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Build_Exception_Text&quot;));</span>
+<span class="nc" id="L135">	    add(property);	   </span>
+	}
+<span class="nc" id="L137">	goToRoot();</span>
+<span class="nc" id="L138">    }</span>
+
+    /**
+     * Add the given item of property to the tree
+     *
+     * @param property the given item
+     */ 
+    public synchronized void add(String property){
+<span class="nc" id="L146">	String[] values = tokenize(property);</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">	if(m_Root.value == null)</span>
+<span class="nc" id="L148">	    m_Root.value = values[0];</span>
+	
+<span class="nc" id="L150">	buildBranch(m_Root, values, 1);</span>
+<span class="nc" id="L151">    }</span>
+    
+    /** 
+     * Private function to build one branch of the tree
+     * based on one property 
+     * 
+     * @param parent the parent of the node to be built
+     * @param values the value of one property
+     * @param lvl the level of the node to be built in the tree
+     */
+    private void buildBranch(TreeNode parent, String[] values, int lvl){
+	// Precondition: children is not null
+	
+<span class="nc bnc" id="L164" title="All 2 branches missed.">	if(lvl == values.length){  // Parent is leaf</span>
+<span class="nc" id="L165">	    parent.children = null;</span>
+<span class="nc" id="L166">	    return;</span>
+	}
+	
+<span class="nc bnc" id="L169" title="All 2 branches missed.">	if(lvl &gt; (m_Depth-1))</span>
+<span class="nc" id="L170">	    m_Depth = lvl+1;  // Depth starts from 1</span>
+	
+<span class="nc" id="L172">	Vector kids = parent.children;</span>
+<span class="nc" id="L173">	int index = search(kids, values[lvl]);</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">	if(index != -1){</span>
+<span class="nc" id="L175">	    TreeNode newParent = (TreeNode)kids.elementAt(index);</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">	    if(newParent.children == null)</span>
+<span class="nc" id="L177">		newParent.children = new Vector();</span>
+<span class="nc" id="L178">	    buildBranch(newParent, values, lvl+1);</span>
+	}
+	else{
+<span class="nc" id="L181">	    TreeNode added = new TreeNode();</span>
+<span class="nc" id="L182">	    added.parent = parent;</span>
+<span class="nc" id="L183">	    added.value = values[lvl];</span>
+<span class="nc" id="L184">	    added.children = new Vector();</span>
+<span class="nc" id="L185">	    added.level = lvl;</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">	    if(parent != m_Root)</span>
+<span class="nc" id="L187">		added.context = parent.context + m_Seperator + parent.value;</span>
+	    else
+<span class="nc" id="L189">		added.context = parent.value;</span>
+	    
+<span class="nc" id="L191">	    kids.addElement(added);</span>
+<span class="nc" id="L192">	    buildBranch(added, values, lvl+1);</span>
+	}
+<span class="nc" id="L194">    }</span>
+    
+    /**
+     * Tokenize the given string based on the seperator and
+     * put the tokens into an array of strings
+     *
+     * @param rawString the given string
+     * @return an array of strings
+     */
+    public String[] tokenize(String rawString){
+<span class="nc" id="L204">	Vector result = new Vector();</span>
+<span class="nc" id="L205">	StringTokenizer tk = new StringTokenizer(rawString, m_Seperator);</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">	while(tk.hasMoreTokens())</span>
+<span class="nc" id="L207">	    result.addElement(tk.nextToken());</span>
+	
+<span class="nc" id="L209">	String[] newStrings = new String[result.size()];</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">	for(int i=0; i &lt; result.size(); i++)</span>
+<span class="nc" id="L211">	    newStrings[i] = (String)result.elementAt(i);</span>
+	
+<span class="nc" id="L213">	return newStrings;</span>
+    }
+    
+    /**
+     * Whether the HierarchyPropertyParser contains the given
+     * string
+     *
+     * @param string the given string
+     * @return whether contains
+     */
+    public boolean contains(String string){
+<span class="nc" id="L224">	String[] item = tokenize(string);</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">	if(!item[0].equals(m_Root.value))</span>
+<span class="nc" id="L226">	    return false;</span>
+	
+<span class="nc" id="L228">	return isContained(m_Root, item, 1);</span>
+    }
+    
+    /** 
+     * Private function to decide whether one level of one branch 
+     * contains the relevant values
+     * 
+     * @param parent the parent of the node to be searched
+     * @param values the value of one property
+     * @param lvl the level of the node in question
+     * @return whether this branch contains the corresponding values
+     */
+    private boolean isContained(TreeNode parent, String[] values, int lvl){
+<span class="nc bnc" id="L241" title="All 2 branches missed.">	if(lvl == values.length)  // Parent is leaf</span>
+<span class="nc" id="L242">	    return true;</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">	else if(lvl &gt; values.length)</span>
+<span class="nc" id="L244">	    return false;</span>
+	else{
+<span class="nc" id="L246">	    Vector kids = parent.children;</span>
+<span class="nc" id="L247">	    int index = search(kids, values[lvl]);</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">	    if(index != -1){</span>
+<span class="nc" id="L249">		TreeNode newParent = (TreeNode)kids.elementAt(index);</span>
+<span class="nc" id="L250">		return isContained(newParent, values, lvl+1);</span>
+	    }
+	    else
+<span class="nc" id="L253">		return false;</span>
+	}
+    }
+    
+    /** 
+     * Whether the given string has a hierachy structure with
+     * the seperators
+     *
+     * @param string the given string
+     */
+    public boolean isHierachic(String string){
+<span class="nc" id="L264">	int index = string.indexOf(m_Seperator); </span>
+	// Seperator not occur or first occurance at the end
+<span class="nc bnc" id="L266" title="All 4 branches missed.">	if((index == (string.length()-1)) || (index == -1))</span>
+<span class="nc" id="L267">	    return false;</span>
+	
+<span class="nc" id="L269">	return true;</span>
+    }
+
+    /**
+     * Helper function to search for the given target string in a 
+     * given vector in which the elements' value may hopefully is equal
+     * to the target.  If such elements are found the first index
+     * is returned, otherwise -1
+     *
+     * @param vct the given vector
+     * @param target the given target string
+     * @return the index of the found element, -1 if not found
+     */
+    public int search(Vector vct, String target){
+<span class="nc bnc" id="L283" title="All 2 branches missed.">	if(vct == null)</span>
+<span class="nc" id="L284">	    return -1;</span>
+	
+<span class="nc bnc" id="L286" title="All 2 branches missed.">	for(int i=0; i &lt; vct.size(); i++)</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">	    if(target.equals(((TreeNode)vct.elementAt(i)).value))</span>
+<span class="nc" id="L288">		return i;</span>
+	
+<span class="nc" id="L290">	return -1;</span>
+    }
+
+    /**
+     * Go to a certain node of the tree according to the specified path
+     * Note that the path must be absolute path from the root.  &lt;br&gt;
+     * For relative path, see goDown(String path).
+     *
+     * @param path the given absolute path
+     * @return whether the path exists, if false the current position does
+     * not move
+     */
+    public synchronized boolean goTo(String path){
+<span class="nc bnc" id="L303" title="All 2 branches missed.">	if(!isHierachic(path)){</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">	    if(m_Root.value.equals(path)){</span>
+<span class="nc" id="L305">		goToRoot();</span>
+<span class="nc" id="L306">		return true;</span>
+	    }
+	    else
+<span class="nc" id="L309">		return false;</span>
+	}
+	
+<span class="nc" id="L312">	TreeNode old = m_Current;</span>
+<span class="nc" id="L313">	m_Current = new TreeNode(); </span>
+<span class="nc" id="L314">	goToRoot();</span>
+<span class="nc" id="L315">	String[] nodes = tokenize(path);</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">	if(!m_Current.value.equals(nodes[0]))</span>
+<span class="nc" id="L317">	    return false;</span>
+
+<span class="nc bnc" id="L319" title="All 2 branches missed.">	for(int i=1; i &lt; nodes.length; i++){</span>
+<span class="nc" id="L320">	    int pos = search(m_Current.children, nodes[i]);</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">	    if(pos == -1){</span>
+<span class="nc" id="L322">		m_Current = old;</span>
+<span class="nc" id="L323">		return false;</span>
+	    }
+<span class="nc" id="L325">	    m_Current = (TreeNode)m_Current.children.elementAt(pos);</span>
+	}
+	
+<span class="nc" id="L328">	return true;</span>
+    }
+
+    /**
+     * Go to a certain node of the tree down from the current node 
+     * according to the specified relative path.  The path does not
+     * contain the value of current node
+     * 
+     * @param path the given relative path
+     * @return whether the path exists, if false the current position does
+     * not move
+     */
+    public synchronized boolean goDown(String path){
+<span class="nc bnc" id="L341" title="All 2 branches missed.">	if(!isHierachic(path))</span>
+<span class="nc" id="L342">	    return goToChild(path);</span>
+
+<span class="nc" id="L344">	TreeNode old = m_Current;</span>
+<span class="nc" id="L345">	m_Current = new TreeNode(); </span>
+<span class="nc" id="L346">	String[] nodes = tokenize(path);</span>
+<span class="nc" id="L347">	int pos = search(old.children, nodes[0]);</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">	if(pos == -1){</span>
+<span class="nc" id="L349">	    m_Current = old;</span>
+<span class="nc" id="L350">	    return false;</span>
+	}
+      
+<span class="nc" id="L353">	m_Current = (TreeNode)old.children.elementAt(pos);</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">	for(int i=1; i &lt; nodes.length; i++){</span>
+<span class="nc" id="L355">	    pos = search(m_Current.children, nodes[i]);</span>
+<span class="nc bnc" id="L356" title="All 2 branches missed.">	    if(pos == -1){</span>
+<span class="nc" id="L357">		m_Current = old;</span>
+<span class="nc" id="L358">		return false;</span>
+	    }
+	    
+<span class="nc" id="L361">	    m_Current = (TreeNode)m_Current.children.elementAt(pos);</span>
+	}
+	
+<span class="nc" id="L364">	return true;</span>
+    }
+
+    /**
+     * Go to the root of the tree
+     */    
+    public synchronized void goToRoot(){
+<span class="nc" id="L371">	m_Current=m_Root;</span>
+<span class="nc" id="L372">    }</span>
+
+    /**
+     * Go to the parent from the current position in the tree
+     * If the current position is the root, it stays there and does 
+     * not move
+     */
+    public synchronized void goToParent(){
+<span class="nc bnc" id="L380" title="All 2 branches missed.">	if(m_Current.parent != null)  // Not root</span>
+<span class="nc" id="L381">	    m_Current = m_Current.parent;</span>
+<span class="nc" id="L382">    }</span>
+    
+    /**
+     * Go to one child node from the current position in the tree
+     * according to the given value &lt;br&gt;
+     * If the child node with the given value cannot be found it
+     * returns false, true otherwise.  If false, the current position
+     * does not change
+     * 
+     * @param value the value of the given child
+     * @return whether the child can be found
+     */
+    public synchronized boolean goToChild(String value){
+<span class="nc bnc" id="L395" title="All 2 branches missed.">	if(m_Current.children == null) // Leaf</span>
+<span class="nc" id="L396">	    return false;</span>
+	
+<span class="nc" id="L398">	int pos = search(m_Current.children, value);</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">	if(pos == -1)</span>
+<span class="nc" id="L400">	    return false;</span>
+	
+<span class="nc" id="L402">	m_Current = (TreeNode)m_Current.children.elementAt(pos);	</span>
+<span class="nc" id="L403">	return true;</span>
+    }
+    
+    /**
+     * Go to one child node from the current position in the tree
+     * according to the given position &lt;br&gt;
+     *
+     * @param pos the position of the given child
+     * @exception Exception if the position is out of range or leaf is reached
+     */
+    public synchronized void goToChild(int pos) throws Exception {
+<span class="nc bnc" id="L414" title="All 2 branches missed.">	if((m_Current.children == null) || </span>
+<span class="nc bnc" id="L415" title="All 4 branches missed.">	   (pos &lt; 0) || (pos &gt;= m_Current.children.size()))</span>
+<span class="nc" id="L416">	    throw new Exception(Messages.getInstance().getString(&quot;HierarchyPropertyParser_GoToChild_Exception_Text&quot;));</span>
+	
+<span class="nc" id="L418">	m_Current = (TreeNode)m_Current.children.elementAt(pos);</span>
+<span class="nc" id="L419">    }</span>
+
+    /**
+     * The number of the children nodes. If current node is leaf, it
+     * returns 0.
+     * 
+     * @return the number of the children nodes of the current position
+     */    
+    public synchronized int numChildren(){
+<span class="nc bnc" id="L428" title="All 2 branches missed.">	if(m_Current.children == null) // Leaf</span>
+<span class="nc" id="L429">	    return 0;</span>
+	
+<span class="nc" id="L431">	return m_Current.children.size(); </span>
+    }
+    
+    /**
+     * The value in the children nodes. If current node is leaf, it
+     * returns null.
+     * 
+     * @return the value in the children nodes
+     */    
+    public synchronized String[] childrenValues(){
+<span class="nc bnc" id="L441" title="All 2 branches missed.">	if(m_Current.children == null) // Leaf</span>
+<span class="nc" id="L442">	    return null;</span>
+	else{
+<span class="nc" id="L444">	    Vector kids = m_Current.children;</span>
+<span class="nc" id="L445">	    String[] values = new String[kids.size()];</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">	    for(int i=0; i &lt; kids.size(); i++)</span>
+<span class="nc" id="L447">		values[i] = ((TreeNode)kids.elementAt(i)).value;</span>
+<span class="nc" id="L448">	    return values;</span>
+	}
+    }
+
+    /**
+     * The value in the parent node. If current node is root, it
+     * returns null.
+     * 
+     * @return the value in the parent node
+     */    
+    public synchronized String parentValue(){
+<span class="nc bnc" id="L459" title="All 2 branches missed.">	if(m_Current.parent != null)  // Not root</span>
+<span class="nc" id="L460">	    return m_Current.parent.value;</span>
+<span class="nc" id="L461">	else return null;</span>
+    }
+
+    /**
+     * Whether the current position is a leaf
+     *
+     * @return whether the current position is a leaf
+     */
+    public synchronized boolean isLeafReached(){
+<span class="nc bnc" id="L470" title="All 2 branches missed.">	return (m_Current.children == null);</span>
+    }
+    
+    /**
+     * Whether the current position is the root
+     *
+     * @return whether the current position is the root
+     */
+    public synchronized boolean isRootReached(){
+<span class="nc bnc" id="L479" title="All 2 branches missed.">	return (m_Current.parent == null);</span>
+    }
+    
+    /** 
+     * Get the value of current node
+     *
+     * @return value level
+     */ 
+<span class="nc" id="L487">    public synchronized String getValue(){ return m_Current.value; }</span>
+    
+    /** 
+     * Get the level of current node.  Note the level starts from 0
+     *
+     * @return the level
+     */ 
+<span class="nc" id="L494">    public synchronized int getLevel(){ return m_Current.level; }</span>
+
+    /** 
+     * Get the depth of the tree, i.e. (the largest level)+1
+     *
+     * @return the depth of the tree
+     */
+<span class="nc" id="L501">    public int depth(){ return m_Depth; }</span>
+    
+    /**
+     * The context of the current node, i.e. the path from the
+     * root to the parent node of the current node, seperated by
+     * the seperator.  If root, it returns null
+     *
+     * @return the context path
+     */
+    public synchronized String context(){
+<span class="nc" id="L511">	return m_Current.context;</span>
+    }
+    
+    /**
+     * The full value of the current node, i.e. its context + seperator
+     * + its value.  For root, only its value.
+     *
+     * @return the context path
+     */
+    public synchronized String fullValue(){
+<span class="nc bnc" id="L521" title="All 2 branches missed.">	if(m_Current == m_Root)</span>
+<span class="nc" id="L522">	    return m_Root.value;</span>
+	else    
+<span class="nc" id="L524">	    return (m_Current.context + m_Seperator + m_Current.value);</span>
+    }
+
+
+    /**
+     * Show the whole tree in text format
+     *
+     * @return the whole tree in text format
+     */
+    public String showTree(){
+<span class="nc" id="L534">	return showNode(m_Root, null);</span>
+    }
+    
+    /**
+     * Show one node of the tree in text format
+     *
+     * @param node the node in question
+     * @return the node in text format
+     */
+    private String showNode(TreeNode node, boolean[] hasBar){
+<span class="nc" id="L544">	StringBuffer text =  new StringBuffer();	</span>
+
+<span class="nc bnc" id="L546" title="All 2 branches missed.">	for(int i=0; i &lt; (node.level - 1); i++)</span>
+<span class="nc bnc" id="L547" title="All 2 branches missed.">	    if(hasBar[i])</span>
+<span class="nc" id="L548">		text.append(&quot;  |       &quot;);</span>
+	    else
+<span class="nc" id="L550">		text.append(&quot;          &quot;);</span>
+
+<span class="nc bnc" id="L552" title="All 2 branches missed.">	if(node.level != 0)</span>
+<span class="nc" id="L553">	    text.append(&quot;  |------ &quot;);</span>
+<span class="nc" id="L554">	text.append(node.value+&quot;(&quot;+node.level+&quot;)&quot;+&quot;[&quot;+node.context+&quot;]\n&quot;);</span>
+
+<span class="nc bnc" id="L556" title="All 2 branches missed.">	if(node.children != null)</span>
+<span class="nc bnc" id="L557" title="All 2 branches missed.">	    for(int i=0; i &lt; node.children.size(); i++){</span>
+<span class="nc" id="L558">		boolean[] newBar = new boolean[node.level+1];</span>
+<span class="nc" id="L559">		int lvl = node.level;</span>
+
+<span class="nc bnc" id="L561" title="All 2 branches missed.">		if(hasBar != null)</span>
+<span class="nc bnc" id="L562" title="All 2 branches missed.">		    for(int j=0; j &lt; lvl; j++)</span>
+<span class="nc" id="L563">			newBar[j] = hasBar[j];</span>
+		
+<span class="nc bnc" id="L565" title="All 2 branches missed.">		if((i == (node.children.size()-1)))</span>
+<span class="nc" id="L566">		    newBar[lvl] = false;</span>
+		else
+<span class="nc" id="L568">		    newBar[lvl] = true;</span>
+
+<span class="nc" id="L570">		text.append(showNode((TreeNode)node.children.elementAt(i), newBar));		</span>
+	    }
+	
+<span class="nc" id="L573">	return text.toString();</span>
+    }
+    
+    /**
+     * Tests out the parser.
+     *
+     * @param args should contain nothing
+     */
+    public static void main(String args[]){
+<span class="nc" id="L582">	StringBuffer sb = new StringBuffer();</span>
+<span class="nc" id="L583">	sb.append(&quot;node1.node1_1.node1_1_1.node1_1_1_1, &quot;);</span>
+<span class="nc" id="L584">	sb.append(&quot;node1.node1_1.node1_1_1.node1_1_1_2, &quot;);</span>
+<span class="nc" id="L585">	sb.append(&quot;node1.node1_1.node1_1_1.node1_1_1_3, &quot;);</span>
+<span class="nc" id="L586">	sb.append(&quot;node1.node1_1.node1_1_2.node1_1_2_1, &quot;);</span>
+<span class="nc" id="L587">	sb.append(&quot;node1.node1_1.node1_1_3.node1_1_3_1, &quot;);</span>
+<span class="nc" id="L588">	sb.append(&quot;node1.node1_2.node1_2_1.node1_2_1_1, &quot;);</span>
+<span class="nc" id="L589">	sb.append(&quot;node1.node1_2.node1_2_3.node1_2_3_1, &quot;);</span>
+<span class="nc" id="L590">	sb.append(&quot;node1.node1_3.node1_3_3.node1_3_3_1, &quot;);</span>
+<span class="nc" id="L591">	sb.append(&quot;node1.node1_3.node1_3_3.node1_3_3_2, &quot;);</span>
+
+<span class="nc" id="L593">	String p = sb.toString();</span>
+	try{
+<span class="nc" id="L595">	    HierarchyPropertyParser hpp = new HierarchyPropertyParser(p, &quot;, &quot;);</span>
+<span class="nc" id="L596">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_First&quot;) + hpp.getSeperator());</span>
+<span class="nc" id="L597">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Second&quot;) + hpp.depth());</span>
+<span class="nc" id="L598">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Third&quot;) + hpp.showTree());</span>
+<span class="nc" id="L599">	    hpp.goToRoot();</span>
+<span class="nc" id="L600">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Fourth&quot;) + hpp.goTo(&quot;node1.node1_2.node1_2_1&quot;)</span>
+<span class="nc" id="L601">			       +&quot;: &quot;+hpp.getValue()+&quot; | &quot;+hpp.fullValue()+</span>
+<span class="nc" id="L602">			       Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Fifth&quot;) + hpp.isLeafReached());</span>
+<span class="nc" id="L603">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Sixth&quot;) + hpp.goDown(&quot;node1&quot;));</span>
+<span class="nc" id="L604">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Seventh&quot;) + hpp.getValue());</span>
+<span class="nc" id="L605">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Eighth&quot;) + hpp.goToChild(&quot;node1_2_1_1&quot;)</span>
+<span class="nc" id="L606">			       +&quot;: &quot;+hpp.getValue()+&quot; | &quot;+hpp.fullValue()+</span>
+<span class="nc" id="L607">			       Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Nineth&quot;) + hpp.isLeafReached()</span>
+<span class="nc" id="L608">			       + Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Tenth&quot;) + hpp.isRootReached());</span>
+<span class="nc" id="L609">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Eleventh&quot;) + hpp.parentValue());</span>
+<span class="nc" id="L610">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Twelveth&quot;) + hpp.getLevel());</span>
+<span class="nc" id="L611">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Thirteenth&quot;) + hpp.context());</span>
+<span class="nc" id="L612">	    hpp.goToRoot();</span>
+<span class="nc" id="L613">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Fourteenth&quot;) + hpp.isLeafReached()</span>
+<span class="nc" id="L614">			       + Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Fifteenth&quot;) + hpp.isRootReached());</span>
+<span class="nc" id="L615">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Sixteenth&quot;) +</span>
+<span class="nc" id="L616">			       hpp.goDown(&quot;node1_1.node1_1_1&quot;)+</span>
+<span class="nc" id="L617">			       Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Seventeenth&quot;) + hpp.getValue()+&quot; | &quot;+hpp.fullValue()</span>
+<span class="nc" id="L618">			       + Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Eighteenth&quot;) + hpp.getLevel()</span>
+<span class="nc" id="L619">			       + Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Nineteenth&quot;) + hpp.isLeafReached()</span>
+<span class="nc" id="L620">			       + Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_Twenty&quot;) + hpp.isRootReached());</span>
+<span class="nc" id="L621">	    hpp.goToParent();</span>
+<span class="nc" id="L622">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_TwentyFirst&quot;) + hpp.getValue()+&quot; | &quot;+hpp.fullValue());</span>
+<span class="nc" id="L623">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_TwentySecond&quot;) + hpp.getLevel());</span>
+	    
+<span class="nc" id="L625">	    String[] chd = hpp.childrenValues();</span>
+<span class="nc bnc" id="L626" title="All 2 branches missed.">	    for(int i=0; i &lt; chd.length; i++){</span>
+<span class="nc" id="L627">		System.out.print(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_TwentyThird&quot;) + i + &quot;: &quot; + chd[i]);</span>
+<span class="nc" id="L628">		hpp.goDown(chd[i]);</span>
+<span class="nc" id="L629">		System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_TwentyFourth&quot;) + hpp.getValue()+&quot; | &quot;+</span>
+<span class="nc" id="L630">				   hpp.fullValue()+</span>
+<span class="nc" id="L631">				   Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_TwentyFifth&quot;) + hpp.getLevel()+Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_TwentySixth&quot;));</span>
+<span class="nc" id="L632">		hpp.goToParent();</span>
+	    }
+	    
+<span class="nc" id="L635">	    System.out.println(Messages.getInstance().getString(&quot;HierarchyPropertyParser_Main_Text_TwentySeventh&quot;) + hpp.goTo(&quot;node1&quot;)</span>
+<span class="nc" id="L636">			       +&quot;: &quot;+hpp.getValue()+&quot; | &quot;+hpp.fullValue()); </span>
+<span class="nc" id="L637">   	}catch(Exception e){</span>
+<span class="nc" id="L638">	    System.out.println(e.getMessage());</span>
+<span class="nc" id="L639">	    e.printStackTrace();</span>
+	}
+<span class="nc" id="L641">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

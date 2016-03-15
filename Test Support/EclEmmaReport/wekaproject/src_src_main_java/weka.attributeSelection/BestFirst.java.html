@@ -1,0 +1,933 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>BestFirst.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">BestFirst.java</span></div><h1>BestFirst.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    BestFirst.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.attributeSelection;
+
+import weka.core.FastVector;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.Range;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.Utils;
+
+import java.io.Serializable;
+import java.util.BitSet;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * BestFirst:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Searches the space of attribute subsets by greedy hillclimbing augmented with a backtracking facility. Setting the number of consecutive non-improving nodes allowed controls the level of backtracking done. Best first may start with the empty set of attributes and search forward, or start with the full set of attributes and search backward, or start at any point and search in both directions (by considering all possible single attribute additions and deletions at a given point).&lt;br/&gt;
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;start set&amp;gt;
+ *  Specify a starting set of attributes.
+ *  Eg. 1,3,5-7.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D &amp;lt;0 = backward | 1 = forward | 2 = bi-directional&amp;gt;
+ *  Direction of search. (default = 1).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+ *  Number of non-improving nodes to
+ *  consider before terminating search.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Size of lookup cache for evaluated subsets.
+ *  Expressed as a multiple of the number of
+ *  attributes in the data set. (default = 1)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ *         Martin Guetlein (cashing merit of expanded nodes) 
+ * @version $Revision: 1.29 $
+ */
+<span class="fc" id="L75">public class BestFirst </span>
+  extends ASSearch 
+  implements OptionHandler, StartSetHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = 7841338689536821867L;
+
+  // Inner classes
+  /**
+   * Class for a node in a linked list. Used in best first search.
+   * @author Mark Hall (mhall@cs.waikato.ac.nz)
+   **/
+  public class Link2 
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    static final long serialVersionUID = -8236598311516351420L;
+    
+    /*    BitSet group; */
+    Object [] m_data;
+    double m_merit;
+
+
+    /** 
+     * Constructor
+     */
+<span class="fc" id="L101">    public Link2 (Object [] data, double mer) {</span>
+      //      group = (BitSet)gr.clone();
+<span class="fc" id="L103">      m_data = data;</span>
+<span class="fc" id="L104">      m_merit = mer;</span>
+<span class="fc" id="L105">    }</span>
+
+
+    /** Get a group */
+    public Object [] getData () {
+<span class="fc" id="L110">      return  m_data;</span>
+    }
+
+
+    public String toString () {
+<span class="nc" id="L115">      return  (&quot;Node: &quot; + m_data.toString() + &quot;  &quot; + m_merit);</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L124">      return RevisionUtils.extract(&quot;$Revision: 1.29 $&quot;);</span>
+    }
+  }
+
+
+  /**
+   * Class for handling a linked list. Used in best first search.
+   * Extends the Vector class.
+   * @author Mark Hall (mhall@cs.waikato.ac.nz)
+   **/
+  public class LinkedList2
+    extends FastVector {
+    
+    /** for serialization */
+    static final long serialVersionUID = 3250538292330398929L;
+    
+    /** Max number of elements in the list */
+    int m_MaxSize;
+
+    // ================
+    // Public methods
+    // ================
+    public LinkedList2 (int sz) {
+<span class="fc" id="L147">      super();</span>
+<span class="fc" id="L148">      m_MaxSize = sz;</span>
+<span class="fc" id="L149">    }</span>
+
+
+    /**
+     * removes an element (Link) at a specific index from the list.
+     * @param index the index of the element to be removed.
+     **/
+    public void removeLinkAt (int index)
+      throws Exception {
+      
+<span class="pc bpc" id="L159" title="2 of 4 branches missed.">      if ((index &gt;= 0) &amp;&amp; (index &lt; size())) {</span>
+<span class="fc" id="L160">        removeElementAt(index);</span>
+      }
+      else {
+<span class="nc" id="L163">        throw  new Exception(&quot;index out of range (removeLinkAt)&quot;);</span>
+      }
+<span class="fc" id="L165">    }</span>
+
+
+    /**
+     * returns the element (Link) at a specific index from the list.
+     * @param index the index of the element to be returned.
+     **/
+    public Link2 getLinkAt (int index)
+      throws Exception {
+      
+<span class="pc bpc" id="L175" title="1 of 2 branches missed.">      if (size() == 0) {</span>
+<span class="nc" id="L176">        throw  new Exception(&quot;List is empty (getLinkAt)&quot;);</span>
+      }
+<span class="pc bpc" id="L178" title="2 of 4 branches missed.">      else {if ((index &gt;= 0) &amp;&amp; (index &lt; size())) {</span>
+<span class="fc" id="L179">        return  ((Link2)(elementAt(index)));</span>
+      }
+      else {
+<span class="nc" id="L182">        throw  new Exception(&quot;index out of range (getLinkAt)&quot;);</span>
+      }
+      }
+    }
+
+
+    /**
+     * adds an element (Link) to the list.
+     * @param data the attribute set specification
+     * @param mer the &quot;merit&quot; of this attribute set
+     **/
+    public void addToList (Object [] data, double mer)
+      throws Exception {
+<span class="fc" id="L195">      Link2 newL = new Link2(data, mer);</span>
+
+<span class="fc bfc" id="L197" title="All 2 branches covered.">      if (size() == 0) {</span>
+<span class="fc" id="L198">	addElement(newL);</span>
+      }
+<span class="fc bfc" id="L200" title="All 2 branches covered.">      else {if (mer &gt; ((Link2)(firstElement())).m_merit) {</span>
+<span class="fc bfc" id="L201" title="All 2 branches covered.">	if (size() == m_MaxSize) {</span>
+<span class="fc" id="L202">	  removeLinkAt(m_MaxSize - 1);</span>
+	}
+
+	//----------
+<span class="fc" id="L206">	insertElementAt(newL, 0);</span>
+      }
+      else {
+<span class="fc" id="L209">	int i = 0;</span>
+<span class="fc" id="L210">	int size = size();</span>
+<span class="fc" id="L211">	boolean done = false;</span>
+
+	//------------
+	// don't insert if list contains max elements an this
+	// is worst than the last
+<span class="fc bfc" id="L216" title="All 4 branches covered.">	if ((size == m_MaxSize) &amp;&amp; (mer &lt;= ((Link2)(lastElement())).m_merit)) {</span>
+
+	}
+	//---------------
+	else {
+<span class="pc bpc" id="L221" title="1 of 4 branches missed.">	  while ((!done) &amp;&amp; (i &lt; size)) {</span>
+<span class="fc bfc" id="L222" title="All 2 branches covered.">	    if (mer &gt; ((Link2)(elementAt(i))).m_merit) {</span>
+<span class="fc bfc" id="L223" title="All 2 branches covered.">	      if (size == m_MaxSize) {</span>
+<span class="fc" id="L224">		removeLinkAt(m_MaxSize - 1);</span>
+	      }
+
+	      // ---------------------
+<span class="fc" id="L228">	      insertElementAt(newL, i);</span>
+<span class="fc" id="L229">	      done = true;</span>
+	    }
+<span class="fc bfc" id="L231" title="All 2 branches covered.">	    else {if (i == size - 1) {</span>
+<span class="fc" id="L232">	      addElement(newL);</span>
+<span class="fc" id="L233">	      done = true;</span>
+	    }
+	    else {
+<span class="fc" id="L236">	      i++;</span>
+	    }
+	    }
+	  }
+	}
+      }
+      }
+<span class="fc" id="L243">    }</span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L251">      return RevisionUtils.extract(&quot;$Revision: 1.29 $&quot;);</span>
+    }
+  }
+
+  // member variables
+  /** maximum number of stale nodes before terminating search */
+  protected int m_maxStale;
+
+  /** 0 == backward search, 1 == forward search, 2 == bidirectional */
+  protected int m_searchDirection;
+
+  /** search direction: backward */
+  protected static final int SELECTION_BACKWARD = 0;
+  /** search direction: forward */
+  protected static final int SELECTION_FORWARD = 1;
+  /** search direction: bidirectional */
+  protected static final int SELECTION_BIDIRECTIONAL = 2;
+  /** search directions */
+<span class="fc" id="L269">  public static final Tag [] TAGS_SELECTION = {</span>
+<span class="fc" id="L270">    new Tag(SELECTION_BACKWARD, &quot;Backward&quot;),</span>
+<span class="fc" id="L271">    new Tag(SELECTION_FORWARD, &quot;Forward&quot;),</span>
+<span class="fc" id="L272">    new Tag(SELECTION_BIDIRECTIONAL, &quot;Bi-directional&quot;),</span>
+  };
+
+  /** holds an array of starting attributes */
+  protected int[] m_starting;
+
+  /** holds the start set for the search as a Range */
+  protected Range m_startRange;
+
+  /** does the data have a class */
+  protected boolean m_hasClass;
+
+  /** holds the class index */
+  protected int m_classIndex;
+
+  /** number of attributes in the data */
+  protected int m_numAttribs;
+
+  /** total number of subsets evaluated during a search */
+  protected int m_totalEvals;
+
+  /** for debugging */
+  protected boolean m_debug;
+
+  /** holds the merit of the best subset found */
+  protected double m_bestMerit;
+
+  /** holds the maximum size of the lookup cache for evaluated subsets */
+  protected int m_cacheSize;
+  
+  /**
+   * Returns a string describing this search method
+   * @return a description of the search method suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L308">    return &quot;BestFirst:\n\n&quot;</span>
+      +&quot;Searches the space of attribute subsets by greedy hillclimbing &quot;
+      +&quot;augmented with a backtracking facility. Setting the number of &quot;
+      +&quot;consecutive non-improving nodes allowed controls the level of &quot;
+      +&quot;backtracking done. Best first may start with the empty set of &quot;
+      +&quot;attributes and search forward, or start with the full set of &quot;
+      +&quot;attributes and search backward, or start at any point and search &quot;
+      +&quot;in both directions (by considering all possible single attribute &quot;
+      +&quot;additions and deletions at a given point).\n&quot;;
+  }
+
+  /** 
+   *Constructor 
+   */
+<span class="fc" id="L322">  public BestFirst () {</span>
+<span class="fc" id="L323">    resetOptions();</span>
+<span class="fc" id="L324">  }</span>
+
+  /**
+   * Returns an enumeration describing the available options.
+   * @return an enumeration of all the available options.
+   *
+   **/
+  public Enumeration listOptions () {
+<span class="fc" id="L332">    Vector newVector = new Vector(4);</span>
+    
+<span class="fc" id="L334">    newVector.addElement(new Option(&quot;\tSpecify a starting set of attributes.&quot; </span>
+				    + &quot;\n\tEg. 1,3,5-7.&quot;
+<span class="fc" id="L336">				    ,&quot;P&quot;,1</span>
+<span class="fc" id="L337">				    , &quot;-P &lt;start set&gt;&quot;));</span>
+<span class="fc" id="L338">    newVector.addElement(new Option(&quot;\tDirection of search. (default = 1).&quot;</span>
+<span class="fc" id="L339">				    , &quot;D&quot;, 1</span>
+<span class="fc" id="L340">				    , &quot;-D &lt;0 = backward | 1 = forward &quot; </span>
+				    + &quot;| 2 = bi-directional&gt;&quot;));
+<span class="fc" id="L342">    newVector.addElement(new Option(&quot;\tNumber of non-improving nodes to&quot; </span>
+				    + &quot;\n\tconsider before terminating search.&quot;
+<span class="fc" id="L344">				    , &quot;N&quot;, 1, &quot;-N &lt;num&gt;&quot;));</span>
+<span class="fc" id="L345">    newVector.addElement(new Option(&quot;\tSize of lookup cache for evaluated subsets.&quot;</span>
+				    +&quot;\n\tExpressed as a multiple of the number of&quot;
+				    +&quot;\n\tattributes in the data set. (default = 1)&quot;,
+<span class="fc" id="L348">				    &quot;S&quot;, 1, &quot;-S &lt;num&gt;&quot;));</span>
+				    
+<span class="fc" id="L350">    return  newVector.elements();</span>
+  }
+
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;start set&amp;gt;
+   *  Specify a starting set of attributes.
+   *  Eg. 1,3,5-7.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D &amp;lt;0 = backward | 1 = forward | 2 = bi-directional&amp;gt;
+   *  Direction of search. (default = 1).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+   *  Number of non-improving nodes to
+   *  consider before terminating search.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Size of lookup cache for evaluated subsets.
+   *  Expressed as a multiple of the number of
+   *  attributes in the data set. (default = 1)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   *
+   **/
+  public void setOptions (String[] options)
+    throws Exception {
+    String optionString;
+<span class="fc" id="L385">    resetOptions();</span>
+
+<span class="fc" id="L387">    optionString = Utils.getOption('P', options);</span>
+<span class="pc bpc" id="L388" title="1 of 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L389">      setStartSet(optionString);</span>
+    }
+
+<span class="fc" id="L392">    optionString = Utils.getOption('D', options);</span>
+
+<span class="fc bfc" id="L394" title="All 2 branches covered.">    if (optionString.length() != 0) {</span>
+<span class="fc" id="L395">      setDirection(new SelectedTag(Integer.parseInt(optionString),</span>
+<span class="fc" id="L396">				   TAGS_SELECTION));</span>
+    } else {
+<span class="fc" id="L398">      setDirection(new SelectedTag(SELECTION_FORWARD, TAGS_SELECTION));</span>
+    }
+
+<span class="fc" id="L401">    optionString = Utils.getOption('N', options);</span>
+
+<span class="fc bfc" id="L403" title="All 2 branches covered.">    if (optionString.length() != 0) {</span>
+<span class="fc" id="L404">      setSearchTermination(Integer.parseInt(optionString));</span>
+    }
+
+<span class="fc" id="L407">    optionString = Utils.getOption('S', options);</span>
+<span class="pc bpc" id="L408" title="1 of 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L409">      setLookupCacheSize(Integer.parseInt(optionString));</span>
+    }
+
+<span class="fc" id="L412">    m_debug = Utils.getFlag('Z', options);</span>
+<span class="fc" id="L413">  }</span>
+
+  /**
+   * Set the maximum size of the evaluated subset cache (hashtable). This is
+   * expressed as a multiplier for the number of attributes in the data set.
+   * (default = 1).
+   *
+   * @param size the maximum size of the hashtable
+   */
+  public void setLookupCacheSize(int size) {
+<span class="nc bnc" id="L423" title="All 2 branches missed.">    if (size &gt;= 0) {</span>
+<span class="nc" id="L424">      m_cacheSize = size;</span>
+    }
+<span class="nc" id="L426">  }</span>
+
+  /**
+   * Return the maximum size of the evaluated subset cache (expressed as a multiplier
+   * for the number of attributes in a data set.
+   *
+   * @return the maximum size of the hashtable.
+   */
+  public int getLookupCacheSize() {
+<span class="nc" id="L435">    return m_cacheSize;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String lookupCacheSizeTipText() {
+<span class="nc" id="L444">    return &quot;Set the maximum size of the lookup cache of evaluated subsets. This is &quot;</span>
+      +&quot;expressed as a multiplier of the number of attributes in the data set. &quot;
+      +&quot;(default = 1).&quot;;
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String startSetTipText() {
+<span class="nc" id="L455">    return &quot;Set the start point for the search. This is specified as a comma &quot;</span>
+      +&quot;seperated list off attribute indexes starting at 1. It can include &quot;
+      +&quot;ranges. Eg. 1,2,5-9,17.&quot;;
+  }
+
+  /**
+   * Sets a starting set of attributes for the search. It is the
+   * search method's responsibility to report this start set (if any)
+   * in its toString() method.
+   * @param startSet a string containing a list of attributes (and or ranges),
+   * eg. 1,2,6,10-15.
+   * @throws Exception if start set can't be set.
+   */
+  public void setStartSet (String startSet) throws Exception {
+<span class="nc" id="L469">    m_startRange.setRanges(startSet);</span>
+<span class="nc" id="L470">  }</span>
+
+  /**
+   * Returns a list of attributes (and or attribute ranges) as a String
+   * @return a list of attributes (and or attribute ranges)
+   */
+  public String getStartSet () {
+<span class="fc" id="L477">    return m_startRange.getRanges();</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String searchTerminationTipText() {
+<span class="nc" id="L486">    return &quot;Set the amount of backtracking. Specify the number of &quot;;</span>
+  }
+
+  /**
+   * Set the numnber of non-improving nodes to consider before terminating
+   * search.
+   *
+   * @param t the number of non-improving nodes
+   * @throws Exception if t is less than 1
+   */
+  public void setSearchTermination (int t)
+    throws Exception {
+<span class="pc bpc" id="L498" title="1 of 2 branches missed.">    if (t &lt; 1) {</span>
+<span class="nc" id="L499">      throw  new Exception(&quot;Value of -N must be &gt; 0.&quot;);</span>
+    }
+
+<span class="fc" id="L502">    m_maxStale = t;</span>
+<span class="fc" id="L503">  }</span>
+
+
+  /**
+   * Get the termination criterion (number of non-improving nodes).
+   *
+   * @return the number of non-improving nodes
+   */
+  public int getSearchTermination () {
+<span class="nc" id="L512">    return  m_maxStale;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String directionTipText() {
+<span class="nc" id="L521">    return &quot;Set the direction of the search.&quot;;</span>
+  }
+
+  /**
+   * Set the search direction
+   *
+   * @param d the direction of the search
+   */
+  public void setDirection (SelectedTag d) {
+    
+<span class="pc bpc" id="L531" title="1 of 2 branches missed.">    if (d.getTags() == TAGS_SELECTION) {</span>
+<span class="fc" id="L532">      m_searchDirection = d.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L534">  }</span>
+
+
+  /**
+   * Get the search direction
+   *
+   * @return the direction of the search
+   */
+  public SelectedTag getDirection () {
+
+<span class="nc" id="L544">    return new SelectedTag(m_searchDirection, TAGS_SELECTION);</span>
+  }
+
+
+  /**
+   * Gets the current settings of BestFirst.
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions () {
+<span class="fc" id="L553">    String[] options = new String[6];</span>
+<span class="fc" id="L554">    int current = 0;</span>
+
+<span class="pc bpc" id="L556" title="1 of 2 branches missed.">    if (!(getStartSet().equals(&quot;&quot;))) {</span>
+<span class="nc" id="L557">      options[current++] = &quot;-P&quot;;</span>
+<span class="nc" id="L558">      options[current++] = &quot;&quot;+startSetToString();</span>
+    }
+<span class="fc" id="L560">    options[current++] = &quot;-D&quot;;</span>
+<span class="fc" id="L561">    options[current++] = &quot;&quot; + m_searchDirection;</span>
+<span class="fc" id="L562">    options[current++] = &quot;-N&quot;;</span>
+<span class="fc" id="L563">    options[current++] = &quot;&quot; + m_maxStale;</span>
+
+<span class="fc bfc" id="L565" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc" id="L566">      options[current++] = &quot;&quot;;</span>
+    }
+
+<span class="fc" id="L569">    return  options;</span>
+  }
+
+  /**
+   * converts the array of starting attributes to a string. This is
+   * used by getOptions to return the actual attributes specified
+   * as the starting set. This is better than using m_startRanges.getRanges()
+   * as the same start set can be specified in different ways from the
+   * command line---eg 1,2,3 == 1-3. This is to ensure that stuff that
+   * is stored in a database is comparable.
+   * @return a comma seperated list of individual attribute numbers as a String
+   */
+  private String startSetToString() {
+<span class="nc" id="L582">    StringBuffer FString = new StringBuffer();</span>
+    boolean didPrint;
+
+<span class="nc bnc" id="L585" title="All 2 branches missed.">    if (m_starting == null) {</span>
+<span class="nc" id="L586">      return getStartSet();</span>
+    }
+<span class="nc bnc" id="L588" title="All 2 branches missed.">    for (int i = 0; i &lt; m_starting.length; i++) {</span>
+<span class="nc" id="L589">      didPrint = false;</span>
+      
+<span class="nc bnc" id="L591" title="All 2 branches missed.">      if ((m_hasClass == false) || </span>
+<span class="nc bnc" id="L592" title="All 4 branches missed.">	  (m_hasClass == true &amp;&amp; i != m_classIndex)) {</span>
+<span class="nc" id="L593">	FString.append((m_starting[i] + 1));</span>
+<span class="nc" id="L594">	didPrint = true;</span>
+      }
+      
+<span class="nc bnc" id="L597" title="All 2 branches missed.">      if (i == (m_starting.length - 1)) {</span>
+<span class="nc" id="L598">	FString.append(&quot;&quot;);</span>
+      }
+      else {
+<span class="nc bnc" id="L601" title="All 2 branches missed.">	if (didPrint) {</span>
+<span class="nc" id="L602">	  FString.append(&quot;,&quot;);</span>
+	  }
+      }
+    }
+
+<span class="nc" id="L607">    return FString.toString();</span>
+  }
+
+  /**
+   * returns a description of the search as a String
+   * @return a description of the search
+   */
+  public String toString () {
+<span class="fc" id="L615">    StringBuffer BfString = new StringBuffer();</span>
+<span class="fc" id="L616">    BfString.append(&quot;\tBest first.\n\tStart set: &quot;);</span>
+
+<span class="pc bpc" id="L618" title="1 of 2 branches missed.">    if (m_starting == null) {</span>
+<span class="fc" id="L619">      BfString.append(&quot;no attributes\n&quot;);</span>
+    }
+    else {
+<span class="nc" id="L622">      BfString.append(startSetToString()+&quot;\n&quot;);</span>
+    }
+
+<span class="fc" id="L625">    BfString.append(&quot;\tSearch direction: &quot;);</span>
+
+<span class="pc bpc" id="L627" title="1 of 2 branches missed.">    if (m_searchDirection == SELECTION_BACKWARD) {</span>
+<span class="nc" id="L628">      BfString.append(&quot;backward\n&quot;);</span>
+    }
+<span class="pc bpc" id="L630" title="1 of 2 branches missed.">    else {if (m_searchDirection == SELECTION_FORWARD) {</span>
+<span class="fc" id="L631">      BfString.append(&quot;forward\n&quot;);</span>
+    }
+    else {
+<span class="nc" id="L634">      BfString.append(&quot;bi-directional\n&quot;);</span>
+    }
+    }
+
+<span class="fc" id="L638">    BfString.append(&quot;\tStale search after &quot; </span>
+<span class="fc" id="L639">		    + m_maxStale + &quot; node expansions\n&quot;);</span>
+<span class="fc" id="L640">    BfString.append(&quot;\tTotal number of subsets evaluated: &quot; </span>
+<span class="fc" id="L641">		    + m_totalEvals + &quot;\n&quot;);</span>
+<span class="fc" id="L642">    BfString.append(&quot;\tMerit of best subset found: &quot;</span>
+<span class="fc" id="L643">		    +Utils.doubleToString(Math.abs(m_bestMerit),8,3)+&quot;\n&quot;);</span>
+<span class="fc" id="L644">    return  BfString.toString();</span>
+  }
+
+
+  protected void printGroup (BitSet tt, int numAttribs) {
+    int i;
+
+<span class="nc bnc" id="L651" title="All 2 branches missed.">    for (i = 0; i &lt; numAttribs; i++) {</span>
+<span class="nc bnc" id="L652" title="All 2 branches missed.">      if (tt.get(i) == true) {</span>
+<span class="nc" id="L653">	System.out.print((i + 1) + &quot; &quot;);</span>
+      }
+    }
+
+<span class="nc" id="L657">    System.out.println();</span>
+<span class="nc" id="L658">  }</span>
+
+
+  /**
+   * Searches the attribute subset space by best first search
+   *
+   * @param ASEval the attribute evaluator to guide the search
+   * @param data the training instances.
+   * @return an array (not necessarily ordered) of selected attribute indexes
+   * @throws Exception if the search can't be completed
+   */
+  public int[] search (ASEvaluation ASEval, Instances data)
+    throws Exception {
+<span class="fc" id="L671">    m_totalEvals = 0;</span>
+<span class="pc bpc" id="L672" title="1 of 2 branches missed.">    if (!(ASEval instanceof SubsetEvaluator)) {</span>
+<span class="nc" id="L673">      throw  new Exception(ASEval.getClass().getName() </span>
+<span class="nc" id="L674">			   + &quot; is not a &quot; </span>
+<span class="nc" id="L675">			   + &quot;Subset evaluator!&quot;);</span>
+    }
+
+<span class="pc bpc" id="L678" title="1 of 2 branches missed.">    if (ASEval instanceof UnsupervisedSubsetEvaluator) {</span>
+<span class="nc" id="L679">      m_hasClass = false;</span>
+    } else {
+<span class="fc" id="L681">      m_hasClass = true;</span>
+<span class="fc" id="L682">      m_classIndex = data.classIndex();</span>
+    }
+
+<span class="fc" id="L685">    SubsetEvaluator ASEvaluator = (SubsetEvaluator)ASEval;</span>
+<span class="fc" id="L686">    m_numAttribs = data.numAttributes();</span>
+    int i, j;
+<span class="fc" id="L688">    int best_size = 0;</span>
+<span class="fc" id="L689">    int size = 0;</span>
+    int done;
+<span class="fc" id="L691">    int sd = m_searchDirection;</span>
+    BitSet best_group, temp_group;
+    int stale;
+    double best_merit;
+    double merit;
+    boolean z;
+    boolean added;
+    Link2 tl;
+<span class="fc" id="L699">    Hashtable lookup = new Hashtable(m_cacheSize * m_numAttribs);</span>
+<span class="fc" id="L700">    int insertCount = 0;</span>
+<span class="fc" id="L701">    int cacheHits = 0;</span>
+<span class="fc" id="L702">    LinkedList2 bfList = new LinkedList2(m_maxStale);</span>
+<span class="fc" id="L703">    best_merit = -Double.MAX_VALUE;</span>
+<span class="fc" id="L704">    stale = 0;</span>
+<span class="fc" id="L705">    best_group = new BitSet(m_numAttribs);</span>
+
+<span class="fc" id="L707">    m_startRange.setUpper(m_numAttribs-1);</span>
+<span class="pc bpc" id="L708" title="1 of 2 branches missed.">    if (!(getStartSet().equals(&quot;&quot;))) {</span>
+<span class="nc" id="L709">      m_starting = m_startRange.getSelection();</span>
+    }
+    // If a starting subset has been supplied, then initialise the bitset
+<span class="pc bpc" id="L712" title="1 of 2 branches missed.">    if (m_starting != null) {</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">      for (i = 0; i &lt; m_starting.length; i++) {</span>
+<span class="nc bnc" id="L714" title="All 2 branches missed.">	if ((m_starting[i]) != m_classIndex) {</span>
+<span class="nc" id="L715">	  best_group.set(m_starting[i]);</span>
+	}
+      }
+
+<span class="nc" id="L719">      best_size = m_starting.length;</span>
+<span class="nc" id="L720">      m_totalEvals++;</span>
+    } else {
+<span class="pc bpc" id="L722" title="1 of 2 branches missed.">      if (m_searchDirection == SELECTION_BACKWARD) {</span>
+<span class="nc" id="L723">	setStartSet(&quot;1-last&quot;);</span>
+<span class="nc" id="L724">	m_starting = new int[m_numAttribs];</span>
+
+	// init initial subset to all attributes
+<span class="nc bnc" id="L727" title="All 2 branches missed.">	for (i = 0, j = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="nc bnc" id="L728" title="All 2 branches missed.">	  if (i != m_classIndex) {</span>
+<span class="nc" id="L729">	    best_group.set(i);</span>
+<span class="nc" id="L730">	    m_starting[j++] = i;</span>
+	  }
+	}
+
+<span class="nc" id="L734">	best_size = m_numAttribs - 1;</span>
+<span class="nc" id="L735">	m_totalEvals++;</span>
+      }
+    }
+
+    // evaluate the initial subset
+<span class="fc" id="L740">    best_merit = ASEvaluator.evaluateSubset(best_group);</span>
+    // add the initial group to the list and the hash table
+<span class="fc" id="L742">    Object [] best = new Object[1];</span>
+<span class="fc" id="L743">    best[0] = best_group.clone();</span>
+<span class="fc" id="L744">    bfList.addToList(best, best_merit);</span>
+<span class="fc" id="L745">    BitSet tt = (BitSet)best_group.clone();</span>
+<span class="fc" id="L746">    String hashC = tt.toString();</span>
+<span class="fc" id="L747">    lookup.put(hashC, new Double(best_merit));</span>
+
+<span class="fc bfc" id="L749" title="All 2 branches covered.">    while (stale &lt; m_maxStale) {</span>
+<span class="fc" id="L750">      added = false;</span>
+
+<span class="pc bpc" id="L752" title="1 of 2 branches missed.">      if (m_searchDirection == SELECTION_BIDIRECTIONAL) {</span>
+	// bi-directional search
+<span class="nc" id="L754">        done = 2;</span>
+<span class="nc" id="L755">        sd = SELECTION_FORWARD;</span>
+      } else {
+<span class="fc" id="L757">	done = 1;</span>
+      }
+
+      // finished search?
+<span class="fc bfc" id="L761" title="All 2 branches covered.">      if (bfList.size() == 0) {</span>
+<span class="fc" id="L762">	stale = m_maxStale;</span>
+<span class="fc" id="L763">	break;</span>
+      }
+
+      // copy the attribute set at the head of the list
+<span class="fc" id="L767">      tl = bfList.getLinkAt(0);</span>
+<span class="fc" id="L768">      temp_group = (BitSet)(tl.getData()[0]);</span>
+<span class="fc" id="L769">      temp_group = (BitSet)temp_group.clone();</span>
+      // remove the head of the list
+<span class="fc" id="L771">      bfList.removeLinkAt(0);</span>
+      // count the number of bits set (attributes)
+      int kk;
+
+<span class="fc bfc" id="L775" title="All 2 branches covered.">      for (kk = 0, size = 0; kk &lt; m_numAttribs; kk++) {</span>
+<span class="fc bfc" id="L776" title="All 2 branches covered.">	if (temp_group.get(kk)) {</span>
+<span class="fc" id="L777">	  size++;</span>
+	}
+      }
+
+      do {
+<span class="fc bfc" id="L782" title="All 2 branches covered.">	for (i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="pc bpc" id="L783" title="1 of 2 branches missed.">	  if (sd == SELECTION_FORWARD) {</span>
+<span class="fc bfc" id="L784" title="All 4 branches covered.">	    z = ((i != m_classIndex) &amp;&amp; (!temp_group.get(i)));</span>
+	  } else {
+<span class="nc bnc" id="L786" title="All 4 branches missed.">	    z = ((i != m_classIndex) &amp;&amp; (temp_group.get(i)));</span>
+	  }
+          
+<span class="fc bfc" id="L789" title="All 2 branches covered.">	  if (z) {</span>
+	    // set the bit (attribute to add/delete)
+<span class="pc bpc" id="L791" title="1 of 2 branches missed.">	    if (sd == SELECTION_FORWARD) {</span>
+<span class="fc" id="L792">	      temp_group.set(i);</span>
+<span class="fc" id="L793">	      size++;</span>
+	    } else {
+<span class="nc" id="L795">	      temp_group.clear(i);</span>
+<span class="nc" id="L796">	      size--;</span>
+	    }
+
+	    /* if this subset has been seen before, then it is already 
+	       in the list (or has been fully expanded) */
+<span class="fc" id="L801">	    tt = (BitSet)temp_group.clone();</span>
+<span class="fc" id="L802">	    hashC = tt.toString();</span>
+	    
+<span class="fc bfc" id="L804" title="All 2 branches covered.">	    if (lookup.containsKey(hashC) == false) {</span>
+<span class="fc" id="L805">	      merit = ASEvaluator.evaluateSubset(temp_group);</span>
+<span class="fc" id="L806">	      m_totalEvals++;</span>
+	      
+	      // insert this one in the hashtable
+<span class="fc bfc" id="L809" title="All 2 branches covered.">	      if (insertCount &gt; m_cacheSize * m_numAttribs) {</span>
+<span class="fc" id="L810">		lookup = new Hashtable(m_cacheSize * m_numAttribs);</span>
+<span class="fc" id="L811">		insertCount = 0;</span>
+	      }
+<span class="fc" id="L813">	      hashC = tt.toString();</span>
+<span class="fc" id="L814">    	      lookup.put(hashC, new Double(merit));</span>
+<span class="fc" id="L815">    	      insertCount++;</span>
+	    } else {
+<span class="fc" id="L817">	      merit = ((Double)lookup.get(hashC)).doubleValue();</span>
+<span class="fc" id="L818">	      cacheHits++;  </span>
+	    }
+	    
+	    // insert this one in the list
+<span class="fc" id="L822">	    Object[] add = new Object[1];</span>
+<span class="fc" id="L823">	    add[0] = tt.clone();</span>
+<span class="fc" id="L824">	    bfList.addToList(add, merit);</span>
+	    
+<span class="pc bpc" id="L826" title="1 of 2 branches missed.">	    if (m_debug) {</span>
+<span class="nc" id="L827">	      System.out.print(&quot;Group: &quot;);</span>
+<span class="nc" id="L828">	      printGroup(tt, m_numAttribs);</span>
+<span class="nc" id="L829">	      System.out.println(&quot;Merit: &quot; + merit);</span>
+	    }
+
+	    // is this better than the best?
+<span class="pc bpc" id="L833" title="1 of 2 branches missed.">	    if (sd == SELECTION_FORWARD) {</span>
+<span class="fc bfc" id="L834" title="All 2 branches covered.">	      z = ((merit - best_merit) &gt; 0.00001);</span>
+	    } else {
+<span class="nc bnc" id="L836" title="All 2 branches missed.">	      if (merit == best_merit) {</span>
+<span class="nc bnc" id="L837" title="All 2 branches missed.">		z = (size &lt; best_size);</span>
+	      } else {
+<span class="nc bnc" id="L839" title="All 2 branches missed.">		z = (merit &gt;  best_merit);</span>
+	      } 
+	    }
+
+<span class="fc bfc" id="L843" title="All 2 branches covered.">	    if (z) {</span>
+<span class="fc" id="L844">	      added = true;</span>
+<span class="fc" id="L845">	      stale = 0;</span>
+<span class="fc" id="L846">	      best_merit = merit;</span>
+	      //		best_size = (size + best_size);
+<span class="fc" id="L848">	      best_size = size;</span>
+<span class="fc" id="L849">	      best_group = (BitSet)(temp_group.clone());</span>
+	    }
+
+	    // unset this addition(deletion)
+<span class="pc bpc" id="L853" title="1 of 2 branches missed.">	    if (sd == SELECTION_FORWARD) {</span>
+<span class="fc" id="L854">	      temp_group.clear(i);</span>
+<span class="fc" id="L855">	      size--;</span>
+	    } else {
+<span class="nc" id="L857">	      temp_group.set(i);</span>
+<span class="nc" id="L858">	      size++;</span>
+	    }
+	  }
+	}
+
+<span class="pc bpc" id="L863" title="1 of 2 branches missed.">	if (done == 2) {</span>
+<span class="nc" id="L864">	  sd = SELECTION_BACKWARD;</span>
+	}
+
+<span class="fc" id="L867">	done--;</span>
+<span class="pc bpc" id="L868" title="1 of 2 branches missed.">      } while (done &gt; 0);</span>
+
+      /* if we haven't added a new attribute subset then full expansion 
+	 of this node hasen't resulted in anything better */
+<span class="fc bfc" id="L872" title="All 2 branches covered.">      if (!added) {</span>
+<span class="fc" id="L873">	stale++;</span>
+      }
+    }
+
+<span class="fc" id="L877">    m_bestMerit = best_merit;</span>
+<span class="fc" id="L878">    return  attributeList(best_group);</span>
+  }
+
+
+  /**
+   * Reset options to default values
+   */
+  protected void resetOptions () {
+<span class="fc" id="L886">    m_maxStale = 5;</span>
+<span class="fc" id="L887">    m_searchDirection = SELECTION_FORWARD;</span>
+<span class="fc" id="L888">    m_starting = null;</span>
+<span class="fc" id="L889">    m_startRange = new Range();</span>
+<span class="fc" id="L890">    m_classIndex = -1;</span>
+<span class="fc" id="L891">    m_totalEvals = 0;</span>
+<span class="fc" id="L892">    m_cacheSize = 1;</span>
+<span class="fc" id="L893">    m_debug = false;</span>
+<span class="fc" id="L894">  }</span>
+
+
+  /**
+   * converts a BitSet into a list of attribute indexes 
+   * @param group the BitSet to convert
+   * @return an array of attribute indexes
+   **/
+  protected int[] attributeList (BitSet group) {
+<span class="fc" id="L903">    int count = 0;</span>
+
+    // count how many were selected
+<span class="fc bfc" id="L906" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="fc bfc" id="L907" title="All 2 branches covered.">      if (group.get(i)) {</span>
+<span class="fc" id="L908">	count++;</span>
+      }
+    }
+
+<span class="fc" id="L912">    int[] list = new int[count];</span>
+<span class="fc" id="L913">    count = 0;</span>
+
+<span class="fc bfc" id="L915" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numAttribs; i++) {</span>
+<span class="fc bfc" id="L916" title="All 2 branches covered.">      if (group.get(i)) {</span>
+<span class="fc" id="L917">	list[count++] = i;</span>
+      }
+    }
+
+<span class="fc" id="L921">    return  list;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L930">    return RevisionUtils.extract(&quot;$Revision: 1.29 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

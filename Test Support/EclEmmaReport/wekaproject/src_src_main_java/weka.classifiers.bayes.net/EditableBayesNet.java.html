@@ -1,0 +1,2677 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>EditableBayesNet.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.bayes.net</a> &gt; <span class="el_source">EditableBayesNet.java</span></div><h1>EditableBayesNet.java</h1><pre class="source lang-java linenums">package weka.classifiers.bayes.net;
+/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * EditableBayesNet.java
+ *
+ */
+
+import java.io.Serializable;
+import java.io.StringReader;
+import java.util.StringTokenizer;
+
+import javax.xml.parsers.DocumentBuilderFactory;
+
+import org.w3c.dom.CharacterData;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+import weka.classifiers.bayes.BayesNet;
+import weka.classifiers.bayes.net.estimate.DiscreteEstimatorBayes;
+import weka.core.Attribute;
+import weka.core.FastVector;
+import weka.core.Instances;
+import weka.core.RevisionUtils;
+import weka.core.SerializedObject;
+import weka.estimators.Estimator;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.Reorder;
+
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Bayes Network learning using various search algorithms and quality measures.&lt;br/&gt;
+ * Base class for a Bayes Network classifier. Provides datastructures (network structure, conditional probability distributions, etc.) and facilities common to Bayes Network learning algorithms like K2 and B.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * http://www.cs.waikato.ac.nz/~remco/weka.pdf
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Do not use ADTree data structure
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -B &amp;lt;BIF file&amp;gt;
+ *  BIF file to compare with
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -Q weka.classifiers.bayes.net.search.SearchAlgorithm
+ *  Search algorithm
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -E weka.classifiers.bayes.net.estimate.SimpleEstimator
+ *  Estimator algorithm
+ * &lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Remco Bouckaert (rrb@xm.co.nz)
+ * @version $Revision: 7836 $
+ */
+
+public class EditableBayesNet extends BayesNet {
+	/** for serialization */
+	static final long serialVersionUID = 746037443258735954L;
+
+	/** location of nodes, used for graph drawing * */
+	protected FastVector m_nPositionX;
+
+	protected FastVector m_nPositionY;
+
+	/** marginal distributions * */
+	protected FastVector m_fMarginP;
+
+	/** evidence values, used for evidence propagation * */
+	protected FastVector m_nEvidence;
+
+	/** standard constructor * */
+	public EditableBayesNet() {
+<span class="nc" id="L100">		super();</span>
+<span class="nc" id="L101">		m_nEvidence = new FastVector(0);</span>
+<span class="nc" id="L102">		m_fMarginP = new FastVector(0);</span>
+<span class="nc" id="L103">		m_nPositionX = new FastVector();</span>
+<span class="nc" id="L104">		m_nPositionY = new FastVector();</span>
+<span class="nc" id="L105">		clearUndoStack();</span>
+<span class="nc" id="L106">	} // c'tor</span>
+
+	/** constructor, creates empty network with nodes based on the attributes in a data set */
+<span class="nc" id="L109">	public EditableBayesNet(Instances instances) {</span>
+		try {
+<span class="nc bnc" id="L111" title="All 2 branches missed.">			if (instances.classIndex() &lt; 0) {</span>
+<span class="nc" id="L112">				instances.setClassIndex(instances.numAttributes() - 1);</span>
+			}
+<span class="nc" id="L114">			m_Instances = normalizeDataSet(instances);</span>
+<span class="nc" id="L115">		} catch (Exception e) {</span>
+<span class="nc" id="L116">			e.printStackTrace();</span>
+		}
+
+<span class="nc" id="L119">		int nNodes = getNrOfNodes();</span>
+<span class="nc" id="L120">		m_ParentSets = new ParentSet[nNodes];</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">		for (int i = 0; i &lt; nNodes; i++) {</span>
+<span class="nc" id="L122">			m_ParentSets[i] = new ParentSet();</span>
+		}
+<span class="nc" id="L124">		m_Distributions = new Estimator[nNodes][];</span>
+<span class="nc bnc" id="L125" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nNodes; iNode++) {</span>
+<span class="nc" id="L126">			m_Distributions[iNode] = new Estimator[1];</span>
+<span class="nc" id="L127">			m_Distributions[iNode][0] = new DiscreteEstimatorBayes(getCardinality(iNode), 0.5);</span>
+		}
+
+<span class="nc" id="L130">		m_nEvidence = new FastVector(nNodes);</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">		for (int i = 0; i &lt; nNodes; i++) {</span>
+<span class="nc" id="L132">			m_nEvidence.addElement(-1);</span>
+		}
+<span class="nc" id="L134">		m_fMarginP = new FastVector(nNodes);</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">		for (int i = 0; i &lt; nNodes; i++) {</span>
+<span class="nc" id="L136">			double[] P = new double[getCardinality(i)];</span>
+<span class="nc" id="L137">			m_fMarginP.addElement(P);</span>
+		}
+
+<span class="nc" id="L140">		m_nPositionX = new FastVector(nNodes);</span>
+<span class="nc" id="L141">		m_nPositionY = new FastVector(nNodes);</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nNodes; iNode++) {</span>
+<span class="nc" id="L143">			m_nPositionX.addElement(iNode%10 * 50);</span>
+<span class="nc" id="L144">			m_nPositionY.addElement(((int)(iNode/10)) * 50);</span>
+		}
+
+<span class="nc" id="L147">	} // c'tor</span>
+
+	/** constructor, copies Bayesian network structure from a Bayesian network
+	 * encapsulated in a BIFReader
+	 */
+<span class="nc" id="L152">	public EditableBayesNet(BIFReader other) {</span>
+<span class="nc" id="L153">		m_Instances = other.m_Instances;</span>
+<span class="nc" id="L154">		m_ParentSets = other.getParentSets();</span>
+<span class="nc" id="L155">		m_Distributions = other.getDistributions();</span>
+
+<span class="nc" id="L157">		int nNodes = getNrOfNodes();</span>
+<span class="nc" id="L158">		m_nPositionX = new FastVector(nNodes);</span>
+<span class="nc" id="L159">		m_nPositionY = new FastVector(nNodes);</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">		for (int i = 0; i &lt; nNodes; i++) {</span>
+<span class="nc" id="L161">			m_nPositionX.addElement(other.m_nPositionX[i]);</span>
+<span class="nc" id="L162">			m_nPositionY.addElement(other.m_nPositionY[i]);</span>
+		}
+<span class="nc" id="L164">		m_nEvidence = new FastVector(nNodes);</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">		for (int i = 0; i &lt; nNodes; i++) {</span>
+<span class="nc" id="L166">			m_nEvidence.addElement(-1);</span>
+		}
+<span class="nc" id="L168">		m_fMarginP = new FastVector(nNodes);</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">		for (int i = 0; i &lt; nNodes; i++) {</span>
+<span class="nc" id="L170">			double[] P = new double[getCardinality(i)];</span>
+<span class="nc" id="L171">			m_fMarginP.addElement(P);</span>
+		}
+<span class="nc" id="L173">		clearUndoStack();</span>
+<span class="nc" id="L174">	} // c'tor</span>
+
+	/**
+	 * constructor that potentially initializes instances as well
+	 *
+	 * @param bSetInstances
+	 *            flag indicating whether to initialize instances or not
+	 */
+	public EditableBayesNet(boolean bSetInstances) {
+<span class="nc" id="L183">		super();</span>
+<span class="nc" id="L184">		m_nEvidence = new FastVector(0);</span>
+<span class="nc" id="L185">		m_fMarginP = new FastVector(0);</span>
+<span class="nc" id="L186">		m_nPositionX = new FastVector();</span>
+<span class="nc" id="L187">		m_nPositionY = new FastVector();</span>
+<span class="nc" id="L188">		clearUndoStack();</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">		if (bSetInstances) {</span>
+<span class="nc" id="L190">			m_Instances = new Instances(&quot;New Network&quot;, new FastVector(0), 0);</span>
+		}
+<span class="nc" id="L192">	} // c'tor</span>
+
+
+	/** Assuming a network structure is defined and we want to learn from data,
+	 * the data set must be put if correct order first and possibly discretized/missing
+	 * values filled in before proceeding to CPT learning.
+	 * @param instances data set to learn from
+	 * @exception Exception when data sets are not compatible, e.g., a variable is missing
+	 * or a variable has different nr of values.
+	 */
+	public void setData(Instances instances) throws Exception {
+		// sync order of variables
+<span class="nc" id="L204">		int [] order = new int [getNrOfNodes()];</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; getNrOfNodes(); iNode++) {</span>
+<span class="nc" id="L206">			String sName = getNodeName(iNode);</span>
+<span class="nc" id="L207">			int nNode = 0;</span>
+<span class="nc bnc" id="L208" title="All 4 branches missed.">			while (nNode &lt; getNrOfNodes() &amp;&amp; !sName.equals(instances.attribute(nNode).name())) {</span>
+<span class="nc" id="L209">				nNode++;</span>
+			}
+<span class="nc bnc" id="L211" title="All 2 branches missed.">			if (nNode &gt;= getNrOfNodes()) {</span>
+<span class="nc" id="L212">				throw new Exception(&quot;Cannot find node named [[[&quot; + sName + &quot;]]] in the data&quot;);</span>
+			}
+<span class="nc" id="L214">			order[iNode] = nNode;</span>
+		}
+<span class="nc" id="L216">		Reorder reorderFilter = new Reorder();</span>
+<span class="nc" id="L217">		reorderFilter.setAttributeIndicesArray(order);</span>
+<span class="nc" id="L218">		reorderFilter.setInputFormat(instances);</span>
+<span class="nc" id="L219">		instances = Filter.useFilter(instances, reorderFilter);</span>
+		// filter using discretization/missing values filter
+<span class="nc" id="L221">		Instances newInstances = new Instances(m_Instances, 0);</span>
+<span class="nc bnc" id="L222" title="All 4 branches missed.">		if (m_DiscretizeFilter == null &amp;&amp; m_MissingValuesFilter == null) {</span>
+<span class="nc" id="L223">			newInstances = normalizeDataSet(instances);</span>
+		} else {
+<span class="nc bnc" id="L225" title="All 2 branches missed.">			for (int iInstance = 0; iInstance &lt; instances.numInstances(); iInstance++) {</span>
+<span class="nc" id="L226">				newInstances.add(normalizeInstance(instances.instance(iInstance)));</span>
+			}
+		}
+		//sanity check
+<span class="nc bnc" id="L230" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; getNrOfNodes(); iNode++) {</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">			if (newInstances.attribute(iNode).numValues() != getCardinality(iNode)) {</span>
+<span class="nc" id="L232">				throw new Exception(&quot;Number of values of node [[[&quot; + getNodeName(iNode) + &quot;]]] differs in (discretized) dataset.&quot; );</span>
+			}
+		}
+		// if we got this far, all is ok with the data set and
+		// we can replace data set of Bayes net
+<span class="nc" id="L237">		m_Instances = newInstances;</span>
+<span class="nc" id="L238">	} // setData</span>
+
+	/** returns index of node with given name, or -1 if no such node exists
+	 * @param sNodeName name of the node to get index for
+	 */
+	public int getNode2(String sNodeName) {
+<span class="nc" id="L244">		int iNode = 0;</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">		while (iNode &lt; m_Instances.numAttributes()) {</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">			if (m_Instances.attribute(iNode).name().equals(sNodeName)) {</span>
+<span class="nc" id="L247">				return iNode;</span>
+			}
+<span class="nc" id="L249">			iNode++;</span>
+		}
+<span class="nc" id="L251">		return -1;</span>
+	} // getNode2
+
+	/** returns index of node with given name. Throws exception if no such node exists
+	 * @param sNodeName name of the node to get index for
+	 */
+	public int getNode(String sNodeName) throws Exception {
+<span class="nc" id="L258">		int iNode = getNode2(sNodeName);</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">		if (iNode &lt; 0) {</span>
+<span class="nc" id="L260">			throw new Exception(&quot;Could not find node [[&quot; + sNodeName + &quot;]]&quot;);</span>
+		}
+<span class="nc" id="L262">		return iNode;</span>
+	} // getNode
+
+	/**
+	 * Add new node to the network, initializing instances, parentsets,
+	 * distributions. Used for manual manipulation of the Bayesian network.
+	 *
+	 * @param sName
+	 *            name of the node. If the name already exists, an x is appended
+	 *            to the name
+	 * @param nCardinality
+	 *            number of values for this node
+	 * @throws Exception
+	 */
+	public void addNode(String sName, int nCardinality) throws Exception {
+<span class="nc" id="L277">		addNode(sName, nCardinality, 100 + getNrOfNodes() * 10, 100 + getNrOfNodes() * 10);</span>
+<span class="nc" id="L278">	} // addNode</span>
+
+	/** Add node to network at a given position, initializing instances, parentsets,
+	 * distributions. Used for manual manipulation of the Bayesian network.
+	 *
+	 * @param sName
+	 *            name of the node. If the name already exists, an x is appended
+	 *            to the name
+	 * @param nCardinality
+	 *            number of values for this node
+	 * @param nPosX x-coordiate of the position to place this node
+	 * @param nPosY y-coordiate of the position to place this node
+	 * @throws Exception
+	 */
+	public void addNode(String sName, int nCardinality, int nPosX, int nPosY) throws Exception {
+<span class="nc bnc" id="L293" title="All 2 branches missed.">		if (getNode2(sName) &gt;= 0) {</span>
+<span class="nc" id="L294">			addNode(sName + &quot;x&quot;, nCardinality);</span>
+<span class="nc" id="L295">			return ;</span>
+		}
+		// update instances
+<span class="nc" id="L298">		FastVector values = new FastVector(nCardinality);</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">		for (int iValue = 0; iValue &lt; nCardinality; iValue++) {</span>
+<span class="nc" id="L300">			values.addElement(&quot;Value&quot; + (iValue + 1));</span>
+		}
+<span class="nc" id="L302">		Attribute att = new Attribute(sName, values);</span>
+<span class="nc" id="L303">		m_Instances.insertAttributeAt(att, m_Instances.numAttributes());</span>
+<span class="nc" id="L304">		int nAtts = m_Instances.numAttributes();</span>
+		// update parentsets
+<span class="nc" id="L306">		ParentSet[] parentSets = new ParentSet[nAtts];</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">		for (int iParentSet = 0; iParentSet &lt; nAtts - 1; iParentSet++) {</span>
+<span class="nc" id="L308">			parentSets[iParentSet] = m_ParentSets[iParentSet];</span>
+		}
+<span class="nc" id="L310">		parentSets[nAtts - 1] = new ParentSet();</span>
+<span class="nc" id="L311">		m_ParentSets = parentSets;</span>
+		// update distributions
+<span class="nc" id="L313">		Estimator[][] distributions = new Estimator[nAtts][];</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nAtts - 1; iNode++) {</span>
+<span class="nc" id="L315">			distributions[iNode] = m_Distributions[iNode];</span>
+		}
+<span class="nc" id="L317">		distributions[nAtts - 1] = new Estimator[1];</span>
+<span class="nc" id="L318">		distributions[nAtts - 1][0] = new DiscreteEstimatorBayes(nCardinality, 0.5);</span>
+<span class="nc" id="L319">		m_Distributions = distributions;</span>
+		// update positions
+<span class="nc" id="L321">		m_nPositionX.addElement(nPosX);</span>
+<span class="nc" id="L322">		m_nPositionY.addElement(nPosY);</span>
+		// update evidence &amp; margins
+<span class="nc" id="L324">		m_nEvidence.addElement(-1);</span>
+<span class="nc" id="L325">		double[] fMarginP = new double[nCardinality];</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">		for (int iValue = 0; iValue &lt; nCardinality; iValue++) {</span>
+<span class="nc" id="L327">			fMarginP[iValue] = 1.0 / nCardinality;</span>
+		}
+<span class="nc" id="L329">		m_fMarginP.addElement(fMarginP);</span>
+		// update undo stack
+<span class="nc bnc" id="L331" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L332">			addUndoAction(new AddNodeAction(sName, nCardinality, nPosX, nPosY));</span>
+		}
+<span class="nc" id="L334">	} // addNode</span>
+
+	/**
+	 * Delete node from the network, updating instances, parentsets,
+	 * distributions Conditional distributions are condensed by taking the
+	 * values for the target node to be its first value. Used for manual
+	 * manipulation of the Bayesian network.
+	 *
+	 * @param sName
+	 *            name of the node. If the name does not exists an exception is
+	 *            thrown
+	 * @throws Exception
+	 */
+	public void deleteNode(String sName) throws Exception {
+<span class="nc" id="L348">		int nTargetNode = getNode(sName);</span>
+<span class="nc" id="L349">		deleteNode(nTargetNode);</span>
+<span class="nc" id="L350">	} // deleteNode</span>
+
+	/**
+	 * Delete node from the network, updating instances, parentsets,
+	 * distributions Conditional distributions are condensed by taking the
+	 * values for the target node to be its first value. Used for manual
+	 * manipulation of the Bayesian network.
+	 *
+	 * @param nTargetNode
+	 *            index of the node to delete.
+	 * @throws Exception
+	 */
+	public void deleteNode(int nTargetNode) throws Exception {
+		// update undo stack
+<span class="nc bnc" id="L364" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L365">			addUndoAction(new DeleteNodeAction(nTargetNode));</span>
+		}
+<span class="nc" id="L367">		int nAtts = m_Instances.numAttributes() - 1;</span>
+<span class="nc" id="L368">		int nTargetCard = m_Instances.attribute(nTargetNode).numValues();</span>
+		// update distributions
+<span class="nc" id="L370">		Estimator[][] distributions = new Estimator[nAtts][];</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nAtts; iNode++) {</span>
+<span class="nc" id="L372">			int iNode2 = iNode;</span>
+<span class="nc bnc" id="L373" title="All 2 branches missed.">			if (iNode &gt;= nTargetNode) {</span>
+<span class="nc" id="L374">				iNode2++;</span>
+			}
+<span class="nc" id="L376">			Estimator[] distribution = m_Distributions[iNode2];</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">			if (m_ParentSets[iNode2].contains(nTargetNode)) {</span>
+				// condense distribution, use values for targetnode = 0
+<span class="nc" id="L379">				int nParentCard = m_ParentSets[iNode2].getCardinalityOfParents();</span>
+<span class="nc" id="L380">				nParentCard = nParentCard / nTargetCard;</span>
+<span class="nc" id="L381">				Estimator[] distribution2 = new Estimator[nParentCard];</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">				for (int iParent = 0; iParent &lt; nParentCard; iParent++) {</span>
+<span class="nc" id="L383">					distribution2[iParent] = distribution[iParent];</span>
+				}
+<span class="nc" id="L385">				distribution = distribution2;</span>
+			}
+<span class="nc" id="L387">			distributions[iNode] = distribution;</span>
+		}
+<span class="nc" id="L389">		m_Distributions = distributions;</span>
+		// update parentsets
+<span class="nc" id="L391">		ParentSet[] parentSets = new ParentSet[nAtts];</span>
+<span class="nc bnc" id="L392" title="All 2 branches missed.">		for (int iParentSet = 0; iParentSet &lt; nAtts; iParentSet++) {</span>
+<span class="nc" id="L393">			int iParentSet2 = iParentSet;</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">			if (iParentSet &gt;= nTargetNode) {</span>
+<span class="nc" id="L395">				iParentSet2++;</span>
+			}
+<span class="nc" id="L397">			ParentSet parentset = m_ParentSets[iParentSet2];</span>
+<span class="nc" id="L398">			parentset.deleteParent(nTargetNode, m_Instances);</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">			for (int iParent = 0; iParent &lt; parentset.getNrOfParents(); iParent++) {</span>
+<span class="nc" id="L400">				int nParent = parentset.getParent(iParent);</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">				if (nParent &gt; nTargetNode) {</span>
+<span class="nc" id="L402">					parentset.SetParent(iParent, nParent - 1);</span>
+				}
+			}
+<span class="nc" id="L405">			parentSets[iParentSet] = parentset;</span>
+		}
+<span class="nc" id="L407">		m_ParentSets = parentSets;</span>
+		// update instances
+<span class="nc" id="L409">		m_Instances.setClassIndex(-1);</span>
+<span class="nc" id="L410">		m_Instances.deleteAttributeAt(nTargetNode);</span>
+<span class="nc" id="L411">		m_Instances.setClassIndex(nAtts - 1);</span>
+
+		// update positions
+<span class="nc" id="L414">		m_nPositionX.removeElementAt(nTargetNode);</span>
+<span class="nc" id="L415">		m_nPositionY.removeElementAt(nTargetNode);</span>
+		// update evidence &amp; margins
+<span class="nc" id="L417">		m_nEvidence.removeElementAt(nTargetNode);</span>
+<span class="nc" id="L418">		m_fMarginP.removeElementAt(nTargetNode);</span>
+<span class="nc" id="L419">	} // deleteNode</span>
+
+	/**
+	 * Delete nodes with indexes in selection from the network, updating instances, parentsets,
+	 * distributions Conditional distributions are condensed by taking the
+	 * values for the target node to be its first value. Used for manual
+	 * manipulation of the Bayesian network.
+	 *
+	 * @param nodes
+	 *            array of indexes of nodes to delete.
+	 * @throws Exception
+	 */
+	public void deleteSelection(FastVector nodes) {
+		// sort before proceeding
+<span class="nc bnc" id="L433" title="All 2 branches missed.">		for (int i = 0; i &lt; nodes.size(); i++) {</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">			for (int j = i + 1; j &lt; nodes.size(); j++) {</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">				if ((Integer) nodes.elementAt(i) &gt; (Integer) nodes.elementAt(j)) {</span>
+<span class="nc" id="L436">					int h = (Integer) nodes.elementAt(i);</span>
+<span class="nc" id="L437">					nodes.setElementAt(nodes.elementAt(j), i);</span>
+<span class="nc" id="L438">					nodes.setElementAt(h, j);</span>
+				}
+			}
+		}
+		// update undo stack
+<span class="nc bnc" id="L443" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L444">			addUndoAction(new DeleteSelectionAction(nodes));</span>
+		}
+<span class="nc" id="L446">		boolean bNeedsUndoAction = m_bNeedsUndoAction;</span>
+<span class="nc" id="L447">		m_bNeedsUndoAction = false;</span>
+		try {
+<span class="nc bnc" id="L449" title="All 2 branches missed.">			for (int iNode = nodes.size() - 1; iNode &gt;= 0; iNode--) {</span>
+<span class="nc" id="L450">				deleteNode((Integer) nodes.elementAt(iNode));</span>
+			}
+<span class="nc" id="L452">		} catch (Exception e) {</span>
+<span class="nc" id="L453">			e.printStackTrace();</span>
+		}
+<span class="nc" id="L455">		m_bNeedsUndoAction = bNeedsUndoAction;</span>
+<span class="nc" id="L456">	} // deleteSelection</span>
+
+	/** XML helper function for selecting elements under a node with a given name
+	 * @param item XMLNode to select items from
+	 * @param sElement name of the element to return
+	 */
+	FastVector selectElements(Node item, String sElement) throws Exception {
+<span class="nc" id="L463">		NodeList children = item.getChildNodes();</span>
+<span class="nc" id="L464">		FastVector nodelist = new FastVector();</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; children.getLength(); iNode++) {</span>
+<span class="nc" id="L466">			Node node = children.item(iNode);</span>
+<span class="nc bnc" id="L467" title="All 4 branches missed.">			if ((node.getNodeType() == Node.ELEMENT_NODE) &amp;&amp; node.getNodeName().equals(sElement)) {</span>
+<span class="nc" id="L468">				nodelist.addElement(node);</span>
+			}
+		}
+<span class="nc" id="L471">		return nodelist;</span>
+	} // selectElements
+
+	/**
+	 * XML helper function. Returns all TEXT children of the given node in one string. Between the
+	 * node values new lines are inserted.
+	 *
+	 * @param node
+	 *            the node to return the content for
+	 * @return the content of the node
+	 */
+	public String getContent(Element node) {
+		NodeList list;
+		Node item;
+		int i;
+		String result;
+
+<span class="nc" id="L488">		result = &quot;&quot;;</span>
+<span class="nc" id="L489">		list = node.getChildNodes();</span>
+
+<span class="nc bnc" id="L491" title="All 2 branches missed.">		for (i = 0; i &lt; list.getLength(); i++) {</span>
+<span class="nc" id="L492">			item = list.item(i);</span>
+<span class="nc bnc" id="L493" title="All 2 branches missed.">			if (item.getNodeType() == Node.TEXT_NODE)</span>
+<span class="nc" id="L494">				result += &quot;\n&quot; + item.getNodeValue();</span>
+		}
+
+<span class="nc" id="L497">		return result;</span>
+	}
+
+	/** XML helper function that returns DEFINITION element from a XMLBIF document
+	 * for a node with a given name.
+	 * @param doc XMLBIF document
+	 * @param sName name of the node to get the definition for
+	 */
+	Element getDefinition(Document doc, String sName) throws Exception {
+<span class="nc" id="L506">		NodeList nodelist = doc.getElementsByTagName(&quot;DEFINITION&quot;);</span>
+<span class="nc bnc" id="L507" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodelist.getLength(); iNode++) {</span>
+<span class="nc" id="L508">			Node node = nodelist.item(iNode);</span>
+<span class="nc" id="L509">			FastVector list = selectElements(node, &quot;FOR&quot;);</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">			if (list.size() &gt; 0) {</span>
+<span class="nc" id="L511">				Node forNode = (Node) list.elementAt(0);</span>
+<span class="nc bnc" id="L512" title="All 2 branches missed.">				if (getContent((Element) forNode).trim().equals(sName)) {</span>
+<span class="nc" id="L513">					return (Element) node;</span>
+				}
+			}
+		}
+<span class="nc" id="L517">		throw new Exception(&quot;Could not find definition for ((&quot; + sName + &quot;))&quot;);</span>
+	} // getDefinition
+
+
+	/** Paste modes. This allows for verifying that a past action does not cause
+	 * any problems before actually performing the paste operation.
+	 */
+	final static int TEST = 0;
+	final static int EXECUTE = 1;
+
+	/** Apply paste operation with XMLBIF fragment. This adds nodes in the XMLBIF fragment
+	 * to the network, together with its parents. First, paste in test mode to verify
+	 * no problems occur, then execute paste operation. If a problem occurs (e.g. parent
+	 * does not exist) then a exception is thrown.
+	 * @param sXML XMLBIF fragment to paste into the network
+	 */
+	public void paste(String sXML) throws Exception {
+		try {
+<span class="nc" id="L535">			paste(sXML, TEST);</span>
+<span class="nc" id="L536">		} catch (Exception e) {</span>
+<span class="nc" id="L537">			throw e;</span>
+		}
+<span class="nc" id="L539">		paste(sXML, EXECUTE);</span>
+<span class="nc" id="L540">	} // paste</span>
+
+	/** Apply paste operation with XMLBIF fragment. Depending on the paste mode, the
+	 * nodes are actually added to the network or it is just tested that the nodes can
+	 * be added to the network.
+	 * @param sXML XMLBIF fragment to paste into the network
+	 * @param mode paste mode TEST or EXECUTE
+	 */
+	void paste(String sXML, int mode) throws Exception {
+<span class="nc" id="L549">		DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();</span>
+<span class="nc" id="L550">		factory.setValidating(true);</span>
+<span class="nc" id="L551">		Document doc = factory.newDocumentBuilder().parse(new org.xml.sax.InputSource(new StringReader(sXML)));</span>
+<span class="nc" id="L552">		doc.normalize();</span>
+
+		// create nodes first
+<span class="nc" id="L555">		NodeList nodelist = doc.getElementsByTagName(&quot;VARIABLE&quot;);</span>
+<span class="nc" id="L556">		FastVector sBaseNames = new FastVector();</span>
+<span class="nc" id="L557">		Instances instances = new Instances(m_Instances, 0);</span>
+<span class="nc" id="L558">		int nBase = instances.numAttributes();</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodelist.getLength(); iNode++) {</span>
+			// Get element
+			FastVector valueslist;
+			// Get the name of the node
+<span class="nc" id="L563">			valueslist = selectElements(nodelist.item(iNode), &quot;OUTCOME&quot;);</span>
+
+<span class="nc" id="L565">			int nValues = valueslist.size();</span>
+			// generate value strings
+<span class="nc" id="L567">			FastVector nomStrings = new FastVector(nValues + 1);</span>
+<span class="nc bnc" id="L568" title="All 2 branches missed.">			for (int iValue = 0; iValue &lt; nValues; iValue++) {</span>
+<span class="nc" id="L569">				Node node = ((Node) valueslist.elementAt(iValue)).getFirstChild();</span>
+<span class="nc" id="L570">				String sValue = ((CharacterData) (node)).getData();</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">				if (sValue == null) {</span>
+<span class="nc" id="L572">					sValue = &quot;Value&quot; + (iValue + 1);</span>
+				}
+<span class="nc" id="L574">				nomStrings.addElement(sValue);</span>
+			}
+			FastVector nodelist2;
+			// Get the name of the network
+<span class="nc" id="L578">			nodelist2 = selectElements(nodelist.item(iNode), &quot;NAME&quot;);</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">			if (nodelist2.size() == 0) {</span>
+<span class="nc" id="L580">				throw new Exception(&quot;No name specified for variable&quot;);</span>
+			}
+<span class="nc" id="L582">			String sBaseName = ((CharacterData) (((Node) nodelist2.elementAt(0)).getFirstChild())).getData();</span>
+<span class="nc" id="L583">			sBaseNames.addElement(sBaseName);</span>
+<span class="nc" id="L584">			String sNodeName = sBaseName;</span>
+<span class="nc bnc" id="L585" title="All 2 branches missed.">			if (getNode2(sNodeName) &gt;= 0) {</span>
+<span class="nc" id="L586">				sNodeName = &quot;Copy of &quot; + sBaseName;</span>
+			}
+<span class="nc" id="L588">			int iAttempt = 2;</span>
+<span class="nc bnc" id="L589" title="All 2 branches missed.">			while (getNode2(sNodeName) &gt;= 0) {</span>
+<span class="nc" id="L590">				sNodeName = &quot;Copy (&quot; + iAttempt + &quot;) of &quot; + sBaseName;</span>
+<span class="nc" id="L591">				iAttempt++;</span>
+			}
+
+<span class="nc" id="L594">			Attribute att = new Attribute(sNodeName, nomStrings);</span>
+<span class="nc" id="L595">			instances.insertAttributeAt(att, instances.numAttributes());</span>
+
+<span class="nc" id="L597">			valueslist = selectElements(nodelist.item(iNode), &quot;PROPERTY&quot;);</span>
+<span class="nc" id="L598">			nValues = valueslist.size();</span>
+			// generate value strings
+<span class="nc" id="L600">			int nPosX = iAttempt * 10;</span>
+<span class="nc" id="L601">			int nPosY = iAttempt * 10;</span>
+<span class="nc bnc" id="L602" title="All 2 branches missed.">			for (int iValue = 0; iValue &lt; nValues; iValue++) {</span>
+				// parsing for strings of the form &quot;position = (73, 165)&quot;
+<span class="nc" id="L604">				Node node = ((Node) valueslist.elementAt(iValue)).getFirstChild();</span>
+<span class="nc" id="L605">				String sValue = ((CharacterData) (node)).getData();</span>
+<span class="nc bnc" id="L606" title="All 2 branches missed.">				if (sValue.startsWith(&quot;position&quot;)) {</span>
+<span class="nc" id="L607">					int i0 = sValue.indexOf('(');</span>
+<span class="nc" id="L608">					int i1 = sValue.indexOf(',');</span>
+<span class="nc" id="L609">					int i2 = sValue.indexOf(')');</span>
+<span class="nc" id="L610">					String sX = sValue.substring(i0 + 1, i1).trim();</span>
+<span class="nc" id="L611">					String sY = sValue.substring(i1 + 1, i2).trim();</span>
+					try {
+<span class="nc" id="L613">						nPosX = (Integer.parseInt(sX) + iAttempt * 10);</span>
+<span class="nc" id="L614">						nPosY = (Integer.parseInt(sY) + iAttempt * 10);</span>
+<span class="nc" id="L615">					} catch (NumberFormatException e) {</span>
+<span class="nc" id="L616">						System.err.println(&quot;Wrong number format in position :(&quot; + sX + &quot;,&quot; + sY + &quot;)&quot;);</span>
+					}
+				}
+			}
+<span class="nc bnc" id="L620" title="All 2 branches missed.">			if (mode == EXECUTE) {</span>
+<span class="nc" id="L621">				m_nPositionX.addElement(nPosX);</span>
+<span class="nc" id="L622">				m_nPositionY.addElement(nPosY);</span>
+			}
+
+		}
+
+		FastVector nodelist2;
+<span class="nc" id="L628">		Estimator[][] distributions = new Estimator[nBase + sBaseNames.size()][];</span>
+<span class="nc" id="L629">		ParentSet[] parentsets = new ParentSet[nBase + sBaseNames.size()];</span>
+<span class="nc bnc" id="L630" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nBase; iNode++) {</span>
+<span class="nc" id="L631">			distributions[iNode] = m_Distributions[iNode];</span>
+<span class="nc" id="L632">			parentsets[iNode] = m_ParentSets[iNode];</span>
+		}
+<span class="nc bnc" id="L634" title="All 2 branches missed.">		if (mode == EXECUTE) {</span>
+<span class="nc" id="L635">			m_Instances = instances;</span>
+		}
+		// create arrows &amp; create distributions
+<span class="nc bnc" id="L638" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; sBaseNames.size(); iNode++) {</span>
+			// find definition that goes with this node
+<span class="nc" id="L640">			String sName = (String) sBaseNames.elementAt(iNode);</span>
+<span class="nc" id="L641">			Element definition = getDefinition(doc, sName);</span>
+<span class="nc" id="L642">			parentsets[nBase + iNode] = new ParentSet();</span>
+
+			// get the parents for this node
+			// resolve structure
+<span class="nc" id="L646">			nodelist2 = selectElements(definition, &quot;GIVEN&quot;);</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">			for (int iParent = 0; iParent &lt; nodelist2.size(); iParent++) {</span>
+<span class="nc" id="L648">				Node parentName = ((Node) nodelist2.elementAt(iParent)).getFirstChild();</span>
+<span class="nc" id="L649">				String sParentName = ((CharacterData) (parentName)).getData();</span>
+<span class="nc" id="L650">				int nParent = -1;</span>
+<span class="nc bnc" id="L651" title="All 2 branches missed.">				for (int iBase = 0; iBase &lt; sBaseNames.size(); iBase++) {</span>
+<span class="nc bnc" id="L652" title="All 2 branches missed.">					if (sParentName.equals((String) sBaseNames.elementAt(iBase))) {</span>
+<span class="nc" id="L653">						nParent = nBase + iBase;</span>
+					}
+				}
+<span class="nc bnc" id="L656" title="All 2 branches missed.">				if (nParent &lt; 0) {</span>
+<span class="nc" id="L657">					nParent = getNode(sParentName);</span>
+				}
+<span class="nc" id="L659">				parentsets[nBase + iNode].addParent(nParent, instances);</span>
+			}
+			// resolve conditional probability table
+<span class="nc" id="L662">			int nCardinality = parentsets[nBase + iNode].getCardinalityOfParents();</span>
+<span class="nc" id="L663">			int nValues = instances.attribute(nBase + iNode).numValues();</span>
+<span class="nc" id="L664">			distributions[nBase + iNode] = new Estimator[nCardinality];</span>
+<span class="nc bnc" id="L665" title="All 2 branches missed.">			for (int i = 0; i &lt; nCardinality; i++) {</span>
+<span class="nc" id="L666">				distributions[nBase + iNode][i] = new DiscreteEstimatorBayes(nValues, 0.0f);</span>
+			}
+
+<span class="nc" id="L669">			String sTable = getContent((Element) selectElements(definition, &quot;TABLE&quot;).elementAt(0));</span>
+<span class="nc" id="L670">			sTable = sTable.replaceAll(&quot;\\n&quot;, &quot; &quot;);</span>
+<span class="nc" id="L671">			StringTokenizer st = new StringTokenizer(sTable.toString());</span>
+
+<span class="nc bnc" id="L673" title="All 2 branches missed.">			for (int i = 0; i &lt; nCardinality; i++) {</span>
+<span class="nc" id="L674">				DiscreteEstimatorBayes d = (DiscreteEstimatorBayes) distributions[nBase + iNode][i];</span>
+<span class="nc bnc" id="L675" title="All 2 branches missed.">				for (int iValue = 0; iValue &lt; nValues; iValue++) {</span>
+<span class="nc" id="L676">					String sWeight = st.nextToken();</span>
+<span class="nc" id="L677">					d.addValue(iValue, new Double(sWeight).doubleValue());</span>
+				}
+			}
+<span class="nc bnc" id="L680" title="All 2 branches missed.">			if (mode == EXECUTE) {</span>
+<span class="nc" id="L681">				m_nEvidence.insertElementAt(-1, nBase + iNode);</span>
+<span class="nc" id="L682">				m_fMarginP.insertElementAt(new double[getCardinality(nBase + iNode)], nBase + iNode);</span>
+			}
+		}
+<span class="nc bnc" id="L685" title="All 2 branches missed.">		if (mode == EXECUTE) {</span>
+<span class="nc" id="L686">			m_Distributions = distributions;</span>
+<span class="nc" id="L687">			m_ParentSets = parentsets;</span>
+		}
+		// update undo stack
+<span class="nc bnc" id="L690" title="All 4 branches missed.">		if (mode == EXECUTE &amp;&amp; m_bNeedsUndoAction) {</span>
+<span class="nc" id="L691">			addUndoAction(new PasteAction(sXML, nBase));</span>
+		}
+<span class="nc" id="L693">	} // paste</span>
+
+	/**
+	 * Add arc between two nodes Distributions are updated by duplication for
+	 * every value of the parent node.
+	 *
+	 * @param sParent
+	 *            name of the parent node
+	 * @param sChild
+	 *            name of the child node
+	 * @throws Exception
+	 *             if parent or child cannot be found in network
+	 */
+	public void addArc(String sParent, String sChild) throws Exception {
+<span class="nc" id="L707">		int nParent = getNode(sParent);</span>
+<span class="nc" id="L708">		int nChild = getNode(sChild);</span>
+<span class="nc" id="L709">		addArc(nParent, nChild);</span>
+<span class="nc" id="L710">	} // addArc</span>
+
+	/**
+	 * Add arc between two nodes Distributions are updated by duplication for
+	 * every value of the parent node.
+	 *
+	 * @param nParent
+	 *            index of the parent node
+	 * @param nChild
+	 *            index of the child node
+	 * @throws Exception
+	 */
+	public void addArc(int nParent, int nChild) throws Exception {
+		// update undo stack
+<span class="nc bnc" id="L724" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L725">			addUndoAction(new AddArcAction(nParent, nChild));</span>
+		}
+<span class="nc" id="L727">		int nOldCard = m_ParentSets[nChild].getCardinalityOfParents();</span>
+		// update parentsets
+<span class="nc" id="L729">		m_ParentSets[nChild].addParent(nParent, m_Instances);</span>
+		// update distributions
+<span class="nc" id="L731">		int nNewCard = m_ParentSets[nChild].getCardinalityOfParents();</span>
+<span class="nc" id="L732">		Estimator[] ds = new Estimator[nNewCard];</span>
+<span class="nc bnc" id="L733" title="All 2 branches missed.">		for (int iParent = 0; iParent &lt; nNewCard; iParent++) {</span>
+<span class="nc" id="L734">			ds[iParent] = Estimator.clone(m_Distributions[nChild][iParent % nOldCard]);</span>
+		}
+<span class="nc" id="L736">		m_Distributions[nChild] = ds;</span>
+<span class="nc" id="L737">	} // addArc</span>
+
+	/**
+	 * Add arc between parent node and each of the nodes in a given list.
+	 * Distributions are updated as above.
+	 *
+	 * @param sParent
+	 *            name of the parent node
+	 * @param nodes
+	 *            array of indexes of child nodes
+	 * @throws Exception
+	 */
+	public void addArc(String sParent, FastVector nodes) throws Exception {
+<span class="nc" id="L750">		int nParent = getNode(sParent);</span>
+		// update undo stack
+<span class="nc bnc" id="L752" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L753">			addUndoAction(new AddArcAction(nParent, nodes));</span>
+		}
+<span class="nc" id="L755">		boolean bNeedsUndoAction = m_bNeedsUndoAction;</span>
+<span class="nc" id="L756">		m_bNeedsUndoAction = false;</span>
+<span class="nc bnc" id="L757" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L758">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L759">			addArc(nParent, nNode);</span>
+		}
+<span class="nc" id="L761">		m_bNeedsUndoAction = bNeedsUndoAction;</span>
+<span class="nc" id="L762">	} // addArc</span>
+
+	/**
+	 * Delete arc between two nodes. Distributions are updated by condensing for
+	 * the parent node taking its first value.
+	 *
+	 * @param sParent
+	 *            name of the parent node
+	 * @param sChild
+	 *            name of the child node
+	 * @throws Exception
+	 *             if parent or child cannot be found in network
+	 */
+	public void deleteArc(String sParent, String sChild) throws Exception {
+<span class="nc" id="L776">		int nParent = getNode(sParent);</span>
+<span class="nc" id="L777">		int nChild = getNode(sChild);</span>
+<span class="nc" id="L778">		deleteArc(nParent, nChild);</span>
+<span class="nc" id="L779">	} // deleteArc</span>
+
+	/**
+	 * Delete arc between two nodes. Distributions are updated by condensing for
+	 * the parent node taking its first value.
+	 *
+	 * @param nParent
+	 *            index of the parent node
+	 * @param nChild
+	 *            index of the child node
+	 * @throws Exception
+	 */
+	public void deleteArc(int nParent, int nChild) throws Exception {
+		// update undo stack
+<span class="nc bnc" id="L793" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L794">			addUndoAction(new DeleteArcAction(nParent, nChild));</span>
+		}
+		// update distributions
+		// condense distribution, use values for targetnode = 0
+<span class="nc" id="L798">		int nParentCard = m_ParentSets[nChild].getCardinalityOfParents();</span>
+<span class="nc" id="L799">		int nTargetCard = m_Instances.attribute(nChild).numValues();</span>
+<span class="nc" id="L800">		nParentCard = nParentCard / nTargetCard;</span>
+<span class="nc" id="L801">		Estimator[] distribution2 = new Estimator[nParentCard];</span>
+<span class="nc bnc" id="L802" title="All 2 branches missed.">		for (int iParent = 0; iParent &lt; nParentCard; iParent++) {</span>
+<span class="nc" id="L803">			distribution2[iParent] = m_Distributions[nChild][iParent];</span>
+		}
+<span class="nc" id="L805">		m_Distributions[nChild] = distribution2;</span>
+		// update parentsets
+<span class="nc" id="L807">		m_ParentSets[nChild].deleteParent(nParent, m_Instances);</span>
+<span class="nc" id="L808">	} // deleteArc</span>
+
+
+	/** specify distribution of a node
+	 * @param sName name of the node to specify distribution for
+	 * @param P matrix representing distribution with P[i][j] = P(node = j | parent configuration = i)
+	 * @throws Exception
+	 *             if parent or child cannot be found in network
+	 */
+	public void setDistribution(String sName, double[][] P) throws Exception {
+<span class="nc" id="L818">		int nTargetNode = getNode(sName);</span>
+<span class="nc" id="L819">		setDistribution(nTargetNode, P);</span>
+<span class="nc" id="L820">	} // setDistribution</span>
+
+	/** specify distribution of a node
+	 * @param nTargetNode index of the node to specify distribution for
+	 * @param P matrix representing distribution with P[i][j] = P(node = j | parent configuration = i)
+	 * @throws Exception
+	 *             if parent or child cannot be found in network
+	 */
+	public void setDistribution(int nTargetNode, double[][] P) throws Exception {
+		// update undo stack
+<span class="nc bnc" id="L830" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L831">			addUndoAction(new SetDistributionAction(nTargetNode, P));</span>
+		}
+<span class="nc" id="L833">		Estimator[] distributions = m_Distributions[nTargetNode];</span>
+<span class="nc bnc" id="L834" title="All 2 branches missed.">		for (int iParent = 0; iParent &lt; distributions.length; iParent++) {</span>
+<span class="nc" id="L835">			DiscreteEstimatorBayes distribution = new DiscreteEstimatorBayes(P[0].length, 0);</span>
+<span class="nc bnc" id="L836" title="All 2 branches missed.">			for (int iValue = 0; iValue &lt; distribution.getNumSymbols(); iValue++) {</span>
+<span class="nc" id="L837">				distribution.addValue(iValue, P[iParent][iValue]);</span>
+			}
+<span class="nc" id="L839">			distributions[iParent] = distribution;</span>
+		}
+		// m_Distributions[nTargetNode] = distributions;
+<span class="nc" id="L842">	} // setDistribution</span>
+
+	/** returns distribution of a node in matrix form with matrix representing distribution
+	 * with P[i][j] = P(node = j | parent configuration = i)
+	 * @param sName name of the node to get distribution from
+	 */
+	public double[][] getDistribution(String sName) {
+<span class="nc" id="L849">		int nTargetNode = getNode2(sName);</span>
+<span class="nc" id="L850">		return getDistribution(nTargetNode);</span>
+	} // getDistribution
+
+	/** returns distribution of a node in matrix form with matrix representing distribution
+	 * with P[i][j] = P(node = j | parent configuration = i)
+	 * @param nTargetNode index of the node to get distribution from
+	 */
+	public double[][] getDistribution(int nTargetNode) {
+<span class="nc" id="L858">		int nParentCard = m_ParentSets[nTargetNode].getCardinalityOfParents();</span>
+<span class="nc" id="L859">		int nCard = m_Instances.attribute(nTargetNode).numValues();</span>
+<span class="nc" id="L860">		double[][] P = new double[nParentCard][nCard];</span>
+<span class="nc bnc" id="L861" title="All 2 branches missed.">		for (int iParent = 0; iParent &lt; nParentCard; iParent++) {</span>
+<span class="nc bnc" id="L862" title="All 2 branches missed.">			for (int iValue = 0; iValue &lt; nCard; iValue++) {</span>
+<span class="nc" id="L863">				P[iParent][iValue] = m_Distributions[nTargetNode][iParent].getProbability(iValue);</span>
+			}
+		}
+<span class="nc" id="L866">		return P;</span>
+	} // getDistribution
+
+	/** returns array of values of a node
+	 * @param sName name of the node to get values from
+	 */
+	public String[] getValues(String sName) {
+<span class="nc" id="L873">		int nTargetNode = getNode2(sName);</span>
+<span class="nc" id="L874">		return getValues(nTargetNode);</span>
+	} // getValues
+
+	/** returns array of values of a node
+	 * @param nTargetNode index of the node to get values from
+	 */
+	public String[] getValues(int nTargetNode) {
+<span class="nc" id="L881">		String[] values = new String[getCardinality(nTargetNode)];</span>
+<span class="nc bnc" id="L882" title="All 2 branches missed.">		for (int iValue = 0; iValue &lt; values.length; iValue++) {</span>
+<span class="nc" id="L883">			values[iValue] = m_Instances.attribute(nTargetNode).value(iValue);</span>
+		}
+<span class="nc" id="L885">		return values;</span>
+	} // getValues
+
+	/** returns value of a node
+	 * @param nTargetNode index of the node to get values from
+	 * @param iValue index of the value
+	 */
+	public String getValueName(int nTargetNode, int iValue) {
+<span class="nc" id="L893">		return m_Instances.attribute(nTargetNode).value(iValue);</span>
+	} // getNodeValue
+
+	/** change the name of a node
+	 * @param nTargetNode index of the node to set name for
+	 * @param sName new name to assign
+	 */
+	public void setNodeName(int nTargetNode, String sName) {
+		// update undo stack
+<span class="nc bnc" id="L902" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L903">			addUndoAction(new RenameAction(nTargetNode, getNodeName(nTargetNode), sName));</span>
+		}
+<span class="nc" id="L905">		Attribute att = m_Instances.attribute(nTargetNode);</span>
+<span class="nc" id="L906">		int nCardinality = att.numValues();</span>
+<span class="nc" id="L907">		FastVector values = new FastVector(nCardinality);</span>
+<span class="nc bnc" id="L908" title="All 2 branches missed.">		for (int iValue = 0; iValue &lt; nCardinality; iValue++) {</span>
+<span class="nc" id="L909">			values.addElement(att.value(iValue));</span>
+		}
+<span class="nc" id="L911">		replaceAtt(nTargetNode, sName, values);</span>
+<span class="nc" id="L912">	} // setNodeName</span>
+
+	/** change the name of a value of a node
+	 * @param nTargetNode index of the node to set name for
+	 * @param sValue current name of the value
+	 * @param sNewValue new name of the value
+	 */
+	public void renameNodeValue(int nTargetNode, String sValue, String sNewValue) {
+		// update undo stack
+<span class="nc bnc" id="L921" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L922">			addUndoAction(new RenameValueAction(nTargetNode, sValue, sNewValue));</span>
+		}
+<span class="nc" id="L924">		Attribute att = m_Instances.attribute(nTargetNode);</span>
+<span class="nc" id="L925">		int nCardinality = att.numValues();</span>
+<span class="nc" id="L926">		FastVector values = new FastVector(nCardinality);</span>
+<span class="nc bnc" id="L927" title="All 2 branches missed.">		for (int iValue = 0; iValue &lt; nCardinality; iValue++) {</span>
+<span class="nc bnc" id="L928" title="All 2 branches missed.">			if (att.value(iValue).equals(sValue)) {</span>
+<span class="nc" id="L929">				values.addElement(sNewValue);</span>
+			} else {
+<span class="nc" id="L931">				values.addElement(att.value(iValue));</span>
+			}
+		}
+<span class="nc" id="L934">		replaceAtt(nTargetNode, att.name(), values);</span>
+<span class="nc" id="L935">	} // renameNodeValue</span>
+
+
+	/** Add node value to a node. Distributions for the node assign zero probability
+	 * to the new value. Child nodes duplicate CPT conditioned on the new value.
+	 * @param nTargetNode index of the node to add value for
+	 * @param sNewValue name of the value
+	 */
+	public void addNodeValue(int nTargetNode, String sNewValue) {
+		// update undo stack
+<span class="nc bnc" id="L945" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L946">			addUndoAction(new AddValueAction(nTargetNode, sNewValue));</span>
+		}
+<span class="nc" id="L948">		Attribute att = m_Instances.attribute(nTargetNode);</span>
+<span class="nc" id="L949">		int nCardinality = att.numValues();</span>
+<span class="nc" id="L950">		FastVector values = new FastVector(nCardinality);</span>
+<span class="nc bnc" id="L951" title="All 2 branches missed.">		for (int iValue = 0; iValue &lt; nCardinality; iValue++) {</span>
+<span class="nc" id="L952">			values.addElement(att.value(iValue));</span>
+		}
+<span class="nc" id="L954">		values.addElement(sNewValue);</span>
+<span class="nc" id="L955">		replaceAtt(nTargetNode, att.name(), values);</span>
+
+		// update distributions of this node
+<span class="nc" id="L958">		Estimator[] distributions = m_Distributions[nTargetNode];</span>
+<span class="nc" id="L959">		int nNewCard = values.size();</span>
+<span class="nc bnc" id="L960" title="All 2 branches missed.">		for (int iParent = 0; iParent &lt; distributions.length; iParent++) {</span>
+<span class="nc" id="L961">			DiscreteEstimatorBayes distribution = new DiscreteEstimatorBayes(nNewCard, 0);</span>
+<span class="nc bnc" id="L962" title="All 2 branches missed.">			for (int iValue = 0; iValue &lt; nNewCard - 1; iValue++) {</span>
+<span class="nc" id="L963">				distribution.addValue(iValue, distributions[iParent].getProbability(iValue));</span>
+			}
+<span class="nc" id="L965">			distributions[iParent] = distribution;</span>
+		}
+
+		// update distributions of all children
+<span class="nc bnc" id="L969" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; getNrOfNodes(); iNode++) {</span>
+<span class="nc bnc" id="L970" title="All 2 branches missed.">			if (m_ParentSets[iNode].contains(nTargetNode)) {</span>
+<span class="nc" id="L971">				distributions = m_Distributions[iNode];</span>
+<span class="nc" id="L972">				ParentSet parentSet = m_ParentSets[iNode];</span>
+<span class="nc" id="L973">				int nParentCard = parentSet.getFreshCardinalityOfParents(m_Instances);</span>
+<span class="nc" id="L974">				Estimator[] newDistributions = new Estimator[nParentCard];</span>
+<span class="nc" id="L975">				int nCard = getCardinality(iNode);</span>
+<span class="nc" id="L976">				int nParents = parentSet.getNrOfParents();</span>
+<span class="nc" id="L977">				int[] values2 = new int[nParents];</span>
+<span class="nc" id="L978">				int iOldPos = 0;</span>
+<span class="nc" id="L979">				int iTargetNode = 0;</span>
+<span class="nc bnc" id="L980" title="All 2 branches missed.">				while (parentSet.getParent(iTargetNode) != nTargetNode) {</span>
+<span class="nc" id="L981">					iTargetNode++;</span>
+				}
+<span class="nc bnc" id="L983" title="All 2 branches missed.">				for (int iPos = 0; iPos &lt; nParentCard; iPos++) {</span>
+<span class="nc" id="L984">					DiscreteEstimatorBayes distribution = new DiscreteEstimatorBayes(nCard, 0);</span>
+<span class="nc bnc" id="L985" title="All 2 branches missed.">					for (int iValue = 0; iValue &lt; nCard; iValue++) {</span>
+<span class="nc" id="L986">						distribution.addValue(iValue, distributions[iOldPos].getProbability(iValue));</span>
+					}
+<span class="nc" id="L988">					newDistributions[iPos] = distribution;</span>
+					// update values
+<span class="nc" id="L990">					int i = 0;</span>
+<span class="nc" id="L991">					values2[i]++;</span>
+<span class="nc bnc" id="L992" title="All 4 branches missed.">					while (i &lt; nParents &amp;&amp; values2[i] == getCardinality(parentSet.getParent(i))) {</span>
+<span class="nc" id="L993">						values2[i] = 0;</span>
+<span class="nc" id="L994">						i++;</span>
+<span class="nc bnc" id="L995" title="All 2 branches missed.">						if (i &lt; nParents) {</span>
+<span class="nc" id="L996">							values2[i]++;</span>
+						}
+					}
+<span class="nc bnc" id="L999" title="All 2 branches missed.">					if (values2[iTargetNode] != nNewCard - 1) {</span>
+<span class="nc" id="L1000">						iOldPos++;</span>
+					}
+				}
+<span class="nc" id="L1003">				m_Distributions[iNode] = newDistributions;</span>
+			}
+		}
+<span class="nc" id="L1006">	} // addNodeValue</span>
+
+
+	/** Delete node value from a node. Distributions for the node are scaled
+	 * up proportional to existing distribution
+	 * (or made uniform if zero probability is assigned to remainder of values).
+	.* Child nodes delete CPTs conditioned on the new value.
+	 * @param nTargetNode index of the node to delete value from
+	 * @param sValue name of the value to delete
+	 */
+	public void delNodeValue(int nTargetNode, String sValue) throws Exception {
+		// update undo stack
+<span class="nc bnc" id="L1018" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1019">			addUndoAction(new DelValueAction(nTargetNode, sValue));</span>
+		}
+<span class="nc" id="L1021">		Attribute att = m_Instances.attribute(nTargetNode);</span>
+<span class="nc" id="L1022">		int nCardinality = att.numValues();</span>
+<span class="nc" id="L1023">		FastVector values = new FastVector(nCardinality);</span>
+<span class="nc" id="L1024">		int nValue = -1;</span>
+<span class="nc bnc" id="L1025" title="All 2 branches missed.">		for (int iValue = 0; iValue &lt; nCardinality; iValue++) {</span>
+<span class="nc bnc" id="L1026" title="All 2 branches missed.">			if (att.value(iValue).equals(sValue)) {</span>
+<span class="nc" id="L1027">				nValue = iValue;</span>
+			} else {
+<span class="nc" id="L1029">				values.addElement(att.value(iValue));</span>
+			}
+		}
+<span class="nc bnc" id="L1032" title="All 2 branches missed.">		if (nValue &lt; 0) {</span>
+			// could not find value
+<span class="nc" id="L1034">			throw new Exception(&quot;Node &quot; + nTargetNode + &quot; does not have value (&quot; + sValue + &quot;)&quot;);</span>
+		}
+<span class="nc" id="L1036">		replaceAtt(nTargetNode, att.name(), values);</span>
+
+		// update distributions
+<span class="nc" id="L1039">		Estimator[] distributions = m_Distributions[nTargetNode];</span>
+<span class="nc" id="L1040">		int nCard = values.size();</span>
+<span class="nc bnc" id="L1041" title="All 2 branches missed.">		for (int iParent = 0; iParent &lt; distributions.length; iParent++) {</span>
+<span class="nc" id="L1042">			DiscreteEstimatorBayes distribution = new DiscreteEstimatorBayes(nCard, 0);</span>
+<span class="nc" id="L1043">			double sum = 0;</span>
+<span class="nc bnc" id="L1044" title="All 2 branches missed.">			for (int iValue = 0; iValue &lt; nCard; iValue++) {</span>
+<span class="nc" id="L1045">				sum += distributions[iParent].getProbability(iValue);</span>
+			}
+<span class="nc bnc" id="L1047" title="All 2 branches missed.">			if (sum &gt; 0) {</span>
+<span class="nc bnc" id="L1048" title="All 2 branches missed.">				for (int iValue = 0; iValue &lt; nCard; iValue++) {</span>
+<span class="nc" id="L1049">					distribution.addValue(iValue, distributions[iParent].getProbability(iValue) / sum);</span>
+				}
+			} else {
+<span class="nc bnc" id="L1052" title="All 2 branches missed.">				for (int iValue = 0; iValue &lt; nCard; iValue++) {</span>
+<span class="nc" id="L1053">					distribution.addValue(iValue, 1.0 / nCard);</span>
+				}
+			}
+<span class="nc" id="L1056">			distributions[iParent] = distribution;</span>
+		}
+
+		// update distributions of all children
+<span class="nc bnc" id="L1060" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; getNrOfNodes(); iNode++) {</span>
+<span class="nc bnc" id="L1061" title="All 2 branches missed.">			if (m_ParentSets[iNode].contains(nTargetNode)) {</span>
+<span class="nc" id="L1062">				ParentSet parentSet = m_ParentSets[iNode];</span>
+<span class="nc" id="L1063">				distributions = m_Distributions[iNode];</span>
+<span class="nc" id="L1064">				Estimator[] newDistributions = new Estimator[distributions.length * nCard / (nCard + 1)];</span>
+<span class="nc" id="L1065">				int iCurrentDist = 0;</span>
+
+<span class="nc" id="L1067">				int nParents = parentSet.getNrOfParents();</span>
+<span class="nc" id="L1068">				int[] values2 = new int[nParents];</span>
+				// fill in the values
+<span class="nc" id="L1070">				int nParentCard = parentSet.getFreshCardinalityOfParents(m_Instances) * (nCard + 1) / nCard;</span>
+<span class="nc" id="L1071">				int iTargetNode = 0;</span>
+<span class="nc bnc" id="L1072" title="All 2 branches missed.">				while (parentSet.getParent(iTargetNode) != nTargetNode) {</span>
+<span class="nc" id="L1073">					iTargetNode++;</span>
+				}
+<span class="nc" id="L1075">				int[] nCards = new int[nParents];</span>
+<span class="nc bnc" id="L1076" title="All 2 branches missed.">				for (int iParent = 0; iParent &lt; nParents; iParent++) {</span>
+<span class="nc" id="L1077">					nCards[iParent] = getCardinality(parentSet.getParent(iParent));</span>
+				}
+<span class="nc" id="L1079">				nCards[iTargetNode]++;</span>
+<span class="nc bnc" id="L1080" title="All 2 branches missed.">				for (int iPos = 0; iPos &lt; nParentCard; iPos++) {</span>
+<span class="nc bnc" id="L1081" title="All 2 branches missed.">					if (values2[iTargetNode] != nValue) {</span>
+<span class="nc" id="L1082">						newDistributions[iCurrentDist++] = distributions[iPos];</span>
+					}
+					// update values
+<span class="nc" id="L1085">					int i = 0;</span>
+<span class="nc" id="L1086">					values2[i]++;</span>
+<span class="nc bnc" id="L1087" title="All 4 branches missed.">					while (i &lt; nParents &amp;&amp; values2[i] == nCards[i]) {</span>
+<span class="nc" id="L1088">						values2[i] = 0;</span>
+<span class="nc" id="L1089">						i++;</span>
+<span class="nc bnc" id="L1090" title="All 2 branches missed.">						if (i &lt; nParents) {</span>
+<span class="nc" id="L1091">							values2[i]++;</span>
+						}
+					}
+				}
+
+<span class="nc" id="L1096">				m_Distributions[iNode] = newDistributions;</span>
+			}
+		}
+		// update evidence
+<span class="nc bnc" id="L1100" title="All 2 branches missed.">		if (getEvidence(nTargetNode) &gt; nValue) {</span>
+<span class="nc" id="L1101">			setEvidence(nTargetNode, getEvidence(nTargetNode) - 1);</span>
+		}
+<span class="nc" id="L1103">	} // delNodeValue</span>
+
+	/** set position of node
+	 * @param iNode index of node to set position for
+	 * @param nX x position of new position
+	 * @param nY y position of new position
+	 */
+	public void setPosition(int iNode, int nX, int nY) {
+		// update undo stack
+<span class="nc bnc" id="L1112" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1113">			boolean isUpdate = false;</span>
+<span class="nc" id="L1114">			UndoAction undoAction = null;</span>
+			try {
+<span class="nc bnc" id="L1116" title="All 2 branches missed.">				if (m_undoStack.size() &gt; 0) {</span>
+<span class="nc" id="L1117">					undoAction = (UndoAction) m_undoStack.elementAt(m_undoStack.size() - 1);</span>
+<span class="nc" id="L1118">					SetPositionAction posAction = (SetPositionAction) undoAction;</span>
+<span class="nc bnc" id="L1119" title="All 2 branches missed.">					if (posAction.m_nTargetNode == iNode) {</span>
+<span class="nc" id="L1120">						isUpdate = true;</span>
+<span class="nc" id="L1121">						posAction.setUndoPosition(nX, nY);</span>
+					}
+				}
+<span class="nc" id="L1124">			} catch (Exception e) {</span>
+				// ignore. it's not a SetPositionAction
+			}
+<span class="nc bnc" id="L1127" title="All 2 branches missed.">			if (!isUpdate) {</span>
+<span class="nc" id="L1128">				addUndoAction(new SetPositionAction(iNode, nX, nY));</span>
+			}
+		}
+<span class="nc" id="L1131">		m_nPositionX.setElementAt(nX, iNode);</span>
+<span class="nc" id="L1132">		m_nPositionY.setElementAt(nY, iNode);</span>
+<span class="nc" id="L1133">	} // setPosition</span>
+
+	/** Set position of node. Move set of nodes with the same displacement
+	 * as a specified node.
+	 * @param iNode index of node to set position for
+	 * @param nX x position of new position
+	 * @param nY y position of new position
+	 * @param nodes array of indexes of nodes to move
+	 */
+	public void setPosition(int nNode, int nX, int nY, FastVector nodes) {
+<span class="nc" id="L1143">		int dX = nX - getPositionX(nNode);</span>
+<span class="nc" id="L1144">		int dY = nY - getPositionY(nNode);</span>
+		// update undo stack
+<span class="nc bnc" id="L1146" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1147">			boolean isUpdate = false;</span>
+			try {
+<span class="nc" id="L1149">				UndoAction undoAction = null;</span>
+<span class="nc bnc" id="L1150" title="All 2 branches missed.">				if (m_undoStack.size() &gt; 0) {</span>
+<span class="nc" id="L1151">					undoAction = (UndoAction) m_undoStack.elementAt(m_undoStack.size() - 1);</span>
+<span class="nc" id="L1152">						SetGroupPositionAction posAction = (SetGroupPositionAction) undoAction;</span>
+<span class="nc" id="L1153">						isUpdate = true;</span>
+<span class="nc" id="L1154">						int iNode = 0;</span>
+<span class="nc bnc" id="L1155" title="All 4 branches missed.">						while (isUpdate &amp;&amp; iNode &lt; posAction.m_nodes.size()) {</span>
+<span class="nc bnc" id="L1156" title="All 2 branches missed.">							if ((Integer)posAction.m_nodes.elementAt(iNode) != (Integer) nodes.elementAt(iNode)) {</span>
+<span class="nc" id="L1157">								isUpdate = false;</span>
+							}
+<span class="nc" id="L1159">							iNode++;</span>
+						}
+<span class="nc bnc" id="L1161" title="All 2 branches missed.">						if (isUpdate == true) {</span>
+<span class="nc" id="L1162">							posAction.setUndoPosition(dX, dY);</span>
+						}
+				}
+<span class="nc" id="L1165">			} catch (Exception e) {</span>
+				// ignore. it's not a SetPositionAction
+			}
+<span class="nc bnc" id="L1168" title="All 2 branches missed.">			if (!isUpdate) {</span>
+<span class="nc" id="L1169">				addUndoAction(new SetGroupPositionAction(nodes, dX, dY));</span>
+			}
+		}
+<span class="nc bnc" id="L1172" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1173">			nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1174">			m_nPositionX.setElementAt(getPositionX(nNode) + dX, nNode);</span>
+<span class="nc" id="L1175">			m_nPositionY.setElementAt(getPositionY(nNode) + dY, nNode);</span>
+		}
+<span class="nc" id="L1177">	} // setPosition</span>
+
+	/** set positions of all nodes
+	 * @param nPosX new x positions for all nodes
+	 * @param nPosY new y positions for all nodes
+	 */
+	public void layoutGraph(FastVector nPosX, FastVector nPosY) {
+<span class="nc bnc" id="L1184" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1185">			addUndoAction(new LayoutGraphAction(nPosX, nPosY));</span>
+		}
+<span class="nc" id="L1187">		m_nPositionX = nPosX;</span>
+<span class="nc" id="L1188">		m_nPositionY = nPosY;</span>
+<span class="nc" id="L1189">	} // layoutGraph</span>
+
+	/** get x position of a node
+	 * @param iNode index of node of interest
+	 */
+	public int getPositionX(int iNode) {
+<span class="nc" id="L1195">		return (Integer) (m_nPositionX.elementAt(iNode));</span>
+	}
+
+	/** get y position of a node
+	 * @param iNode index of node of interest
+	 */
+	public int getPositionY(int iNode) {
+<span class="nc" id="L1202">		return (Integer) (m_nPositionY.elementAt(iNode));</span>
+	}
+
+	/** align set of nodes with the left most node in the list
+	 * @param nodes list of indexes of nodes to align
+	 */
+	public void alignLeft(FastVector nodes) {
+		// update undo stack
+<span class="nc bnc" id="L1210" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1211">			addUndoAction(new alignLeftAction(nodes));</span>
+		}
+<span class="nc" id="L1213">		int nMinX = -1;</span>
+<span class="nc bnc" id="L1214" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1215">			int nX = getPositionX((Integer) nodes.elementAt(iNode));</span>
+<span class="nc bnc" id="L1216" title="All 4 branches missed.">			if (nX &lt; nMinX || iNode == 0) {</span>
+<span class="nc" id="L1217">				nMinX = nX;</span>
+			}
+		}
+<span class="nc bnc" id="L1220" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1221">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1222">			m_nPositionX.setElementAt(nMinX, nNode);</span>
+		}
+<span class="nc" id="L1224">	} // alignLeft</span>
+
+	/** align set of nodes with the right most node in the list
+	 * @param nodes list of indexes of nodes to align
+	 */
+	public void alignRight(FastVector nodes) {
+		// update undo stack
+<span class="nc bnc" id="L1231" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1232">			addUndoAction(new alignRightAction(nodes));</span>
+		}
+<span class="nc" id="L1234">		int nMaxX = -1;</span>
+<span class="nc bnc" id="L1235" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1236">			int nX = getPositionX((Integer) nodes.elementAt(iNode));</span>
+<span class="nc bnc" id="L1237" title="All 4 branches missed.">			if (nX &gt; nMaxX || iNode == 0) {</span>
+<span class="nc" id="L1238">				nMaxX = nX;</span>
+			}
+		}
+<span class="nc bnc" id="L1241" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1242">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1243">			m_nPositionX.setElementAt(nMaxX, nNode);</span>
+		}
+<span class="nc" id="L1245">	} // alignRight</span>
+
+	/** align set of nodes with the top most node in the list
+	 * @param nodes list of indexes of nodes to align
+	 */
+	public void alignTop(FastVector nodes) {
+		// update undo stack
+<span class="nc bnc" id="L1252" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1253">			addUndoAction(new alignTopAction(nodes));</span>
+		}
+<span class="nc" id="L1255">		int nMinY = -1;</span>
+<span class="nc bnc" id="L1256" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1257">			int nY = getPositionY((Integer) nodes.elementAt(iNode));</span>
+<span class="nc bnc" id="L1258" title="All 4 branches missed.">			if (nY &lt; nMinY || iNode == 0) {</span>
+<span class="nc" id="L1259">				nMinY = nY;</span>
+			}
+		}
+<span class="nc bnc" id="L1262" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1263">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1264">			m_nPositionY.setElementAt(nMinY, nNode);</span>
+		}
+<span class="nc" id="L1266">	} // alignTop</span>
+
+	/** align set of nodes with the bottom most node in the list
+	 * @param nodes list of indexes of nodes to align
+	 */
+	public void alignBottom(FastVector nodes) {
+		// update undo stack
+<span class="nc bnc" id="L1273" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1274">			addUndoAction(new alignBottomAction(nodes));</span>
+		}
+<span class="nc" id="L1276">		int nMaxY = -1;</span>
+<span class="nc bnc" id="L1277" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1278">			int nY = getPositionY((Integer) nodes.elementAt(iNode));</span>
+<span class="nc bnc" id="L1279" title="All 4 branches missed.">			if (nY &gt; nMaxY || iNode == 0) {</span>
+<span class="nc" id="L1280">				nMaxY = nY;</span>
+			}
+		}
+<span class="nc bnc" id="L1283" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1284">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1285">			m_nPositionY.setElementAt(nMaxY, nNode);</span>
+		}
+<span class="nc" id="L1287">	} // alignBottom</span>
+
+	/** center set of nodes half way between left and right most node in the list
+	 * @param nodes list of indexes of nodes to center
+	 */
+	public void centerHorizontal(FastVector nodes) {
+		// update undo stack
+<span class="nc bnc" id="L1294" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1295">			addUndoAction(new centerHorizontalAction(nodes));</span>
+		}
+<span class="nc" id="L1297">		int nMinY = -1;</span>
+<span class="nc" id="L1298">		int nMaxY = -1;</span>
+<span class="nc bnc" id="L1299" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1300">			int nY = getPositionY((Integer) nodes.elementAt(iNode));</span>
+<span class="nc bnc" id="L1301" title="All 4 branches missed.">			if (nY &lt; nMinY || iNode == 0) {</span>
+<span class="nc" id="L1302">				nMinY = nY;</span>
+			}
+<span class="nc bnc" id="L1304" title="All 4 branches missed.">			if (nY &gt; nMaxY || iNode == 0) {</span>
+<span class="nc" id="L1305">				nMaxY = nY;</span>
+			}
+		}
+<span class="nc bnc" id="L1308" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1309">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1310">			m_nPositionY.setElementAt((nMinY + nMaxY) / 2, nNode);</span>
+		}
+<span class="nc" id="L1312">	} // centerHorizontal</span>
+
+	/** center set of nodes half way between top and bottom most node in the list
+	 * @param nodes list of indexes of nodes to center
+	 */
+	public void centerVertical(FastVector nodes) {
+		// update undo stack
+<span class="nc bnc" id="L1319" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1320">			addUndoAction(new centerVerticalAction(nodes));</span>
+		}
+<span class="nc" id="L1322">		int nMinX = -1;</span>
+<span class="nc" id="L1323">		int nMaxX = -1;</span>
+<span class="nc bnc" id="L1324" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1325">			int nX = getPositionX((Integer) nodes.elementAt(iNode));</span>
+<span class="nc bnc" id="L1326" title="All 4 branches missed.">			if (nX &lt; nMinX || iNode == 0) {</span>
+<span class="nc" id="L1327">				nMinX = nX;</span>
+			}
+<span class="nc bnc" id="L1329" title="All 4 branches missed.">			if (nX &gt; nMaxX || iNode == 0) {</span>
+<span class="nc" id="L1330">				nMaxX = nX;</span>
+			}
+		}
+<span class="nc bnc" id="L1333" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1334">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1335">			m_nPositionX.setElementAt((nMinX + nMaxX) / 2, nNode);</span>
+		}
+<span class="nc" id="L1337">	} // centerVertical</span>
+
+	/** space out set of nodes evenly between left and right most node in the list
+	 * @param nodes list of indexes of nodes to space out
+	 */
+	public void spaceHorizontal(FastVector nodes) {
+		// update undo stack
+<span class="nc bnc" id="L1344" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1345">			addUndoAction(new spaceHorizontalAction(nodes));</span>
+		}
+<span class="nc" id="L1347">		int nMinX = -1;</span>
+<span class="nc" id="L1348">		int nMaxX = -1;</span>
+<span class="nc bnc" id="L1349" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1350">			int nX = getPositionX((Integer) nodes.elementAt(iNode));</span>
+<span class="nc bnc" id="L1351" title="All 4 branches missed.">			if (nX &lt; nMinX || iNode == 0) {</span>
+<span class="nc" id="L1352">				nMinX = nX;</span>
+			}
+<span class="nc bnc" id="L1354" title="All 4 branches missed.">			if (nX &gt; nMaxX || iNode == 0) {</span>
+<span class="nc" id="L1355">				nMaxX = nX;</span>
+			}
+		}
+<span class="nc bnc" id="L1358" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1359">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1360">			m_nPositionX.setElementAt((int) (nMinX + iNode * (nMaxX - nMinX) / (nodes.size() - 1.0)), nNode);</span>
+		}
+<span class="nc" id="L1362">	} // spaceHorizontal</span>
+
+	/** space out set of nodes evenly between top and bottom most node in the list
+	 * @param nodes list of indexes of nodes to space out
+	 */
+	public void spaceVertical(FastVector nodes) {
+		// update undo stack
+<span class="nc bnc" id="L1369" title="All 2 branches missed.">		if (m_bNeedsUndoAction) {</span>
+<span class="nc" id="L1370">			addUndoAction(new spaceVerticalAction(nodes));</span>
+		}
+<span class="nc" id="L1372">		int nMinY = -1;</span>
+<span class="nc" id="L1373">		int nMaxY = -1;</span>
+<span class="nc bnc" id="L1374" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1375">			int nY = getPositionY((Integer) nodes.elementAt(iNode));</span>
+<span class="nc bnc" id="L1376" title="All 4 branches missed.">			if (nY &lt; nMinY || iNode == 0) {</span>
+<span class="nc" id="L1377">				nMinY = nY;</span>
+			}
+<span class="nc bnc" id="L1379" title="All 4 branches missed.">			if (nY &gt; nMaxY || iNode == 0) {</span>
+<span class="nc" id="L1380">				nMaxY = nY;</span>
+			}
+		}
+<span class="nc bnc" id="L1383" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1384">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1385">			m_nPositionY.setElementAt((int) (nMinY + iNode * (nMaxY - nMinY) / (nodes.size() - 1.0)), nNode);</span>
+		}
+<span class="nc" id="L1387">	} // spaceVertical</span>
+
+
+	/** replace attribute with specified name and values
+	 * @param nTargetNode index of node the replace specification for
+	 * @param sName new name of the node
+	 * @param values array of values of the node
+	 */
+	void replaceAtt(int nTargetNode, String sName, FastVector values) {
+<span class="nc" id="L1396">		Attribute newAtt = new Attribute(sName, values);</span>
+<span class="nc bnc" id="L1397" title="All 2 branches missed.">		if (m_Instances.classIndex() == nTargetNode) {</span>
+<span class="nc" id="L1398">			m_Instances.setClassIndex(-1);</span>
+			/*m_Instances.insertAttributeAt(newAtt, nTargetNode);
+			m_Instances.deleteAttributeAt(nTargetNode + 1);
+			m_Instances.setClassIndex(nTargetNode); */
+			
+<span class="nc" id="L1403">			m_Instances.deleteAttributeAt(nTargetNode);</span>
+<span class="nc" id="L1404">                        m_Instances.insertAttributeAt(newAtt, nTargetNode);</span>
+<span class="nc" id="L1405">                        m_Instances.setClassIndex(nTargetNode);</span>
+		} else {
+			/*m_Instances.insertAttributeAt(newAtt, nTargetNode);
+			m_Instances.deleteAttributeAt(nTargetNode + 1); */
+<span class="nc" id="L1409">		        m_Instances.deleteAttributeAt(nTargetNode);</span>
+<span class="nc" id="L1410">                        m_Instances.insertAttributeAt(newAtt, nTargetNode);</span>
+		}
+<span class="nc" id="L1412">	} // replaceAtt</span>
+
+	/** return marginal distibution for a node
+	 * @param iNode index of node of interest
+	 */
+	public double[] getMargin(int iNode) {
+<span class="nc" id="L1418">		return (double[]) m_fMarginP.elementAt(iNode);</span>
+	};
+
+	/** set marginal distibution for a node
+	 * @param iNode index of node to set marginal distribution for
+	 * @param fMarginP marginal distribution
+	 */
+	public void setMargin(int iNode, double[] fMarginP) {
+<span class="nc" id="L1426">		m_fMarginP.setElementAt(fMarginP, iNode);</span>
+<span class="nc" id="L1427">	}</span>
+
+	/** get evidence state of a node. -1 represents no evidence set, otherwise
+	 * the index of a value of the node
+	 * @param iNode index of node of interest
+	 */
+	public int getEvidence(int iNode) {
+<span class="nc" id="L1434">		return (Integer) m_nEvidence.elementAt(iNode);</span>
+	}
+
+	/** set evidence state of a node. -1 represents no evidence set, otherwise
+	 * the index of a value of the node
+ 	 * @param iNode index of node of interest
+	 * @param iValue evidence value to set
+	 */
+	public void setEvidence(int iNode, int iValue) {
+<span class="nc" id="L1443">		m_nEvidence.setElementAt(iValue, iNode);</span>
+<span class="nc" id="L1444">	}</span>
+
+	/** return list of children of a node
+	 * @param iNode index of node of interest
+	 */
+	public FastVector getChildren(int nTargetNode) {
+<span class="nc" id="L1450">		FastVector children = new FastVector();</span>
+<span class="nc bnc" id="L1451" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; getNrOfNodes(); iNode++) {</span>
+<span class="nc bnc" id="L1452" title="All 2 branches missed.">			if (m_ParentSets[iNode].contains(nTargetNode)) {</span>
+<span class="nc" id="L1453">				children.addElement(iNode);</span>
+			}
+		}
+<span class="nc" id="L1456">		return children;</span>
+	} // getChildren
+
+	/** returns network in XMLBIF format
+	*/
+	public String toXMLBIF03() {
+<span class="nc bnc" id="L1462" title="All 2 branches missed.">		if (m_Instances == null) {</span>
+<span class="nc" id="L1463">			return (&quot;&lt;!--No model built yet--&gt;&quot;);</span>
+		}
+
+<span class="nc" id="L1466">		StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L1467">		text.append(getBIFHeader());</span>
+<span class="nc" id="L1468">		text.append(&quot;\n&quot;);</span>
+<span class="nc" id="L1469">		text.append(&quot;\n&quot;);</span>
+<span class="nc" id="L1470">		text.append(&quot;&lt;BIF VERSION=\&quot;0.3\&quot;&gt;\n&quot;);</span>
+<span class="nc" id="L1471">		text.append(&quot;&lt;NETWORK&gt;\n&quot;);</span>
+<span class="nc" id="L1472">		text.append(&quot;&lt;NAME&gt;&quot; + XMLNormalize(m_Instances.relationName()) + &quot;&lt;/NAME&gt;\n&quot;);</span>
+<span class="nc bnc" id="L1473" title="All 2 branches missed.">		for (int iAttribute = 0; iAttribute &lt; m_Instances.numAttributes(); iAttribute++) {</span>
+<span class="nc" id="L1474">			text.append(&quot;&lt;VARIABLE TYPE=\&quot;nature\&quot;&gt;\n&quot;);</span>
+<span class="nc" id="L1475">			text.append(&quot;&lt;NAME&gt;&quot; + XMLNormalize(m_Instances.attribute(iAttribute).name()) + &quot;&lt;/NAME&gt;\n&quot;);</span>
+<span class="nc bnc" id="L1476" title="All 2 branches missed.">			for (int iValue = 0; iValue &lt; m_Instances.attribute(iAttribute).numValues(); iValue++) {</span>
+<span class="nc" id="L1477">				text.append(&quot;&lt;OUTCOME&gt;&quot; + XMLNormalize(m_Instances.attribute(iAttribute).value(iValue))</span>
+<span class="nc" id="L1478">						+ &quot;&lt;/OUTCOME&gt;\n&quot;);</span>
+			}
+<span class="nc" id="L1480">			text.append(&quot;&lt;PROPERTY&gt;position = (&quot; + getPositionX(iAttribute) + &quot;,&quot; + getPositionY(iAttribute)</span>
+<span class="nc" id="L1481">					+ &quot;)&lt;/PROPERTY&gt;\n&quot;);</span>
+<span class="nc" id="L1482">			text.append(&quot;&lt;/VARIABLE&gt;\n&quot;);</span>
+		}
+
+<span class="nc bnc" id="L1485" title="All 2 branches missed.">		for (int iAttribute = 0; iAttribute &lt; m_Instances.numAttributes(); iAttribute++) {</span>
+<span class="nc" id="L1486">			text.append(&quot;&lt;DEFINITION&gt;\n&quot;);</span>
+<span class="nc" id="L1487">			text.append(&quot;&lt;FOR&gt;&quot; + XMLNormalize(m_Instances.attribute(iAttribute).name()) + &quot;&lt;/FOR&gt;\n&quot;);</span>
+<span class="nc bnc" id="L1488" title="All 2 branches missed.">			for (int iParent = 0; iParent &lt; m_ParentSets[iAttribute].getNrOfParents(); iParent++) {</span>
+<span class="nc" id="L1489">				text.append(&quot;&lt;GIVEN&gt;&quot;</span>
+<span class="nc" id="L1490">						+ XMLNormalize(m_Instances.attribute(m_ParentSets[iAttribute].getParent(iParent)).name())</span>
+<span class="nc" id="L1491">						+ &quot;&lt;/GIVEN&gt;\n&quot;);</span>
+			}
+<span class="nc" id="L1493">			text.append(&quot;&lt;TABLE&gt;\n&quot;);</span>
+<span class="nc bnc" id="L1494" title="All 2 branches missed.">			for (int iParent = 0; iParent &lt; m_ParentSets[iAttribute].getCardinalityOfParents(); iParent++) {</span>
+<span class="nc bnc" id="L1495" title="All 2 branches missed.">				for (int iValue = 0; iValue &lt; m_Instances.attribute(iAttribute).numValues(); iValue++) {</span>
+<span class="nc" id="L1496">					text.append(m_Distributions[iAttribute][iParent].getProbability(iValue));</span>
+<span class="nc" id="L1497">					text.append(' ');</span>
+				}
+<span class="nc" id="L1499">				text.append('\n');</span>
+			}
+<span class="nc" id="L1501">			text.append(&quot;&lt;/TABLE&gt;\n&quot;);</span>
+<span class="nc" id="L1502">			text.append(&quot;&lt;/DEFINITION&gt;\n&quot;);</span>
+		}
+<span class="nc" id="L1504">		text.append(&quot;&lt;/NETWORK&gt;\n&quot;);</span>
+<span class="nc" id="L1505">		text.append(&quot;&lt;/BIF&gt;\n&quot;);</span>
+<span class="nc" id="L1506">		return text.toString();</span>
+	} // toXMLBIF03
+
+	/** return fragment of network in XMLBIF format
+	 * @param nodes array of indexes of nodes that should be in the fragment
+	 */
+	public String toXMLBIF03(FastVector nodes) {
+<span class="nc" id="L1513">		StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L1514">		text.append(getBIFHeader());</span>
+<span class="nc" id="L1515">		text.append(&quot;\n&quot;);</span>
+<span class="nc" id="L1516">		text.append(&quot;\n&quot;);</span>
+<span class="nc" id="L1517">		text.append(&quot;&lt;BIF VERSION=\&quot;0.3\&quot;&gt;\n&quot;);</span>
+<span class="nc" id="L1518">		text.append(&quot;&lt;NETWORK&gt;\n&quot;);</span>
+<span class="nc" id="L1519">		text.append(&quot;&lt;NAME&gt;&quot; + XMLNormalize(m_Instances.relationName()) + &quot;&lt;/NAME&gt;\n&quot;);</span>
+<span class="nc bnc" id="L1520" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1521">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1522">			text.append(&quot;&lt;VARIABLE TYPE=\&quot;nature\&quot;&gt;\n&quot;);</span>
+<span class="nc" id="L1523">			text.append(&quot;&lt;NAME&gt;&quot; + XMLNormalize(m_Instances.attribute(nNode).name()) + &quot;&lt;/NAME&gt;\n&quot;);</span>
+<span class="nc bnc" id="L1524" title="All 2 branches missed.">			for (int iValue = 0; iValue &lt; m_Instances.attribute(nNode).numValues(); iValue++) {</span>
+<span class="nc" id="L1525">				text.append(&quot;&lt;OUTCOME&gt;&quot; + XMLNormalize(m_Instances.attribute(nNode).value(iValue)) + &quot;&lt;/OUTCOME&gt;\n&quot;);</span>
+			}
+<span class="nc" id="L1527">			text.append(&quot;&lt;PROPERTY&gt;position = (&quot; + getPositionX(nNode) + &quot;,&quot; + getPositionY(nNode) + &quot;)&lt;/PROPERTY&gt;\n&quot;);</span>
+<span class="nc" id="L1528">			text.append(&quot;&lt;/VARIABLE&gt;\n&quot;);</span>
+		}
+
+<span class="nc bnc" id="L1531" title="All 2 branches missed.">		for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1532">			int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1533">			text.append(&quot;&lt;DEFINITION&gt;\n&quot;);</span>
+<span class="nc" id="L1534">			text.append(&quot;&lt;FOR&gt;&quot; + XMLNormalize(m_Instances.attribute(nNode).name()) + &quot;&lt;/FOR&gt;\n&quot;);</span>
+<span class="nc bnc" id="L1535" title="All 2 branches missed.">			for (int iParent = 0; iParent &lt; m_ParentSets[nNode].getNrOfParents(); iParent++) {</span>
+<span class="nc" id="L1536">				text.append(&quot;&lt;GIVEN&gt;&quot;</span>
+<span class="nc" id="L1537">						+ XMLNormalize(m_Instances.attribute(m_ParentSets[nNode].getParent(iParent)).name())</span>
+<span class="nc" id="L1538">						+ &quot;&lt;/GIVEN&gt;\n&quot;);</span>
+			}
+<span class="nc" id="L1540">			text.append(&quot;&lt;TABLE&gt;\n&quot;);</span>
+<span class="nc bnc" id="L1541" title="All 2 branches missed.">			for (int iParent = 0; iParent &lt; m_ParentSets[nNode].getCardinalityOfParents(); iParent++) {</span>
+<span class="nc bnc" id="L1542" title="All 2 branches missed.">				for (int iValue = 0; iValue &lt; m_Instances.attribute(nNode).numValues(); iValue++) {</span>
+<span class="nc" id="L1543">					text.append(m_Distributions[nNode][iParent].getProbability(iValue));</span>
+<span class="nc" id="L1544">					text.append(' ');</span>
+				}
+<span class="nc" id="L1546">				text.append('\n');</span>
+			}
+<span class="nc" id="L1548">			text.append(&quot;&lt;/TABLE&gt;\n&quot;);</span>
+<span class="nc" id="L1549">			text.append(&quot;&lt;/DEFINITION&gt;\n&quot;);</span>
+		}
+<span class="nc" id="L1551">		text.append(&quot;&lt;/NETWORK&gt;\n&quot;);</span>
+<span class="nc" id="L1552">		text.append(&quot;&lt;/BIF&gt;\n&quot;);</span>
+<span class="nc" id="L1553">		return text.toString();</span>
+	} // toXMLBIF03
+
+	/** undo stack for undoin edit actions, or redo edit actions */
+<span class="nc" id="L1557">	FastVector m_undoStack = new FastVector();</span>
+
+	/** current action in undo stack */
+<span class="nc" id="L1560">	int m_nCurrentEditAction = -1;</span>
+
+	/** action that the network is saved */
+<span class="nc" id="L1563">	int m_nSavedPointer = -1;</span>
+
+	/***************************************************************************
+	 * flag to indicate whether an edit action needs to introduce an undo
+	 * action. This is only false when an undo or redo action is performed.
+	 **************************************************************************/
+<span class="nc" id="L1569">	boolean m_bNeedsUndoAction = true;</span>
+
+	/** return whether there is something on the undo stack that can be performed */
+	public boolean canUndo() {
+<span class="nc bnc" id="L1573" title="All 2 branches missed.">		return m_nCurrentEditAction &gt;= 0;</span>
+	}
+
+	/** return whether there is something on the undo stack that can be performed */
+	public boolean canRedo() {
+<span class="nc bnc" id="L1578" title="All 2 branches missed.">		return m_nCurrentEditAction &lt; m_undoStack.size() - 1;</span>
+	}
+
+	/** return true when current state differs from the state the network was last saved */
+	public boolean isChanged() {
+<span class="nc bnc" id="L1583" title="All 2 branches missed.">		return m_nCurrentEditAction != m_nSavedPointer;</span>
+	}
+
+	/** indicate the network state was saved */
+	public void isSaved() {
+<span class="nc" id="L1588">		m_nSavedPointer = m_nCurrentEditAction;</span>
+<span class="nc" id="L1589">	}</span>
+
+	/** get message representing the last action performed on the network */
+	public String lastActionMsg() {
+<span class="nc bnc" id="L1593" title="All 2 branches missed.">		if (m_undoStack.size() == 0) {</span>
+<span class="nc" id="L1594">			return &quot;&quot;;</span>
+		}
+<span class="nc" id="L1596">		return ((UndoAction) m_undoStack.lastElement()).getRedoMsg();</span>
+	} // lastActionMsg
+
+
+	/** undo the last edit action performed on the network.
+	 * returns message representing the action performed.
+	 */
+	public String undo() {
+<span class="nc bnc" id="L1604" title="All 2 branches missed.">		if (!canUndo()) {</span>
+<span class="nc" id="L1605">			return &quot;&quot;;</span>
+		}
+<span class="nc" id="L1607">		UndoAction undoAction = (UndoAction) m_undoStack.elementAt(m_nCurrentEditAction);</span>
+<span class="nc" id="L1608">		m_bNeedsUndoAction = false;</span>
+<span class="nc" id="L1609">		undoAction.undo();</span>
+<span class="nc" id="L1610">		m_bNeedsUndoAction = true;</span>
+<span class="nc" id="L1611">		m_nCurrentEditAction--;</span>
+
+		// undo stack debugging
+		/*
+		if (m_nCurrentEditAction&gt;0) {
+			String sXML = (String) m_sXMLStack.elementAt(m_nCurrentEditAction);
+			String sXMLCurrent = toXMLBIF03();
+			if (!sXML.equals(sXMLCurrent)) {
+				String sDiff = &quot;&quot;;
+				String sDiff2 = &quot;&quot;;
+				for (int i = 0; i &lt; sXML.length() &amp;&amp; sDiff.length() &lt; 80; i++) {
+					if (sXML.charAt(i) != sXMLCurrent.charAt(i)) {
+						sDiff += sXML.charAt(i);
+						sDiff2 += sXMLCurrent.charAt(i);
+					}
+				}
+
+				JOptionPane.showMessageDialog(null,&quot;Undo error\n&quot; + sDiff + &quot; \n&quot; + sDiff2);
+			}
+		}
+		*/
+<span class="nc" id="L1632">		return undoAction.getUndoMsg();</span>
+	} // undo
+
+	/** redo the last edit action performed on the network.
+	 * returns message representing the action performed.
+	 */
+	public String redo() {
+<span class="nc bnc" id="L1639" title="All 2 branches missed.">		if (!canRedo()) {</span>
+<span class="nc" id="L1640">			return &quot;&quot;;</span>
+		}
+<span class="nc" id="L1642">		m_nCurrentEditAction++;</span>
+<span class="nc" id="L1643">		UndoAction undoAction = (UndoAction) m_undoStack.elementAt(m_nCurrentEditAction);</span>
+<span class="nc" id="L1644">		m_bNeedsUndoAction = false;</span>
+<span class="nc" id="L1645">		undoAction.redo();</span>
+<span class="nc" id="L1646">		m_bNeedsUndoAction = true;</span>
+
+		// undo stack debugging
+		/*
+		if (m_nCurrentEditAction &lt; m_sXMLStack.size()) {
+			String sXML = (String) m_sXMLStack.elementAt(m_nCurrentEditAction);
+			String sXMLCurrent = toXMLBIF03();
+			if (!sXML.equals(sXMLCurrent)) {
+				String sDiff = &quot;&quot;;
+				String sDiff2 = &quot;&quot;;
+				for (int i = 0; i &lt; sXML.length() &amp;&amp; sDiff.length() &lt; 80; i++) {
+					if (sXML.charAt(i) != sXMLCurrent.charAt(i)) {
+						sDiff += sXML.charAt(i);
+						sDiff2 += sXMLCurrent.charAt(i);
+					}
+				}
+
+				JOptionPane.showMessageDialog(null,&quot;redo error\n&quot; + sDiff + &quot; \n&quot; + sDiff2);
+			}
+		}
+		*/
+<span class="nc" id="L1667">		return undoAction.getRedoMsg();</span>
+	} // redo
+
+	/** add undo action to the undo stack.
+	 * @param action operation that needs to be added to the undo stack
+	 */
+	void addUndoAction(UndoAction action) {
+<span class="nc" id="L1674">		int iAction = m_undoStack.size() - 1;</span>
+<span class="nc bnc" id="L1675" title="All 2 branches missed.">		while (iAction &gt; m_nCurrentEditAction) {</span>
+<span class="nc" id="L1676">			m_undoStack.removeElementAt(iAction--);</span>
+		}
+<span class="nc bnc" id="L1678" title="All 2 branches missed.">		if (m_nSavedPointer &gt; m_nCurrentEditAction) {</span>
+<span class="nc" id="L1679">			m_nSavedPointer = -2;</span>
+		}
+<span class="nc" id="L1681">		m_undoStack.addElement(action);</span>
+		//m_sXMLStack.addElement(toXMLBIF03());
+<span class="nc" id="L1683">		m_nCurrentEditAction++;</span>
+<span class="nc" id="L1684">	} // addUndoAction</span>
+
+	/** remove all actions from the undo stack */
+	public void clearUndoStack() {
+<span class="nc" id="L1688">		m_undoStack = new FastVector();</span>
+		//m_sXMLStack = new FastVector();
+<span class="nc" id="L1690">		m_nCurrentEditAction = -1;</span>
+<span class="nc" id="L1691">		m_nSavedPointer = -1;</span>
+<span class="nc" id="L1692">	} // clearUndoStack</span>
+
+	/** base class for actions representing operations on the Bayesian network
+	 * that can be undone/redone
+	 */
+<span class="nc" id="L1697">	class UndoAction implements Serializable {</span>
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		public void undo() {
+<span class="nc" id="L1701">		}</span>
+
+		public void redo() {
+<span class="nc" id="L1704">		}</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L1707">			return getMsg();</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L1711">			return getMsg();</span>
+		}
+		String getMsg() {
+<span class="nc" id="L1714">			String sStr = toString();</span>
+<span class="nc" id="L1715">			int iStart = sStr.indexOf('$');</span>
+<span class="nc" id="L1716">			int iEnd = sStr.indexOf('@');</span>
+<span class="nc" id="L1717">			StringBuffer sBuffer = new StringBuffer();</span>
+<span class="nc bnc" id="L1718" title="All 2 branches missed.">			for(int i= iStart + 1; i &lt; iEnd; i++) {</span>
+<span class="nc" id="L1719">				char c = sStr.charAt(i);</span>
+<span class="nc bnc" id="L1720" title="All 2 branches missed.">				if (Character.isUpperCase(c)) {</span>
+<span class="nc" id="L1721">					sBuffer.append(' ');</span>
+				}
+<span class="nc" id="L1723">				sBuffer.append(sStr.charAt(i));</span>
+			}
+<span class="nc" id="L1725">			return sBuffer.toString();</span>
+		} // getMsg
+	} // class UndoAction
+
+	class AddNodeAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		String m_sName;
+		int m_nPosX;
+		int m_nPosY;
+
+		int m_nCardinality;
+
+<span class="nc" id="L1738">		AddNodeAction(String sName, int nCardinality, int nPosX, int nPosY) {</span>
+<span class="nc" id="L1739">			m_sName = sName;</span>
+<span class="nc" id="L1740">			m_nCardinality = nCardinality;</span>
+<span class="nc" id="L1741">			m_nPosX = nPosX;</span>
+<span class="nc" id="L1742">			m_nPosY = nPosY;</span>
+<span class="nc" id="L1743">		} // c'tor</span>
+
+		public void undo() {
+			try {
+<span class="nc" id="L1747">				deleteNode(getNrOfNodes() - 1);</span>
+<span class="nc" id="L1748">			} catch (Exception e) {</span>
+<span class="nc" id="L1749">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L1751">		} // undo</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L1755">				addNode(m_sName, m_nCardinality, m_nPosX, m_nPosY);</span>
+<span class="nc" id="L1756">			} catch (Exception e) {</span>
+<span class="nc" id="L1757">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L1759">		} // redo</span>
+	} // class AddNodeAction
+
+	class DeleteNodeAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		int m_nTargetNode;
+
+		Attribute m_att;
+
+		Estimator[] m_CPT;
+
+		ParentSet m_ParentSet;
+
+		FastVector m_deleteArcActions;
+
+		int m_nPosX;
+
+		int m_nPosY;
+
+<span class="nc" id="L1779">		DeleteNodeAction(int nTargetNode) {</span>
+<span class="nc" id="L1780">			m_nTargetNode = nTargetNode;</span>
+<span class="nc" id="L1781">			m_att = m_Instances.attribute(nTargetNode);</span>
+			try {
+<span class="nc" id="L1783">				SerializedObject so = new SerializedObject(m_Distributions[nTargetNode]);</span>
+<span class="nc" id="L1784">				m_CPT = (Estimator[]) so.getObject();</span>
+				;
+<span class="nc" id="L1786">				so = new SerializedObject(m_ParentSets[nTargetNode]);</span>
+<span class="nc" id="L1787">				m_ParentSet = (ParentSet) so.getObject();</span>
+<span class="nc" id="L1788">			} catch (Exception e) {</span>
+<span class="nc" id="L1789">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L1791">			m_deleteArcActions = new FastVector();</span>
+<span class="nc bnc" id="L1792" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; getNrOfNodes(); iNode++) {</span>
+<span class="nc bnc" id="L1793" title="All 2 branches missed.">				if (m_ParentSets[iNode].contains(nTargetNode)) {</span>
+<span class="nc" id="L1794">					m_deleteArcActions.addElement(new DeleteArcAction(nTargetNode, iNode));</span>
+				}
+			}
+<span class="nc" id="L1797">			m_nPosX = getPositionX(m_nTargetNode);</span>
+<span class="nc" id="L1798">			m_nPosY = getPositionY(m_nTargetNode);</span>
+<span class="nc" id="L1799">		} // c'tor</span>
+
+		public void undo() {
+			try {
+<span class="nc" id="L1803">				m_Instances.insertAttributeAt(m_att, m_nTargetNode);</span>
+<span class="nc" id="L1804">				int nAtts = m_Instances.numAttributes();</span>
+				// update parentsets
+<span class="nc" id="L1806">				ParentSet[] parentSets = new ParentSet[nAtts];</span>
+<span class="nc" id="L1807">				int nX = 0;</span>
+<span class="nc bnc" id="L1808" title="All 2 branches missed.">				for (int iParentSet = 0; iParentSet &lt; nAtts; iParentSet++) {</span>
+<span class="nc bnc" id="L1809" title="All 2 branches missed.">					if (iParentSet == m_nTargetNode) {</span>
+<span class="nc" id="L1810">						SerializedObject so = new SerializedObject(m_ParentSet);</span>
+<span class="nc" id="L1811">						parentSets[iParentSet] = (ParentSet) so.getObject();</span>
+<span class="nc" id="L1812">						nX = 1;</span>
+					} else {
+<span class="nc" id="L1814">						parentSets[iParentSet] = m_ParentSets[iParentSet - nX];</span>
+<span class="nc bnc" id="L1815" title="All 2 branches missed.">						for (int iParent = 0; iParent &lt; parentSets[iParentSet].getNrOfParents(); iParent++) {</span>
+<span class="nc" id="L1816">							int nParent = parentSets[iParentSet].getParent(iParent);</span>
+<span class="nc bnc" id="L1817" title="All 2 branches missed.">							if (nParent &gt;= m_nTargetNode) {</span>
+<span class="nc" id="L1818">								parentSets[iParentSet].SetParent(iParent, nParent + 1);</span>
+							}
+						}
+					}
+				}
+<span class="nc" id="L1823">				m_ParentSets = parentSets;</span>
+				// update distributions
+<span class="nc" id="L1825">				Estimator[][] distributions = new Estimator[nAtts][];</span>
+<span class="nc" id="L1826">				nX = 0;</span>
+<span class="nc bnc" id="L1827" title="All 2 branches missed.">				for (int iNode = 0; iNode &lt; nAtts; iNode++) {</span>
+<span class="nc bnc" id="L1828" title="All 2 branches missed.">					if (iNode == m_nTargetNode) {</span>
+<span class="nc" id="L1829">						SerializedObject so = new SerializedObject(m_CPT);</span>
+<span class="nc" id="L1830">						distributions[iNode] = (Estimator[]) so.getObject();</span>
+<span class="nc" id="L1831">						nX = 1;</span>
+					} else {
+<span class="nc" id="L1833">						distributions[iNode] = m_Distributions[iNode - nX];</span>
+					}
+				}
+<span class="nc" id="L1836">				m_Distributions = distributions;</span>
+
+<span class="nc bnc" id="L1838" title="All 2 branches missed.">				for (int deletedArc = 0; deletedArc &lt; m_deleteArcActions.size(); deletedArc++) {</span>
+<span class="nc" id="L1839">					DeleteArcAction action = (DeleteArcAction) m_deleteArcActions.elementAt(deletedArc);</span>
+<span class="nc" id="L1840">					action.undo();</span>
+				}
+<span class="nc" id="L1842">				m_nPositionX.insertElementAt(m_nPosX, m_nTargetNode);</span>
+<span class="nc" id="L1843">				m_nPositionY.insertElementAt(m_nPosY, m_nTargetNode);</span>
+<span class="nc" id="L1844">				m_nEvidence.insertElementAt(-1, m_nTargetNode);</span>
+<span class="nc" id="L1845">				m_fMarginP.insertElementAt(new double[getCardinality(m_nTargetNode)], m_nTargetNode);</span>
+<span class="nc" id="L1846">			} catch (Exception e) {</span>
+<span class="nc" id="L1847">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L1849">		} // undo</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L1853">				deleteNode(m_nTargetNode);</span>
+<span class="nc" id="L1854">			} catch (Exception e) {</span>
+<span class="nc" id="L1855">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L1857">		} // redo</span>
+	} // class DeleteNodeAction
+
+	class DeleteSelectionAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		FastVector m_nodes;
+
+		Attribute[] m_att;
+
+		Estimator[][] m_CPT;
+
+		ParentSet[] m_ParentSet;
+
+		FastVector m_deleteArcActions;
+
+		int[] m_nPosX;
+
+		int[] m_nPosY;
+
+<span class="nc" id="L1877">		public DeleteSelectionAction(FastVector nodes) {</span>
+<span class="nc" id="L1878">			m_nodes = new FastVector();</span>
+<span class="nc" id="L1879">			int nNodes = nodes.size();</span>
+<span class="nc" id="L1880">			m_att = new Attribute[nNodes];</span>
+<span class="nc" id="L1881">			m_CPT = new Estimator[nNodes][];</span>
+<span class="nc" id="L1882">			m_ParentSet = new ParentSet[nNodes];</span>
+<span class="nc" id="L1883">			m_nPosX = new int[nNodes];</span>
+<span class="nc" id="L1884">			m_nPosY = new int[nNodes];</span>
+<span class="nc" id="L1885">			m_deleteArcActions = new FastVector();</span>
+<span class="nc bnc" id="L1886" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L1887">				int nTargetNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L1888">				m_nodes.addElement(nTargetNode);</span>
+<span class="nc" id="L1889">				m_att[iNode] = m_Instances.attribute(nTargetNode);</span>
+				try {
+<span class="nc" id="L1891">					SerializedObject so = new SerializedObject(m_Distributions[nTargetNode]);</span>
+<span class="nc" id="L1892">					m_CPT[iNode] = (Estimator[]) so.getObject();</span>
+					;
+<span class="nc" id="L1894">					so = new SerializedObject(m_ParentSets[nTargetNode]);</span>
+<span class="nc" id="L1895">					m_ParentSet[iNode] = (ParentSet) so.getObject();</span>
+<span class="nc" id="L1896">				} catch (Exception e) {</span>
+<span class="nc" id="L1897">					e.printStackTrace();</span>
+				}
+<span class="nc" id="L1899">				m_nPosX[iNode] = getPositionX(nTargetNode);</span>
+<span class="nc" id="L1900">				m_nPosY[iNode] = getPositionY(nTargetNode);</span>
+<span class="nc bnc" id="L1901" title="All 2 branches missed.">				for (int iNode2 = 0; iNode2 &lt; getNrOfNodes(); iNode2++) {</span>
+<span class="nc bnc" id="L1902" title="All 4 branches missed.">					if (!nodes.contains(iNode2) &amp;&amp; m_ParentSets[iNode2].contains(nTargetNode)) {</span>
+<span class="nc" id="L1903">						m_deleteArcActions.addElement(new DeleteArcAction(nTargetNode, iNode2));</span>
+					}
+				}
+			}
+<span class="nc" id="L1907">		} // c'tor</span>
+
+		public void undo() {
+			try {
+<span class="nc bnc" id="L1911" title="All 2 branches missed.">				for (int iNode = 0; iNode &lt; m_nodes.size(); iNode++) {</span>
+<span class="nc" id="L1912">					int nTargetNode = (Integer) m_nodes.elementAt(iNode);</span>
+<span class="nc" id="L1913">					m_Instances.insertAttributeAt(m_att[iNode], nTargetNode);</span>
+				}
+<span class="nc" id="L1915">				int nAtts = m_Instances.numAttributes();</span>
+				// update parentsets
+<span class="nc" id="L1917">				ParentSet[] parentSets = new ParentSet[nAtts];</span>
+<span class="nc" id="L1918">				int[] offset = new int[nAtts];</span>
+<span class="nc bnc" id="L1919" title="All 2 branches missed.">				for (int iNode = 0; iNode &lt; nAtts; iNode++) {</span>
+<span class="nc" id="L1920">					offset[iNode] = iNode;</span>
+				}
+<span class="nc bnc" id="L1922" title="All 2 branches missed.">				for (int iNode = m_nodes.size() - 1; iNode &gt;= 0; iNode--) {</span>
+<span class="nc" id="L1923">					int nTargetNode = (Integer) m_nodes.elementAt(iNode);</span>
+<span class="nc bnc" id="L1924" title="All 2 branches missed.">					for (int i = nTargetNode; i &lt; nAtts - 1; i++) {</span>
+<span class="nc" id="L1925">						offset[i] = offset[i + 1];</span>
+					}
+				}
+
+<span class="nc" id="L1929">				int iTargetNode = 0;</span>
+<span class="nc bnc" id="L1930" title="All 2 branches missed.">				for (int iParentSet = 0; iParentSet &lt; nAtts; iParentSet++) {</span>
+<span class="nc bnc" id="L1931" title="All 2 branches missed.">					if (iTargetNode &lt; m_nodes.size()</span>
+<span class="nc bnc" id="L1932" title="All 2 branches missed.">							&amp;&amp; (Integer) m_nodes.elementAt(iTargetNode) == (Integer) iParentSet) {</span>
+<span class="nc" id="L1933">						SerializedObject so = new SerializedObject(m_ParentSet[iTargetNode]);</span>
+<span class="nc" id="L1934">						parentSets[iParentSet] = (ParentSet) so.getObject();</span>
+<span class="nc" id="L1935">						iTargetNode++;</span>
+					} else {
+<span class="nc" id="L1937">						parentSets[iParentSet] = m_ParentSets[iParentSet - iTargetNode];</span>
+<span class="nc bnc" id="L1938" title="All 2 branches missed.">						for (int iParent = 0; iParent &lt; parentSets[iParentSet].getNrOfParents(); iParent++) {</span>
+<span class="nc" id="L1939">							int nParent = parentSets[iParentSet].getParent(iParent);</span>
+<span class="nc" id="L1940">							parentSets[iParentSet].SetParent(iParent, offset[nParent]);</span>
+						}
+					}
+				}
+<span class="nc" id="L1944">				m_ParentSets = parentSets;</span>
+				// update distributions
+<span class="nc" id="L1946">				Estimator[][] distributions = new Estimator[nAtts][];</span>
+<span class="nc" id="L1947">				iTargetNode = 0;</span>
+<span class="nc bnc" id="L1948" title="All 2 branches missed.">				for (int iNode = 0; iNode &lt; nAtts; iNode++) {</span>
+<span class="nc bnc" id="L1949" title="All 4 branches missed.">					if (iTargetNode &lt; m_nodes.size() &amp;&amp; (Integer) m_nodes.elementAt(iTargetNode) == (Integer) iNode) {</span>
+<span class="nc" id="L1950">						SerializedObject so = new SerializedObject(m_CPT[iTargetNode]);</span>
+<span class="nc" id="L1951">						distributions[iNode] = (Estimator[]) so.getObject();</span>
+<span class="nc" id="L1952">						iTargetNode++;</span>
+					} else {
+<span class="nc" id="L1954">						distributions[iNode] = m_Distributions[iNode - iTargetNode];</span>
+					}
+				}
+<span class="nc" id="L1957">				m_Distributions = distributions;</span>
+
+<span class="nc bnc" id="L1959" title="All 2 branches missed.">				for (int iNode = 0; iNode &lt; m_nodes.size(); iNode++) {</span>
+<span class="nc" id="L1960">					int nTargetNode = (Integer) m_nodes.elementAt(iNode);</span>
+<span class="nc" id="L1961">					m_nPositionX.insertElementAt(m_nPosX[iNode], nTargetNode);</span>
+<span class="nc" id="L1962">					m_nPositionY.insertElementAt(m_nPosY[iNode], nTargetNode);</span>
+<span class="nc" id="L1963">					m_nEvidence.insertElementAt(-1, nTargetNode);</span>
+<span class="nc" id="L1964">					m_fMarginP.insertElementAt(new double[getCardinality(nTargetNode)], nTargetNode);</span>
+				}
+<span class="nc bnc" id="L1966" title="All 2 branches missed.">				for (int deletedArc = 0; deletedArc &lt; m_deleteArcActions.size(); deletedArc++) {</span>
+<span class="nc" id="L1967">					DeleteArcAction action = (DeleteArcAction) m_deleteArcActions.elementAt(deletedArc);</span>
+<span class="nc" id="L1968">					action.undo();</span>
+				}
+<span class="nc" id="L1970">			} catch (Exception e) {</span>
+<span class="nc" id="L1971">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L1973">		} // undo</span>
+
+		public void redo() {
+			try {
+<span class="nc bnc" id="L1977" title="All 2 branches missed.">				for (int iNode = m_nodes.size() - 1; iNode &gt;= 0; iNode--) {</span>
+<span class="nc" id="L1978">					int nNode = (Integer) m_nodes.elementAt(iNode);</span>
+<span class="nc" id="L1979">					deleteNode(nNode);</span>
+				}
+<span class="nc" id="L1981">			} catch (Exception e) {</span>
+<span class="nc" id="L1982">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L1984">		} // redo</span>
+	} // class DeleteSelectionAction
+
+	class AddArcAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		//int m_nChild;
+		FastVector m_children;
+
+		int m_nParent;
+
+		Estimator[][] m_CPT;
+
+<span class="nc" id="L1997">		AddArcAction(int nParent, int nChild) {</span>
+			try {
+<span class="nc" id="L1999">				m_nParent = nParent;</span>
+<span class="nc" id="L2000">				m_children = new FastVector();</span>
+<span class="nc" id="L2001">				m_children.addElement(nChild);</span>
+				//m_nChild = nChild;
+<span class="nc" id="L2003">				SerializedObject so = new SerializedObject(m_Distributions[nChild]);</span>
+<span class="nc" id="L2004">				m_CPT = new Estimator[1][];</span>
+<span class="nc" id="L2005">				m_CPT[0] = (Estimator[]) so.getObject();</span>
+				;
+<span class="nc" id="L2007">			} catch (Exception e) {</span>
+<span class="nc" id="L2008">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2010">		} // c'tor</span>
+
+<span class="nc" id="L2012">		AddArcAction(int nParent, FastVector children) {</span>
+			try {
+<span class="nc" id="L2014">				m_nParent = nParent;</span>
+<span class="nc" id="L2015">				m_children = new FastVector();</span>
+<span class="nc" id="L2016">				m_CPT = new Estimator[children.size()][];</span>
+<span class="nc bnc" id="L2017" title="All 2 branches missed.">				for (int iChild = 0; iChild &lt; children.size(); iChild++) {</span>
+<span class="nc" id="L2018">					int nChild = (Integer) children.elementAt(iChild);</span>
+<span class="nc" id="L2019">					m_children.addElement(nChild);</span>
+<span class="nc" id="L2020">					SerializedObject so = new SerializedObject(m_Distributions[nChild]);</span>
+<span class="nc" id="L2021">					m_CPT[iChild] = (Estimator[]) so.getObject();</span>
+				}
+<span class="nc" id="L2023">			} catch (Exception e) {</span>
+<span class="nc" id="L2024">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2026">		} // c'tor</span>
+
+		public void undo() {
+			try {
+<span class="nc bnc" id="L2030" title="All 2 branches missed.">				for (int iChild = 0; iChild &lt; m_children.size(); iChild++) {</span>
+<span class="nc" id="L2031">					int nChild = (Integer) m_children.elementAt(iChild);</span>
+<span class="nc" id="L2032">					deleteArc(m_nParent, nChild);</span>
+<span class="nc" id="L2033">					SerializedObject so = new SerializedObject(m_CPT[iChild]);</span>
+<span class="nc" id="L2034">					m_Distributions[nChild] = (Estimator[]) so.getObject();</span>
+				}
+<span class="nc" id="L2036">			} catch (Exception e) {</span>
+<span class="nc" id="L2037">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2039">		} // undo</span>
+
+		public void redo() {
+			try {
+<span class="nc bnc" id="L2043" title="All 2 branches missed.">				for (int iChild = 0; iChild &lt; m_children.size(); iChild++) {</span>
+<span class="nc" id="L2044">					int nChild = (Integer) m_children.elementAt(iChild);</span>
+<span class="nc" id="L2045">					addArc(m_nParent, nChild);</span>
+				}
+<span class="nc" id="L2047">			} catch (Exception e) {</span>
+<span class="nc" id="L2048">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2050">		} // redo</span>
+	} // class AddArcAction
+
+	class DeleteArcAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		int[] m_nParents;
+		int m_nChild;
+		int m_nParent;
+		Estimator[] m_CPT;
+
+<span class="nc" id="L2061">		DeleteArcAction(int nParent, int nChild) {</span>
+			try {
+<span class="nc" id="L2063">			m_nChild = nChild;</span>
+<span class="nc" id="L2064">			m_nParent = nParent;</span>
+<span class="nc" id="L2065">			m_nParents = new int[getNrOfParents(nChild)];</span>
+<span class="nc bnc" id="L2066" title="All 2 branches missed.">			for (int iParent = 0; iParent &lt; m_nParents.length; iParent++) {</span>
+<span class="nc" id="L2067">				m_nParents[iParent] = getParent(nChild, iParent);</span>
+			}
+<span class="nc" id="L2069">			SerializedObject so = new SerializedObject(m_Distributions[nChild]);</span>
+<span class="nc" id="L2070">			m_CPT = (Estimator[]) so.getObject();</span>
+<span class="nc" id="L2071">			} catch (Exception e) {</span>
+<span class="nc" id="L2072">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2074">		} // c'tor</span>
+
+		public void undo() {
+			try {
+<span class="nc" id="L2078">				SerializedObject so = new SerializedObject(m_CPT);</span>
+<span class="nc" id="L2079">				m_Distributions[m_nChild] = (Estimator[]) so.getObject();</span>
+<span class="nc" id="L2080">				ParentSet parentSet = new ParentSet();</span>
+<span class="nc bnc" id="L2081" title="All 2 branches missed.">				for (int iParent = 0; iParent &lt; m_nParents.length; iParent++) {</span>
+<span class="nc" id="L2082">					parentSet.addParent(m_nParents[iParent], m_Instances);</span>
+				}
+<span class="nc" id="L2084">				m_ParentSets[m_nChild] = parentSet;</span>
+<span class="nc" id="L2085">			} catch (Exception e) {</span>
+<span class="nc" id="L2086">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2088">		} // undo</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2092">				deleteArc(m_nParent, m_nChild);</span>
+<span class="nc" id="L2093">			} catch (Exception e) {</span>
+<span class="nc" id="L2094">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2096">		} // redo</span>
+	} // class DeleteArcAction
+
+	class SetDistributionAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		int m_nTargetNode;
+
+		Estimator[] m_CPT;
+
+		double[][] m_P;
+
+<span class="nc" id="L2108">		SetDistributionAction(int nTargetNode, double[][] P) {</span>
+			try {
+<span class="nc" id="L2110">				m_nTargetNode = nTargetNode;</span>
+<span class="nc" id="L2111">				SerializedObject so = new SerializedObject(m_Distributions[nTargetNode]);</span>
+<span class="nc" id="L2112">				m_CPT = (Estimator[]) so.getObject();</span>
+				;
+<span class="nc" id="L2114">				m_P = P;</span>
+<span class="nc" id="L2115">			} catch (Exception e) {</span>
+<span class="nc" id="L2116">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2118">		} // c'tor</span>
+
+		public void undo() {
+			try {
+<span class="nc" id="L2122">				SerializedObject so = new SerializedObject(m_CPT);</span>
+<span class="nc" id="L2123">				m_Distributions[m_nTargetNode] = (Estimator[]) so.getObject();</span>
+<span class="nc" id="L2124">			} catch (Exception e) {</span>
+<span class="nc" id="L2125">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2127">		} // undo</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2131">				setDistribution(m_nTargetNode, m_P);</span>
+<span class="nc" id="L2132">			} catch (Exception e) {</span>
+<span class="nc" id="L2133">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2135">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2138">			return &quot;Distribution of node &quot; + getNodeName(m_nTargetNode) + &quot; changed&quot;;</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2142">			return &quot;Distribution of node &quot; + getNodeName(m_nTargetNode) + &quot; changed&quot;;</span>
+		}
+	} // class SetDistributionAction
+
+	class RenameAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		int m_nTargetNode;
+
+		String m_sNewName;
+
+		String m_sOldName;
+
+<span class="nc" id="L2155">		RenameAction(int nTargetNode, String sOldName, String sNewName) {</span>
+<span class="nc" id="L2156">			m_nTargetNode = nTargetNode;</span>
+<span class="nc" id="L2157">			m_sNewName = sNewName;</span>
+<span class="nc" id="L2158">			m_sOldName = sOldName;</span>
+<span class="nc" id="L2159">		} // c'tor</span>
+
+		public void undo() {
+<span class="nc" id="L2162">			setNodeName(m_nTargetNode, m_sOldName);</span>
+<span class="nc" id="L2163">		} // undo</span>
+
+		public void redo() {
+<span class="nc" id="L2166">			setNodeName(m_nTargetNode, m_sNewName);</span>
+<span class="nc" id="L2167">		} // redo</span>
+	} // class RenameAction
+
+	class RenameValueAction extends RenameAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		RenameValueAction(int nTargetNode, String sOldName, String sNewName) {
+<span class="nc" id="L2174">			super(nTargetNode, sOldName, sNewName);</span>
+<span class="nc" id="L2175">		} // c'tor</span>
+
+		public void undo() {
+<span class="nc" id="L2178">			renameNodeValue(m_nTargetNode, m_sNewName, m_sOldName);</span>
+<span class="nc" id="L2179">		} // undo</span>
+
+		public void redo() {
+<span class="nc" id="L2182">			renameNodeValue(m_nTargetNode, m_sOldName, m_sNewName);</span>
+<span class="nc" id="L2183">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2186">			return &quot;Value of node &quot; + getNodeName(m_nTargetNode) + &quot; changed from &quot; + m_sNewName + &quot; to &quot; + m_sOldName;</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2190">			return &quot;Value of node &quot; + getNodeName(m_nTargetNode) + &quot; changed from &quot; + m_sOldName + &quot; to &quot; + m_sNewName;</span>
+		}
+	} // class RenameValueAction
+
+	class AddValueAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		int m_nTargetNode;
+
+		String m_sValue;
+
+<span class="nc" id="L2201">		AddValueAction(int nTargetNode, String sValue) {</span>
+<span class="nc" id="L2202">			m_nTargetNode = nTargetNode;</span>
+<span class="nc" id="L2203">			m_sValue = sValue;</span>
+<span class="nc" id="L2204">		} // c'tor</span>
+
+		public void undo() {
+			try {
+<span class="nc" id="L2208">				delNodeValue(m_nTargetNode, m_sValue);</span>
+<span class="nc" id="L2209">			} catch (Exception e) {</span>
+<span class="nc" id="L2210">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2212">		} // undo</span>
+
+		public void redo() {
+<span class="nc" id="L2215">			addNodeValue(m_nTargetNode, m_sValue);</span>
+<span class="nc" id="L2216">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2219">			return &quot;Value &quot; + m_sValue + &quot; removed from node &quot; + getNodeName(m_nTargetNode);</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2223">			return &quot;Value &quot; + m_sValue + &quot; added to node &quot; + getNodeName(m_nTargetNode);</span>
+		}
+	} // class AddValueAction
+
+	class DelValueAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		int m_nTargetNode;
+
+		String m_sValue;
+
+		Estimator[] m_CPT;
+
+		FastVector m_children;
+
+		Estimator[][] m_childAtts;
+
+		Attribute m_att;
+
+<span class="nc" id="L2242">		DelValueAction(int nTargetNode, String sValue) {</span>
+			try {
+<span class="nc" id="L2244">				m_nTargetNode = nTargetNode;</span>
+<span class="nc" id="L2245">				m_sValue = sValue;</span>
+<span class="nc" id="L2246">				m_att = m_Instances.attribute(nTargetNode);</span>
+<span class="nc" id="L2247">				SerializedObject so = new SerializedObject(m_Distributions[nTargetNode]);</span>
+<span class="nc" id="L2248">				m_CPT = (Estimator[]) so.getObject();</span>
+				;
+<span class="nc" id="L2250">				m_children = new FastVector();</span>
+<span class="nc bnc" id="L2251" title="All 2 branches missed.">				for (int iNode = 0; iNode &lt; getNrOfNodes(); iNode++) {</span>
+<span class="nc bnc" id="L2252" title="All 2 branches missed.">					if (m_ParentSets[iNode].contains(nTargetNode)) {</span>
+<span class="nc" id="L2253">						m_children.addElement(iNode);</span>
+					}
+				}
+<span class="nc" id="L2256">				m_childAtts = new Estimator[m_children.size()][];</span>
+<span class="nc bnc" id="L2257" title="All 2 branches missed.">				for (int iChild = 0; iChild &lt; m_children.size(); iChild++) {</span>
+<span class="nc" id="L2258">					int nChild = (Integer) m_children.elementAt(iChild);</span>
+<span class="nc" id="L2259">					m_childAtts[iChild] = m_Distributions[nChild];</span>
+				}
+<span class="nc" id="L2261">			} catch (Exception e) {</span>
+<span class="nc" id="L2262">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2264">		} // c'tor</span>
+
+		public void undo() {
+			try {
+<span class="nc" id="L2268">				m_Instances.insertAttributeAt(m_att, m_nTargetNode);</span>
+<span class="nc" id="L2269">				SerializedObject so = new SerializedObject(m_CPT);</span>
+<span class="nc" id="L2270">				m_Distributions[m_nTargetNode] = (Estimator[]) so.getObject();</span>
+<span class="nc bnc" id="L2271" title="All 2 branches missed.">				for (int iChild = 0; iChild &lt; m_children.size(); iChild++) {</span>
+<span class="nc" id="L2272">					int nChild = (Integer) m_children.elementAt(iChild);</span>
+<span class="nc" id="L2273">					m_Instances.insertAttributeAt(m_att, m_nTargetNode);</span>
+<span class="nc" id="L2274">					so = new SerializedObject(m_childAtts[iChild]);</span>
+<span class="nc" id="L2275">					m_Distributions[nChild] = (Estimator[]) so.getObject();</span>
+				}
+<span class="nc" id="L2277">			} catch (Exception e) {</span>
+<span class="nc" id="L2278">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2280">		} // undo</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2284">				delNodeValue(m_nTargetNode, m_sValue);</span>
+<span class="nc" id="L2285">			} catch (Exception e) {</span>
+<span class="nc" id="L2286">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2288">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2291">			return &quot;Value &quot; + m_sValue + &quot; added to node &quot; + getNodeName(m_nTargetNode);</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2295">			return &quot;Value &quot; + m_sValue + &quot; removed from node &quot; + getNodeName(m_nTargetNode);</span>
+		}
+	} // class DelValueAction
+
+	class alignAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		FastVector m_nodes;
+
+		FastVector m_posX;
+
+		FastVector m_posY;
+
+<span class="nc" id="L2308">		alignAction(FastVector nodes) {</span>
+<span class="nc" id="L2309">			m_nodes = new FastVector(nodes.size());</span>
+<span class="nc" id="L2310">			m_posX = new FastVector(nodes.size());</span>
+<span class="nc" id="L2311">			m_posY = new FastVector(nodes.size());</span>
+<span class="nc bnc" id="L2312" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L2313">				int nNode = (Integer) nodes.elementAt(iNode);</span>
+<span class="nc" id="L2314">				m_nodes.addElement(nNode);</span>
+<span class="nc" id="L2315">				m_posX.addElement(getPositionX(nNode));</span>
+<span class="nc" id="L2316">				m_posY.addElement(getPositionY(nNode));</span>
+			}
+<span class="nc" id="L2318">		} // c'tor</span>
+
+		public void undo() {
+			try {
+<span class="nc bnc" id="L2322" title="All 2 branches missed.">				for (int iNode = 0; iNode &lt; m_nodes.size(); iNode++) {</span>
+<span class="nc" id="L2323">					int nNode = (Integer) m_nodes.elementAt(iNode);</span>
+<span class="nc" id="L2324">					setPosition(nNode, (Integer) m_posX.elementAt(iNode), (Integer) m_posY.elementAt(iNode));</span>
+				}
+<span class="nc" id="L2326">			} catch (Exception e) {</span>
+<span class="nc" id="L2327">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2329">		} // undo</span>
+	} // class alignAction
+
+	class alignLeftAction extends alignAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		public alignLeftAction(FastVector nodes) {
+<span class="nc" id="L2336">			super(nodes);</span>
+<span class="nc" id="L2337">		} // c'tor</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2341">				alignLeft(m_nodes);</span>
+<span class="nc" id="L2342">			} catch (Exception e) {</span>
+<span class="nc" id="L2343">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2345">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2348">			return &quot;Returning &quot; + m_nodes.size() + &quot; from aliging nodes to the left.&quot;;</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2352">			return &quot;Aligning &quot; + m_nodes.size() + &quot; nodes to the left.&quot;;</span>
+		}
+	} // class alignLeftAction
+
+	class alignRightAction extends alignAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		public alignRightAction(FastVector nodes) {
+<span class="nc" id="L2360">			super(nodes);</span>
+<span class="nc" id="L2361">		} // c'tor</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2365">				alignRight(m_nodes);</span>
+<span class="nc" id="L2366">			} catch (Exception e) {</span>
+<span class="nc" id="L2367">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2369">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2372">			return &quot;Returning &quot; + m_nodes.size() + &quot; from aliging nodes to the right.&quot;;</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2376">			return &quot;Aligning &quot; + m_nodes.size() + &quot; nodes to the right.&quot;;</span>
+		}
+	} // class alignLeftAction
+
+	class alignTopAction extends alignAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		public alignTopAction(FastVector nodes) {
+<span class="nc" id="L2384">			super(nodes);</span>
+<span class="nc" id="L2385">		} // c'tor</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2389">				alignTop(m_nodes);</span>
+<span class="nc" id="L2390">			} catch (Exception e) {</span>
+<span class="nc" id="L2391">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2393">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2396">			return &quot;Returning &quot; + m_nodes.size() + &quot; from aliging nodes to the top.&quot;;</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2400">			return &quot;Aligning &quot; + m_nodes.size() + &quot; nodes to the top.&quot;;</span>
+		}
+	} // class alignTopAction
+
+	class alignBottomAction extends alignAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		public alignBottomAction(FastVector nodes) {
+<span class="nc" id="L2408">			super(nodes);</span>
+<span class="nc" id="L2409">		} // c'tor</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2413">				alignBottom(m_nodes);</span>
+<span class="nc" id="L2414">			} catch (Exception e) {</span>
+<span class="nc" id="L2415">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2417">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2420">			return &quot;Returning &quot; + m_nodes.size() + &quot; from aliging nodes to the bottom.&quot;;</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2424">			return &quot;Aligning &quot; + m_nodes.size() + &quot; nodes to the bottom.&quot;;</span>
+		}
+	} // class alignBottomAction
+
+	class centerHorizontalAction extends alignAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		public centerHorizontalAction(FastVector nodes) {
+<span class="nc" id="L2432">			super(nodes);</span>
+<span class="nc" id="L2433">		} // c'tor</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2437">				centerHorizontal(m_nodes);</span>
+<span class="nc" id="L2438">			} catch (Exception e) {</span>
+<span class="nc" id="L2439">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2441">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2444">			return &quot;Returning &quot; + m_nodes.size() + &quot; from centering horizontally.&quot;;</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2448">			return &quot;Centering &quot; + m_nodes.size() + &quot; nodes horizontally.&quot;;</span>
+		}
+	} // class centerHorizontalAction
+
+	class centerVerticalAction extends alignAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		public centerVerticalAction(FastVector nodes) {
+<span class="nc" id="L2456">			super(nodes);</span>
+<span class="nc" id="L2457">		} // c'tor</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2461">				centerVertical(m_nodes);</span>
+<span class="nc" id="L2462">			} catch (Exception e) {</span>
+<span class="nc" id="L2463">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2465">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2468">			return &quot;Returning &quot; + m_nodes.size() + &quot; from centering vertically.&quot;;</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2472">			return &quot;Centering &quot; + m_nodes.size() + &quot; nodes vertically.&quot;;</span>
+		}
+	} // class centerVerticalAction
+
+	class spaceHorizontalAction extends alignAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		public spaceHorizontalAction(FastVector nodes) {
+<span class="nc" id="L2480">			super(nodes);</span>
+<span class="nc" id="L2481">		} // c'tor</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2485">				spaceHorizontal(m_nodes);</span>
+<span class="nc" id="L2486">			} catch (Exception e) {</span>
+<span class="nc" id="L2487">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2489">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2492">			return &quot;Returning &quot; + m_nodes.size() + &quot; from spaceing horizontally.&quot;;</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2496">			return &quot;spaceing &quot; + m_nodes.size() + &quot; nodes horizontally.&quot;;</span>
+		}
+	} // class spaceHorizontalAction
+
+	class spaceVerticalAction extends alignAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		public spaceVerticalAction(FastVector nodes) {
+<span class="nc" id="L2504">			super(nodes);</span>
+<span class="nc" id="L2505">		} // c'tor</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2509">				spaceVertical(m_nodes);</span>
+<span class="nc" id="L2510">			} catch (Exception e) {</span>
+<span class="nc" id="L2511">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2513">		} // redo</span>
+
+		public String getUndoMsg() {
+<span class="nc" id="L2516">			return &quot;Returning &quot; + m_nodes.size() + &quot; from spaceng vertically.&quot;;</span>
+		}
+
+		public String getRedoMsg() {
+<span class="nc" id="L2520">			return &quot;Spaceng &quot; + m_nodes.size() + &quot; nodes vertically.&quot;;</span>
+		}
+	} // class spaceVerticalAction
+
+	class SetPositionAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		int m_nTargetNode;
+
+		int m_nX;
+
+		int m_nY;
+
+		int m_nX2;
+
+		int m_nY2;
+
+<span class="nc" id="L2537">		SetPositionAction(int nTargetNode, int nX, int nY) {</span>
+<span class="nc" id="L2538">			m_nTargetNode = nTargetNode;</span>
+<span class="nc" id="L2539">			m_nX2 = nX;</span>
+<span class="nc" id="L2540">			m_nY2 = nY;</span>
+<span class="nc" id="L2541">			m_nX = getPositionX(nTargetNode);</span>
+<span class="nc" id="L2542">			m_nY = getPositionY(nTargetNode);</span>
+<span class="nc" id="L2543">		} // c'tor</span>
+
+		public void undo() {
+<span class="nc" id="L2546">			setPosition(m_nTargetNode, m_nX, m_nY);</span>
+<span class="nc" id="L2547">		} // undo</span>
+
+		public void redo() {
+<span class="nc" id="L2550">			setPosition(m_nTargetNode, m_nX2, m_nY2);</span>
+<span class="nc" id="L2551">		} // redo</span>
+
+		public void setUndoPosition(int nX, int nY) {
+<span class="nc" id="L2554">			m_nX2 = nX;</span>
+<span class="nc" id="L2555">			m_nY2 = nY;</span>
+<span class="nc" id="L2556">		} // setPosition</span>
+	} // class SetPositionAction
+
+	class SetGroupPositionAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		FastVector m_nodes;
+		int m_dX;
+		int m_dY;
+
+<span class="nc" id="L2566">		SetGroupPositionAction(FastVector nodes, int dX, int dY) {</span>
+<span class="nc" id="L2567">			m_nodes = new FastVector(nodes.size());</span>
+<span class="nc bnc" id="L2568" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; nodes.size(); iNode++) {</span>
+<span class="nc" id="L2569">				m_nodes.addElement(nodes.elementAt(iNode));</span>
+			}
+<span class="nc" id="L2571">			m_dX = dX;</span>
+<span class="nc" id="L2572">			m_dY = dY;</span>
+<span class="nc" id="L2573">		} // c'tor</span>
+
+		public void undo() {
+<span class="nc bnc" id="L2576" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; m_nodes.size(); iNode++) {</span>
+<span class="nc" id="L2577">				int nNode = (Integer) m_nodes.elementAt(iNode);</span>
+<span class="nc" id="L2578">				setPosition(nNode, getPositionX(nNode) - m_dX,  getPositionY(nNode) - m_dY);</span>
+			}
+<span class="nc" id="L2580">		} // undo</span>
+
+		public void redo() {
+<span class="nc bnc" id="L2583" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; m_nodes.size(); iNode++) {</span>
+<span class="nc" id="L2584">				int nNode = (Integer) m_nodes.elementAt(iNode);</span>
+<span class="nc" id="L2585">				setPosition(nNode, getPositionX(nNode) + m_dX,  getPositionY(nNode) + m_dY);</span>
+			}
+<span class="nc" id="L2587">		} // redo</span>
+		public void setUndoPosition(int dX, int dY) {
+<span class="nc" id="L2589">			m_dX += dX;</span>
+<span class="nc" id="L2590">			m_dY += dY;</span>
+<span class="nc" id="L2591">		} // setPosition</span>
+	} // class SetGroupPositionAction
+
+	class LayoutGraphAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		FastVector m_nPosX;
+		FastVector m_nPosY;
+		FastVector m_nPosX2;
+		FastVector m_nPosY2;
+
+<span class="nc" id="L2602">		LayoutGraphAction(FastVector nPosX, FastVector nPosY) {</span>
+<span class="nc" id="L2603">			m_nPosX = new FastVector(nPosX.size());</span>
+<span class="nc" id="L2604">			m_nPosY = new FastVector(nPosX.size());</span>
+<span class="nc" id="L2605">			m_nPosX2 = new FastVector(nPosX.size());</span>
+<span class="nc" id="L2606">			m_nPosY2 = new FastVector(nPosX.size());</span>
+<span class="nc bnc" id="L2607" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; nPosX.size(); iNode++) {</span>
+<span class="nc" id="L2608">				m_nPosX.addElement(m_nPositionX.elementAt(iNode));</span>
+<span class="nc" id="L2609">				m_nPosY.addElement(m_nPositionY.elementAt(iNode));</span>
+<span class="nc" id="L2610">				m_nPosX2.addElement(nPosX.elementAt(iNode));</span>
+<span class="nc" id="L2611">				m_nPosY2.addElement(nPosY.elementAt(iNode));</span>
+			}
+<span class="nc" id="L2613">		} // c'tor</span>
+
+		public void undo() {
+<span class="nc bnc" id="L2616" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; m_nPosX.size(); iNode++) {</span>
+<span class="nc" id="L2617">				setPosition(iNode, (Integer) m_nPosX.elementAt(iNode), (Integer) m_nPosY.elementAt(iNode));</span>
+			}
+<span class="nc" id="L2619">		} // undo</span>
+
+		public void redo() {
+<span class="nc bnc" id="L2622" title="All 2 branches missed.">			for (int iNode = 0; iNode &lt; m_nPosX.size(); iNode++) {</span>
+<span class="nc" id="L2623">				setPosition(iNode, (Integer) m_nPosX2.elementAt(iNode), (Integer) m_nPosY2.elementAt(iNode));</span>
+			}
+<span class="nc" id="L2625">		} // redo</span>
+	} // class LayoutGraphAction
+
+	class PasteAction extends UndoAction {
+		/** for serialization */
+		static final long serialVersionUID = 1;
+		int m_nBase;
+
+		String m_sXML;
+
+<span class="nc" id="L2635">		PasteAction(String sXML, int nBase) {</span>
+<span class="nc" id="L2636">			m_sXML = sXML;</span>
+<span class="nc" id="L2637">			m_nBase = nBase;</span>
+<span class="nc" id="L2638">		} // c'tor</span>
+
+		public void undo() {
+			try {
+<span class="nc" id="L2642">				int iNode = getNrOfNodes() - 1;</span>
+<span class="nc bnc" id="L2643" title="All 2 branches missed.">				while (iNode &gt;= m_nBase) {</span>
+<span class="nc" id="L2644">					deleteNode(iNode);</span>
+<span class="nc" id="L2645">					iNode--;</span>
+				}
+<span class="nc" id="L2647">			} catch (Exception e) {</span>
+<span class="nc" id="L2648">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2650">		} // undo</span>
+
+		public void redo() {
+			try {
+<span class="nc" id="L2654">				paste(m_sXML, EXECUTE);</span>
+<span class="nc" id="L2655">			} catch (Exception e) {</span>
+<span class="nc" id="L2656">				e.printStackTrace();</span>
+			}
+<span class="nc" id="L2658">		} // redo</span>
+	} // class PasteAction
+	  
+	  /**
+	   * Returns the revision string.
+	   * 
+	   * @return		the revision
+	   */
+	  public String getRevision() {
+<span class="nc" id="L2667">	    return RevisionUtils.extract(&quot;$Revision: 7836 $&quot;);</span>
+	  }
+
+	/**
+	 * @param args
+	 */
+	public static void main(String[] args) {
+<span class="nc" id="L2674">	} // main</span>
+} // class EditableBayesNet
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

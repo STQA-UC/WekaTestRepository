@@ -1,0 +1,463 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>MultiInstanceToPropositional.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.filters.unsupervised.attribute</a> &gt; <span class="el_source">MultiInstanceToPropositional.java</span></div><h1>MultiInstanceToPropositional.java</h1><pre class="source lang-java linenums">/*
+ *   This program is free software: you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation, either version 3 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program.  If not, see &lt;http://www.gnu.org/licenses/&gt;.
+ */
+
+/*
+ * MultiInstanceToPropositional.java
+ * Copyright (C) 2005 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.filters.unsupervised.attribute;
+
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.Instance; 
+import weka.core.Instances;
+import weka.core.MultiInstanceCapabilitiesHandler;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RelationalLocator;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.StringLocator;
+import weka.core.Tag;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.filters.Filter;
+import weka.filters.UnsupervisedFilter;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * Converts the multi-instance dataset into single instance dataset so that the Nominalize, Standardize and other type of filters or transformation  can be applied to these data for the further preprocessing.&lt;br/&gt;
+ * Note: the first attribute of the converted dataset is a nominal attribute and refers to the bagId.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -A &amp;lt;num&amp;gt;
+ *  The type of weight setting for each prop. instance:
+ *  0.weight = original single bag weight /Total number of
+ *  prop. instance in the corresponding bag;
+ *  1.weight = 1.0;
+ *  2.weight = 1.0/Total number of prop. instance in the 
+ *   corresponding bag; 
+ *  3. weight = Total number of prop. instance / (Total number 
+ *   of bags * Total number of prop. instance in the 
+ *   corresponding bag). 
+ *  (default:0)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Lin Dong (ld21@cs.waikato.ac.nz) 
+ * @version $Revision: 9141 $
+ * @see PropositionalToMultiInstance
+ */
+<span class="fc" id="L72">public class MultiInstanceToPropositional </span>
+  extends Filter 
+  implements OptionHandler, UnsupervisedFilter, MultiInstanceCapabilitiesHandler {
+
+  /** for serialization */
+  private static final long serialVersionUID = -4102847628883002530L;
+
+  /** the total number of bags */
+  protected int m_NumBags;
+
+  /** Indices of string attributes in the bag */
+<span class="fc" id="L83">  protected StringLocator m_BagStringAtts = null;</span>
+
+  /** Indices of relational attributes in the bag */
+<span class="fc" id="L86">  protected RelationalLocator m_BagRelAtts = null;</span>
+  
+  /** the total number of the propositional instance in the dataset */
+  protected int m_NumInstances;
+  
+  /** weight method: keep the weight to be the same as the original value */
+  public static final int WEIGHTMETHOD_ORIGINAL = 0;
+  /** weight method: 1.0 */
+  public static final int WEIGHTMETHOD_1 = 1;
+  /** weight method: 1.0 / Total # of prop. instance in the corresp. bag */
+  public static final int WEIGHTMETHOD_INVERSE1 = 2;
+  /** weight method: Total # of prop. instance / (Total # of bags * Total # of prop. instance in the corresp. bag) */
+  public static final int WEIGHTMETHOD_INVERSE2 = 3;
+  /** weight methods */
+<span class="fc" id="L100">  public static final Tag[] TAGS_WEIGHTMETHOD = {</span>
+<span class="fc" id="L101">    new Tag(WEIGHTMETHOD_ORIGINAL, </span>
+<span class="fc" id="L102">        &quot;keep the weight to be the same as the original value&quot;),</span>
+<span class="fc" id="L103">    new Tag(WEIGHTMETHOD_1, </span>
+<span class="fc" id="L104">        &quot;1.0&quot;),</span>
+<span class="fc" id="L105">    new Tag(WEIGHTMETHOD_INVERSE1, </span>
+<span class="fc" id="L106">        &quot;1.0 / Total # of prop. instance in the corresp. bag&quot;),</span>
+<span class="fc" id="L107">    new Tag(WEIGHTMETHOD_INVERSE2, </span>
+<span class="fc" id="L108">        &quot;Total # of prop. instance / (Total # of bags * Total # of prop. instance in the corresp. bag)&quot;)</span>
+  };
+
+  /** the propositional instance weight setting method */
+<span class="fc" id="L112">  protected int m_WeightMethod = WEIGHTMETHOD_INVERSE2;</span>
+
+  /**
+   * Returns an enumeration describing the available options
+   *
+   * @return an enumeration of all the available options
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L120">    Vector result = new Vector();</span>
+  
+<span class="nc" id="L122">    result.addElement(new Option(</span>
+<span class="nc" id="L123">          &quot;\tThe type of weight setting for each prop. instance:\n&quot;</span>
+          + &quot;\t0.weight = original single bag weight /Total number of\n&quot;
+          + &quot;\tprop. instance in the corresponding bag;\n&quot;
+          + &quot;\t1.weight = 1.0;\n&quot;
+          + &quot;\t2.weight = 1.0/Total number of prop. instance in the \n&quot;
+          + &quot;\t\tcorresponding bag; \n&quot;
+          + &quot;\t3. weight = Total number of prop. instance / (Total number \n&quot;
+          + &quot;\t\tof bags * Total number of prop. instance in the \n&quot;
+          + &quot;\t\tcorresponding bag). \n&quot;
+          + &quot;\t(default:0)&quot;,
+<span class="nc" id="L133">          &quot;A&quot;, 1, &quot;-A &lt;num&gt;&quot;));</span>
+    
+<span class="nc" id="L135">    return result.elements();</span>
+  }
+
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -A &amp;lt;num&amp;gt;
+   *  The type of weight setting for each prop. instance:
+   *  0.weight = original single bag weight /Total number of
+   *  prop. instance in the corresponding bag;
+   *  1.weight = 1.0;
+   *  2.weight = 1.0/Total number of prop. instance in the 
+   *   corresponding bag; 
+   *  3. weight = Total number of prop. instance / (Total number 
+   *   of bags * Total number of prop. instance in the 
+   *   corresponding bag). 
+   *  (default:0)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="nc" id="L163">    String weightString = Utils.getOption('A', options);</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">    if (weightString.length() != 0) {</span>
+<span class="nc" id="L165">      setWeightMethod(</span>
+<span class="nc" id="L166">          new SelectedTag(Integer.parseInt(weightString), TAGS_WEIGHTMETHOD));</span>
+    } else {
+<span class="nc" id="L168">      setWeightMethod(</span>
+<span class="nc" id="L169">          new SelectedTag(WEIGHTMETHOD_INVERSE2, TAGS_WEIGHTMETHOD));</span>
+    }	
+<span class="nc" id="L171">  }</span>
+
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+    Vector        result;
+    
+<span class="fc" id="L181">    result = new Vector();</span>
+    
+<span class="fc" id="L183">    result.add(&quot;-A&quot;);</span>
+<span class="fc" id="L184">    result.add(&quot;&quot; + m_WeightMethod);</span>
+
+<span class="fc" id="L186">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String weightMethodTipText() {
+<span class="nc" id="L196">    return &quot;The method used for weighting the instances.&quot;;</span>
+  }
+
+  /**
+   * The new method for weighting the instances.
+   *
+   * @param method      the new method
+   */
+  public void setWeightMethod(SelectedTag method){
+<span class="pc bpc" id="L205" title="1 of 2 branches missed.">    if (method.getTags() == TAGS_WEIGHTMETHOD)</span>
+<span class="fc" id="L206">      m_WeightMethod = method.getSelectedTag().getID();</span>
+<span class="fc" id="L207">  }</span>
+
+  /**
+   * Returns the current weighting method for instances.
+   * 
+   * @return		the current weight method
+   */
+  public SelectedTag getWeightMethod(){
+<span class="nc" id="L215">    return new SelectedTag(m_WeightMethod, TAGS_WEIGHTMETHOD);</span>
+  }
+
+  /**
+   * Returns a string describing this filter
+   *
+   * @return a description of the filter suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L226">    return </span>
+<span class="nc" id="L227">        &quot;Converts the multi-instance dataset into single instance dataset &quot;</span>
+      + &quot;so that the Nominalize, Standardize and other type of filters or transformation &quot;
+      + &quot; can be applied to these data for the further preprocessing.\n&quot;
+      + &quot;Note: the first attribute of the converted dataset is a nominal &quot;
+      + &quot;attribute and refers to the bagId.&quot;;
+  }
+
+  /** 
+   * Returns the Capabilities of this filter.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L241">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L242">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L245">    result.disableAllAttributes();</span>
+<span class="fc" id="L246">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L247">    result.enable(Capability.RELATIONAL_ATTRIBUTES);</span>
+<span class="fc" id="L248">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="fc" id="L251">    result.enableAllClasses();</span>
+<span class="fc" id="L252">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+    // other
+<span class="fc" id="L255">    result.enable(Capability.ONLY_MULTIINSTANCE);</span>
+    
+<span class="fc" id="L257">    return result;</span>
+  }
+
+  /**
+   * Returns the capabilities of this multi-instance filter for the
+   * relational data (i.e., the bags).
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getMultiInstanceCapabilities() {
+<span class="fc" id="L268">    Capabilities result = new Capabilities(this);</span>
+
+    // attributes
+<span class="fc" id="L271">    result.enableAllAttributes();</span>
+<span class="fc" id="L272">    result.disable(Capability.RELATIONAL_ATTRIBUTES);</span>
+<span class="fc" id="L273">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="fc" id="L276">    result.enableAllClasses();</span>
+<span class="fc" id="L277">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+<span class="fc" id="L278">    result.enable(Capability.NO_CLASS);</span>
+    
+    // other
+<span class="fc" id="L281">    result.setMinimumNumberInstances(0);</span>
+    
+<span class="fc" id="L283">    return result;</span>
+  }
+
+  /**
+   * Sets the format of the input instances.
+   *
+   * @param instanceInfo an Instances object containing the input 
+   * instance structure (any instances contained in the object are 
+   * ignored - only the structure is required).
+   * @return true if the outputFormat may be collected immediately
+   * @throws Exception if the input format can't be set 
+   * successfully
+   */
+  public boolean setInputFormat(Instances instanceInfo) 
+    throws Exception {
+
+<span class="pc bpc" id="L299" title="1 of 2 branches missed.">    if (instanceInfo.attribute(1).type()!=Attribute.RELATIONAL) {</span>
+<span class="nc" id="L300">      throw new Exception(&quot;Can only handle relational-valued attribute!&quot;);</span>
+    }  
+<span class="fc" id="L302">    super.setInputFormat(instanceInfo);   </span>
+
+<span class="fc" id="L304">    m_NumBags = instanceInfo.numInstances();</span>
+<span class="fc" id="L305">    m_NumInstances = 0;</span>
+<span class="fc bfc" id="L306" title="All 2 branches covered.">    for (int i=0; i&lt;m_NumBags; i++)</span>
+<span class="pc bpc" id="L307" title="1 of 2 branches missed.">      if (instanceInfo.instance(i).relationalValue(1) == null) {</span>
+<span class="nc" id="L308">        m_NumInstances++;</span>
+      } else {
+<span class="fc" id="L310">        m_NumInstances += instanceInfo.instance(i).relationalValue(1).numInstances();</span>
+      }
+
+<span class="fc" id="L313">    Attribute classAttribute = (Attribute) instanceInfo.classAttribute().copy();</span>
+<span class="fc" id="L314">    Attribute bagIndex = (Attribute) instanceInfo.attribute(0).copy();</span>
+
+    /* create a new output format (propositional instance format) */
+<span class="fc" id="L317">    Instances newData = instanceInfo.attribute(1).relation().stringFreeStructure();</span>
+<span class="fc" id="L318">    newData.insertAttributeAt(bagIndex, 0);</span>
+<span class="fc" id="L319">    newData.insertAttributeAt(classAttribute, newData.numAttributes());</span>
+<span class="fc" id="L320">    newData.setClassIndex(newData.numAttributes() - 1);</span>
+
+<span class="fc" id="L322">    super.setOutputFormat(newData.stringFreeStructure());</span>
+
+<span class="fc" id="L324">    m_BagStringAtts = new StringLocator(instanceInfo.attribute(1).relation().stringFreeStructure());</span>
+<span class="fc" id="L325">    m_BagRelAtts    = new RelationalLocator(instanceInfo.attribute(1).relation().stringFreeStructure());</span>
+
+<span class="fc" id="L327">    return true;</span>
+  }
+
+
+  /**
+   * Input an instance for filtering. Filter requires all
+   * training instances be read before producing output.
+   *
+   * @param instance the input instance
+   * @return true if the filtered instance may now be
+   * collected with output().
+   * @throws IllegalStateException if no input format has been set.
+   */
+  public boolean input(Instance instance) {
+
+<span class="pc bpc" id="L342" title="1 of 2 branches missed.">    if (getInputFormat() == null) {</span>
+<span class="nc" id="L343">      throw new IllegalStateException(&quot;No input instance format defined&quot;);</span>
+    }
+<span class="fc bfc" id="L345" title="All 2 branches covered.">    if (m_NewBatch) {</span>
+<span class="fc" id="L346">      resetQueue();</span>
+<span class="fc" id="L347">      m_NewBatch = false;</span>
+    }
+
+<span class="fc" id="L350">    convertInstance(instance);</span>
+<span class="fc" id="L351">    return true;</span>
+
+  }
+
+  /**
+   * Signify that this batch of input to the filter is finished. 
+   * If the filter requires all instances prior to filtering,
+   * output() may now be called to retrieve the filtered instances.
+   *
+   * @return true if there are instances pending output
+   * @throws IllegalStateException if no input structure has been defined
+   */
+  public boolean batchFinished() {
+
+<span class="pc bpc" id="L365" title="1 of 2 branches missed.">    if (getInputFormat() == null) {</span>
+<span class="nc" id="L366">      throw new IllegalStateException(&quot;No input instance format defined&quot;);</span>
+    }
+
+<span class="fc" id="L369">    Instances input = getInputFormat();</span>
+
+    // Convert pending input instances
+<span class="pc bpc" id="L372" title="1 of 2 branches missed.">    for(int i = 0; i &lt; input.numInstances(); i++) {</span>
+<span class="nc" id="L373">      convertInstance(input.instance(i));</span>
+    }
+
+    // Free memory
+<span class="fc" id="L377">    flushInput();</span>
+
+<span class="fc" id="L379">    m_NewBatch = true;</span>
+<span class="fc bfc" id="L380" title="All 2 branches covered.">    return (numPendingOutput() != 0);</span>
+  }
+
+  /**
+   * Convert a single bag over. The converted instances is 
+   * added to the end of the output queue.
+   *
+   * @param bag the bag to convert
+   */
+  private void convertInstance(Instance bag) {
+
+<span class="fc" id="L391">    Instances data = bag.relationalValue(1);</span>
+<span class="fc" id="L392">    int bagSize = 1;</span>
+<span class="pc bpc" id="L393" title="1 of 2 branches missed.">    if (data != null) {</span>
+<span class="fc" id="L394">      bagSize = data.numInstances();</span>
+    }
+<span class="fc" id="L396">    double bagIndex = bag.value(0);</span>
+<span class="fc" id="L397">    double classValue = bag.classValue();</span>
+<span class="fc" id="L398">    double weight = 0.0; </span>
+    //the proper weight for each instance in a bag 
+<span class="fc bfc" id="L400" title="All 2 branches covered.">    if (m_WeightMethod == WEIGHTMETHOD_1)</span>
+<span class="fc" id="L401">      weight = 1.0;</span>
+<span class="pc bpc" id="L402" title="1 of 2 branches missed.">    else if (m_WeightMethod == WEIGHTMETHOD_INVERSE1)</span>
+<span class="nc" id="L403">      weight = (double) 1.0 / bagSize;</span>
+<span class="fc bfc" id="L404" title="All 2 branches covered.">    else if (m_WeightMethod == WEIGHTMETHOD_INVERSE2)</span>
+<span class="fc" id="L405">      weight=(double) m_NumInstances / (m_NumBags * bagSize);</span>
+    else 
+<span class="fc" id="L407">      weight = (double) bag.weight() / bagSize;</span>
+
+    Instance newInst;
+<span class="fc" id="L410">    Instances outputFormat = getOutputFormat().stringFreeStructure();</span>
+
+<span class="fc bfc" id="L412" title="All 2 branches covered.">    for (int i = 0; i &lt; bagSize; i++) {</span>
+<span class="fc" id="L413">      newInst = new Instance(outputFormat.numAttributes());</span>
+<span class="fc" id="L414">      newInst.setDataset(outputFormat);</span>
+<span class="fc" id="L415">      newInst.setValue(0,bagIndex);</span>
+<span class="fc bfc" id="L416" title="All 2 branches covered.">      if (!bag.classIsMissing())</span>
+<span class="fc" id="L417">        newInst.setClassValue(classValue);</span>
+      // copy the attribute values to new instance
+<span class="fc bfc" id="L419" title="All 2 branches covered.">      for (int j = 1; j &lt; outputFormat.numAttributes() - 1; j++){</span>
+<span class="pc bpc" id="L420" title="1 of 2 branches missed.">        if (data == null) {</span>
+<span class="nc" id="L421">          newInst.setMissing(j);</span>
+        } else {
+<span class="fc" id="L423">          newInst.setValue(j,data.instance(i).value(j - 1));</span>
+        }
+      }	
+
+<span class="fc" id="L427">      newInst.setWeight(weight);</span>
+
+      // copy strings/relational values
+<span class="fc" id="L430">      StringLocator.copyStringValues(</span>
+<span class="fc" id="L431">	  newInst, false, </span>
+<span class="fc" id="L432">	  data, m_BagStringAtts, </span>
+<span class="fc" id="L433">	  outputFormat, m_OutputStringAtts);</span>
+
+<span class="fc" id="L435">      RelationalLocator.copyRelationalValues(</span>
+<span class="fc" id="L436">	  newInst, false, </span>
+<span class="fc" id="L437">	  data, m_BagRelAtts, </span>
+<span class="fc" id="L438">	  outputFormat, m_OutputRelAtts);</span>
+      
+<span class="fc" id="L440">      push(newInst);</span>
+    }
+<span class="fc" id="L442">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L450">    return RevisionUtils.extract(&quot;$Revision: 9141 $&quot;);</span>
+  }
+
+  /**
+   * Main method for running this filter.
+   *
+   * @param args should contain arguments to the filter: 
+   * use -h for help
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L460">    runFilter(new MultiInstanceToPropositional(), args);</span>
+<span class="nc" id="L461">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

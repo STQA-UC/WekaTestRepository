@@ -1,0 +1,3508 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>GridSearch.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.meta</a> &gt; <span class="el_source">GridSearch.java</span></div><h1>GridSearch.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * GridSearch.java
+ * Copyright (C) 2006 University of Waikato, Hamilton, New Zealand
+ */
+
+package weka.classifiers.meta;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.Evaluation;
+import weka.classifiers.RandomizableSingleClassifierEnhancer;
+import weka.classifiers.functions.LinearRegression;
+import weka.core.AdditionalMeasureProducer;
+import weka.core.Capabilities;
+import weka.core.Debug;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.MathematicalExpression;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.PropertyPath;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.SerializedObject;
+import weka.core.Summarizable;
+import weka.core.Tag;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.filters.Filter;
+import weka.filters.supervised.attribute.PLSFilter;
+import weka.filters.unsupervised.attribute.MathExpression;
+import weka.filters.unsupervised.attribute.NumericCleaner;
+import weka.filters.unsupervised.instance.Resample;
+
+import java.beans.PropertyDescriptor;
+import java.io.File;
+import java.io.Serializable;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Performs a grid search of parameter pairs for the a classifier (Y-axis, default is LinearRegression with the &quot;Ridge&quot; parameter) and the PLSFilter (X-axis, &quot;# of Components&quot;) and chooses the best pair found for the actual predicting.&lt;br/&gt;
+ * &lt;br/&gt;
+ * The initial grid is worked on with 2-fold CV to determine the values of the parameter pairs for the selected type of evaluation (e.g., accuracy). The best point in the grid is then taken and a 10-fold CV is performed with the adjacent parameter pairs. If a better pair is found, then this will act as new center and another 10-fold CV will be performed (kind of hill-climbing). This process is repeated until no better pair is found or the best pair is on the border of the grid.&lt;br/&gt;
+ * In case the best pair is on the border, one can let GridSearch automatically extend the grid and continue the search. Check out the properties 'gridIsExtendable' (option '-extend-grid') and 'maxGridExtensions' (option '-max-grid-extensions &amp;lt;num&amp;gt;').&lt;br/&gt;
+ * &lt;br/&gt;
+ * GridSearch can handle doubles, integers (values are just cast to int) and booleans (0 is false, otherwise true). float, char and long are supported as well.&lt;br/&gt;
+ * &lt;br/&gt;
+ * The best filter/classifier setup can be accessed after the buildClassifier call via the getBestFilter/getBestClassifier methods.&lt;br/&gt;
+ * Note on the implementation: after the data has been passed through the filter, a default NumericCleaner filter is applied to the data in order to avoid numbers that are getting too small and might produce NaNs in other schemes.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -E &amp;lt;CC|RMSE|RRSE|MAE|RAE|COMB|ACC|KAP&amp;gt;
+ *  Determines the parameter used for evaluation:
+ *  CC = Correlation coefficient
+ *  RMSE = Root mean squared error
+ *  RRSE = Root relative squared error
+ *  MAE = Mean absolute error
+ *  RAE = Root absolute error
+ *  COMB = Combined = (1-abs(CC)) + RRSE + RAE
+ *  ACC = Accuracy
+ *  KAP = Kappa
+ *  (default: CC)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -y-property &amp;lt;option&amp;gt;
+ *  The Y option to test (without leading dash).
+ *  (default: classifier.ridge)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -y-min &amp;lt;num&amp;gt;
+ *  The minimum for Y.
+ *  (default: -10)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -y-max &amp;lt;num&amp;gt;
+ *  The maximum for Y.
+ *  (default: +5)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -y-step &amp;lt;num&amp;gt;
+ *  The step size for Y.
+ *  (default: 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -y-base &amp;lt;num&amp;gt;
+ *  The base for Y.
+ *  (default: 10)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -y-expression &amp;lt;expr&amp;gt;
+ *  The expression for Y.
+ *  Available parameters:
+ *   BASE
+ *   FROM
+ *   TO
+ *   STEP
+ *   I - the current iteration value
+ *   (from 'FROM' to 'TO' with stepsize 'STEP')
+ *  (default: 'pow(BASE,I)')&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -filter &amp;lt;filter specification&amp;gt;
+ *  The filter to use (on X axis). Full classname of filter to include, 
+ *  followed by scheme options.
+ *  (default: weka.filters.supervised.attribute.PLSFilter)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -x-property &amp;lt;option&amp;gt;
+ *  The X option to test (without leading dash).
+ *  (default: filter.numComponents)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -x-min &amp;lt;num&amp;gt;
+ *  The minimum for X.
+ *  (default: +5)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -x-max &amp;lt;num&amp;gt;
+ *  The maximum for X.
+ *  (default: +20)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -x-step &amp;lt;num&amp;gt;
+ *  The step size for X.
+ *  (default: 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -x-base &amp;lt;num&amp;gt;
+ *  The base for X.
+ *  (default: 10)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -x-expression &amp;lt;expr&amp;gt;
+ *  The expression for the X value.
+ *  Available parameters:
+ *   BASE
+ *   MIN
+ *   MAX
+ *   STEP
+ *   I - the current iteration value
+ *   (from 'FROM' to 'TO' with stepsize 'STEP')
+ *  (default: 'pow(BASE,I)')&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -extend-grid
+ *  Whether the grid can be extended.
+ *  (default: no)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -max-grid-extensions &amp;lt;num&amp;gt;
+ *  The maximum number of grid extensions (-1 is unlimited).
+ *  (default: 3)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -sample-size &amp;lt;num&amp;gt;
+ *  The size (in percent) of the sample to search the inital grid with.
+ *  (default: 100)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -traversal &amp;lt;ROW-WISE|COLUMN-WISE&amp;gt;
+ *  The type of traversal for the grid.
+ *  (default: COLUMN-WISE)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -log-file &amp;lt;filename&amp;gt;
+ *  The log file to log the messages to.
+ *  (default: none)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W
+ *  Full name of base classifier.
+ *  (default: weka.classifiers.functions.LinearRegression)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to classifier weka.classifiers.functions.LinearRegression:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Produce debugging output.
+ *  (default no debugging output)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;number of selection method&amp;gt;
+ *  Set the attribute selection method to use. 1 = None, 2 = Greedy.
+ *  (default 0 = M5' method)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C
+ *  Do not try to eliminate colinear attributes.
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;double&amp;gt;
+ *  Set ridge parameter (default 1.0e-8).
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to filter weka.filters.supervised.attribute.PLSFilter ('-filter'):
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Turns on output of debugging information.&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+ *  The number of components to compute.
+ *  (default: 20)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -U
+ *  Updates the class attribute as well.
+ *  (default: off)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Turns replacing of missing values on.
+ *  (default: off)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A &amp;lt;SIMPLS|PLS1&amp;gt;
+ *  The algorithm to use.
+ *  (default: PLS1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -P &amp;lt;none|center|standardize&amp;gt;
+ *  The type of preprocessing that is applied to the data.
+ *  (default: center)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * Examples:
+ * &lt;ul&gt;
+ *   &lt;li&gt;
+ *     &lt;b&gt;Optimizing SMO with RBFKernel (C and gamma)&lt;/b&gt;
+ *     &lt;ul&gt;
+ *       &lt;li&gt;Set the evaluation to &lt;i&gt;Accuracy&lt;/i&gt;.&lt;/li&gt;
+ *       &lt;li&gt;Set the filter to &lt;code&gt;weka.filters.AllFilter&lt;/code&gt; since we
+ *           don't need any special data processing and we don't optimize the
+ *           filter in this case (data gets always passed through filter!).&lt;/li&gt;
+ *       &lt;li&gt;Set &lt;code&gt;weka.classifiers.functions.SMO&lt;/code&gt; as classifier
+ *           with &lt;code&gt;weka.classifiers.functions.supportVector.RBFKernel&lt;/code&gt;
+ *           as kernel.
+ *       &lt;/li&gt;
+ *       &lt;li&gt;Set the XProperty to &quot;classifier.c&quot;, XMin to &quot;1&quot;, XMax to &quot;16&quot;, 
+ *           XStep to &quot;1&quot; and the XExpression to &quot;I&quot;. This will test the &quot;C&quot;
+ *           parameter of SMO for the values from 1 to 16.&lt;/li&gt;
+ *       &lt;li&gt;Set the YProperty to &quot;classifier.kernel.gamma&quot;, YMin to &quot;-5&quot;,
+ *           YMax to &quot;2&quot;, YStep to &quot;1&quot; YBase to &quot;10&quot; and YExpression to 
+ *           &quot;pow(BASE,I)&quot;. This will test the gamma of the RBFKernel with the
+ *           values 10^-5, 10^-4,..,10^2.&lt;/li&gt;
+ *     &lt;/ul&gt;
+ *   &lt;/li&gt;
+ *   &lt;li&gt;
+ *     &lt;b&gt;Optimizing PLSFilter with LinearRegression (# of components and ridge) - default setup&lt;/b&gt;
+ *     &lt;ul&gt;
+ *       &lt;li&gt;Set the evaluation to &lt;i&gt;Correlation coefficient&lt;/i&gt;.&lt;/li&gt;
+ *       &lt;li&gt;Set the filter to &lt;code&gt;weka.filters.supervised.attribute.PLSFilter&lt;/code&gt;.&lt;/li&gt;
+ *       &lt;li&gt;Set &lt;code&gt;weka.classifiers.functions.LinearRegression&lt;/code&gt; as 
+ *           classifier and use no attribute selection and no elimination of
+ *           colinear attributes.&lt;/li&gt;
+ *       &lt;li&gt;Set the XProperty to &quot;filter.numComponents&quot;, XMin to &quot;5&quot;, XMax 
+ *           to &quot;20&quot; (this depends heavily on your dataset, should be no more
+ *           than the number of attributes!), XStep to &quot;1&quot; and XExpression to
+ *           &quot;I&quot;. This will test the number of components the PLSFilter will
+ *           produce from 5 to 20.&lt;/li&gt;
+ *       &lt;li&gt;Set the YProperty to &quot;classifier.ridge&quot;, XMin to &quot;-10&quot;, XMax to 
+ *           &quot;5&quot;, YStep to &quot;1&quot; and YExpression to &quot;pow(BASE,I)&quot;. This will
+ *           try ridge parameters from 10^-10 to 10^5.&lt;/li&gt;
+ *     &lt;/ul&gt;
+ *   &lt;/li&gt;
+ * &lt;/ul&gt;
+ * 
+ * General notes:
+ * &lt;ul&gt;
+ *   &lt;li&gt;Turn the &lt;i&gt;debug&lt;/i&gt; flag on in order to see some progress output in the
+ *       console&lt;/li&gt;
+ *   &lt;li&gt;If you want to view the fitness landscape that GridSearch explores,
+ *       select a &lt;i&gt;log file&lt;/i&gt;. This log will then contain Gnuplot data and 
+ *       script block for viewing the landscape. Just copy paste those blocks 
+ *       into files named accordingly and run Gnuplot with them.&lt;/li&gt;
+ * &lt;/ul&gt;
+ *
+ * @author  Bernhard Pfahringer (bernhard at cs dot waikato dot ac dot nz)
+ * @author  Geoff Holmes (geoff at cs dot waikato dot ac dot nz)
+ * @author  fracpete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 9733 $
+ * @see     PLSFilter
+ * @see     LinearRegression
+ * @see	    NumericCleaner
+ */
+<span class="fc" id="L300">public class GridSearch</span>
+  extends RandomizableSingleClassifierEnhancer
+  implements AdditionalMeasureProducer, Summarizable {
+
+  /**
+   * a serializable version of Point2D.Double
+   * 
+   * @see java.awt.geom.Point2D.Double
+   */
+  protected class PointDouble
+    extends java.awt.geom.Point2D.Double
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    private static final long serialVersionUID = 7151661776161898119L;
+    
+    /**
+     * the default constructor
+     * 
+     * @param x		the x value of the point
+     * @param y		the y value of the point
+     */
+    public PointDouble(double x, double y) {
+<span class="fc" id="L323">      super(x, y);</span>
+<span class="fc" id="L324">    }</span>
+
+    /**
+     * Determines whether or not two points are equal.
+     * 
+     * @param obj 	an object to be compared with this PointDouble
+     * @return 		true if the object to be compared has the same values; 
+     * 			false otherwise.
+     */
+    public boolean equals(Object obj) {
+      PointDouble 	pd;
+      
+<span class="nc" id="L336">      pd = (PointDouble) obj;</span>
+      
+<span class="nc bnc" id="L338" title="All 4 branches missed.">      return (Utils.eq(this.getX(), pd.getX()) &amp;&amp; Utils.eq(this.getY(), pd.getY()));</span>
+    }
+    
+    /**
+     * returns a string representation of the Point
+     * 
+     * @return the point as string
+     */
+    public String toString() {
+<span class="fc" id="L347">      return super.toString().replaceAll(&quot;.*\\[&quot;, &quot;[&quot;);</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L356">      return RevisionUtils.extract(&quot;$Revision: 9733 $&quot;);</span>
+    }
+  }
+
+  /**
+   * a serializable version of Point
+   * 
+   * @see java.awt.Point
+   */
+  protected class PointInt
+    extends java.awt.Point
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    private static final long serialVersionUID = -5900415163698021618L;
+
+    /**
+     * the default constructor
+     * 
+     * @param x		the x value of the point
+     * @param y		the y value of the point
+     */
+    public PointInt(int x, int y) {
+<span class="fc" id="L379">      super(x, y);</span>
+<span class="fc" id="L380">    }</span>
+    
+    /**
+     * returns a string representation of the Point
+     * 
+     * @return the point as string
+     */
+    public String toString() {
+<span class="nc" id="L388">      return super.toString().replaceAll(&quot;.*\\[&quot;, &quot;[&quot;);</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L397">      return RevisionUtils.extract(&quot;$Revision: 9733 $&quot;);</span>
+    }
+  }
+  
+  /**
+   * for generating the parameter pairs in a grid
+   */
+  protected class Grid
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    private static final long serialVersionUID = 7290732613611243139L;
+    
+    /** the minimum on the X axis */
+    protected double m_MinX;
+    
+    /** the maximum on the X axis */
+    protected double m_MaxX;
+    
+    /** the step size for the X axis */
+    protected double m_StepX;
+
+    /** the label for the X axis */
+    protected String m_LabelX;
+    
+    /** the minimum on the Y axis */
+    protected double m_MinY;
+    
+    /** the maximum on the Y axis */
+    protected double m_MaxY;
+    
+    /** the step size for the Y axis */
+    protected double m_StepY;
+
+    /** the label for the Y axis */
+    protected String m_LabelY;
+    
+    /** the number of points on the X axis */
+    protected int m_Width;
+    
+    /** the number of points on the Y axis */
+    protected int m_Height;
+    
+    /**
+     * initializes the grid
+     * 
+     * @param minX 	the minimum on the X axis
+     * @param maxX 	the maximum on the X axis
+     * @param stepX 	the step size for the X axis
+     * @param minY 	the minimum on the Y axis
+     * @param maxY 	the maximum on the Y axis
+     * @param stepY 	the step size for the Y axis
+     */
+    public Grid(double minX, double maxX, double stepX, 
+	        double minY, double maxY, double stepY) {
+<span class="nc" id="L452">      this(minX, maxX, stepX, &quot;&quot;, minY, maxY, stepY, &quot;&quot;);</span>
+<span class="nc" id="L453">    }</span>
+
+    
+    /**
+     * initializes the grid
+     * 
+     * @param minX 	the minimum on the X axis
+     * @param maxX 	the maximum on the X axis
+     * @param stepX 	the step size for the X axis
+     * @param labelX	the label for the X axis
+     * @param minY 	the minimum on the Y axis
+     * @param maxY 	the maximum on the Y axis
+     * @param stepY 	the step size for the Y axis
+     * @param labelY	the label for the Y axis
+     */
+    public Grid(double minX, double maxX, double stepX, String labelX,
+	        double minY, double maxY, double stepY, String labelY) {
+
+<span class="fc" id="L471">      super();</span>
+      
+<span class="fc" id="L473">      m_MinX   = minX;</span>
+<span class="fc" id="L474">      m_MaxX   = maxX;</span>
+<span class="fc" id="L475">      m_StepX  = stepX;</span>
+<span class="fc" id="L476">      m_LabelX = labelX;</span>
+<span class="fc" id="L477">      m_MinY   = minY;</span>
+<span class="fc" id="L478">      m_MaxY   = maxY;</span>
+<span class="fc" id="L479">      m_StepY  = stepY;</span>
+<span class="fc" id="L480">      m_LabelY = labelY;</span>
+<span class="fc" id="L481">      m_Height = (int) StrictMath.round((m_MaxY - m_MinY) / m_StepY) + 1;</span>
+<span class="fc" id="L482">      m_Width  = (int) StrictMath.round((m_MaxX - m_MinX) / m_StepX) + 1;</span>
+      
+      // is min &lt; max?
+<span class="pc bpc" id="L485" title="1 of 2 branches missed.">      if (m_MinX &gt;= m_MaxX)</span>
+<span class="nc" id="L486">	throw new IllegalArgumentException(&quot;XMin must be smaller than XMax!&quot;);</span>
+<span class="pc bpc" id="L487" title="1 of 2 branches missed.">      if (m_MinY &gt;= m_MaxY)</span>
+<span class="nc" id="L488">	throw new IllegalArgumentException(&quot;YMin must be smaller than YMax!&quot;);</span>
+      
+      // steps positive?
+<span class="pc bpc" id="L491" title="1 of 2 branches missed.">      if (m_StepX &lt;= 0)</span>
+<span class="nc" id="L492">	throw new IllegalArgumentException(&quot;XStep must be a positive number!&quot;);</span>
+<span class="pc bpc" id="L493" title="1 of 2 branches missed.">      if (m_StepY &lt;= 0)</span>
+<span class="nc" id="L494">	throw new IllegalArgumentException(&quot;YStep must be a positive number!&quot;);</span>
+      
+      // check borders
+<span class="pc bpc" id="L497" title="1 of 2 branches missed.">      if (!Utils.eq(m_MinX + (m_Width-1)*m_StepX, m_MaxX))</span>
+<span class="nc" id="L498">	throw new IllegalArgumentException(</span>
+<span class="nc" id="L499">	    &quot;X axis doesn't match! Provided max: &quot; + m_MaxX </span>
+<span class="nc" id="L500">	    + &quot;, calculated max via min and step size: &quot; </span>
+<span class="nc" id="L501">	    + (m_MinX + (m_Width-1)*m_StepX));</span>
+<span class="pc bpc" id="L502" title="1 of 2 branches missed.">      if (!Utils.eq(m_MinY + (m_Height-1)*m_StepY, m_MaxY))</span>
+<span class="pc" id="L503">	throw new IllegalArgumentException(</span>
+<span class="nc" id="L504">	    &quot;Y axis doesn't match! Provided max: &quot; + m_MaxY </span>
+<span class="nc" id="L505">	    + &quot;, calculated max via min and step size: &quot; </span>
+<span class="nc" id="L506">	    + (m_MinY + (m_Height-1)*m_StepY));</span>
+<span class="fc" id="L507">    }</span>
+
+    /**
+     * Tests itself against the provided grid object
+     * 
+     * @param o		the grid object to compare against
+     * @return		if the two grids have the same setup
+     */
+    public boolean equals(Object o) {
+      boolean	result;
+      Grid	g;
+      
+<span class="nc" id="L519">      g = (Grid) o;</span>
+      
+<span class="nc bnc" id="L521" title="All 2 branches missed.">      result =    (width() == g.width())</span>
+<span class="nc bnc" id="L522" title="All 2 branches missed.">               &amp;&amp; (height() == g.height())</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">               &amp;&amp; (getMinX() == g.getMinX())</span>
+<span class="nc bnc" id="L524" title="All 2 branches missed.">               &amp;&amp; (getMinY() == g.getMinY())</span>
+<span class="nc bnc" id="L525" title="All 2 branches missed.">               &amp;&amp; (getStepX() == g.getStepX())</span>
+<span class="nc bnc" id="L526" title="All 2 branches missed.">               &amp;&amp; (getStepY() == g.getStepY())</span>
+<span class="nc bnc" id="L527" title="All 2 branches missed.">               &amp;&amp; getLabelX().equals(g.getLabelX())</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">               &amp;&amp; getLabelY().equals(g.getLabelY());</span>
+      
+<span class="nc" id="L530">      return result;</span>
+    }
+    
+    /**
+     * returns the left border
+     * 
+     * @return 		the left border
+     */
+    public double getMinX() {
+<span class="fc" id="L539">      return m_MinX;</span>
+    }
+    
+    /**
+     * returns the right border
+     * 
+     * @return 		the right border
+     */
+    public double getMaxX() {
+<span class="fc" id="L548">      return m_MaxX;</span>
+    }
+    
+    /**
+     * returns the step size on the X axis
+     * 
+     * @return 		the step size
+     */
+    public double getStepX() {
+<span class="nc" id="L557">      return m_StepX;</span>
+    }
+    
+    /**
+     * returns the label for the X axis
+     * 
+     * @return		the label
+     */
+    public String getLabelX() {
+<span class="fc" id="L566">      return m_LabelX;</span>
+    }
+    
+    /**
+     * returns the bottom border
+     * 
+     * @return 		the bottom border
+     */
+    public double getMinY() {
+<span class="fc" id="L575">      return m_MinY;</span>
+    }
+    
+    /**
+     * returns the top border
+     * 
+     * @return 		the top border
+     */
+    public double getMaxY() {
+<span class="fc" id="L584">      return m_MaxY;</span>
+    }
+    
+    /**
+     * returns the step size on the Y axis
+     * 
+     * @return 		the step size
+     */
+    public double getStepY() {
+<span class="nc" id="L593">      return m_StepY;</span>
+    }
+    
+    /**
+     * returns the label for the Y axis
+     * 
+     * @return		the label
+     */
+    public String getLabelY() {
+<span class="fc" id="L602">      return m_LabelY;</span>
+    }
+    
+    /**
+     * returns the number of points in the grid on the Y axis (incl. borders)
+     * 
+     * @return 		the number of points in the grid on the Y axis
+     */
+    public int height() {
+<span class="fc" id="L611">      return m_Height;</span>
+    }
+    
+    /**
+     * returns the number of points in the grid on the X axis (incl. borders)
+     * 
+     * @return 		the number of points in the grid on the X axis
+     */
+    public int width() {
+<span class="fc" id="L620">      return m_Width;</span>
+    }
+
+    /**
+     * returns the values at the given point in the grid
+     * 
+     * @param x		the x-th point on the X axis
+     * @param y		the y-th point on the Y axis
+     * @return		the value pair at the given position
+     */
+    public PointDouble getValues(int x, int y) {
+<span class="pc bpc" id="L631" title="1 of 2 branches missed.">      if (x &gt;= width())</span>
+<span class="nc" id="L632">	throw new IllegalArgumentException(&quot;Index out of scope on X axis (&quot; + x + &quot; &gt;= &quot; + width() + &quot;)!&quot;);</span>
+<span class="pc bpc" id="L633" title="1 of 2 branches missed.">      if (y &gt;= height())</span>
+<span class="nc" id="L634">	throw new IllegalArgumentException(&quot;Index out of scope on Y axis (&quot; + y + &quot; &gt;= &quot; + height() + &quot;)!&quot;);</span>
+      
+<span class="fc" id="L636">      return new PointDouble(m_MinX + m_StepX*x, m_MinY + m_StepY*y);</span>
+    }
+
+    /**
+     * returns the closest index pair for the given value pair in the grid.
+     * 
+     * @param values	the values to get the indices for
+     * @return		the closest indices in the grid
+     */
+    public PointInt getLocation(PointDouble values) {
+      PointInt	result;
+      int	x;
+      int	y;
+      double	distance;
+      double	currDistance;
+      int	i;
+
+      // determine x
+<span class="fc" id="L654">      x        = 0;</span>
+<span class="fc" id="L655">      distance = m_StepX;</span>
+<span class="fc bfc" id="L656" title="All 2 branches covered.">      for (i = 0; i &lt; width(); i++) {</span>
+<span class="fc" id="L657">	currDistance = StrictMath.abs(values.getX() - getValues(i, 0).getX());</span>
+<span class="fc bfc" id="L658" title="All 2 branches covered.">	if (Utils.sm(currDistance, distance)) {</span>
+<span class="fc" id="L659">	  distance = currDistance;</span>
+<span class="fc" id="L660">	  x        = i;</span>
+	}
+      }
+      
+      // determine y
+<span class="fc" id="L665">      y        = 0;</span>
+<span class="fc" id="L666">      distance = m_StepY;</span>
+<span class="fc bfc" id="L667" title="All 2 branches covered.">      for (i = 0; i &lt; height(); i++) {</span>
+<span class="fc" id="L668">	currDistance = StrictMath.abs(values.getY() - getValues(0, i).getY());</span>
+<span class="fc bfc" id="L669" title="All 2 branches covered.">	if (Utils.sm(currDistance, distance)) {</span>
+<span class="fc" id="L670">	  distance = currDistance;</span>
+<span class="fc" id="L671">	  y        = i;</span>
+	}
+      }
+      
+<span class="fc" id="L675">      result = new PointInt(x, y);</span>
+<span class="fc" id="L676">      return result;</span>
+    }
+
+    /**
+     * checks whether the given values are on the border of the grid
+     * 
+     * @param values		the values to check
+     * @return			true if the the values are on the border
+     */
+    public boolean isOnBorder(PointDouble values) {
+<span class="nc" id="L686">      return isOnBorder(getLocation(values));</span>
+    }
+
+    /**
+     * checks whether the given location is on the border of the grid
+     * 
+     * @param location 		the location to check
+     * @return			true if the the location is on the border
+     */
+    public boolean isOnBorder(PointInt location) {
+<span class="fc bfc" id="L696" title="All 2 branches covered.">      if (location.getX() == 0)</span>
+<span class="fc" id="L697">	return true;</span>
+<span class="fc bfc" id="L698" title="All 2 branches covered.">      else if (location.getX() == width() - 1)</span>
+<span class="fc" id="L699">	return true;</span>
+<span class="pc bpc" id="L700" title="1 of 2 branches missed.">      if (location.getY() == 0)</span>
+<span class="nc" id="L701">	return true;</span>
+<span class="pc bpc" id="L702" title="1 of 2 branches missed.">      else if (location.getY() == height() - 1)</span>
+<span class="fc" id="L703">	return true;</span>
+      else
+<span class="nc" id="L705">	return false;</span>
+    }
+    
+    /**
+     * returns a subgrid with the same step sizes, but different borders
+     * 
+     * @param top	the top index
+     * @param left	the left index
+     * @param bottom	the bottom index
+     * @param right	the right index
+     * @return 		the Sub-Grid
+     */
+    public Grid subgrid(int top, int left, int bottom, int right) {
+<span class="nc" id="L718">      return new Grid(</span>
+<span class="nc" id="L719">                   getValues(left, top).getX(), getValues(right, top).getX(), getStepX(), getLabelX(),</span>
+<span class="nc" id="L720">                   getValues(left, bottom).getY(), getValues(left, top).getY(), getStepY(), getLabelY());</span>
+    }
+    
+    /**
+     * returns an extended grid that encompasses the given point (won't be on
+     * the border of the grid).
+     * 
+     * @param values	the point that the grid should contain
+     * @return		the extended grid
+     */
+    public Grid extend(PointDouble values) {
+      double	minX;
+      double	maxX;
+      double	minY;
+      double	maxY;
+      double	distance;
+      Grid	result;
+      
+      // left
+<span class="nc bnc" id="L739" title="All 2 branches missed.">      if (Utils.smOrEq(values.getX(), getMinX())) {</span>
+<span class="nc" id="L740">	distance = getMinX() - values.getX();</span>
+	// exactly on grid point?
+<span class="nc bnc" id="L742" title="All 2 branches missed.">	if (Utils.eq(distance, 0))</span>
+<span class="nc" id="L743">	  minX = getMinX() - getStepX() * (StrictMath.round(distance / getStepX()) + 1);</span>
+	else
+<span class="nc" id="L745">	  minX = getMinX() - getStepX() * (StrictMath.round(distance / getStepX()));</span>
+      }
+      else {
+<span class="nc" id="L748">	minX = getMinX();</span>
+      }
+      
+      // right
+<span class="nc bnc" id="L752" title="All 2 branches missed.">      if (Utils.grOrEq(values.getX(), getMaxX())) {</span>
+<span class="nc" id="L753">	distance = values.getX() - getMaxX();</span>
+	// exactly on grid point?
+<span class="nc bnc" id="L755" title="All 2 branches missed.">	if (Utils.eq(distance, 0))</span>
+<span class="nc" id="L756">	  maxX = getMaxX() + getStepX() * (StrictMath.round(distance / getStepX()) + 1);</span>
+	else
+<span class="nc" id="L758">	  maxX = getMaxX() + getStepX() * (StrictMath.round(distance / getStepX()));</span>
+      }
+      else {
+<span class="nc" id="L761">	maxX = getMaxX();</span>
+      }
+      
+      // bottom
+<span class="nc bnc" id="L765" title="All 2 branches missed.">      if (Utils.smOrEq(values.getY(), getMinY())) {</span>
+<span class="nc" id="L766">	distance = getMinY() - values.getY();</span>
+	// exactly on grid point?
+<span class="nc bnc" id="L768" title="All 2 branches missed.">	if (Utils.eq(distance, 0))</span>
+<span class="nc" id="L769">	  minY = getMinY() - getStepY() * (StrictMath.round(distance / getStepY()) + 1);</span>
+	else
+<span class="nc" id="L771">	  minY = getMinY() - getStepY() * (StrictMath.round(distance / getStepY()));</span>
+      }
+      else {
+<span class="nc" id="L774">	minY = getMinY();</span>
+      }
+      
+      // top
+<span class="nc bnc" id="L778" title="All 2 branches missed.">      if (Utils.grOrEq(values.getY(), getMaxY())) {</span>
+<span class="nc" id="L779">	distance = values.getY() - getMaxY();</span>
+	// exactly on grid point?
+<span class="nc bnc" id="L781" title="All 2 branches missed.">	if (Utils.eq(distance, 0))</span>
+<span class="nc" id="L782">	  maxY = getMaxY() + getStepY() * (StrictMath.round(distance / getStepY()) + 1);</span>
+	else
+<span class="nc" id="L784">	  maxY = getMaxY() + getStepY() * (StrictMath.round(distance / getStepY()));</span>
+      }
+      else {
+<span class="nc" id="L787">	maxY = getMaxY();</span>
+      }
+      
+<span class="nc" id="L790">      result = new Grid(minX, maxX, getStepX(), getLabelX(), minY, maxY, getStepY(), getLabelY());</span>
+      
+      // did the grid really extend?
+<span class="nc bnc" id="L793" title="All 2 branches missed.">      if (equals(result))</span>
+<span class="nc" id="L794">	throw new IllegalStateException(&quot;Grid extension failed!&quot;);</span>
+      
+<span class="nc" id="L796">      return result;</span>
+    }
+    
+    /**
+     * returns an Enumeration over all pairs in the given row
+     * 
+     * @param y		the row to retrieve
+     * @return		an Enumeration over all pairs
+     * @see #getValues(int, int)
+     */
+    public Enumeration&lt;PointDouble&gt; row(int y) {
+      Vector	result;
+      int	i;
+      
+<span class="nc" id="L810">      result = new Vector();</span>
+      
+<span class="nc bnc" id="L812" title="All 2 branches missed.">      for (i = 0; i &lt; width(); i++)</span>
+<span class="nc" id="L813">	result.add(getValues(i, y));</span>
+      
+<span class="nc" id="L815">      return result.elements();</span>
+    }
+    
+    /**
+     * returns an Enumeration over all pairs in the given column
+     * 
+     * @param x		the column to retrieve
+     * @return		an Enumeration over all pairs
+     * @see #getValues(int, int)
+     */
+    public Enumeration&lt;PointDouble&gt; column(int x) {
+      Vector	result;
+      int	i;
+      
+<span class="fc" id="L829">      result = new Vector();</span>
+      
+<span class="fc bfc" id="L831" title="All 2 branches covered.">      for (i = 0; i &lt; height(); i++)</span>
+<span class="fc" id="L832">	result.add(getValues(x, i));</span>
+      
+<span class="fc" id="L834">      return result.elements();</span>
+    }
+    
+    /**
+     * returns a string representation of the grid
+     * 
+     * @return a string representation
+     */
+    public String toString() {
+      String	result;
+      
+<span class="fc" id="L845">      result  = &quot;X: &quot; + m_MinX + &quot; - &quot; + m_MaxX + &quot;, Step &quot; + m_StepX;</span>
+<span class="pc bpc" id="L846" title="1 of 2 branches missed.">      if (m_LabelX.length() != 0)</span>
+<span class="fc" id="L847">	result += &quot; (&quot; + m_LabelX + &quot;)&quot;;</span>
+<span class="fc" id="L848">      result += &quot;\n&quot;;</span>
+      
+<span class="fc" id="L850">      result += &quot;Y: &quot; + m_MinY + &quot; - &quot; + m_MaxY + &quot;, Step &quot; + m_StepY;</span>
+<span class="pc bpc" id="L851" title="1 of 2 branches missed.">      if (m_LabelY.length() != 0)</span>
+<span class="fc" id="L852">	result += &quot; (&quot; + m_LabelY + &quot;)&quot;;</span>
+<span class="fc" id="L853">      result += &quot;\n&quot;;</span>
+
+<span class="fc" id="L855">      result += &quot;Dimensions (Rows x Columns): &quot; + height() + &quot; x &quot; + width();</span>
+      
+<span class="fc" id="L857">      return result;</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L866">      return RevisionUtils.extract(&quot;$Revision: 9733 $&quot;);</span>
+    }
+  }
+  
+  
+  /**
+   * A helper class for storing the performance of a values-pair.
+   * Can be sorted with the PerformanceComparator class.
+   * 
+   * @see PerformanceComparator
+   */
+  protected class Performance
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    private static final long serialVersionUID = -4374706475277588755L;
+    
+    /** the value pair the classifier was built with */
+    protected PointDouble m_Values;
+    
+    /** the Correlation coefficient */
+    protected double m_CC;
+    
+    /** the Root mean squared error */
+    protected double m_RMSE;
+    
+    /** the Root relative squared error */
+    protected double m_RRSE;
+    
+    /** the Mean absolute error */
+    protected double m_MAE;
+    
+    /** the Relative absolute error */
+    protected double m_RAE;
+    
+    /** the Accuracy */
+    protected double m_ACC;
+    
+    /** the kappa value */
+    protected double m_Kappa;
+    
+    /**
+     * initializes the performance container
+     * 
+     * @param values		the values-pair
+     * @param evaluation	the evaluation to extract the performance
+     * 				measures from
+     * @throws Exception	if retrieving of measures fails
+     */
+    public Performance(PointDouble values, Evaluation evaluation) throws Exception {
+<span class="fc" id="L916">      super();</span>
+      
+<span class="fc" id="L918">      m_Values = values;</span>
+      
+<span class="fc" id="L920">      m_RMSE  = evaluation.rootMeanSquaredError();</span>
+<span class="fc" id="L921">      m_RRSE  = evaluation.rootRelativeSquaredError();</span>
+<span class="fc" id="L922">      m_MAE   = evaluation.meanAbsoluteError();</span>
+<span class="fc" id="L923">      m_RAE   = evaluation.relativeAbsoluteError();</span>
+
+      try {
+<span class="nc" id="L926">	m_CC = evaluation.correlationCoefficient();</span>
+      }
+<span class="fc" id="L928">      catch (Exception e) {</span>
+<span class="fc" id="L929">	m_CC = Double.NaN;</span>
+      }
+      try {
+<span class="fc" id="L932">	m_ACC = evaluation.pctCorrect();</span>
+      }
+<span class="nc" id="L934">      catch (Exception e) {</span>
+<span class="nc" id="L935">	m_ACC = Double.NaN;</span>
+      }
+      try {
+<span class="fc" id="L938">	m_Kappa = evaluation.kappa();</span>
+      }
+<span class="nc" id="L940">      catch (Exception e) {</span>
+<span class="pc" id="L941">	m_Kappa = Double.NaN;</span>
+      }
+<span class="fc" id="L943">    }</span>
+    
+    /**
+     * returns the performance measure
+     * 
+     * @param evaluation	the type of measure to return
+     * @return 			the performance measure
+     */
+    public double getPerformance(int evaluation) {
+      double	result;
+      
+<span class="fc" id="L954">      result = Double.NaN;</span>
+      
+<span class="pc bpc" id="L956" title="1 of 9 branches missed.">      switch (evaluation) {</span>
+	case EVALUATION_CC:
+<span class="fc" id="L958">	  result = m_CC;</span>
+<span class="fc" id="L959">	  break;</span>
+	case EVALUATION_RMSE:
+<span class="fc" id="L961">	  result = m_RMSE;</span>
+<span class="fc" id="L962">	  break;</span>
+	case EVALUATION_RRSE:
+<span class="fc" id="L964">	  result = m_RRSE;</span>
+<span class="fc" id="L965">	  break;</span>
+	case EVALUATION_MAE:
+<span class="fc" id="L967">	  result = m_MAE;</span>
+<span class="fc" id="L968">	  break;</span>
+	case EVALUATION_RAE:
+<span class="fc" id="L970">	  result = m_RAE;</span>
+<span class="fc" id="L971">	  break;</span>
+	case EVALUATION_COMBINED:
+<span class="fc" id="L973">	  result = (1 - StrictMath.abs(m_CC)) + m_RRSE + m_RAE;</span>
+<span class="fc" id="L974">	  break;</span>
+	case EVALUATION_ACC:
+<span class="fc" id="L976">	  result = m_ACC;</span>
+<span class="fc" id="L977">	  break;</span>
+	case EVALUATION_KAPPA:
+<span class="fc" id="L979">	  result = m_Kappa;</span>
+<span class="fc" id="L980">	  break;</span>
+	default:
+<span class="nc" id="L982">	  throw new IllegalArgumentException(&quot;Evaluation type '&quot; + evaluation + &quot;' not supported!&quot;);</span>
+      }
+      
+<span class="fc" id="L985">      return result;</span>
+    }
+    
+    /**
+     * returns the values-pair for this performance
+     * 
+     * @return the values-pair
+     */
+    public PointDouble getValues() {
+<span class="fc" id="L994">      return m_Values;</span>
+    }
+    
+    /**
+     * returns a string representation of this performance object
+     * 
+     * @param evaluation	the type of performance to return
+     * @return 			a string representation
+     */
+    public String toString(int evaluation) {
+      String	result;
+      
+<span class="nc" id="L1006">      result =   &quot;Performance (&quot; + getValues() + &quot;): &quot; </span>
+<span class="nc" id="L1007">      	       + getPerformance(evaluation) </span>
+<span class="nc" id="L1008">      	       + &quot; (&quot; + new SelectedTag(evaluation, TAGS_EVALUATION) + &quot;)&quot;;</span>
+      
+<span class="nc" id="L1010">      return result;</span>
+    }
+    
+    /**
+     * returns a Gnuplot string of this performance object
+     * 
+     * @param evaluation	the type of performance to return
+     * @return 			the gnuplot string (x, y, z)
+     */
+    public String toGnuplot(int evaluation) {
+      String	result;
+      
+<span class="fc" id="L1022">      result =   getValues().getX() + &quot;\t&quot; </span>
+<span class="fc" id="L1023">      	       + getValues().getY() + &quot;\t&quot;</span>
+<span class="fc" id="L1024">      	       + getPerformance(evaluation);</span>
+      
+<span class="fc" id="L1026">      return result;</span>
+    }
+    
+    /**
+     * returns a string representation of this performance object
+     * 
+     * @return a string representation
+     */
+    public String toString() {
+      String	result;
+      int	i;
+      
+<span class="fc" id="L1038">      result = &quot;Performance (&quot; + getValues() + &quot;): &quot;;</span>
+      
+<span class="fc bfc" id="L1040" title="All 2 branches covered.">      for (i = 0; i &lt; TAGS_EVALUATION.length; i++) {</span>
+<span class="fc bfc" id="L1041" title="All 2 branches covered.">	if (i &gt; 0)</span>
+<span class="fc" id="L1042">	  result += &quot;, &quot;;</span>
+<span class="fc" id="L1043">        result +=   getPerformance(TAGS_EVALUATION[i].getID()) </span>
+<span class="fc" id="L1044">        	  + &quot; (&quot; + new SelectedTag(TAGS_EVALUATION[i].getID(), TAGS_EVALUATION) + &quot;)&quot;;</span>
+      }
+      
+<span class="fc" id="L1047">      return result;</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L1056">      return RevisionUtils.extract(&quot;$Revision: 9733 $&quot;);</span>
+    }
+  }
+  
+  /**
+   * A concrete Comparator for the Performance class.
+   * 
+   * @see Performance
+   */
+  protected class PerformanceComparator
+    implements Comparator&lt;Performance&gt;, Serializable, RevisionHandler {
+    
+    /** for serialization */
+    private static final long serialVersionUID = 6507592831825393847L;
+    
+    /** the performance measure to use for comparison 
+     * @see GridSearch#TAGS_EVALUATION */
+    protected int m_Evaluation;
+    
+    /**
+     * initializes the comparator with the given performance measure
+     * 
+     * @param evaluation	the performance measure to use
+     * @see GridSearch#TAGS_EVALUATION
+     */
+    public PerformanceComparator(int evaluation) {
+<span class="fc" id="L1082">      super();</span>
+      
+<span class="fc" id="L1084">      m_Evaluation = evaluation;</span>
+<span class="fc" id="L1085">    }</span>
+    
+    /**
+     * returns the performance measure that's used to compare the objects
+     * 
+     * @return the performance measure
+     * @see GridSearch#TAGS_EVALUATION
+     */
+    public int getEvaluation() {
+<span class="fc" id="L1094">      return m_Evaluation;</span>
+    }
+    
+    /**
+     * Compares its two arguments for order. Returns a negative integer, 
+     * zero, or a positive integer as the first argument is less than, 
+     * equal to, or greater than the second.
+     * 
+     * @param o1 	the first performance
+     * @param o2 	the second performance
+     * @return 		the order
+     */
+    public int compare(Performance o1, Performance o2) {
+      int	result;
+      double	p1;
+      double	p2;
+      
+<span class="fc" id="L1111">      p1 = o1.getPerformance(getEvaluation());</span>
+<span class="fc" id="L1112">      p2 = o2.getPerformance(getEvaluation());</span>
+      
+<span class="fc bfc" id="L1114" title="All 2 branches covered.">      if (Utils.sm(p1, p2))</span>
+<span class="fc" id="L1115">	result = -1;</span>
+<span class="fc bfc" id="L1116" title="All 2 branches covered.">      else if (Utils.gr(p1, p2))</span>
+<span class="fc" id="L1117">	result = 1;</span>
+      else
+<span class="fc" id="L1119">	result = 0;</span>
+	
+      // only correlation coefficient/accuracy/kappa obey to this order, for the
+      // errors (and the combination of all three), the smaller the number the
+      // better -&gt; hence invert them
+<span class="pc bpc" id="L1124" title="1 of 2 branches missed.">      if (    (getEvaluation() != EVALUATION_CC) </span>
+<span class="pc bpc" id="L1125" title="1 of 2 branches missed.">           &amp;&amp; (getEvaluation() != EVALUATION_ACC) </span>
+<span class="nc bnc" id="L1126" title="All 2 branches missed.">           &amp;&amp; (getEvaluation() != EVALUATION_KAPPA) )</span>
+<span class="nc" id="L1127">	result = -result;</span>
+	
+<span class="fc" id="L1129">      return result;</span>
+    }
+    
+    /**
+     * Indicates whether some other object is &quot;equal to&quot; this Comparator.
+     * 
+     * @param obj	the object to compare with
+     * @return		true if the same evaluation type is used
+     */
+    public boolean equals(Object obj) {
+<span class="nc bnc" id="L1139" title="All 2 branches missed.">      if (!(obj instanceof PerformanceComparator))</span>
+<span class="nc" id="L1140">	throw new IllegalArgumentException(&quot;Must be PerformanceComparator!&quot;);</span>
+      
+<span class="nc bnc" id="L1142" title="All 2 branches missed.">      return (m_Evaluation == ((PerformanceComparator) obj).m_Evaluation);</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L1151">      return RevisionUtils.extract(&quot;$Revision: 9733 $&quot;);</span>
+    }
+  }
+  
+  /**
+   * Generates a 2-dim array for the performances from a grid for a certain 
+   * type. x-min/y-min is in the bottom-left corner, i.e., getTable()[0][0]
+   * returns the performance for the x-min/y-max pair.
+   * &lt;pre&gt;
+   * x-min     x-max
+   * |-------------|
+   *                - y-max
+   *                |
+   *                |
+   *                - y-min
+   * &lt;/pre&gt;
+   */
+  protected class PerformanceTable 
+    implements Serializable, RevisionHandler {
+    
+    /** for serialization */
+    private static final long serialVersionUID = 5486491313460338379L;
+
+    /** the corresponding grid */
+    protected Grid m_Grid;
+    
+    /** the performances */
+    protected Vector&lt;Performance&gt; m_Performances;
+    
+    /** the type of performance the table was generated for */
+    protected int m_Type;
+    
+    /** the table with the values */
+    protected double[][] m_Table;
+    
+    /** the minimum performance */
+    protected double m_Min;
+    
+    /** the maximum performance */
+    protected double m_Max;
+    
+    /**
+     * initializes the table
+     * 
+     * @param grid		the underlying grid
+     * @param performances	the performances
+     * @param type		the type of performance
+     */
+    public PerformanceTable(Grid grid, Vector&lt;Performance&gt; performances, int type) {
+<span class="fc" id="L1200">      super();</span>
+      
+<span class="fc" id="L1202">      m_Grid         = grid;</span>
+<span class="fc" id="L1203">      m_Type         = type;</span>
+<span class="fc" id="L1204">      m_Performances = performances;</span>
+      
+<span class="fc" id="L1206">      generate();</span>
+<span class="fc" id="L1207">    }</span>
+    
+    /**
+     * generates the table
+     */
+    protected void generate() {
+      Performance 	perf;
+      int 		i;
+      PointInt 		location;
+      
+<span class="fc" id="L1217">      m_Table = new double[getGrid().height()][getGrid().width()];</span>
+<span class="fc" id="L1218">      m_Min   = 0;</span>
+<span class="fc" id="L1219">      m_Max   = 0;</span>
+      
+<span class="fc bfc" id="L1221" title="All 2 branches covered.">      for (i = 0; i &lt; getPerformances().size(); i++) {</span>
+<span class="fc" id="L1222">	perf     = (Performance) getPerformances().get(i);</span>
+<span class="fc" id="L1223">	location = getGrid().getLocation(perf.getValues());</span>
+<span class="fc" id="L1224">	m_Table[getGrid().height() - (int) location.getY() - 1][(int) location.getX()] = perf.getPerformance(getType());</span>
+	
+	// determine min/max
+<span class="fc bfc" id="L1227" title="All 2 branches covered.">	if (i == 0) {</span>
+<span class="fc" id="L1228">	  m_Min = perf.getPerformance(m_Type);</span>
+<span class="fc" id="L1229">	  m_Max = m_Min;</span>
+	}
+	else {
+<span class="fc bfc" id="L1232" title="All 2 branches covered.">	  if (perf.getPerformance(m_Type) &lt; m_Min)</span>
+<span class="fc" id="L1233">	    m_Min = perf.getPerformance(m_Type);</span>
+<span class="fc bfc" id="L1234" title="All 2 branches covered.">	  if (perf.getPerformance(m_Type) &gt; m_Max)</span>
+<span class="fc" id="L1235">	    m_Max = perf.getPerformance(m_Type);</span>
+	}
+      }
+<span class="fc" id="L1238">    }</span>
+    
+    /**
+     * returns the corresponding grid
+     * 
+     * @return		the underlying grid
+     */
+    public Grid getGrid() {
+<span class="fc" id="L1246">      return m_Grid;</span>
+    }
+
+    /**
+     * returns the underlying performances
+     * 
+     * @return		the underlying performances
+     */
+    public Vector&lt;Performance&gt; getPerformances() {
+<span class="fc" id="L1255">      return m_Performances;</span>
+    }
+    
+    /**
+     * returns the type of performance
+     * 
+     * @return		the type of performance
+     */
+    public int getType() {
+<span class="fc" id="L1264">      return m_Type;</span>
+    }
+    
+    /**
+     * returns the generated table
+     * 
+     * @return 		the performance table
+     * @see		#m_Table
+     * @see		#generate()
+     */
+    public double[][] getTable() {
+<span class="fc" id="L1275">      return m_Table;</span>
+    }
+    
+    /**
+     * the minimum performance
+     * 
+     * @return		the performance
+     */
+    public double getMin() {
+<span class="fc" id="L1284">      return m_Min;</span>
+    }
+    
+    /**
+     * the maximum performance
+     * 
+     * @return		the performance
+     */
+    public double getMax() {
+<span class="fc" id="L1293">      return m_Max;</span>
+    }
+    
+    /**
+     * returns the table as string
+     * 
+     * @return		the table as string
+     */
+    public String toString() {
+      String	result;
+      int	i;
+      int	n;
+      
+<span class="fc" id="L1306">      result =   &quot;Table (&quot; </span>
+<span class="fc" id="L1307">	       + new SelectedTag(getType(), TAGS_EVALUATION).getSelectedTag().getReadable() </span>
+<span class="fc" id="L1308">               + &quot;) - &quot;</span>
+<span class="fc" id="L1309">               + &quot;X: &quot; + getGrid().getLabelX() + &quot;, Y: &quot; + getGrid().getLabelY()</span>
+<span class="fc" id="L1310">               + &quot;:\n&quot;;</span>
+      
+<span class="fc bfc" id="L1312" title="All 2 branches covered.">      for (i = 0; i &lt; getTable().length; i++) {</span>
+<span class="fc bfc" id="L1313" title="All 2 branches covered.">	if (i &gt; 0)</span>
+<span class="fc" id="L1314">	  result += &quot;\n&quot;;</span>
+	
+<span class="fc bfc" id="L1316" title="All 2 branches covered.">	for (n = 0; n &lt; getTable()[i].length; n++) {</span>
+<span class="fc bfc" id="L1317" title="All 2 branches covered.">	  if (n &gt; 0)</span>
+<span class="fc" id="L1318">	    result += &quot;,&quot;;</span>
+<span class="fc" id="L1319">	  result += getTable()[i][n];</span>
+	}
+      }
+      
+<span class="fc" id="L1323">      return result;</span>
+    }
+    
+    /**
+     * returns a string containing a gnuplot script+data file
+     * 
+     * @return		the data in gnuplot format
+     */
+    public String toGnuplot() {
+      StringBuffer	result;
+      Tag		type;
+      int		i;
+      
+<span class="fc" id="L1336">      result = new StringBuffer();</span>
+<span class="fc" id="L1337">      type   = new SelectedTag(getType(), TAGS_EVALUATION).getSelectedTag();</span>
+      
+<span class="fc" id="L1339">      result.append(&quot;Gnuplot (&quot; + type.getReadable() + &quot;):\n&quot;);</span>
+<span class="fc" id="L1340">      result.append(&quot;# begin 'gridsearch.data'\n&quot;);</span>
+<span class="fc" id="L1341">      result.append(&quot;# &quot; + type.getReadable() + &quot;\n&quot;);</span>
+<span class="fc bfc" id="L1342" title="All 2 branches covered.">      for (i = 0; i &lt; getPerformances().size(); i++)</span>
+<span class="fc" id="L1343">        result.append(getPerformances().get(i).toGnuplot(type.getID()) + &quot;\n&quot;);</span>
+<span class="fc" id="L1344">      result.append(&quot;# end 'gridsearch.data'\n\n&quot;);</span>
+      
+<span class="fc" id="L1346">      result.append(&quot;# begin 'gridsearch.plot'\n&quot;);</span>
+<span class="fc" id="L1347">      result.append(&quot;# &quot; + type.getReadable() + &quot;\n&quot;);</span>
+<span class="fc" id="L1348">      result.append(&quot;set data style lines\n&quot;);</span>
+<span class="fc" id="L1349">      result.append(&quot;set contour base\n&quot;);</span>
+<span class="fc" id="L1350">      result.append(&quot;set surface\n&quot;);</span>
+<span class="fc" id="L1351">      result.append(&quot;set title '&quot; + m_Data.relationName() + &quot;'\n&quot;);</span>
+<span class="fc" id="L1352">      result.append(&quot;set xrange [&quot; + getGrid().getMinX() + &quot;:&quot; + getGrid().getMaxX() + &quot;]\n&quot;);</span>
+<span class="fc" id="L1353">      result.append(&quot;set xlabel 'x (&quot; + getFilter().getClass().getName() + &quot;: &quot; + getXProperty() + &quot;)'\n&quot;);</span>
+<span class="fc" id="L1354">      result.append(&quot;set yrange [&quot; + getGrid().getMinY() + &quot;:&quot; + getGrid().getMaxY() + &quot;]\n&quot;);</span>
+<span class="fc" id="L1355">      result.append(&quot;set ylabel 'y - (&quot; + getClassifier().getClass().getName() + &quot;: &quot; + getYProperty() + &quot;)'\n&quot;);</span>
+<span class="fc" id="L1356">      result.append(&quot;set zrange [&quot; + (getMin() - (getMax() - getMin())*0.1) + &quot;:&quot; + (getMax() + (getMax() - getMin())*0.1) + &quot;]\n&quot;);</span>
+<span class="fc" id="L1357">      result.append(&quot;set zlabel 'z - &quot; + type.getReadable() + &quot;'\n&quot;);</span>
+<span class="fc" id="L1358">      result.append(&quot;set dgrid3d &quot; + getGrid().height() + &quot;,&quot; + getGrid().width() + &quot;,1\n&quot;);</span>
+<span class="fc" id="L1359">      result.append(&quot;show contour\n&quot;);</span>
+<span class="fc" id="L1360">      result.append(&quot;splot 'gridsearch.data'\n&quot;);</span>
+<span class="fc" id="L1361">      result.append(&quot;pause -1\n&quot;);</span>
+<span class="fc" id="L1362">      result.append(&quot;# end 'gridsearch.plot'&quot;);</span>
+
+<span class="fc" id="L1364">      return result.toString();</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L1373">      return RevisionUtils.extract(&quot;$Revision: 9733 $&quot;);</span>
+    }
+  }
+  
+  /**
+   * Represents a simple cache for performance objects.
+   */
+<span class="fc" id="L1380">  protected class PerformanceCache</span>
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    private static final long serialVersionUID = 5838863230451530252L;
+    
+    /** the cache for points in the grid that got calculated */
+<span class="fc" id="L1387">    protected Hashtable m_Cache = new Hashtable();</span>
+    
+    /**
+     * returns the ID string for a cache item
+     * 
+     * @param cv		the number of folds in the cross-validation
+     * @param values	the point in the grid
+     * @return		the ID string
+     */
+    protected String getID(int cv, PointDouble values) {
+<span class="fc" id="L1397">      return cv + &quot;\t&quot; + values.getX() + &quot;\t&quot; + values.getY();</span>
+    }
+    
+    /**
+     * checks whether the point was already calculated ones
+     * 
+     * @param cv	the number of folds in the cross-validation
+     * @param values	the point in the grid
+     * @return		true if the value is already cached
+     */
+    public boolean isCached(int cv, PointDouble values) {
+<span class="pc bpc" id="L1408" title="1 of 2 branches missed.">      return (get(cv, values) != null);</span>
+    }
+    
+    /**
+     * returns a cached performance object, null if not yet in the cache
+     * 
+     * @param cv	the number of folds in the cross-validation
+     * @param values	the point in the grid
+     * @return		the cached performance item, null if not in cache
+     */
+    public Performance get(int cv, PointDouble values) {
+<span class="fc" id="L1419">      return (Performance) m_Cache.get(getID(cv, values));</span>
+    }
+    
+    /**
+     * adds the performance to the cache
+     * 
+     * @param cv	the number of folds in the cross-validation
+     * @param p		the performance object to store
+     */
+    public void add(int cv, Performance p) {
+<span class="fc" id="L1429">      m_Cache.put(getID(cv, p.getValues()), p);</span>
+<span class="fc" id="L1430">    }</span>
+    
+    /**
+     * returns a string representation of the cache
+     * 
+     * @return		the string representation of the cache
+     */
+    public String toString() {
+<span class="nc" id="L1438">      return m_Cache.toString();</span>
+    }
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L1447">      return RevisionUtils.extract(&quot;$Revision: 9733 $&quot;);</span>
+    }
+  }
+  
+  /** for serialization */
+  private static final long serialVersionUID = -3034773968581595348L;
+
+  /** evaluation via: Correlation coefficient */
+  public static final int EVALUATION_CC = 0;
+  /** evaluation via: Root mean squared error */
+  public static final int EVALUATION_RMSE = 1;
+  /** evaluation via: Root relative squared error */
+  public static final int EVALUATION_RRSE = 2;
+  /** evaluation via: Mean absolute error */
+  public static final int EVALUATION_MAE = 3;
+  /** evaluation via: Relative absolute error */
+  public static final int EVALUATION_RAE = 4;
+  /** evaluation via: Combined = (1-CC) + RRSE + RAE */
+  public static final int EVALUATION_COMBINED = 5;
+  /** evaluation via: Accuracy */
+  public static final int EVALUATION_ACC = 6;
+  /** evaluation via: kappa statistic */
+  public static final int EVALUATION_KAPPA = 7;
+  /** evaluation */
+<span class="fc" id="L1471">  public static final Tag[] TAGS_EVALUATION = {</span>
+<span class="fc" id="L1472">    new Tag(EVALUATION_CC, &quot;CC&quot;, &quot;Correlation coefficient&quot;),</span>
+<span class="fc" id="L1473">    new Tag(EVALUATION_RMSE, &quot;RMSE&quot;, &quot;Root mean squared error&quot;),</span>
+<span class="fc" id="L1474">    new Tag(EVALUATION_RRSE, &quot;RRSE&quot;, &quot;Root relative squared error&quot;),</span>
+<span class="fc" id="L1475">    new Tag(EVALUATION_MAE, &quot;MAE&quot;, &quot;Mean absolute error&quot;),</span>
+<span class="fc" id="L1476">    new Tag(EVALUATION_RAE, &quot;RAE&quot;, &quot;Root absolute error&quot;),</span>
+<span class="fc" id="L1477">    new Tag(EVALUATION_COMBINED, &quot;COMB&quot;, &quot;Combined = (1-abs(CC)) + RRSE + RAE&quot;),</span>
+<span class="fc" id="L1478">    new Tag(EVALUATION_ACC, &quot;ACC&quot;, &quot;Accuracy&quot;),</span>
+<span class="fc" id="L1479">    new Tag(EVALUATION_KAPPA, &quot;KAP&quot;, &quot;Kappa&quot;)</span>
+  };
+  
+  /** row-wise grid traversal */
+  public static final int TRAVERSAL_BY_ROW = 0;
+  /** column-wise grid traversal */
+  public static final int TRAVERSAL_BY_COLUMN = 1;
+  /** traversal */
+<span class="fc" id="L1487">  public static final Tag[] TAGS_TRAVERSAL = {</span>
+<span class="fc" id="L1488">    new Tag(TRAVERSAL_BY_ROW, &quot;row-wise&quot;, &quot;row-wise&quot;),</span>
+<span class="fc" id="L1489">    new Tag(TRAVERSAL_BY_COLUMN, &quot;column-wise&quot;, &quot;column-wise&quot;)</span>
+  };
+
+  /** the prefix to indicate that the option is for the classifier */
+  public final static String PREFIX_CLASSIFIER = &quot;classifier.&quot;;
+
+  /** the prefix to indicate that the option is for the filter */
+  public final static String PREFIX_FILTER = &quot;filter.&quot;;
+  
+  /** the Filter */
+  protected Filter m_Filter;
+  
+  /** the Filter with the best setup */
+  protected Filter m_BestFilter;
+  
+  /** the Classifier with the best setup */
+  protected Classifier m_BestClassifier;
+
+  /** the best values */
+<span class="fc" id="L1508">  protected PointDouble m_Values = null;</span>
+  
+  /** the type of evaluation */
+<span class="fc" id="L1511">  protected int m_Evaluation = EVALUATION_CC;</span>
+
+  /** the Y option to work on (without leading dash, preceding 'classifier.' 
+   * means to set the option for the classifier 'filter.' for the filter) */
+<span class="fc" id="L1515">  protected String m_Y_Property = PREFIX_CLASSIFIER + &quot;ridge&quot;;</span>
+  
+  /** the minimum of Y */
+<span class="fc" id="L1518">  protected double m_Y_Min = -10;</span>
+  
+  /** the maximum of Y */
+<span class="fc" id="L1521">  protected double m_Y_Max = +5;</span>
+  
+  /** the step size of Y */
+<span class="fc" id="L1524">  protected double m_Y_Step = 1;</span>
+  
+  /** the base for Y */
+<span class="fc" id="L1527">  protected double m_Y_Base = 10;</span>
+  
+  /** 
+   * The expression for the Y property. Available parameters for the
+   * expression:
+   * &lt;ul&gt;
+   *   &lt;li&gt;BASE&lt;/li&gt;
+   *   &lt;li&gt;FROM (= min)&lt;/li&gt;
+   *   &lt;li&gt;TO (= max)&lt;/li&gt;
+   *   &lt;li&gt;STEP&lt;/li&gt;
+   *   &lt;li&gt;I - the current value (from 'from' to 'to' with stepsize 'step')&lt;/li&gt;
+   * &lt;/ul&gt;
+   * 
+   * @see MathematicalExpression
+   * @see MathExpression
+   */
+<span class="fc" id="L1543">  protected String m_Y_Expression = &quot;pow(BASE,I)&quot;;</span>
+
+  /** the X option to work on (without leading dash, preceding 'classifier.' 
+   * means to set the option for the classifier 'filter.' for the filter) */
+<span class="fc" id="L1547">  protected String m_X_Property = PREFIX_FILTER + &quot;numComponents&quot;;</span>
+  
+  /** the minimum of X */
+<span class="fc" id="L1550">  protected double m_X_Min = +5;</span>
+  
+  /** the maximum of X */
+<span class="fc" id="L1553">  protected double m_X_Max = +20;</span>
+  
+  /** the step size of  */
+<span class="fc" id="L1556">  protected double m_X_Step = 1;</span>
+  
+  /** the base for  */
+<span class="fc" id="L1559">  protected double m_X_Base = 10;</span>
+  
+  /** 
+   * The expression for the X property. Available parameters for the
+   * expression:
+   * &lt;ul&gt;
+   *   &lt;li&gt;BASE&lt;/li&gt;
+   *   &lt;li&gt;FROM (= min)&lt;/li&gt;
+   *   &lt;li&gt;TO (= max)&lt;/li&gt;
+   *   &lt;li&gt;STEP&lt;/li&gt;
+   *   &lt;li&gt;I - the current value (from 'from' to 'to' with stepsize 'step')&lt;/li&gt;
+   * &lt;/ul&gt;
+   * 
+   * @see MathematicalExpression
+   * @see MathExpression
+   */
+<span class="fc" id="L1575">  protected String m_X_Expression = &quot;I&quot;;</span>
+
+  /** whether the grid can be extended */
+<span class="fc" id="L1578">  protected boolean m_GridIsExtendable = false;</span>
+  
+  /** maximum number of grid extensions (-1 means unlimited) */
+<span class="fc" id="L1581">  protected int m_MaxGridExtensions = 3;</span>
+  
+  /** the number of extensions performed */
+<span class="fc" id="L1584">  protected int m_GridExtensionsPerformed = 0;</span>
+
+  /** the sample size to search the initial grid with */
+<span class="fc" id="L1587">  protected double m_SampleSize = 100;</span>
+  
+  /** the traversal */
+<span class="fc" id="L1590">  protected int m_Traversal = TRAVERSAL_BY_COLUMN;</span>
+
+  /** the log file to use */
+<span class="fc" id="L1593">  protected File m_LogFile = new File(System.getProperty(&quot;user.dir&quot;));</span>
+  
+  /** the value-pairs grid */
+  protected Grid m_Grid;
+
+  /** the training data */
+  protected Instances m_Data;
+
+  /** the cache for points in the grid that got calculated */
+  protected PerformanceCache m_Cache;
+
+  /** whether all performances in the grid are the same */
+<span class="fc" id="L1605">  protected boolean m_UniformPerformance = false;</span>
+  
+  /**
+   * the default constructor
+   */
+  public GridSearch() {
+<span class="fc" id="L1611">    super();</span>
+    
+    // classifier
+<span class="fc" id="L1614">    m_Classifier = new LinearRegression();</span>
+<span class="fc" id="L1615">    ((LinearRegression) m_Classifier).setAttributeSelectionMethod(new SelectedTag(LinearRegression.SELECTION_NONE, LinearRegression.TAGS_SELECTION));</span>
+<span class="fc" id="L1616">    ((LinearRegression) m_Classifier).setEliminateColinearAttributes(false);</span>
+    
+    // filter
+<span class="fc" id="L1619">    m_Filter = new PLSFilter();</span>
+<span class="fc" id="L1620">    PLSFilter filter = new PLSFilter();</span>
+<span class="fc" id="L1621">    filter.setPreprocessing(new SelectedTag(PLSFilter.PREPROCESSING_STANDARDIZE, PLSFilter.TAGS_PREPROCESSING));</span>
+<span class="fc" id="L1622">    filter.setReplaceMissing(true);</span>
+    
+    try {
+<span class="fc" id="L1625">      m_BestClassifier = Classifier.makeCopy(m_Classifier);</span>
+    }
+<span class="nc" id="L1627">    catch (Exception e) {</span>
+<span class="nc" id="L1628">      e.printStackTrace();</span>
+    }
+    try {
+<span class="fc" id="L1631">      m_BestFilter = Filter.makeCopy(filter);</span>
+    }
+<span class="nc" id="L1633">    catch (Exception e) {</span>
+<span class="nc" id="L1634">      e.printStackTrace();</span>
+    }
+<span class="fc" id="L1636">  }</span>
+  
+  /**
+   * Returns a string describing classifier
+   * 
+   * @return a description suitable for displaying in the
+   *         explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L1645">    return </span>
+<span class="nc" id="L1646">        &quot;Performs a grid search of parameter pairs for the a classifier &quot;</span>
+      + &quot;(Y-axis, default is LinearRegression with the \&quot;Ridge\&quot; parameter) &quot;
+      + &quot;and the PLSFilter (X-axis, \&quot;# of Components\&quot;) and chooses the best &quot;
+      + &quot;pair found for the actual predicting.\n\n&quot;
+      + &quot;The initial grid is worked on with 2-fold CV to determine the values &quot;
+      + &quot;of the parameter pairs for the selected type of evaluation (e.g., &quot;
+      + &quot;accuracy). The best point in the grid is then taken and a 10-fold CV &quot;
+      + &quot;is performed with the adjacent parameter pairs. If a better pair is &quot;
+      + &quot;found, then this will act as new center and another 10-fold CV will &quot;
+      + &quot;be performed (kind of hill-climbing). This process is repeated until &quot;
+      + &quot;no better pair is found or the best pair is on the border of the grid.\n&quot;
+      + &quot;In case the best pair is on the border, one can let GridSearch &quot;
+      + &quot;automatically extend the grid and continue the search. Check out the &quot;
+      + &quot;properties 'gridIsExtendable' (option '-extend-grid') and &quot;
+      + &quot;'maxGridExtensions' (option '-max-grid-extensions &lt;num&gt;').\n\n&quot;
+      + &quot;GridSearch can handle doubles, integers (values are just cast to int) &quot;
+      + &quot;and booleans (0 is false, otherwise true). float, char and long are &quot;
+      + &quot;supported as well.\n\n&quot;
+      + &quot;The best filter/classifier setup can be accessed after the buildClassifier &quot;
+      + &quot;call via the getBestFilter/getBestClassifier methods.\n&quot;
+      + &quot;Note on the implementation: after the data has been passed through &quot;
+      + &quot;the filter, a default NumericCleaner filter is applied to the data in &quot;
+      + &quot;order to avoid numbers that are getting too small and might produce &quot;
+      + &quot;NaNs in other schemes.&quot;;
+  }
+
+  /**
+   * String describing default classifier.
+   * 
+   * @return		the classname of the default classifier
+   */
+  protected String defaultClassifierString() {
+<span class="fc" id="L1678">    return LinearRegression.class.getName();</span>
+  }
+
+  /**
+   * Gets an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions(){
+    Vector        	result;
+    Enumeration   	en;
+    String		desc;
+    SelectedTag		tag;
+    int			i;
+
+<span class="fc" id="L1693">    result = new Vector();</span>
+
+<span class="fc" id="L1695">    desc  = &quot;&quot;;</span>
+<span class="fc bfc" id="L1696" title="All 2 branches covered.">    for (i = 0; i &lt; TAGS_EVALUATION.length; i++) {</span>
+<span class="fc" id="L1697">      tag = new SelectedTag(TAGS_EVALUATION[i].getID(), TAGS_EVALUATION);</span>
+<span class="fc" id="L1698">      desc  +=   &quot;\t&quot; + tag.getSelectedTag().getIDStr() </span>
+<span class="fc" id="L1699">      	       + &quot; = &quot; + tag.getSelectedTag().getReadable()</span>
+<span class="fc" id="L1700">      	       + &quot;\n&quot;;</span>
+    }
+<span class="fc" id="L1702">    result.addElement(new Option(</span>
+<span class="fc" id="L1703">	&quot;\tDetermines the parameter used for evaluation:\n&quot;</span>
+<span class="fc" id="L1704">	+ desc</span>
+<span class="fc" id="L1705">	+ &quot;\t(default: &quot; + new SelectedTag(EVALUATION_CC, TAGS_EVALUATION) + &quot;)&quot;,</span>
+<span class="fc" id="L1706">	&quot;E&quot;, 1, &quot;-E &quot; + Tag.toOptionList(TAGS_EVALUATION)));</span>
+
+<span class="fc" id="L1708">    result.addElement(new Option(</span>
+<span class="fc" id="L1709">	&quot;\tThe Y option to test (without leading dash).\n&quot;</span>
+	+ &quot;\t(default: &quot; + PREFIX_CLASSIFIER + &quot;ridge)&quot;,
+<span class="fc" id="L1711">	&quot;y-property&quot;, 1, &quot;-y-property &lt;option&gt;&quot;));</span>
+
+<span class="fc" id="L1713">    result.addElement(new Option(</span>
+<span class="fc" id="L1714">	&quot;\tThe minimum for Y.\n&quot;</span>
+	+ &quot;\t(default: -10)&quot;,
+<span class="fc" id="L1716">	&quot;y-min&quot;, 1, &quot;-y-min &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L1718">    result.addElement(new Option(</span>
+<span class="fc" id="L1719">	&quot;\tThe maximum for Y.\n&quot;</span>
+	+ &quot;\t(default: +5)&quot;,
+<span class="fc" id="L1721">	&quot;y-max&quot;, 1, &quot;-y-max &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L1723">    result.addElement(new Option(</span>
+<span class="fc" id="L1724">	&quot;\tThe step size for Y.\n&quot;</span>
+	+ &quot;\t(default: 1)&quot;,
+<span class="fc" id="L1726">	&quot;y-step&quot;, 1, &quot;-y-step &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L1728">    result.addElement(new Option(</span>
+<span class="fc" id="L1729">	&quot;\tThe base for Y.\n&quot;</span>
+	+ &quot;\t(default: 10)&quot;,
+<span class="fc" id="L1731">	&quot;y-base&quot;, 1, &quot;-y-base &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L1733">    result.addElement(new Option(</span>
+<span class="fc" id="L1734">	&quot;\tThe expression for Y.\n&quot;</span>
+	+ &quot;\tAvailable parameters:\n&quot;
+	+ &quot;\t\tBASE\n&quot;
+	+ &quot;\t\tFROM\n&quot;
+	+ &quot;\t\tTO\n&quot;
+	+ &quot;\t\tSTEP\n&quot;
+	+ &quot;\t\tI - the current iteration value\n&quot;
+	+ &quot;\t\t(from 'FROM' to 'TO' with stepsize 'STEP')\n&quot;
+	+ &quot;\t(default: 'pow(BASE,I)')&quot;,
+<span class="fc" id="L1743">	&quot;y-expression&quot;, 1, &quot;-y-expression &lt;expr&gt;&quot;));</span>
+
+<span class="fc" id="L1745">    result.addElement(new Option(</span>
+<span class="fc" id="L1746">	&quot;\tThe filter to use (on X axis). Full classname of filter to include, \n&quot;</span>
+	+ &quot;\tfollowed by scheme options.\n&quot;
+	+ &quot;\t(default: weka.filters.supervised.attribute.PLSFilter)&quot;,
+<span class="fc" id="L1749">	&quot;filter&quot;, 1, &quot;-filter &lt;filter specification&gt;&quot;));</span>
+
+<span class="fc" id="L1751">    result.addElement(new Option(</span>
+<span class="fc" id="L1752">	&quot;\tThe X option to test (without leading dash).\n&quot;</span>
+	+ &quot;\t(default: &quot; + PREFIX_FILTER + &quot;numComponents)&quot;,
+<span class="fc" id="L1754">	&quot;x-property&quot;, 1, &quot;-x-property &lt;option&gt;&quot;));</span>
+
+<span class="fc" id="L1756">    result.addElement(new Option(</span>
+<span class="fc" id="L1757">	&quot;\tThe minimum for X.\n&quot;</span>
+	+ &quot;\t(default: +5)&quot;,
+<span class="fc" id="L1759">	&quot;x-min&quot;, 1, &quot;-x-min &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L1761">    result.addElement(new Option(</span>
+<span class="fc" id="L1762">	&quot;\tThe maximum for X.\n&quot;</span>
+	+ &quot;\t(default: +20)&quot;,
+<span class="fc" id="L1764">	&quot;x-max&quot;, 1, &quot;-x-max &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L1766">    result.addElement(new Option(</span>
+<span class="fc" id="L1767">	&quot;\tThe step size for X.\n&quot;</span>
+	+ &quot;\t(default: 1)&quot;,
+<span class="fc" id="L1769">	&quot;x-step&quot;, 1, &quot;-x-step &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L1771">    result.addElement(new Option(</span>
+<span class="fc" id="L1772">	&quot;\tThe base for X.\n&quot;</span>
+	+ &quot;\t(default: 10)&quot;,
+<span class="fc" id="L1774">	&quot;x-base&quot;, 1, &quot;-x-base &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L1776">    result.addElement(new Option(</span>
+<span class="fc" id="L1777">	&quot;\tThe expression for the X value.\n&quot;</span>
+	+ &quot;\tAvailable parameters:\n&quot;
+	+ &quot;\t\tBASE\n&quot;
+	+ &quot;\t\tMIN\n&quot;
+	+ &quot;\t\tMAX\n&quot;
+	+ &quot;\t\tSTEP\n&quot;
+	+ &quot;\t\tI - the current iteration value\n&quot;
+	+ &quot;\t\t(from 'FROM' to 'TO' with stepsize 'STEP')\n&quot;
+	+ &quot;\t(default: 'pow(BASE,I)')&quot;,
+<span class="fc" id="L1786">	&quot;x-expression&quot;, 1, &quot;-x-expression &lt;expr&gt;&quot;));</span>
+
+<span class="fc" id="L1788">    result.addElement(new Option(</span>
+<span class="fc" id="L1789">	&quot;\tWhether the grid can be extended.\n&quot;</span>
+	+ &quot;\t(default: no)&quot;,
+<span class="fc" id="L1791">	&quot;extend-grid&quot;, 0, &quot;-extend-grid&quot;));</span>
+
+<span class="fc" id="L1793">    result.addElement(new Option(</span>
+<span class="fc" id="L1794">	&quot;\tThe maximum number of grid extensions (-1 is unlimited).\n&quot;</span>
+	+ &quot;\t(default: 3)&quot;,
+<span class="fc" id="L1796">	&quot;max-grid-extensions&quot;, 1, &quot;-max-grid-extensions &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L1798">    result.addElement(new Option(</span>
+<span class="fc" id="L1799">	&quot;\tThe size (in percent) of the sample to search the inital grid with.\n&quot;</span>
+	+ &quot;\t(default: 100)&quot;,
+<span class="fc" id="L1801">	&quot;sample-size&quot;, 1, &quot;-sample-size &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L1803">    result.addElement(new Option(</span>
+<span class="fc" id="L1804">	&quot;\tThe type of traversal for the grid.\n&quot;</span>
+<span class="fc" id="L1805">	+ &quot;\t(default: &quot; + new SelectedTag(TRAVERSAL_BY_COLUMN, TAGS_TRAVERSAL) + &quot;)&quot;,</span>
+<span class="fc" id="L1806">	&quot;traversal&quot;, 1, &quot;-traversal &quot; + Tag.toOptionList(TAGS_TRAVERSAL)));</span>
+
+<span class="fc" id="L1808">    result.addElement(new Option(</span>
+<span class="fc" id="L1809">	&quot;\tThe log file to log the messages to.\n&quot;</span>
+	+ &quot;\t(default: none)&quot;,
+<span class="fc" id="L1811">	&quot;log-file&quot;, 1, &quot;-log-file &lt;filename&gt;&quot;));</span>
+
+<span class="fc" id="L1813">    en = super.listOptions();</span>
+<span class="fc bfc" id="L1814" title="All 2 branches covered.">    while (en.hasMoreElements())</span>
+<span class="fc" id="L1815">      result.addElement(en.nextElement());</span>
+
+<span class="pc bpc" id="L1817" title="1 of 2 branches missed.">    if (getFilter() instanceof OptionHandler) {</span>
+<span class="fc" id="L1818">      result.addElement(new Option(</span>
+<span class="fc" id="L1819">	  &quot;&quot;,</span>
+<span class="fc" id="L1820">	  &quot;&quot;, 0, &quot;\nOptions specific to filter &quot;</span>
+<span class="fc" id="L1821">	  + getFilter().getClass().getName() + &quot; ('-filter'):&quot;));</span>
+      
+<span class="fc" id="L1823">      en = ((OptionHandler) getFilter()).listOptions();</span>
+<span class="fc bfc" id="L1824" title="All 2 branches covered.">      while (en.hasMoreElements())</span>
+<span class="fc" id="L1825">	result.addElement(en.nextElement());</span>
+    }
+
+
+<span class="fc" id="L1829">    return result.elements();</span>
+  }
+  
+  /**
+   * returns the options of the current setup
+   *
+   * @return		the current options
+   */
+  public String[] getOptions(){
+    int       	i;
+    Vector    	result;
+    String[]  	options;
+
+<span class="fc" id="L1842">    result = new Vector();</span>
+
+<span class="fc" id="L1844">    result.add(&quot;-E&quot;);</span>
+<span class="fc" id="L1845">    result.add(&quot;&quot; + getEvaluation());</span>
+
+<span class="fc" id="L1847">    result.add(&quot;-y-property&quot;);</span>
+<span class="fc" id="L1848">    result.add(&quot;&quot; + getYProperty());</span>
+
+<span class="fc" id="L1850">    result.add(&quot;-y-min&quot;);</span>
+<span class="fc" id="L1851">    result.add(&quot;&quot; + getYMin());</span>
+
+<span class="fc" id="L1853">    result.add(&quot;-y-max&quot;);</span>
+<span class="fc" id="L1854">    result.add(&quot;&quot; + getYMax());</span>
+
+<span class="fc" id="L1856">    result.add(&quot;-y-step&quot;);</span>
+<span class="fc" id="L1857">    result.add(&quot;&quot; + getYStep());</span>
+
+<span class="fc" id="L1859">    result.add(&quot;-y-base&quot;);</span>
+<span class="fc" id="L1860">    result.add(&quot;&quot; + getYBase());</span>
+
+<span class="fc" id="L1862">    result.add(&quot;-y-expression&quot;);</span>
+<span class="fc" id="L1863">    result.add(&quot;&quot; + getYExpression());</span>
+
+<span class="fc" id="L1865">    result.add(&quot;-filter&quot;);</span>
+<span class="pc bpc" id="L1866" title="1 of 2 branches missed.">    if (getFilter() instanceof OptionHandler)</span>
+<span class="fc" id="L1867">      result.add(</span>
+<span class="fc" id="L1868">  	    getFilter().getClass().getName() </span>
+<span class="fc" id="L1869">	  + &quot; &quot; </span>
+<span class="fc" id="L1870">	  + Utils.joinOptions(((OptionHandler) getFilter()).getOptions()));</span>
+    else
+<span class="nc" id="L1872">      result.add(</span>
+<span class="nc" id="L1873">	  getFilter().getClass().getName());</span>
+
+<span class="fc" id="L1875">    result.add(&quot;-x-property&quot;);</span>
+<span class="fc" id="L1876">    result.add(&quot;&quot; + getXProperty());</span>
+
+<span class="fc" id="L1878">    result.add(&quot;-x-min&quot;);</span>
+<span class="fc" id="L1879">    result.add(&quot;&quot; + getXMin());</span>
+
+<span class="fc" id="L1881">    result.add(&quot;-x-max&quot;);</span>
+<span class="fc" id="L1882">    result.add(&quot;&quot; + getXMax());</span>
+
+<span class="fc" id="L1884">    result.add(&quot;-x-step&quot;);</span>
+<span class="fc" id="L1885">    result.add(&quot;&quot; + getXStep());</span>
+
+<span class="fc" id="L1887">    result.add(&quot;-x-base&quot;);</span>
+<span class="fc" id="L1888">    result.add(&quot;&quot; + getXBase());</span>
+
+<span class="fc" id="L1890">    result.add(&quot;-x-expression&quot;);</span>
+<span class="fc" id="L1891">    result.add(&quot;&quot; + getXExpression());</span>
+
+<span class="pc bpc" id="L1893" title="1 of 2 branches missed.">    if (getGridIsExtendable()) {</span>
+<span class="nc" id="L1894">      result.add(&quot;-extend-grid&quot;);</span>
+<span class="nc" id="L1895">      result.add(&quot;-max-grid-extensions&quot;);</span>
+<span class="nc" id="L1896">      result.add(&quot;&quot; + getMaxGridExtensions());</span>
+    }
+    
+<span class="fc" id="L1899">    result.add(&quot;-sample-size&quot;);</span>
+<span class="fc" id="L1900">    result.add(&quot;&quot; + getSampleSizePercent());</span>
+
+<span class="fc" id="L1902">    result.add(&quot;-traversal&quot;);</span>
+<span class="fc" id="L1903">    result.add(&quot;&quot; + getTraversal());</span>
+
+<span class="fc" id="L1905">    result.add(&quot;-log-file&quot;);</span>
+<span class="fc" id="L1906">    result.add(&quot;&quot; + getLogFile());</span>
+
+<span class="fc" id="L1908">    options = super.getOptions();</span>
+<span class="fc bfc" id="L1909" title="All 2 branches covered.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="fc" id="L1910">      result.add(options[i]);</span>
+
+<span class="fc" id="L1912">    return (String[]) result.toArray(new String[result.size()]);	  </span>
+  }
+
+  /**
+   * Parses the options for this object. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -E &amp;lt;CC|RMSE|RRSE|MAE|RAE|COMB|ACC|KAP&amp;gt;
+   *  Determines the parameter used for evaluation:
+   *  CC = Correlation coefficient
+   *  RMSE = Root mean squared error
+   *  RRSE = Root relative squared error
+   *  MAE = Mean absolute error
+   *  RAE = Root absolute error
+   *  COMB = Combined = (1-abs(CC)) + RRSE + RAE
+   *  ACC = Accuracy
+   *  KAP = Kappa
+   *  (default: CC)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -y-property &amp;lt;option&amp;gt;
+   *  The Y option to test (without leading dash).
+   *  (default: classifier.ridge)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -y-min &amp;lt;num&amp;gt;
+   *  The minimum for Y.
+   *  (default: -10)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -y-max &amp;lt;num&amp;gt;
+   *  The maximum for Y.
+   *  (default: +5)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -y-step &amp;lt;num&amp;gt;
+   *  The step size for Y.
+   *  (default: 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -y-base &amp;lt;num&amp;gt;
+   *  The base for Y.
+   *  (default: 10)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -y-expression &amp;lt;expr&amp;gt;
+   *  The expression for Y.
+   *  Available parameters:
+   *   BASE
+   *   FROM
+   *   TO
+   *   STEP
+   *   I - the current iteration value
+   *   (from 'FROM' to 'TO' with stepsize 'STEP')
+   *  (default: 'pow(BASE,I)')&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -filter &amp;lt;filter specification&amp;gt;
+   *  The filter to use (on X axis). Full classname of filter to include, 
+   *  followed by scheme options.
+   *  (default: weka.filters.supervised.attribute.PLSFilter)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -x-property &amp;lt;option&amp;gt;
+   *  The X option to test (without leading dash).
+   *  (default: filter.numComponents)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -x-min &amp;lt;num&amp;gt;
+   *  The minimum for X.
+   *  (default: +5)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -x-max &amp;lt;num&amp;gt;
+   *  The maximum for X.
+   *  (default: +20)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -x-step &amp;lt;num&amp;gt;
+   *  The step size for X.
+   *  (default: 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -x-base &amp;lt;num&amp;gt;
+   *  The base for X.
+   *  (default: 10)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -x-expression &amp;lt;expr&amp;gt;
+   *  The expression for the X value.
+   *  Available parameters:
+   *   BASE
+   *   MIN
+   *   MAX
+   *   STEP
+   *   I - the current iteration value
+   *   (from 'FROM' to 'TO' with stepsize 'STEP')
+   *  (default: 'pow(BASE,I)')&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -extend-grid
+   *  Whether the grid can be extended.
+   *  (default: no)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -max-grid-extensions &amp;lt;num&amp;gt;
+   *  The maximum number of grid extensions (-1 is unlimited).
+   *  (default: 3)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -sample-size &amp;lt;num&amp;gt;
+   *  The size (in percent) of the sample to search the inital grid with.
+   *  (default: 100)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -traversal &amp;lt;ROW-WISE|COLUMN-WISE&amp;gt;
+   *  The type of traversal for the grid.
+   *  (default: COLUMN-WISE)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -log-file &amp;lt;filename&amp;gt;
+   *  The log file to log the messages to.
+   *  (default: none)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W
+   *  Full name of base classifier.
+   *  (default: weka.classifiers.functions.LinearRegression)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to classifier weka.classifiers.functions.LinearRegression:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Produce debugging output.
+   *  (default no debugging output)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;number of selection method&amp;gt;
+   *  Set the attribute selection method to use. 1 = None, 2 = Greedy.
+   *  (default 0 = M5' method)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C
+   *  Do not try to eliminate colinear attributes.
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;double&amp;gt;
+   *  Set ridge parameter (default 1.0e-8).
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to filter weka.filters.supervised.attribute.PLSFilter ('-filter'):
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Turns on output of debugging information.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;num&amp;gt;
+   *  The number of components to compute.
+   *  (default: 20)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -U
+   *  Updates the class attribute as well.
+   *  (default: off)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  Turns replacing of missing values on.
+   *  (default: off)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -A &amp;lt;SIMPLS|PLS1&amp;gt;
+   *  The algorithm to use.
+   *  (default: PLS1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -P &amp;lt;none|center|standardize&amp;gt;
+   *  The type of preprocessing that is applied to the data.
+   *  (default: center)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options	the options to use
+   * @throws Exception	if setting of options fails
+   */
+  public void setOptions(String[] options) throws Exception {
+    String	tmpStr;
+    String[]	tmpOptions;
+
+<span class="fc" id="L2088">    tmpStr = Utils.getOption('E', options);</span>
+<span class="fc bfc" id="L2089" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2090">      setEvaluation(new SelectedTag(tmpStr, TAGS_EVALUATION));</span>
+    else
+<span class="fc" id="L2092">      setEvaluation(new SelectedTag(EVALUATION_CC, TAGS_EVALUATION));</span>
+    
+<span class="fc" id="L2094">    tmpStr = Utils.getOption(&quot;y-property&quot;, options);</span>
+<span class="fc bfc" id="L2095" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2096">      setYProperty(tmpStr);</span>
+    else
+<span class="fc" id="L2098">      setYProperty(PREFIX_CLASSIFIER + &quot;ridge&quot;);</span>
+    
+<span class="fc" id="L2100">    tmpStr = Utils.getOption(&quot;y-min&quot;, options);</span>
+<span class="fc bfc" id="L2101" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2102">      setYMin(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L2104">      setYMin(-10);</span>
+    
+<span class="fc" id="L2106">    tmpStr = Utils.getOption(&quot;y-max&quot;, options);</span>
+<span class="fc bfc" id="L2107" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2108">      setYMax(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L2110">      setYMax(10);</span>
+    
+<span class="fc" id="L2112">    tmpStr = Utils.getOption(&quot;y-step&quot;, options);</span>
+<span class="fc bfc" id="L2113" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2114">      setYStep(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L2116">      setYStep(1);</span>
+    
+<span class="fc" id="L2118">    tmpStr = Utils.getOption(&quot;y-base&quot;, options);</span>
+<span class="fc bfc" id="L2119" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2120">      setYBase(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L2122">      setYBase(10);</span>
+    
+<span class="fc" id="L2124">    tmpStr = Utils.getOption(&quot;y-expression&quot;, options);</span>
+<span class="fc bfc" id="L2125" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2126">      setYExpression(tmpStr);</span>
+    else
+<span class="fc" id="L2128">      setYExpression(&quot;pow(BASE,I)&quot;);</span>
+    
+<span class="fc" id="L2130">    tmpStr     = Utils.getOption(&quot;filter&quot;, options);</span>
+<span class="fc" id="L2131">    tmpOptions = Utils.splitOptions(tmpStr);</span>
+<span class="fc bfc" id="L2132" title="All 2 branches covered.">    if (tmpOptions.length != 0) {</span>
+<span class="fc" id="L2133">      tmpStr        = tmpOptions[0];</span>
+<span class="fc" id="L2134">      tmpOptions[0] = &quot;&quot;;</span>
+<span class="fc" id="L2135">      setFilter((Filter) Utils.forName(Filter.class, tmpStr, tmpOptions));</span>
+    }
+    
+<span class="fc" id="L2138">    tmpStr = Utils.getOption(&quot;x-property&quot;, options);</span>
+<span class="fc bfc" id="L2139" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2140">      setXProperty(tmpStr);</span>
+    else
+<span class="fc" id="L2142">      setXProperty(PREFIX_FILTER + &quot;filters[0].kernel.gamma&quot;);</span>
+    
+<span class="fc" id="L2144">    tmpStr = Utils.getOption(&quot;x-min&quot;, options);</span>
+<span class="fc bfc" id="L2145" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2146">      setXMin(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L2148">      setXMin(-10);</span>
+    
+<span class="fc" id="L2150">    tmpStr = Utils.getOption(&quot;x-max&quot;, options);</span>
+<span class="fc bfc" id="L2151" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2152">      setXMax(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L2154">      setXMax(10);</span>
+    
+<span class="fc" id="L2156">    tmpStr = Utils.getOption(&quot;x-step&quot;, options);</span>
+<span class="fc bfc" id="L2157" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2158">      setXStep(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L2160">      setXStep(1);</span>
+    
+<span class="fc" id="L2162">    tmpStr = Utils.getOption(&quot;x-base&quot;, options);</span>
+<span class="fc bfc" id="L2163" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2164">      setXBase(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L2166">      setXBase(10);</span>
+    
+<span class="fc" id="L2168">    tmpStr = Utils.getOption(&quot;x-expression&quot;, options);</span>
+<span class="fc bfc" id="L2169" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2170">      setXExpression(tmpStr);</span>
+    else
+<span class="fc" id="L2172">      setXExpression(&quot;pow(BASE,I)&quot;);</span>
+    
+<span class="fc" id="L2174">    setGridIsExtendable(Utils.getFlag(&quot;extend-grid&quot;, options));</span>
+<span class="pc bpc" id="L2175" title="1 of 2 branches missed.">    if (getGridIsExtendable()) {</span>
+<span class="nc" id="L2176">      tmpStr = Utils.getOption(&quot;max-grid-extensions&quot;, options);</span>
+<span class="nc bnc" id="L2177" title="All 2 branches missed.">      if (tmpStr.length() != 0)</span>
+<span class="nc" id="L2178">        setMaxGridExtensions(Integer.parseInt(tmpStr));</span>
+      else
+<span class="nc" id="L2180">        setMaxGridExtensions(3);</span>
+    }
+    
+<span class="fc" id="L2183">    tmpStr = Utils.getOption(&quot;sample-size&quot;, options);</span>
+<span class="fc bfc" id="L2184" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2185">      setSampleSizePercent(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L2187">      setSampleSizePercent(100);</span>
+    
+<span class="fc" id="L2189">    tmpStr = Utils.getOption(&quot;traversal&quot;, options);</span>
+<span class="fc bfc" id="L2190" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2191">      setTraversal(new SelectedTag(tmpStr, TAGS_TRAVERSAL));</span>
+    else
+<span class="fc" id="L2193">      setTraversal(new SelectedTag(TRAVERSAL_BY_ROW, TAGS_TRAVERSAL));</span>
+    
+<span class="fc" id="L2195">    tmpStr = Utils.getOption(&quot;log-file&quot;, options);</span>
+<span class="fc bfc" id="L2196" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L2197">      setLogFile(new File(tmpStr));</span>
+    else
+<span class="fc" id="L2199">      setLogFile(new File(System.getProperty(&quot;user.dir&quot;)));</span>
+    
+<span class="fc" id="L2201">    super.setOptions(options);</span>
+<span class="fc" id="L2202">  }</span>
+
+  /**
+   * Set the base learner.
+   *
+   * @param newClassifier 	the classifier to use.
+   */
+  public void setClassifier(Classifier newClassifier) {
+    boolean	numeric;
+    boolean	nominal;
+    
+<span class="fc" id="L2213">    Capabilities cap = newClassifier.getCapabilities();</span>
+
+<span class="fc bfc" id="L2215" title="All 2 branches covered.">    numeric =    cap.handles(Capability.NUMERIC_CLASS) </span>
+<span class="pc bpc" id="L2216" title="1 of 2 branches missed.">    	      || cap.hasDependency(Capability.NUMERIC_CLASS);</span>
+    
+<span class="fc bfc" id="L2218" title="All 2 branches covered.">    nominal =    cap.handles(Capability.NOMINAL_CLASS)</span>
+<span class="pc bpc" id="L2219" title="1 of 2 branches missed.">              || cap.hasDependency(Capability.NOMINAL_CLASS)</span>
+<span class="pc bpc" id="L2220" title="1 of 2 branches missed.">              || cap.handles(Capability.BINARY_CLASS)</span>
+<span class="pc bpc" id="L2221" title="1 of 2 branches missed.">              || cap.hasDependency(Capability.BINARY_CLASS)</span>
+<span class="pc bpc" id="L2222" title="1 of 2 branches missed.">              || cap.handles(Capability.UNARY_CLASS)</span>
+<span class="pc bpc" id="L2223" title="1 of 2 branches missed.">              || cap.hasDependency(Capability.UNARY_CLASS);</span>
+    
+<span class="pc bpc" id="L2225" title="1 of 4 branches missed.">    if ((m_Evaluation == EVALUATION_CC) &amp;&amp; !numeric)</span>
+<span class="nc" id="L2226">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L2227">	  &quot;Classifier needs to handle numeric class for chosen type of evaluation!&quot;);</span>
+
+<span class="pc bpc" id="L2229" title="2 of 6 branches missed.">    if (((m_Evaluation == EVALUATION_ACC) || (m_Evaluation == EVALUATION_KAPPA)) &amp;&amp; !nominal)</span>
+<span class="nc" id="L2230">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L2231">	  &quot;Classifier needs to handle nominal class for chosen type of evaluation!&quot;);</span>
+    
+<span class="fc" id="L2233">    super.setClassifier(newClassifier);</span>
+    
+    try {
+<span class="fc" id="L2236">      m_BestClassifier = Classifier.makeCopy(m_Classifier);</span>
+    }
+<span class="nc" id="L2238">    catch (Exception e) {</span>
+<span class="nc" id="L2239">      e.printStackTrace();</span>
+    }
+<span class="fc" id="L2241">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String filterTipText() {
+<span class="nc" id="L2250">    return &quot;The filter to be used (only used for setup).&quot;;</span>
+  }
+
+  /**
+   * Set the kernel filter (only used for setup).
+   *
+   * @param value	the kernel filter.
+   */
+  public void setFilter(Filter value) {
+<span class="fc" id="L2259">    m_Filter = value;</span>
+
+    try {
+<span class="fc" id="L2262">      m_BestFilter = Filter.makeCopy(m_Filter);</span>
+    }
+<span class="nc" id="L2264">    catch (Exception e) {</span>
+<span class="nc" id="L2265">      e.printStackTrace();</span>
+    }
+<span class="fc" id="L2267">  }</span>
+
+  /**
+   * Get the kernel filter.
+   *
+   * @return 		the kernel filter
+   */
+  public Filter getFilter() {
+<span class="fc" id="L2275">    return m_Filter;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String evaluationTipText() {
+<span class="nc" id="L2285">    return </span>
+<span class="nc" id="L2286">        &quot;Sets the criterion for evaluating the classifier performance and &quot;</span>
+      + &quot;choosing the best one.&quot;;
+  }
+
+  /**
+   * Sets the criterion to use for evaluating the classifier performance. 
+   *
+   * @param value 	.the evaluation criterion
+   */
+  public void setEvaluation(SelectedTag value) {
+<span class="pc bpc" id="L2296" title="1 of 2 branches missed.">    if (value.getTags() == TAGS_EVALUATION) {</span>
+<span class="fc" id="L2297">      m_Evaluation = value.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L2299">  }</span>
+
+  /**
+   * Gets the criterion used for evaluating the classifier performance. 
+   *
+   * @return 		the current evaluation criterion.
+   */
+  public SelectedTag getEvaluation() {
+<span class="fc" id="L2307">    return new SelectedTag(m_Evaluation, TAGS_EVALUATION);</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String YPropertyTipText() {
+<span class="nc" id="L2317">    return &quot;The Y property to test (normally the classifier).&quot;;</span>
+  }
+
+  /**
+   * Get the Y property (normally the classifier).
+   *
+   * @return 		Value of the property.
+   */
+  public String getYProperty() {
+<span class="fc" id="L2326">    return m_Y_Property;</span>
+  }
+  
+  /**
+   * Set the Y property (normally the classifier).
+   *
+   * @param value 	the Y property.
+   */
+  public void setYProperty(String value) {
+<span class="fc" id="L2335">    m_Y_Property = value;</span>
+<span class="fc" id="L2336">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String YMinTipText() {
+<span class="nc" id="L2345">    return &quot;The minimum of Y (normally the classifier).&quot;;</span>
+  }
+
+  /**
+   * Get the value of the minimum of Y.
+   *
+   * @return 		Value of the minimum of Y.
+   */
+  public double getYMin() {
+<span class="fc" id="L2354">    return m_Y_Min;</span>
+  }
+  
+  /**
+   * Set the value of the minimum of Y.
+   *
+   * @param value 	Value to use as minimum of Y.
+   */
+  public void setYMin(double value) {
+<span class="fc" id="L2363">    m_Y_Min = value;</span>
+<span class="fc" id="L2364">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String YMaxTipText() {
+<span class="nc" id="L2373">    return &quot;The maximum of Y.&quot;;</span>
+  }
+
+  /**
+   * Get the value of the Maximum of Y.
+   *
+   * @return 		Value of the Maximum of Y.
+   */
+  public double getYMax() {
+<span class="fc" id="L2382">    return m_Y_Max;</span>
+  }
+  
+  /**
+   * Set the value of the Maximum of Y.
+   *
+   * @param value 	Value to use as Maximum of Y.
+   */
+  public void setYMax(double value) {
+<span class="fc" id="L2391">    m_Y_Max = value;</span>
+<span class="fc" id="L2392">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String YStepTipText() {
+<span class="nc" id="L2401">    return &quot;The step size of Y.&quot;;</span>
+  }
+
+  /**
+   * Get the value of the step size for Y.
+   *
+   * @return 		Value of the step size for Y.
+   */
+  public double getYStep() {
+<span class="fc" id="L2410">    return m_Y_Step;</span>
+  }
+  
+  /**
+   * Set the value of the step size for Y.
+   *
+   * @param value 	Value to use as the step size for Y.
+   */
+  public void setYStep(double value) {
+<span class="fc" id="L2419">    m_Y_Step = value;</span>
+<span class="fc" id="L2420">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String YBaseTipText() {
+<span class="nc" id="L2429">    return &quot;The base of Y.&quot;;</span>
+  }
+
+  /**
+   * Get the value of the base for Y.
+   *
+   * @return 		Value of the base for Y.
+   */
+  public double getYBase() {
+<span class="fc" id="L2438">    return m_Y_Base;</span>
+  }
+  
+  /**
+   * Set the value of the base for Y.
+   *
+   * @param value Value to use as the base for Y.
+   */
+  public void setYBase(double value) {
+<span class="fc" id="L2447">    m_Y_Base = value;</span>
+<span class="fc" id="L2448">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String YExpressionTipText() {
+<span class="nc" id="L2457">    return &quot;The expression for the Y value (parameters: BASE, FROM, TO, STEP, I).&quot;;</span>
+  }
+
+  /**
+   * Get the expression for the Y value.
+   *
+   * @return Expression for the Y value.
+   */
+  public String getYExpression() {
+<span class="fc" id="L2466">    return m_Y_Expression;</span>
+  }
+  
+  /**
+   * Set the expression for the Y value.
+   *
+   * @param value Expression for the Y value.
+   */
+  public void setYExpression(String value) {
+<span class="fc" id="L2475">    m_Y_Expression = value;</span>
+<span class="fc" id="L2476">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String XPropertyTipText() {
+<span class="nc" id="L2485">    return &quot;The X property to test (normally the filter).&quot;;</span>
+  }
+
+  /**
+   * Get the X property to test (normally the filter).
+   *
+   * @return 		Value of the X property.
+   */
+  public String getXProperty() {
+<span class="fc" id="L2494">    return m_X_Property;</span>
+  }
+  
+  /**
+   * Set the X property.
+   *
+   * @param value 	the X property.
+   */
+  public void setXProperty(String value) {
+<span class="fc" id="L2503">    m_X_Property = value;</span>
+<span class="fc" id="L2504">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String XMinTipText() {
+<span class="nc" id="L2513">    return &quot;The minimum of X.&quot;;</span>
+  }
+
+  /**
+   * Get the value of the minimum of X.
+   *
+   * @return Value of the minimum of X.
+   */
+  public double getXMin() {
+<span class="fc" id="L2522">    return m_X_Min;</span>
+  }
+  
+  /**
+   * Set the value of the minimum of X.
+   *
+   * @param value Value to use as minimum of X.
+   */
+  public void setXMin(double value) {
+<span class="fc" id="L2531">    m_X_Min = value;</span>
+<span class="fc" id="L2532">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String XMaxTipText() {
+<span class="nc" id="L2541">    return &quot;The maximum of X.&quot;;</span>
+  }
+
+  /**
+   * Get the value of the Maximum of X.
+   *
+   * @return Value of the Maximum of X.
+   */
+  public double getXMax() {
+<span class="fc" id="L2550">    return m_X_Max;</span>
+  }
+  
+  /**
+   * Set the value of the Maximum of X.
+   *
+   * @param value Value to use as Maximum of X.
+   */
+  public void setXMax(double value) {
+<span class="fc" id="L2559">    m_X_Max = value;</span>
+<span class="fc" id="L2560">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String XStepTipText() {
+<span class="nc" id="L2569">    return &quot;The step size of X.&quot;;</span>
+  }
+
+  /**
+   * Get the value of the step size for X.
+   *
+   * @return Value of the step size for X.
+   */
+  public double getXStep() {
+<span class="fc" id="L2578">    return m_X_Step;</span>
+  }
+  
+  /**
+   * Set the value of the step size for X.
+   *
+   * @param value Value to use as the step size for X.
+   */
+  public void setXStep(double value) {
+<span class="fc" id="L2587">    m_X_Step = value;</span>
+<span class="fc" id="L2588">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String XBaseTipText() {
+<span class="nc" id="L2597">    return &quot;The base of X.&quot;;</span>
+  }
+
+  /**
+   * Get the value of the base for X.
+   *
+   * @return Value of the base for X.
+   */
+  public double getXBase() {
+<span class="fc" id="L2606">    return m_X_Base;</span>
+  }
+  
+  /**
+   * Set the value of the base for X.
+   *
+   * @param value Value to use as the base for X.
+   */
+  public void setXBase(double value) {
+<span class="fc" id="L2615">    m_X_Base = value;</span>
+<span class="fc" id="L2616">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String XExpressionTipText() {
+<span class="nc" id="L2625">    return &quot;The expression for the X value (parameters: BASE, FROM, TO, STEP, I).&quot;;</span>
+  }
+
+  /**
+   * Get the expression for the X value.
+   *
+   * @return Expression for the X value.
+   */
+  public String getXExpression() {
+<span class="fc" id="L2634">    return m_X_Expression;</span>
+  }
+  
+  /**
+   * Set the expression for the X value.
+   *
+   * @param value Expression for the X value.
+   */
+  public void setXExpression(String value) {
+<span class="fc" id="L2643">    m_X_Expression = value;</span>
+<span class="fc" id="L2644">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String gridIsExtendableTipText() {
+<span class="nc" id="L2653">    return &quot;Whether the grid can be extended.&quot;;</span>
+  }
+
+  /**
+   * Get whether the grid can be extended dynamically.
+   *
+   * @return true if the grid can be extended.
+   */
+  public boolean getGridIsExtendable() {
+<span class="fc" id="L2662">    return m_GridIsExtendable;</span>
+  }
+  
+  /**
+   * Set whether the grid can be extended dynamically.
+   *
+   * @param value whether the grid can be extended dynamically.
+   */
+  public void setGridIsExtendable(boolean value) {
+<span class="fc" id="L2671">    m_GridIsExtendable = value;</span>
+<span class="fc" id="L2672">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String maxGridExtensionsTipText() {
+<span class="nc" id="L2681">    return &quot;The maximum number of grid extensions, -1 for unlimited.&quot;;</span>
+  }
+
+  /**
+   * Gets the maximum number of grid extensions, -1 for unlimited.
+   *
+   * @return the max number of grid extensions
+   */
+  public int getMaxGridExtensions() {
+<span class="nc" id="L2690">    return m_MaxGridExtensions;</span>
+  }
+  
+  /**
+   * Sets the maximum number of grid extensions, -1 for unlimited.
+   *
+   * @param value the maximum of grid extensions.
+   */
+  public void setMaxGridExtensions(int value) {
+<span class="nc" id="L2699">    m_MaxGridExtensions = value;</span>
+<span class="nc" id="L2700">  }</span>
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String sampleSizePercentTipText() {
+<span class="nc" id="L2709">    return &quot;The sample size (in percent) to use in the initial grid search.&quot;;</span>
+  }
+
+  /**
+   * Gets the sample size for the initial grid search.
+   *
+   * @return the sample size.
+   */
+  public double getSampleSizePercent() {
+<span class="fc" id="L2718">    return m_SampleSize;</span>
+  }
+  
+  /**
+   * Sets the sample size for the initial grid search.
+   *
+   * @param value the sample size for the initial grid search.
+   */
+  public void setSampleSizePercent(double value) {
+<span class="fc" id="L2727">    m_SampleSize = value;</span>
+<span class="fc" id="L2728">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String traversalTipText() {
+<span class="nc" id="L2737">    return &quot;Sets type of traversal of the grid, either by rows or columns.&quot;;</span>
+  }
+
+  /**
+   * Sets the type of traversal for the grid. 
+   *
+   * @param value 	the traversal type
+   */
+  public void setTraversal(SelectedTag value) {
+<span class="pc bpc" id="L2746" title="1 of 2 branches missed.">    if (value.getTags() == TAGS_TRAVERSAL) {</span>
+<span class="fc" id="L2747">      m_Traversal = value.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L2749">  }</span>
+
+  /**
+   * Gets the type of traversal for the grid. 
+   *
+   * @return 		the current traversal type.
+   */
+  public SelectedTag getTraversal() {
+<span class="fc" id="L2757">    return new SelectedTag(m_Traversal, TAGS_TRAVERSAL);</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String logFileTipText() {
+<span class="nc" id="L2767">    return &quot;The log file to log the messages to.&quot;;</span>
+  }
+
+  /**
+   * Gets current log file.
+   *
+   * @return 		the log file.
+   */
+  public File getLogFile() {
+<span class="fc" id="L2776">    return m_LogFile;</span>
+  }
+  
+  /**
+   * Sets the log file to use.
+   *
+   * @param value 	the log file.
+   */
+  public void setLogFile(File value) {
+<span class="fc" id="L2785">    m_LogFile = value;</span>
+<span class="fc" id="L2786">  }</span>
+
+  /**
+   * returns the best filter setup
+   * 
+   * @return		the best filter setup
+   */
+  public Filter getBestFilter() {
+<span class="nc" id="L2794">    return m_BestFilter;</span>
+  }
+
+  /**
+   * returns the best Classifier setup
+   * 
+   * @return		the best Classifier setup
+   */
+  public Classifier getBestClassifier() {
+<span class="nc" id="L2803">    return m_BestClassifier;</span>
+  }
+  
+  /**
+   * Returns an enumeration of the measure names.
+   * 
+   * @return an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+    Vector	result;
+    
+<span class="nc" id="L2814">    result = new Vector();</span>
+    
+<span class="nc" id="L2816">    result.add(&quot;measureX&quot;);</span>
+<span class="nc" id="L2817">    result.add(&quot;measureY&quot;);</span>
+<span class="nc" id="L2818">    result.add(&quot;measureGridExtensionsPerformed&quot;);</span>
+    
+<span class="nc" id="L2820">    return result.elements();</span>
+  }
+
+  /**
+   * Returns the value of the named measure
+   * 
+   * @param measureName the name of the measure to query for its value
+   * @return the value of the named measure
+   */
+  public double getMeasure(String measureName) {
+<span class="nc bnc" id="L2830" title="All 2 branches missed.">    if (measureName.equalsIgnoreCase(&quot;measureX&quot;))</span>
+<span class="nc" id="L2831">      return evaluate(getValues().getX(), true);</span>
+<span class="nc bnc" id="L2832" title="All 2 branches missed.">    else if (measureName.equalsIgnoreCase(&quot;measureY&quot;))</span>
+<span class="nc" id="L2833">      return evaluate(getValues().getY(), false);</span>
+<span class="nc bnc" id="L2834" title="All 2 branches missed.">    else if (measureName.equalsIgnoreCase(&quot;measureGridExtensionsPerformed&quot;))</span>
+<span class="nc" id="L2835">      return getGridExtensionsPerformed();</span>
+    else
+<span class="nc" id="L2837">      throw new IllegalArgumentException(&quot;Measure '&quot; + measureName + &quot;' not supported!&quot;);</span>
+  }
+  
+  /**
+   * returns the parameter pair that was found to work best
+   * 
+   * @return		the best parameter combination
+   */
+  public PointDouble getValues() {
+<span class="nc" id="L2846">    return m_Values;</span>
+  }
+
+  /**
+   * returns the number of grid extensions that took place during the search
+   * (only applicable if the grid was extendable).
+   * 
+   * @return 		the number of grid extensions that were performed
+   * @see 		#getGridIsExtendable()
+   */
+  public int getGridExtensionsPerformed() {
+<span class="nc" id="L2857">    return m_GridExtensionsPerformed;</span>
+  }
+  
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return		the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+    Capabilities 	result;
+    Capabilities	classes;
+    Iterator		iter;
+    Capability		capab;
+    
+<span class="pc bpc" id="L2871" title="1 of 2 branches missed.">    if (getFilter() == null)</span>
+<span class="nc" id="L2872">      result = super.getCapabilities();</span>
+    else
+<span class="fc" id="L2874">      result = getFilter().getCapabilities();</span>
+
+    // only nominal and numeric classes allowed
+<span class="fc" id="L2877">    classes = result.getClassCapabilities();</span>
+<span class="fc" id="L2878">    iter = classes.capabilities();</span>
+<span class="fc bfc" id="L2879" title="All 2 branches covered.">    while (iter.hasNext()) {</span>
+<span class="fc" id="L2880">      capab = (Capability) iter.next();</span>
+<span class="fc bfc" id="L2881" title="All 2 branches covered.">      if (    (capab != Capability.BINARY_CLASS)</span>
+<span class="fc bfc" id="L2882" title="All 2 branches covered.">          &amp;&amp; (capab != Capability.UNARY_CLASS)</span>
+<span class="fc bfc" id="L2883" title="All 2 branches covered.">	   &amp;&amp; (capab != Capability.NOMINAL_CLASS)</span>
+<span class="fc bfc" id="L2884" title="All 2 branches covered.">	   &amp;&amp; (capab != Capability.NUMERIC_CLASS)</span>
+<span class="fc bfc" id="L2885" title="All 2 branches covered.">	   &amp;&amp; (capab != Capability.DATE_CLASS) )</span>
+<span class="fc" id="L2886">	result.disable(capab);</span>
+    }
+    
+<span class="fc" id="L2889">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+    // set dependencies
+<span class="fc bfc" id="L2892" title="All 2 branches covered.">    for (Capability cap: Capability.values())</span>
+<span class="fc" id="L2893">      result.enableDependency(cap);</span>
+    
+<span class="pc bpc" id="L2895" title="1 of 2 branches missed.">    if (result.getMinimumNumberInstances() &lt; 1)</span>
+<span class="fc" id="L2896">      result.setMinimumNumberInstances(1);</span>
+
+<span class="fc" id="L2898">    result.setOwner(this);</span>
+    
+<span class="fc" id="L2900">    return result;</span>
+  }
+
+  /**
+   * prints the specified message to stdout if debug is on and can also dump
+   * the message to a log file
+   * 
+   * @param message	the message to print or store in a log file
+   */
+  protected void log(String message) {
+<span class="fc" id="L2910">    log(message, false);</span>
+<span class="fc" id="L2911">  }</span>
+
+  /**
+   * prints the specified message to stdout if debug is on and can also dump
+   * the message to a log file
+   * 
+   * @param message	the message to print or store in a log file
+   * @param onlyLog	if true the message will only be put into the log file
+   * 			but not to stdout
+   */
+  protected void log(String message, boolean onlyLog) {
+    // print to stdout?
+<span class="pc bpc" id="L2923" title="3 of 4 branches missed.">    if (getDebug() &amp;&amp; (!onlyLog))</span>
+<span class="nc" id="L2924">      System.out.println(message);</span>
+    
+    // log file?
+<span class="pc bpc" id="L2927" title="1 of 2 branches missed.">    if (!getLogFile().isDirectory())</span>
+<span class="nc" id="L2928">      Debug.writeToFile(getLogFile().getAbsolutePath(), message, true);</span>
+<span class="fc" id="L2929">  }</span>
+  
+  /**
+   * replaces the current option in the options array with a new value
+   * 
+   * @param options	the current options
+   * @param option	the option to set a new value for
+   * @param value	the value to set
+   * @return		the updated array
+   * @throws Exception	if something goes wrong
+   */
+  protected String[] updateOption(String[] options, String option, String value) 
+    throws Exception {
+    
+    String[]		result;
+    Vector		tmpOptions;
+    int			i;
+
+    // remove old option
+<span class="nc" id="L2948">    Utils.getOption(option, options);</span>
+    
+    // add option with new value at the beginning (to avoid clashes with &quot;--&quot;)
+<span class="nc" id="L2951">    tmpOptions = new Vector();</span>
+<span class="nc" id="L2952">    tmpOptions.add(&quot;-&quot; + option);</span>
+<span class="nc" id="L2953">    tmpOptions.add(&quot;&quot; + value);</span>
+
+    // move options into vector
+<span class="nc bnc" id="L2956" title="All 2 branches missed.">    for (i = 0; i &lt; options.length; i++) {</span>
+<span class="nc bnc" id="L2957" title="All 2 branches missed.">      if (options[i].length() != 0)</span>
+<span class="nc" id="L2958">	tmpOptions.add(options[i]);</span>
+    }
+    
+<span class="nc" id="L2961">    result = (String[]) tmpOptions.toArray(new String[tmpOptions.size()]);</span>
+    
+<span class="nc" id="L2963">    return result;</span>
+  }
+  
+  /**
+   * evalutes the expression for the current iteration
+   * 
+   * @param value	the current iteration value (from 'min' to 'max' with  
+   * 			stepsize 'step')
+   * @param isX		true if X is to be evaluated otherwise Y
+   * @return		the generated value, NaN if the evaluation fails
+   */
+  protected double evaluate(double value, boolean isX) {
+    double	result;
+    HashMap	symbols;
+    String	expr;
+    double	base;
+    double	min;
+    double	max;
+    double	step;
+
+<span class="fc bfc" id="L2983" title="All 2 branches covered.">    if (isX) {</span>
+<span class="fc" id="L2984">      expr = getXExpression();</span>
+<span class="fc" id="L2985">      base = getXBase();</span>
+<span class="fc" id="L2986">      min  = getXMin();</span>
+<span class="fc" id="L2987">      max  = getXMax();</span>
+<span class="fc" id="L2988">      step = getXStep();</span>
+    }
+    else {
+<span class="fc" id="L2991">      expr = getYExpression();</span>
+<span class="fc" id="L2992">      base = getYBase();</span>
+<span class="fc" id="L2993">      min  = getYMin();</span>
+<span class="fc" id="L2994">      max  = getYMax();</span>
+<span class="fc" id="L2995">      step = getYStep();</span>
+    }
+
+    try {
+<span class="fc" id="L2999">      symbols = new HashMap();</span>
+<span class="fc" id="L3000">      symbols.put(&quot;BASE&quot;, new Double(base));</span>
+<span class="fc" id="L3001">      symbols.put(&quot;FROM&quot;, new Double(min));</span>
+<span class="fc" id="L3002">      symbols.put(&quot;TO&quot;,   new Double(max));</span>
+<span class="fc" id="L3003">      symbols.put(&quot;STEP&quot;, new Double(step));</span>
+<span class="fc" id="L3004">      symbols.put(&quot;I&quot;,    new Double(value));</span>
+<span class="fc" id="L3005">      result = MathematicalExpression.evaluate(expr, symbols);</span>
+    }
+<span class="nc" id="L3007">    catch (Exception e) {</span>
+<span class="nc" id="L3008">      result = Double.NaN;</span>
+    }
+    
+<span class="fc" id="L3011">    return result;</span>
+  }
+
+  /**
+   * tries to set the value as double, integer (just casts it to int!) or
+   * boolean (false if 0, otherwise true) in the object according to the 
+   * specified path. float, char and long are also supported.
+   * 
+   * @param o		the object to modify
+   * @param path	the property path
+   * @param value	the value to set
+   * @return		the modified object
+   * @throws Exception	if neither double nor int could be set
+   */
+  protected Object setValue(Object o, String path, double value) throws Exception {
+    PropertyDescriptor	desc;
+    Class		c;
+    
+<span class="fc" id="L3029">    desc = PropertyPath.getPropertyDescriptor(o, path);</span>
+<span class="fc" id="L3030">    c    = desc.getPropertyType();</span>
+
+    // float
+<span class="pc bpc" id="L3033" title="1 of 4 branches missed.">    if ((c == Float.class) || (c == Float.TYPE))</span>
+<span class="fc" id="L3034">      PropertyPath.setValue(o, path, new Float((float) value));</span>
+    // double
+<span class="pc bpc" id="L3036" title="2 of 4 branches missed.">    else if ((c == Double.class) || (c == Double.TYPE))</span>
+<span class="nc" id="L3037">      PropertyPath.setValue(o, path, new Double(value));</span>
+    // char
+<span class="pc bpc" id="L3039" title="2 of 4 branches missed.">    else if ((c == Character.class) || (c == Character.TYPE))</span>
+<span class="nc" id="L3040">      PropertyPath.setValue(o, path, new Integer((char) value));</span>
+    // int
+<span class="pc bpc" id="L3042" title="2 of 4 branches missed.">    else if ((c == Integer.class) || (c == Integer.TYPE))</span>
+<span class="fc" id="L3043">      PropertyPath.setValue(o, path, new Integer((int) value));</span>
+    // long
+<span class="nc bnc" id="L3045" title="All 4 branches missed.">    else if ((c == Long.class) || (c == Long.TYPE))</span>
+<span class="nc" id="L3046">      PropertyPath.setValue(o, path, new Long((long) value));</span>
+    // boolean
+<span class="nc bnc" id="L3048" title="All 4 branches missed.">    else if ((c == Boolean.class) || (c == Boolean.TYPE))</span>
+<span class="nc bnc" id="L3049" title="All 2 branches missed.">      PropertyPath.setValue(o, path, (value == 0 ? new Boolean(false) : new Boolean(true)));</span>
+<span class="nc" id="L3050">    else throw new Exception(</span>
+<span class="nc" id="L3051">	&quot;Could neither set double nor integer nor boolean value for '&quot; + path + &quot;'!&quot;);</span>
+    
+<span class="fc" id="L3053">    return o;</span>
+  }
+  
+  /**
+   * returns a fully configures object (a copy of the provided one)
+   * 
+   * @param original	the object to create a copy from and set the parameters
+   * @param valueX	the current iteration value for X 
+   * @param valueY	the current iteration value for Y
+   * @return		the configured classifier
+   * @throws Exception	if setup fails
+   */
+  protected Object setup(Object original, double valueX, double valueY) throws Exception {
+    Object	result;
+    
+<span class="fc" id="L3068">    result = new SerializedObject(original).getObject();</span>
+    
+<span class="fc bfc" id="L3070" title="All 2 branches covered.">    if (original instanceof Classifier) {</span>
+<span class="pc bpc" id="L3071" title="1 of 2 branches missed.">      if (getXProperty().startsWith(PREFIX_CLASSIFIER))</span>
+<span class="nc" id="L3072">	setValue(</span>
+<span class="nc" id="L3073">	    result,</span>
+<span class="nc" id="L3074">	    getXProperty().substring(PREFIX_CLASSIFIER.length()),</span>
+<span class="nc" id="L3075">	    valueX);</span>
+      
+<span class="pc bpc" id="L3077" title="1 of 2 branches missed.">      if (getYProperty().startsWith(PREFIX_CLASSIFIER))</span>
+<span class="fc" id="L3078">	setValue(</span>
+<span class="fc" id="L3079">	    result,</span>
+<span class="fc" id="L3080">	    getYProperty().substring(PREFIX_CLASSIFIER.length()), </span>
+<span class="fc" id="L3081">	    valueY);</span>
+    }
+<span class="pc bpc" id="L3083" title="1 of 2 branches missed.">    else if (original instanceof Filter) {</span>
+<span class="pc bpc" id="L3084" title="1 of 2 branches missed.">      if (getXProperty().startsWith(PREFIX_FILTER))</span>
+<span class="fc" id="L3085">	setValue(</span>
+<span class="fc" id="L3086">	    result,</span>
+<span class="fc" id="L3087">	    getXProperty().substring(PREFIX_FILTER.length()), </span>
+<span class="fc" id="L3088">	    valueX);</span>
+      
+<span class="pc bpc" id="L3090" title="1 of 2 branches missed.">      if (getYProperty().startsWith(PREFIX_FILTER))</span>
+<span class="nc" id="L3091">	setValue(</span>
+<span class="nc" id="L3092">	    result,</span>
+<span class="nc" id="L3093">	    getYProperty().substring(PREFIX_FILTER.length()), </span>
+<span class="nc" id="L3094">	    valueY);</span>
+    }
+    else {
+<span class="nc" id="L3097">      throw new IllegalArgumentException(&quot;Object must be either classifier or filter!&quot;);</span>
+    }
+    
+<span class="fc" id="L3100">    return result;</span>
+  }
+  
+  /**
+   * generates a table string for all the performances in the grid and returns
+   * that.
+   * 
+   * @param grid		the current grid to align the performances to
+   * @param performances	the performances to align
+   * @param type		the type of performance
+   * @return			the table string
+   */
+  protected String logPerformances(Grid grid, Vector&lt;Performance&gt; performances, Tag type) {
+    StringBuffer	result;
+    PerformanceTable	table;
+    
+<span class="fc" id="L3116">    result = new StringBuffer(type.getReadable() + &quot;:\n&quot;);</span>
+<span class="fc" id="L3117">    table  = new PerformanceTable(grid, performances, type.getID());</span>
+    
+<span class="fc" id="L3119">    result.append(table.toString() + &quot;\n&quot;);</span>
+<span class="fc" id="L3120">    result.append(&quot;\n&quot;);</span>
+<span class="fc" id="L3121">    result.append(table.toGnuplot() + &quot;\n&quot;);</span>
+<span class="fc" id="L3122">    result.append(&quot;\n&quot;);</span>
+    
+<span class="fc" id="L3124">    return result.toString();</span>
+  }
+  
+  /**
+   * aligns all performances in the grid and prints those tables to the log
+   * file.
+   * 
+   * @param grid		the current grid to align the performances to
+   * @param performances	the performances to align
+   */
+  protected void logPerformances(Grid grid, Vector performances) {
+    int		i;
+    
+<span class="fc bfc" id="L3137" title="All 2 branches covered.">    for (i = 0; i &lt; TAGS_EVALUATION.length; i++)</span>
+<span class="fc" id="L3138">      log(&quot;\n&quot; + logPerformances(grid, performances, TAGS_EVALUATION[i]), true);</span>
+<span class="fc" id="L3139">  }</span>
+  
+  /**
+   * determines the best values-pair for the given grid, using CV with 
+   * specified number of folds.
+   * 
+   * @param grid	the grid to work on
+   * @param inst	the data to work with
+   * @param cv		the number of folds for the cross-validation
+   * @return		the best values pair
+   * @throws Exception	if setup or training fails
+   */
+  protected PointDouble determineBestInGrid(Grid grid, Instances inst, int cv) throws Exception {
+    int				i;
+    Enumeration&lt;PointDouble&gt;	enm;
+    Vector&lt;Performance&gt;		performances;
+    PointDouble			values;
+    Instances			data;
+    Evaluation			eval;
+    PointDouble			result;
+    Classifier			classifier;
+    Filter			filter;
+    int				size;
+    boolean			cached;
+    boolean			allCached;
+    Performance			p1;
+    Performance			p2;
+    double			x;
+    double			y;
+    
+<span class="fc" id="L3169">    performances = new Vector();</span>
+    
+<span class="fc" id="L3171">    log(&quot;Determining best pair with &quot; + cv + &quot;-fold CV in Grid:\n&quot; + grid + &quot;\n&quot;);</span>
+    
+<span class="pc bpc" id="L3173" title="1 of 2 branches missed.">    if (m_Traversal == TRAVERSAL_BY_COLUMN)</span>
+<span class="fc" id="L3174">      size = grid.width();</span>
+    else
+<span class="nc" id="L3176">      size = grid.height();</span>
+    
+<span class="fc" id="L3178">    allCached = true;</span>
+
+<span class="fc bfc" id="L3180" title="All 2 branches covered.">    for (i = 0; i &lt; size; i++) {</span>
+<span class="pc bpc" id="L3181" title="1 of 2 branches missed.">      if (m_Traversal == TRAVERSAL_BY_COLUMN)</span>
+<span class="fc" id="L3182">	enm = grid.column(i);</span>
+      else
+<span class="nc" id="L3184">	enm = grid.row(i);</span>
+      
+<span class="fc" id="L3186">      filter = null;</span>
+<span class="fc" id="L3187">      data   = null;</span>
+      
+<span class="fc bfc" id="L3189" title="All 2 branches covered.">      while (enm.hasMoreElements()) {</span>
+<span class="fc" id="L3190">	values = enm.nextElement();</span>
+	
+	// already calculated?
+<span class="fc" id="L3193">	cached = m_Cache.isCached(cv, values);</span>
+<span class="pc bpc" id="L3194" title="1 of 2 branches missed.">	if (cached) {</span>
+<span class="nc" id="L3195">	  performances.add(m_Cache.get(cv, values));</span>
+	}
+	else {
+<span class="fc" id="L3198">	  allCached = false;</span>
+	  
+<span class="fc" id="L3200">	  x = evaluate(values.getX(), true);</span>
+<span class="fc" id="L3201">	  y = evaluate(values.getY(), false);</span>
+	  
+	  // data pass through filter
+<span class="fc bfc" id="L3204" title="All 2 branches covered.">	  if (filter == null) {</span>
+<span class="fc" id="L3205">	    filter = (Filter) setup(getFilter(), x, y);</span>
+<span class="fc" id="L3206">	    filter.setInputFormat(inst);</span>
+<span class="fc" id="L3207">	    data = Filter.useFilter(inst, filter);</span>
+	    // make sure that the numbers don't get too small - otherwise NaNs!
+<span class="fc" id="L3209">	    Filter cleaner = new NumericCleaner();</span>
+<span class="fc" id="L3210">	    cleaner.setInputFormat(data);</span>
+<span class="fc" id="L3211">	    data = Filter.useFilter(data, cleaner);</span>
+	  }
+
+	  // setup classifier
+<span class="fc" id="L3215">	  classifier = (Classifier) setup(getClassifier(), x, y);</span>
+
+	  // evaluate
+<span class="fc" id="L3218">	  eval = new Evaluation(data);</span>
+<span class="fc" id="L3219">	  eval.crossValidateModel(classifier, data, cv, new Random(getSeed()));</span>
+<span class="fc" id="L3220">	  performances.add(new Performance(values, eval));</span>
+	  
+	  // add to cache
+<span class="fc" id="L3223">	  m_Cache.add(cv, new Performance(values, eval));</span>
+	}
+
+<span class="fc" id="L3226">	log(&quot;&quot; + performances.get(performances.size() - 1) + &quot;: cached=&quot; + cached);</span>
+      }
+    }
+
+<span class="pc bpc" id="L3230" title="1 of 2 branches missed.">    if (allCached) {</span>
+<span class="nc" id="L3231">      log(&quot;All points were already cached - abnormal state!&quot;);</span>
+<span class="nc" id="L3232">      throw new IllegalStateException(&quot;All points were already cached - abnormal state!&quot;);</span>
+    }
+    
+    // sort list
+<span class="fc" id="L3236">    Collections.sort(performances, new PerformanceComparator(m_Evaluation));</span>
+
+<span class="fc" id="L3238">    result = performances.get(performances.size() - 1).getValues();</span>
+
+    // check whether all performances are the same
+<span class="fc" id="L3241">    m_UniformPerformance = true;</span>
+<span class="fc" id="L3242">    p1 = performances.get(0);</span>
+<span class="fc bfc" id="L3243" title="All 2 branches covered.">    for (i = 1; i &lt; performances.size(); i++) {</span>
+<span class="fc" id="L3244">      p2 = performances.get(i);</span>
+<span class="fc bfc" id="L3245" title="All 2 branches covered.">      if (p2.getPerformance(m_Evaluation) != p1.getPerformance(m_Evaluation)) {</span>
+<span class="fc" id="L3246">	m_UniformPerformance = false;</span>
+<span class="fc" id="L3247">	break;</span>
+      }
+    }
+<span class="fc bfc" id="L3250" title="All 2 branches covered.">    if (m_UniformPerformance)</span>
+<span class="fc" id="L3251">      log(&quot;All performances are the same!&quot;);</span>
+    
+<span class="fc" id="L3253">    logPerformances(grid, performances);</span>
+<span class="fc" id="L3254">    log(&quot;\nBest performance:\n&quot; + performances.get(performances.size() - 1));</span>
+    
+<span class="fc" id="L3256">    return result;</span>
+  }
+  
+  /**
+   * returns the best values-pair in the grid
+   * 
+   * @return 		the best values pair
+   * @throws Exception 	if something goes wrong
+   */
+  protected PointDouble findBest() throws Exception {
+    PointInt		center;
+    Grid		neighborGrid;
+    boolean		finished;
+    PointDouble		result;
+    PointDouble		resultOld;
+    int			iteration;
+    Instances		sample;
+    Resample		resample;
+
+<span class="fc" id="L3275">    log(&quot;Step 1:\n&quot;);</span>
+
+    // generate sample?
+<span class="pc bpc" id="L3278" title="1 of 2 branches missed.">    if (getSampleSizePercent() == 100) {</span>
+<span class="fc" id="L3279">      sample = m_Data;</span>
+    }
+    else {
+<span class="nc" id="L3282">      log(&quot;Generating sample (&quot; + getSampleSizePercent() + &quot;%)&quot;);</span>
+<span class="nc" id="L3283">      resample = new Resample();</span>
+<span class="nc" id="L3284">      resample.setRandomSeed(getSeed());</span>
+<span class="nc" id="L3285">      resample.setSampleSizePercent(getSampleSizePercent());</span>
+<span class="nc" id="L3286">      resample.setInputFormat(m_Data);</span>
+<span class="nc" id="L3287">      sample = Filter.useFilter(m_Data, resample);</span>
+    }
+    
+<span class="fc" id="L3290">    finished                  = false;</span>
+<span class="fc" id="L3291">    iteration                 = 0;</span>
+<span class="fc" id="L3292">    m_GridExtensionsPerformed = 0;</span>
+<span class="fc" id="L3293">    m_UniformPerformance      = false;</span>
+    
+    // find first center
+<span class="fc" id="L3296">    log(&quot;\n=== Initial grid - Start ===&quot;);</span>
+<span class="fc" id="L3297">    result = determineBestInGrid(m_Grid, sample, 2);</span>
+<span class="fc" id="L3298">    log(&quot;\nResult of Step 1: &quot; + result + &quot;\n&quot;);</span>
+<span class="fc" id="L3299">    log(&quot;=== Initial grid - End ===\n&quot;);</span>
+
+<span class="fc" id="L3301">    finished = m_UniformPerformance;</span>
+    
+<span class="fc bfc" id="L3303" title="All 2 branches covered.">    if (!finished) {</span>
+<span class="pc bpc" id="L3304" title="1 of 2 branches missed.">      do {</span>
+<span class="fc" id="L3305">	iteration++;</span>
+<span class="fc" id="L3306">	resultOld = (PointDouble) result.clone();</span>
+<span class="fc" id="L3307">	center    = m_Grid.getLocation(result);</span>
+	// on border? -&gt; finished (if it cannot be extended)
+<span class="pc bpc" id="L3309" title="1 of 2 branches missed.">	if (m_Grid.isOnBorder(center)) {</span>
+<span class="fc" id="L3310">	  log(&quot;Center is on border of grid.&quot;);</span>
+
+	  // can we extend grid?
+<span class="pc bpc" id="L3313" title="1 of 2 branches missed.">	  if (getGridIsExtendable()) {</span>
+	    // max number of extensions reached?
+<span class="nc bnc" id="L3315" title="All 2 branches missed.">	    if (m_GridExtensionsPerformed == getMaxGridExtensions()) {</span>
+<span class="nc" id="L3316">	      log(&quot;Maximum number of extensions reached!\n&quot;);</span>
+<span class="nc" id="L3317">	      finished = true;</span>
+	    }
+	    else {
+<span class="nc" id="L3320">	      m_GridExtensionsPerformed++;</span>
+<span class="nc" id="L3321">	      m_Grid = m_Grid.extend(result);</span>
+<span class="nc" id="L3322">	      center = m_Grid.getLocation(result);</span>
+<span class="nc" id="L3323">	      log(&quot;Extending grid (&quot; + m_GridExtensionsPerformed + &quot;/&quot; </span>
+<span class="nc" id="L3324">		  + getMaxGridExtensions() + &quot;):\n&quot; + m_Grid + &quot;\n&quot;);</span>
+	    }
+	  }
+	  else {
+<span class="fc" id="L3328">	    finished = true;</span>
+	  }
+	}
+
+	// new grid with current best one at center and immediate neighbors 
+	// around it
+<span class="pc bpc" id="L3334" title="1 of 2 branches missed.">	if (!finished) {</span>
+<span class="nc" id="L3335">	  neighborGrid = m_Grid.subgrid(</span>
+<span class="nc" id="L3336">	      (int) center.getY() + 1, (int) center.getX() - 1, </span>
+<span class="nc" id="L3337">	      (int) center.getY() - 1, (int) center.getX() + 1);</span>
+<span class="nc" id="L3338">	  result = determineBestInGrid(neighborGrid, sample, 10);</span>
+<span class="nc" id="L3339">	  log(&quot;\nResult of Step 2/Iteration &quot; + (iteration) + &quot;:\n&quot; + result);</span>
+<span class="nc" id="L3340">	  finished = m_UniformPerformance;</span>
+
+	  // no improvement?
+<span class="nc bnc" id="L3343" title="All 2 branches missed.">	  if (result.equals(resultOld)) {</span>
+<span class="nc" id="L3344">	    finished = true;</span>
+<span class="nc" id="L3345">	    log(&quot;\nNo better point found.&quot;);</span>
+	  }
+	}
+      }
+<span class="fc" id="L3349">      while (!finished);</span>
+    }
+    
+<span class="fc" id="L3352">    log(&quot;\nFinal result: &quot; + result);</span>
+
+<span class="fc" id="L3354">    return result;</span>
+  }
+  
+  /**
+   * builds the classifier
+   * 
+   * @param data        the training instances
+   * @throws Exception  if something goes wrong
+   */
+  public void buildClassifier(Instances data) throws Exception {
+    String	strX;
+    String	strY;
+    double	x;
+    double	y;
+    
+    // can classifier handle the data?
+<span class="fc" id="L3370">    getCapabilities().testWithFail(data);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L3373">    m_Data = new Instances(data);</span>
+<span class="fc" id="L3374">    m_Data.deleteWithMissingClass();</span>
+    
+<span class="fc" id="L3376">    m_Cache = new PerformanceCache();</span>
+    
+<span class="pc bpc" id="L3378" title="1 of 2 branches missed.">    if (getXProperty().startsWith(PREFIX_FILTER))</span>
+<span class="fc" id="L3379">      strX = m_Filter.getClass().getName();</span>
+    else
+<span class="nc" id="L3381">      strX = m_Classifier.getClass().getName();</span>
+    
+<span class="pc bpc" id="L3383" title="1 of 2 branches missed.">    if (getYProperty().startsWith(PREFIX_CLASSIFIER))</span>
+<span class="fc" id="L3384">      strY = m_Classifier.getClass().getName();</span>
+    else
+<span class="nc" id="L3386">      strY = m_Filter.getClass().getName();</span>
+    
+<span class="fc" id="L3388">    m_Grid = new Grid(getXMin(), getXMax(), getXStep(), </span>
+<span class="fc" id="L3389">		      strX + &quot;, property &quot; + getXProperty() + &quot;, expr. &quot; + getXExpression() + &quot;, base &quot; + getXBase(),</span>
+<span class="fc" id="L3390">	              getYMin(), getYMax(), getYStep(),</span>
+<span class="fc" id="L3391">	              strY + &quot;, property &quot; + getYProperty() + &quot;, expr. &quot; + getYExpression() + &quot;, base &quot; + getYBase());</span>
+
+<span class="fc" id="L3393">    log(&quot;\n&quot;  </span>
+<span class="fc" id="L3394">	+ this.getClass().getName() + &quot;\n&quot; </span>
+<span class="fc" id="L3395">	+ this.getClass().getName().replaceAll(&quot;.&quot;, &quot;=&quot;) + &quot;\n&quot;</span>
+<span class="fc" id="L3396">	+ &quot;Options: &quot; + Utils.joinOptions(getOptions()) + &quot;\n&quot;);</span>
+    
+    // find best
+<span class="fc" id="L3399">    m_Values = findBest();</span>
+
+    // setup best configurations
+<span class="fc" id="L3402">    x                = evaluate(m_Values.getX(), true);</span>
+<span class="fc" id="L3403">    y                = evaluate(m_Values.getY(), false);</span>
+<span class="fc" id="L3404">    m_BestFilter     = (Filter) setup(getFilter(), x, y);</span>
+<span class="fc" id="L3405">    m_BestClassifier = (Classifier) setup(getClassifier(), x, y);</span>
+    
+    // process data
+<span class="fc" id="L3408">    m_Filter = (Filter) setup(getFilter(), x, y);</span>
+<span class="fc" id="L3409">    m_Filter.setInputFormat(m_Data);</span>
+<span class="fc" id="L3410">    Instances transformed = Filter.useFilter(m_Data, m_Filter);</span>
+    
+    // train classifier
+<span class="fc" id="L3413">    m_Classifier = (Classifier) setup(getClassifier(), x, y);</span>
+<span class="fc" id="L3414">    m_Classifier.buildClassifier(transformed);</span>
+<span class="fc" id="L3415">  }</span>
+    
+  /**
+   * Computes the distribution for a given instance
+   *
+   * @param instance the instance for which distribution is computed
+   * @return the distribution
+   * @throws Exception if the distribution can't be computed successfully
+   */
+  public double[] distributionForInstance(Instance instance) throws Exception {
+    // transform instance
+<span class="fc" id="L3426">    m_Filter.input(instance);</span>
+<span class="fc" id="L3427">    m_Filter.batchFinished();</span>
+<span class="fc" id="L3428">    Instance transformed = m_Filter.output();</span>
+    
+<span class="fc" id="L3430">    return m_Classifier.distributionForInstance(transformed);</span>
+  }
+
+  /**
+   * returns a string representation of the classifier
+   * 
+   * @return a string representation of the classifier
+   */
+  public String toString() {
+    String	result;
+    
+<span class="fc" id="L3441">    result = &quot;&quot;;</span>
+    
+<span class="pc bpc" id="L3443" title="1 of 2 branches missed.">    if (m_Values == null) {</span>
+<span class="fc" id="L3444">      result = &quot;No search performed yet.&quot;;</span>
+    }
+    else {
+<span class="nc" id="L3447">      result = </span>
+<span class="nc" id="L3448">      	  this.getClass().getName() + &quot;:\n&quot;</span>
+<span class="nc" id="L3449">      	+ &quot;Filter: &quot; + getFilter().getClass().getName() </span>
+<span class="nc bnc" id="L3450" title="All 2 branches missed.">      	+ (getFilter() instanceof OptionHandler ? &quot; &quot; + Utils.joinOptions(((OptionHandler) getFilter()).getOptions()) : &quot;&quot;) + &quot;\n&quot;</span>
+<span class="nc" id="L3451">      	+ &quot;Classifier: &quot; + getClassifier().getClass().getName() </span>
+<span class="nc" id="L3452">      	+ &quot; &quot; + Utils.joinOptions(getClassifier().getOptions()) + &quot;\n\n&quot;</span>
+<span class="nc" id="L3453">      	+ &quot;X property: &quot; + getXProperty() + &quot;\n&quot;</span>
+<span class="nc" id="L3454">      	+ &quot;Y property: &quot; + getYProperty() + &quot;\n\n&quot;</span>
+<span class="nc" id="L3455">      	+ &quot;Evaluation: &quot; + getEvaluation().getSelectedTag().getReadable() + &quot;\n&quot;</span>
+<span class="nc" id="L3456">      	+ &quot;Coordinates: &quot; + getValues() + &quot;\n&quot;;</span>
+      
+<span class="nc bnc" id="L3458" title="All 2 branches missed.">      if (getGridIsExtendable())</span>
+<span class="nc" id="L3459">	result += &quot;Grid-Extensions: &quot; + getGridExtensionsPerformed() + &quot;\n&quot;;</span>
+      
+<span class="nc" id="L3461">      result += </span>
+<span class="nc" id="L3462">	&quot;Values: &quot;</span>
+<span class="nc" id="L3463">	+ evaluate(getValues().getX(), true) + &quot; (X coordinate)&quot; </span>
+<span class="nc" id="L3464">	+ &quot;, &quot;</span>
+<span class="nc" id="L3465">	+ evaluate(getValues().getY(), false) + &quot; (Y coordinate)&quot;</span>
+<span class="nc" id="L3466">	+ &quot;\n\n&quot;</span>
+<span class="nc" id="L3467">	+ m_Classifier.toString();</span>
+    }
+    
+<span class="fc" id="L3470">    return result;</span>
+  }
+
+  /**
+   * Returns a string that summarizes the object.
+   *
+   * @return 		the object summarized as a string
+   */
+  public String toSummaryString() {
+    String	result;
+    
+<span class="nc" id="L3481">    result = </span>
+<span class="nc" id="L3482">        &quot;Best filter: &quot; + getBestFilter().getClass().getName() </span>
+<span class="nc bnc" id="L3483" title="All 2 branches missed.">      + (getBestFilter() instanceof OptionHandler ? &quot; &quot; + Utils.joinOptions(((OptionHandler) getBestFilter()).getOptions()) : &quot;&quot;) + &quot;\n&quot;</span>
+<span class="nc" id="L3484">      + &quot;Best classifier: &quot; + getBestClassifier().getClass().getName() </span>
+<span class="nc" id="L3485">      + &quot; &quot; + Utils.joinOptions(getBestClassifier().getOptions());</span>
+    
+<span class="nc" id="L3487">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L3496">    return RevisionUtils.extract(&quot;$Revision: 9733 $&quot;);</span>
+  }
+  
+  /**
+   * Main method for running this classifier from commandline.
+   * 
+   * @param args 	the options
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L3505">    runClassifier(new GridSearch(), args);</span>
+<span class="nc" id="L3506">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

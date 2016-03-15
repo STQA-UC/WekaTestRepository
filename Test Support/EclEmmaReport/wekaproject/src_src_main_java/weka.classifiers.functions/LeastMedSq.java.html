@@ -1,0 +1,733 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>LeastMedSq.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.functions</a> &gt; <span class="el_source">LeastMedSq.java</span></div><h1>LeastMedSq.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    LeastMedSq.java
+ *
+ *    Copyright (C) 2001 University of Waikato
+ */
+
+package weka.classifiers.functions;
+
+import weka.classifiers.Classifier;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.supervised.attribute.NominalToBinary;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+import weka.filters.unsupervised.instance.RemoveRange;
+
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Implements a least median sqaured linear regression utilising the existing weka LinearRegression class to form predictions. &lt;br/&gt;
+ * Least squared regression functions are generated from random subsamples of the data. The least squared regression with the lowest meadian squared error is chosen as the final model.&lt;br/&gt;
+ * &lt;br/&gt;
+ * The basis of the algorithm is &lt;br/&gt;
+ * &lt;br/&gt;
+ * Peter J. Rousseeuw, Annick M. Leroy (1987). Robust regression and outlier detection. .
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;book{Rousseeuw1987,
+ *    author = {Peter J. Rousseeuw and Annick M. Leroy},
+ *    title = {Robust regression and outlier detection},
+ *    year = {1987}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;sample size&amp;gt;
+ *  Set sample size
+ *  (default: 4)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -G &amp;lt;seed&amp;gt;
+ *  Set the seed used to generate samples
+ *  (default: 0)
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  Produce debugging output
+ *  (default no debugging output)
+ * &lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Tony Voyle (tv6@waikato.ac.nz)
+ * @version $Revision: 5523 $
+ */
+<span class="fc" id="L93">public class LeastMedSq </span>
+  extends Classifier 
+  implements OptionHandler, TechnicalInformationHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = 4288954049987652970L;
+  
+  private double[] m_Residuals;
+  
+  private double[] m_weight;
+  
+  private double m_SSR;
+  
+  private double m_scalefactor;
+  
+<span class="fc" id="L108">  private double m_bestMedian = Double.POSITIVE_INFINITY;</span>
+  
+  private LinearRegression m_currentRegression;
+  
+  private LinearRegression m_bestRegression;
+  
+  private LinearRegression m_ls;
+
+  private Instances m_Data;
+
+  private Instances m_RLSData;
+
+  private Instances m_SubSample;
+
+  private ReplaceMissingValues m_MissingFilter;
+
+  private NominalToBinary m_TransformFilter;
+
+  private RemoveRange m_SplitFilter;
+
+<span class="fc" id="L128">  private int m_samplesize = 4;</span>
+
+  private int m_samples;
+
+<span class="fc" id="L132">  private boolean m_israndom = false;</span>
+
+<span class="fc" id="L134">  private boolean m_debug = false;</span>
+
+  private Random m_random;
+
+<span class="fc" id="L138">  private long m_randomseed = 0;</span>
+
+  /**
+   * Returns a string describing this classifier
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L146">    return &quot;Implements a least median sqaured linear regression utilising the &quot;</span>
+      +&quot;existing weka LinearRegression class to form predictions. \n&quot;
+      +&quot;Least squared regression functions are generated from random subsamples of &quot;
+      +&quot;the data. The least squared regression with the lowest meadian squared error &quot;
+      +&quot;is chosen as the final model.\n\n&quot;
+      +&quot;The basis of the algorithm is \n\n&quot;
+<span class="nc" id="L152">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L165">    result = new TechnicalInformation(Type.BOOK);</span>
+<span class="nc" id="L166">    result.setValue(Field.AUTHOR, &quot;Peter J. Rousseeuw and Annick M. Leroy&quot;);</span>
+<span class="nc" id="L167">    result.setValue(Field.YEAR, &quot;1987&quot;);</span>
+<span class="nc" id="L168">    result.setValue(Field.TITLE, &quot;Robust regression and outlier detection&quot;);</span>
+    
+<span class="nc" id="L170">    return result;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L179">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L180">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L183">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L184">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L185">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L186">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L189">    result.enable(Capability.NUMERIC_CLASS);</span>
+<span class="fc" id="L190">    result.enable(Capability.DATE_CLASS);</span>
+<span class="fc" id="L191">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="fc" id="L193">    return result;</span>
+  }
+
+  /**
+   * Build lms regression
+   *
+   * @param data training data
+   * @throws Exception if an error occurs
+   */
+  public void buildClassifier(Instances data)throws Exception{
+
+    // can classifier handle the data?
+<span class="fc" id="L205">    getCapabilities().testWithFail(data);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L208">    data = new Instances(data);</span>
+<span class="fc" id="L209">    data.deleteWithMissingClass();</span>
+    
+<span class="fc" id="L211">    cleanUpData(data);</span>
+
+<span class="fc" id="L213">    getSamples();</span>
+
+<span class="fc" id="L215">    findBestRegression();</span>
+
+<span class="fc" id="L217">    buildRLSRegression();</span>
+
+<span class="fc" id="L219">  } // buildClassifier</span>
+
+  /**
+   * Classify a given instance using the best generated
+   * LinearRegression Classifier.
+   *
+   * @param instance instance to be classified
+   * @return class value
+   * @throws Exception if an error occurs
+   */
+  public double classifyInstance(Instance instance)throws Exception{
+
+<span class="fc" id="L231">    Instance transformedInstance = instance;</span>
+<span class="fc" id="L232">    m_TransformFilter.input(transformedInstance);</span>
+<span class="fc" id="L233">    transformedInstance = m_TransformFilter.output();</span>
+<span class="fc" id="L234">    m_MissingFilter.input(transformedInstance);</span>
+<span class="fc" id="L235">    transformedInstance = m_MissingFilter.output();</span>
+
+<span class="fc" id="L237">    return m_ls.classifyInstance(transformedInstance);</span>
+  } // classifyInstance
+
+  /**
+   * Cleans up data
+   *
+   * @param data data to be cleaned up
+   * @throws Exception if an error occurs
+   */
+  private void cleanUpData(Instances data)throws Exception{
+
+<span class="fc" id="L248">    m_Data = data;</span>
+<span class="fc" id="L249">    m_TransformFilter = new NominalToBinary();</span>
+<span class="fc" id="L250">    m_TransformFilter.setInputFormat(m_Data);</span>
+<span class="fc" id="L251">    m_Data = Filter.useFilter(m_Data, m_TransformFilter);</span>
+<span class="fc" id="L252">    m_MissingFilter = new ReplaceMissingValues();</span>
+<span class="fc" id="L253">    m_MissingFilter.setInputFormat(m_Data);</span>
+<span class="fc" id="L254">    m_Data = Filter.useFilter(m_Data, m_MissingFilter);</span>
+<span class="fc" id="L255">    m_Data.deleteWithMissingClass();</span>
+<span class="fc" id="L256">  }</span>
+
+  /**
+   * Gets the number of samples to use.
+   * 
+   * @throws Exception if an error occurs
+   */
+  private void getSamples()throws Exception{
+
+<span class="fc" id="L265">    int stuf[] = new int[] {500,50,22,17,15,14};</span>
+<span class="pc bpc" id="L266" title="1 of 2 branches missed.">    if ( m_samplesize &lt; 7){</span>
+<span class="fc bfc" id="L267" title="All 2 branches covered.">      if ( m_Data.numInstances() &lt; stuf[m_samplesize - 1])</span>
+<span class="fc" id="L268">	m_samples = combinations(m_Data.numInstances(), m_samplesize);</span>
+      else
+<span class="fc" id="L270">	m_samples = m_samplesize * 500;</span>
+
+<span class="nc" id="L272">    } else m_samples = 3000;</span>
+<span class="pc bpc" id="L273" title="1 of 2 branches missed.">    if (m_debug){</span>
+<span class="nc" id="L274">      System.out.println(&quot;m_samplesize: &quot; + m_samplesize);</span>
+<span class="nc" id="L275">      System.out.println(&quot;m_samples: &quot; + m_samples);</span>
+<span class="nc" id="L276">      System.out.println(&quot;m_randomseed: &quot; + m_randomseed);</span>
+    }
+
+<span class="fc" id="L279">  }</span>
+
+  /**
+   * Set up the random number generator
+   *
+   */
+  private void setRandom(){
+
+<span class="fc" id="L287">    m_random = new Random(getRandomSeed());</span>
+<span class="fc" id="L288">  }</span>
+
+  /**
+   * Finds the best regression generated from m_samples
+   * random samples from the training data
+   *
+   * @throws Exception if an error occurs
+   */
+  private void findBestRegression()throws Exception{
+
+<span class="fc" id="L298">    setRandom();</span>
+<span class="fc" id="L299">    m_bestMedian = Double.POSITIVE_INFINITY;</span>
+<span class="pc bpc" id="L300" title="1 of 2 branches missed.">    if (m_debug) {</span>
+<span class="nc" id="L301">      System.out.println(&quot;Starting:&quot;);</span>
+    }
+<span class="fc bfc" id="L303" title="All 2 branches covered.">    for(int s = 0, r = 0; s &lt; m_samples; s++, r++){</span>
+<span class="pc bpc" id="L304" title="1 of 2 branches missed.">      if (m_debug) {</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">	if(s%(m_samples/100)==0)</span>
+<span class="nc" id="L306">	  System.out.print(&quot;*&quot;);</span>
+      }
+<span class="fc" id="L308">      genRegression();</span>
+<span class="fc" id="L309">      getMedian();</span>
+    }
+<span class="pc bpc" id="L311" title="1 of 2 branches missed.">    if (m_debug) {</span>
+<span class="nc" id="L312">      System.out.println(&quot;&quot;);</span>
+    }
+<span class="fc" id="L314">    m_currentRegression = m_bestRegression;</span>
+<span class="fc" id="L315">  }</span>
+
+  /**
+   * Generates a LinearRegression classifier from
+   * the current m_SubSample
+   *
+   * @throws Exception if an error occurs
+   */
+  private void genRegression()throws Exception{
+
+<span class="fc" id="L325">    m_currentRegression = new LinearRegression();</span>
+<span class="fc" id="L326">    m_currentRegression.setOptions(new String[]{&quot;-S&quot;, &quot;1&quot;});</span>
+<span class="fc" id="L327">    selectSubSample(m_Data);</span>
+<span class="fc" id="L328">    m_currentRegression.buildClassifier(m_SubSample);</span>
+<span class="fc" id="L329">  }</span>
+
+  /**
+   * Finds residuals (squared) for the current
+   * regression.
+   *
+   * @throws Exception if an error occurs
+   */
+  private void findResiduals()throws Exception{
+
+<span class="fc" id="L339">    m_SSR = 0;</span>
+<span class="fc" id="L340">    m_Residuals = new double [m_Data.numInstances()];</span>
+<span class="fc bfc" id="L341" title="All 2 branches covered.">    for(int i = 0; i &lt; m_Data.numInstances(); i++){</span>
+<span class="fc" id="L342">      m_Residuals[i] = m_currentRegression.classifyInstance(m_Data.instance(i));</span>
+<span class="fc" id="L343">      m_Residuals[i] -= m_Data.instance(i).value(m_Data.classAttribute());</span>
+<span class="fc" id="L344">      m_Residuals[i] *= m_Residuals[i];</span>
+<span class="fc" id="L345">      m_SSR += m_Residuals[i];</span>
+    }
+<span class="fc" id="L347">  }</span>
+
+  /**
+   * finds the median residual squared for the
+   * current regression
+   *
+   * @throws Exception if an error occurs
+   */
+  private void getMedian()throws Exception{
+
+<span class="fc" id="L357">    findResiduals();</span>
+<span class="fc" id="L358">    int p = m_Residuals.length;</span>
+<span class="fc" id="L359">    select(m_Residuals, 0, p - 1, p / 2);</span>
+<span class="fc bfc" id="L360" title="All 2 branches covered.">    if(m_Residuals[p / 2] &lt; m_bestMedian){</span>
+<span class="fc" id="L361">      m_bestMedian = m_Residuals[p / 2];</span>
+<span class="fc" id="L362">      m_bestRegression = m_currentRegression;</span>
+    }
+<span class="fc" id="L364">  }</span>
+
+  /**
+   * Returns a string representing the best
+   * LinearRegression classifier found.
+   *
+   * @return String representing the regression
+   */
+  public String toString(){
+
+<span class="pc bpc" id="L374" title="1 of 2 branches missed.">    if( m_ls == null){</span>
+<span class="fc" id="L375">      return &quot;model has not been built&quot;;</span>
+    }
+<span class="nc" id="L377">    return m_ls.toString();</span>
+  }
+
+  /**
+   * Builds a weight function removing instances with an
+   * abnormally high scaled residual
+   *
+   * @throws Exception if weight building fails
+   */
+  private void buildWeight()throws Exception{
+
+<span class="fc" id="L388">    findResiduals();</span>
+<span class="fc" id="L389">    m_scalefactor = 1.4826 * ( 1 + 5 / (m_Data.numInstances()</span>
+<span class="fc" id="L390">					- m_Data.numAttributes()))</span>
+<span class="fc" id="L391">      * Math.sqrt(m_bestMedian);</span>
+<span class="fc" id="L392">    m_weight = new double[m_Residuals.length];</span>
+<span class="fc bfc" id="L393" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Residuals.length; i++)</span>
+<span class="fc bfc" id="L394" title="All 2 branches covered.">      m_weight[i] = ((Math.sqrt(m_Residuals[i])/m_scalefactor &lt; 2.5)?1.0:0.0);</span>
+<span class="fc" id="L395">  }</span>
+
+  /**
+   * Builds a new LinearRegression without the 'bad' data
+   * found by buildWeight
+   *
+   * @throws Exception if building fails
+   */
+  private void buildRLSRegression()throws Exception{
+
+<span class="fc" id="L405">    buildWeight();</span>
+<span class="fc" id="L406">    m_RLSData = new Instances(m_Data);</span>
+<span class="fc" id="L407">    int x = 0;</span>
+<span class="fc" id="L408">    int y = 0;</span>
+<span class="fc" id="L409">    int n = m_RLSData.numInstances();</span>
+<span class="fc bfc" id="L410" title="All 2 branches covered.">    while(y &lt; n){</span>
+<span class="fc bfc" id="L411" title="All 2 branches covered.">      if (m_weight[x] == 0){</span>
+<span class="fc" id="L412">	m_RLSData.delete(y);</span>
+<span class="fc" id="L413">	n = m_RLSData.numInstances();</span>
+<span class="fc" id="L414">	y--;</span>
+      }
+<span class="fc" id="L416">      x++;</span>
+<span class="fc" id="L417">      y++;</span>
+    }
+<span class="pc bpc" id="L419" title="1 of 2 branches missed.">    if ( m_RLSData.numInstances() == 0){</span>
+<span class="nc" id="L420">      System.err.println(&quot;rls regression unbuilt&quot;);</span>
+<span class="nc" id="L421">      m_ls = m_currentRegression;</span>
+    }else{
+<span class="fc" id="L423">      m_ls = new LinearRegression();</span>
+<span class="fc" id="L424">      m_ls.setOptions(new String[]{&quot;-S&quot;, &quot;1&quot;});</span>
+<span class="fc" id="L425">      m_ls.buildClassifier(m_RLSData);</span>
+<span class="fc" id="L426">      m_currentRegression = m_ls;</span>
+    }
+
+<span class="fc" id="L429">  }</span>
+
+  /**
+   * Finds the kth number in an array
+   *
+   * @param a an array of numbers
+   * @param l left pointer
+   * @param r right pointer
+   * @param k position of number to be found
+   */
+  private static void select( double [] a, int l, int r, int k){
+
+<span class="fc bfc" id="L441" title="All 2 branches covered.">    if (r &lt;=l) return;</span>
+<span class="fc" id="L442">    int i = partition( a, l, r);</span>
+<span class="fc bfc" id="L443" title="All 2 branches covered.">    if (i &gt; k) select(a, l, i-1, k);</span>
+<span class="fc bfc" id="L444" title="All 2 branches covered.">    if (i &lt; k) select(a, i+1, r, k);</span>
+<span class="fc" id="L445">  }</span>
+
+  /**
+   * Partitions an array of numbers such that all numbers
+   * less than that at index r, between indexes l and r
+   * will have a smaller index and all numbers greater than
+   * will have a larger index
+   *
+   * @param a an array of numbers
+   * @param l left pointer
+   * @param r right pointer
+   * @return final index of number originally at r
+   */
+  private static int partition( double [] a, int l, int r ){
+
+<span class="fc" id="L460">    int i = l-1, j = r;</span>
+<span class="fc" id="L461">    double v = a[r], temp;</span>
+<span class="fc" id="L462">    while(true){</span>
+<span class="fc bfc" id="L463" title="All 2 branches covered.">      while(a[++i] &lt; v);</span>
+<span class="fc bfc" id="L464" title="All 4 branches covered.">      while(v &lt; a[--j]) if(j == l) break;</span>
+<span class="fc bfc" id="L465" title="All 2 branches covered.">      if(i &gt;= j) break;</span>
+<span class="fc" id="L466">      temp = a[i];</span>
+<span class="fc" id="L467">      a[i] = a[j];</span>
+<span class="fc" id="L468">      a[j] = temp;</span>
+    }
+<span class="fc" id="L470">    temp = a[i];</span>
+<span class="fc" id="L471">    a[i] = a[r];</span>
+<span class="fc" id="L472">    a[r] = temp;</span>
+<span class="fc" id="L473">    return i;</span>
+  }
+
+  /**
+   * Produces a random sample from m_Data
+   * in m_SubSample
+   *
+   * @param data data from which to take sample
+   * @throws Exception if an error occurs
+   */
+  private void selectSubSample(Instances data)throws Exception{
+
+<span class="fc" id="L485">    m_SplitFilter = new RemoveRange();</span>
+<span class="fc" id="L486">    m_SplitFilter.setInvertSelection(true);</span>
+<span class="fc" id="L487">    m_SubSample = data;</span>
+<span class="fc" id="L488">    m_SplitFilter.setInputFormat(m_SubSample);</span>
+<span class="fc" id="L489">    m_SplitFilter.setInstancesIndices(selectIndices(m_SubSample));</span>
+<span class="fc" id="L490">    m_SubSample = Filter.useFilter(m_SubSample, m_SplitFilter);</span>
+<span class="fc" id="L491">  }</span>
+
+  /**
+   * Returns a string suitable for passing to RemoveRange consisting
+   * of m_samplesize indices.
+   *
+   * @param data dataset from which to take indicese
+   * @return string of indices suitable for passing to RemoveRange 
+   */
+  private String selectIndices(Instances data){
+
+<span class="fc" id="L502">    StringBuffer text = new StringBuffer();</span>
+<span class="fc bfc" id="L503" title="All 2 branches covered.">    for(int i = 0, x = 0; i &lt; m_samplesize; i++){</span>
+<span class="fc" id="L504">      do{x = (int) (m_random.nextDouble() * data.numInstances());}</span>
+<span class="fc bfc" id="L505" title="All 2 branches covered.">      while(x==0);</span>
+<span class="fc" id="L506">      text.append(Integer.toString(x));</span>
+<span class="fc bfc" id="L507" title="All 2 branches covered.">      if(i &lt; m_samplesize - 1)</span>
+<span class="fc" id="L508">	text.append(&quot;,&quot;);</span>
+      else
+<span class="fc" id="L510">	text.append(&quot;\n&quot;);</span>
+    }
+<span class="fc" id="L512">    return text.toString();</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String sampleSizeTipText() {
+<span class="nc" id="L521">    return &quot;Set the size of the random samples used to generate the least sqaured &quot;</span>
+      +&quot;regression functions.&quot;;
+  }
+
+  /**
+   * sets number of samples
+   *
+   * @param samplesize value
+   */
+  public void setSampleSize(int samplesize){
+
+<span class="fc" id="L532">    m_samplesize = samplesize;</span>
+<span class="fc" id="L533">  }</span>
+
+  /**
+   * gets number of samples
+   *
+   * @return value
+   */
+  public int getSampleSize(){
+
+<span class="fc" id="L542">    return m_samplesize;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String randomSeedTipText() {
+<span class="nc" id="L551">    return &quot;Set the seed for selecting random subsamples of the training data.&quot;;</span>
+  }
+
+  /**
+   * Set the seed for the random number generator
+   *
+   * @param randomseed the seed
+   */
+  public void setRandomSeed(long randomseed){
+
+<span class="fc" id="L561">    m_randomseed = randomseed;</span>
+<span class="fc" id="L562">  }</span>
+
+  /**
+   * get the seed for the random number generator
+   *
+   * @return the seed value
+   */
+  public long getRandomSeed(){
+
+<span class="fc" id="L571">    return m_randomseed;</span>
+  }
+
+  /**
+   * sets  whether or not debugging output shouild be printed
+   *
+   * @param debug true if debugging output selected
+   */
+  public void setDebug(boolean debug){
+
+<span class="fc" id="L581">    m_debug = debug;</span>
+<span class="fc" id="L582">  }</span>
+
+  /**
+   * Returns whether or not debugging output shouild be printed
+   *
+   * @return true if debuging output selected
+   */
+  public boolean getDebug(){
+
+<span class="fc" id="L591">    return m_debug;</span>
+  }
+
+  /**
+   * Returns an enumeration of all the available options..
+   *
+   * @return an enumeration of all available options.
+   */
+  public Enumeration listOptions(){
+
+<span class="fc" id="L601">    Vector newVector = new Vector(1);</span>
+<span class="fc" id="L602">    newVector.addElement(new Option(&quot;\tSet sample size\n&quot;</span>
+				    + &quot;\t(default: 4)\n&quot;,
+<span class="fc" id="L604">				    &quot;S&quot;, 4, &quot;-S &lt;sample size&gt;&quot;));</span>
+<span class="fc" id="L605">    newVector.addElement(new Option(&quot;\tSet the seed used to generate samples\n&quot;</span>
+				    + &quot;\t(default: 0)\n&quot;,
+<span class="fc" id="L607">				    &quot;G&quot;, 0, &quot;-G &lt;seed&gt;&quot;));</span>
+<span class="fc" id="L608">    newVector.addElement(new Option(&quot;\tProduce debugging output\n&quot;</span>
+				    + &quot;\t(default no debugging output)\n&quot;,
+<span class="fc" id="L610">				    &quot;D&quot;, 0, &quot;-D&quot;));</span>
+
+<span class="fc" id="L612">    return newVector.elements();</span>
+  }
+
+  /**
+   * Sets the OptionHandler's options using the given list. All options
+   * will be set (or reset) during this call (i.e. incremental setting
+   * of options is not possible).
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;sample size&amp;gt;
+   *  Set sample size
+   *  (default: 4)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -G &amp;lt;seed&amp;gt;
+   *  Set the seed used to generate samples
+   *  (default: 0)
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  Produce debugging output
+   *  (default no debugging output)
+   * &lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="fc" id="L645">    String curropt = Utils.getOption('S', options);</span>
+<span class="fc bfc" id="L646" title="All 2 branches covered.">    if ( curropt.length() != 0){</span>
+<span class="fc" id="L647">      setSampleSize(Integer.parseInt(curropt));</span>
+    } else
+<span class="fc" id="L649">      setSampleSize(4);</span>
+
+<span class="fc" id="L651">    curropt = Utils.getOption('G', options);</span>
+<span class="fc bfc" id="L652" title="All 2 branches covered.">    if ( curropt.length() != 0){</span>
+<span class="fc" id="L653">      setRandomSeed(Long.parseLong(curropt));</span>
+    } else {
+<span class="fc" id="L655">      setRandomSeed(0);</span>
+    }
+
+<span class="fc" id="L658">    setDebug(Utils.getFlag('D', options));</span>
+<span class="fc" id="L659">  }</span>
+
+  /**
+   * Gets the current option settings for the OptionHandler.
+   *
+   * @return the list of current option settings as an array of strings
+   */
+  public String[] getOptions(){
+
+<span class="fc" id="L668">    String options[] = new String[9];</span>
+<span class="fc" id="L669">    int current = 0;</span>
+
+<span class="fc" id="L671">    options[current++] = &quot;-S&quot;;</span>
+<span class="fc" id="L672">    options[current++] = &quot;&quot; + getSampleSize();</span>
+
+<span class="fc" id="L674">    options[current++] = &quot;-G&quot;;</span>
+<span class="fc" id="L675">    options[current++] = &quot;&quot; + getRandomSeed();</span>
+
+<span class="pc bpc" id="L677" title="1 of 2 branches missed.">    if (getDebug()) {</span>
+<span class="nc" id="L678">      options[current++] = &quot;-D&quot;;</span>
+    }
+
+<span class="pc bfc" id="L681" title="All 2 branches covered.">    while (current &lt; options.length) {</span>
+<span class="fc" id="L682">      options[current++] = &quot;&quot;;</span>
+    }
+
+<span class="fc" id="L685">    return options;</span>
+  }
+
+  /**
+   * Produces the combination nCr
+   *
+   * @param n
+   * @param r
+   * @return the combination
+   * @throws Exception if r is greater than n
+   */
+  public static int combinations (int n, int r)throws Exception {
+
+<span class="fc" id="L698">    int c = 1, denom = 1, num = 1, i,orig=r;</span>
+<span class="pc bpc" id="L699" title="1 of 2 branches missed.">    if (r &gt; n) throw new Exception(&quot;r must be less that or equal to n.&quot;);</span>
+<span class="fc" id="L700">    r = Math.min( r , n - r);</span>
+
+<span class="fc bfc" id="L702" title="All 2 branches covered.">    for (i = 1 ; i &lt;= r; i++){</span>
+
+<span class="fc" id="L704">      num *= n-i+1;</span>
+<span class="fc" id="L705">      denom *= i;</span>
+    }
+
+<span class="fc" id="L708">    c = num / denom;</span>
+    if(false)
+      System.out.println( &quot;n: &quot;+n+&quot; r: &quot;+orig+&quot; num: &quot;+num+
+			  &quot; denom: &quot;+denom+&quot; c: &quot;+c);
+<span class="fc" id="L712">    return c;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L721">    return RevisionUtils.extract(&quot;$Revision: 5523 $&quot;);</span>
+  }
+
+  /**
+   * generate a Linear regression predictor for testing
+   *
+   * @param argv options
+   */
+  public static void main(String [] argv){
+<span class="nc" id="L730">    runClassifier(new LeastMedSq(), argv);</span>
+<span class="nc" id="L731">  } // main</span>
+} // lmr
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

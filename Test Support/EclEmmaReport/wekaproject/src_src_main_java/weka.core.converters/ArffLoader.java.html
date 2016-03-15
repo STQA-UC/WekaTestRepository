@@ -1,0 +1,1087 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>ArffLoader.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.core.converters</a> &gt; <span class="el_source">ArffLoader.java</span></div><h1>ArffLoader.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    ArffLoader.java
+ *    Copyright (C) 2000 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.core.converters;
+
+import weka.core.Attribute;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SparseInstance;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.io.StreamTokenizer;
+import java.io.StringReader;
+import java.net.URL;
+import java.text.ParseException;
+
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Reads a source that is in arff (attribute relation file format) format.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @author FracPete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 9653 $
+ * @see Loader
+ */
+<span class="fc" id="L56">public class ArffLoader</span>
+  extends AbstractFileLoader
+  implements BatchConverter, IncrementalConverter, URLSourcedLoader {
+
+  /** for serialization */
+  static final long serialVersionUID = 2726929550544048587L;
+
+  /** the file extension */
+<span class="fc" id="L64">  public static String FILE_EXTENSION = Instances.FILE_EXTENSION;</span>
+<span class="fc" id="L65">  public static String FILE_EXTENSION_COMPRESSED = FILE_EXTENSION + &quot;.gz&quot;;</span>
+
+  /** the url */
+<span class="fc" id="L68">  protected String m_URL = &quot;http://&quot;;</span>
+
+  /** The reader for the source file. */
+<span class="fc" id="L71">  protected transient Reader m_sourceReader = null;</span>
+
+  /** The parser for the ARFF file */
+<span class="fc" id="L74">  protected transient ArffReader m_ArffReader = null;</span>
+
+  /**
+   * Reads data from an ARFF file, either in incremental or batch mode. &lt;p/&gt;
+   *
+   * Typical code for batch usage:
+   * &lt;pre&gt;
+   * BufferedReader reader = new BufferedReader(new FileReader(&quot;/some/where/file.arff&quot;));
+   * ArffReader arff = new ArffReader(reader);
+   * Instances data = arff.getData();
+   * data.setClassIndex(data.numAttributes() - 1);
+   * &lt;/pre&gt;
+   *
+   * Typical code for incremental usage:
+   * &lt;pre&gt;
+   * BufferedReader reader = new BufferedReader(new FileReader(&quot;/some/where/file.arff&quot;));
+   * ArffReader arff = new ArffReader(reader, 1000);
+   * Instances data = arff.getStructure();
+   * data.setClassIndex(data.numAttributes() - 1);
+   * Instance inst;
+   * while ((inst = arff.readInstance(data)) != null) {
+   *   data.add(inst);
+   * }
+   * &lt;/pre&gt;
+   *
+   * @author  Eibe Frank (eibe@cs.waikato.ac.nz)
+   * @author  Len Trigg (trigg@cs.waikato.ac.nz)
+   * @author  fracpete (fracpete at waikato dot ac dot nz)
+   * @version $Revision: 9653 $
+   */
+  public static class ArffReader
+    implements RevisionHandler {
+
+    /** the tokenizer for reading the stream */
+    protected StreamTokenizer m_Tokenizer;
+
+    /** Buffer of values for sparse instance */
+    protected double[] m_ValueBuffer;
+
+    /** Buffer of indices for sparse instance */
+    protected int[] m_IndicesBuffer;
+
+    /** the actual data */
+    protected Instances m_Data;
+
+    /** the number of lines read so far */
+    protected int m_Lines;
+
+    /**
+     * Reads the data completely from the reader. The data can be accessed
+     * via the &lt;code&gt;getData()&lt;/code&gt; method.
+     *
+     * @param reader		the reader to use
+     * @throws IOException	if something goes wrong
+     * @see			#getData()
+     */
+<span class="fc" id="L130">    public ArffReader(Reader reader) throws IOException {</span>
+<span class="fc" id="L131">      m_Tokenizer = new StreamTokenizer(reader);</span>
+<span class="fc" id="L132">      initTokenizer();</span>
+
+<span class="fc" id="L134">      readHeader(1000);</span>
+<span class="fc" id="L135">      initBuffers();</span>
+
+      Instance inst;
+<span class="fc bfc" id="L138" title="All 2 branches covered.">      while ((inst = readInstance(m_Data)) != null) {</span>
+<span class="fc" id="L139">        m_Data.add(inst);</span>
+      };
+
+<span class="fc" id="L142">      compactify();</span>
+<span class="fc" id="L143">    }</span>
+
+    /**
+     * Reads only the header and reserves the specified space for instances.
+     * Further instances can be read via &lt;code&gt;readInstance()&lt;/code&gt;.
+     *
+     * @param reader			the reader to use
+     * @param capacity 			the capacity of the new dataset
+     * @throws IOException		if something goes wrong
+     * @throws IllegalArgumentException	if capacity is negative
+     * @see				#getStructure()
+     * @see				#readInstance(Instances)
+     */
+<span class="nc" id="L156">    public ArffReader(Reader reader, int capacity) throws IOException {</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">      if (capacity &lt; 0)</span>
+<span class="nc" id="L158">	throw new IllegalArgumentException(&quot;Capacity has to be positive!&quot;);</span>
+
+<span class="nc" id="L160">      m_Tokenizer = new StreamTokenizer(reader);</span>
+<span class="nc" id="L161">      initTokenizer();</span>
+
+<span class="nc" id="L163">      readHeader(capacity);</span>
+<span class="nc" id="L164">      initBuffers();</span>
+<span class="nc" id="L165">    }</span>
+
+    /**
+     * Reads the data without header according to the specified template.
+     * The data can be accessed via the &lt;code&gt;getData()&lt;/code&gt; method.
+     *
+     * @param reader		the reader to use
+     * @param template		the template header
+     * @param lines		the lines read so far
+     * @throws IOException	if something goes wrong
+     * @see			#getData()
+     */
+    public ArffReader(Reader reader, Instances template, int lines) throws IOException {
+<span class="nc" id="L178">      this(reader, template, lines, 100);</span>
+
+      Instance inst;
+<span class="nc bnc" id="L181" title="All 2 branches missed.">      while ((inst = readInstance(m_Data)) != null) {</span>
+<span class="nc" id="L182">        m_Data.add(inst);</span>
+      };
+
+<span class="nc" id="L185">      compactify();</span>
+<span class="nc" id="L186">    }</span>
+
+    /**
+     * Initializes the reader without reading the header according to the
+     * specified template. The data must be read via the
+     * &lt;code&gt;readInstance()&lt;/code&gt; method.
+     *
+     * @param reader		the reader to use
+     * @param template		the template header
+     * @param lines		the lines read so far
+     * @param capacity 		the capacity of the new dataset
+     * @throws IOException	if something goes wrong
+     * @see			#getData()
+     */
+<span class="nc" id="L200">    public ArffReader(Reader reader, Instances template, int lines, int capacity) throws IOException {</span>
+<span class="nc" id="L201">      m_Lines     = lines;</span>
+<span class="nc" id="L202">      m_Tokenizer = new StreamTokenizer(reader);</span>
+<span class="nc" id="L203">      initTokenizer();</span>
+
+<span class="nc" id="L205">      m_Data = new Instances(template, capacity);</span>
+<span class="nc" id="L206">      initBuffers();</span>
+<span class="nc" id="L207">    }</span>
+
+    /**
+     * initializes the buffers for sparse instances to be read
+     *
+     * @see			#m_ValueBuffer
+     * @see			#m_IndicesBuffer
+     */
+    protected void initBuffers() {
+<span class="fc" id="L216">      m_ValueBuffer = new double[m_Data.numAttributes()];</span>
+<span class="fc" id="L217">      m_IndicesBuffer = new int[m_Data.numAttributes()];</span>
+<span class="fc" id="L218">    }</span>
+
+    /**
+     * compactifies the data
+     */
+    protected void compactify() {
+<span class="pc bpc" id="L224" title="1 of 2 branches missed.">      if (m_Data != null)</span>
+<span class="fc" id="L225">        m_Data.compactify();</span>
+<span class="fc" id="L226">    }</span>
+
+    /**
+     * Throws error message with line number and last token read.
+     *
+     * @param msg 		the error message to be thrown
+     * @throws IOException 	containing the error message
+     */
+    protected void errorMessage(String msg) throws IOException {
+<span class="nc" id="L235">      String str = msg + &quot;, read &quot; + m_Tokenizer.toString();</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">      if (m_Lines &gt; 0) {</span>
+<span class="nc" id="L237">	int line = Integer.parseInt(str.replaceAll(&quot;.* line &quot;, &quot;&quot;));</span>
+<span class="nc" id="L238">	str = str.replaceAll(&quot; line .*&quot;, &quot; line &quot; + (m_Lines + line - 1));</span>
+      }
+<span class="nc" id="L240">      throw new IOException(str);</span>
+    }
+
+    /**
+     * returns the current line number
+     *
+     * @return			the current line number
+     */
+    public int getLineNo() {
+<span class="nc" id="L249">      return m_Lines + m_Tokenizer.lineno();</span>
+    }
+
+    /**
+     * Gets next token, skipping empty lines.
+     *
+     * @throws IOException 	if reading the next token fails
+     */
+    protected void getFirstToken() throws IOException {
+<span class="fc bfc" id="L258" title="All 2 branches covered.">      while (m_Tokenizer.nextToken() == StreamTokenizer.TT_EOL) {};</span>
+
+<span class="pc bpc" id="L260" title="1 of 2 branches missed.">      if ((m_Tokenizer.ttype == '\'') ||</span>
+<span class="pc bpc" id="L261" title="1 of 2 branches missed.">  	(m_Tokenizer.ttype == '&quot;')) {</span>
+<span class="nc" id="L262">        m_Tokenizer.ttype = StreamTokenizer.TT_WORD;</span>
+<span class="fc bfc" id="L263" title="All 2 branches covered.">      } else if ((m_Tokenizer.ttype == StreamTokenizer.TT_WORD) &amp;&amp;</span>
+<span class="pc bpc" id="L264" title="1 of 2 branches missed.">  	       (m_Tokenizer.sval.equals(&quot;?&quot;))){</span>
+<span class="nc" id="L265">        m_Tokenizer.ttype = '?';</span>
+      }
+<span class="fc" id="L267">    }</span>
+
+    /**
+     * Gets index, checking for a premature and of line.
+     *
+     * @throws IOException 	if it finds a premature end of line
+     */
+    protected void getIndex() throws IOException {
+<span class="pc bpc" id="L275" title="1 of 2 branches missed.">      if (m_Tokenizer.nextToken() == StreamTokenizer.TT_EOL) {</span>
+<span class="nc" id="L276">        errorMessage(&quot;premature end of line&quot;);</span>
+      }
+<span class="pc bpc" id="L278" title="1 of 2 branches missed.">      if (m_Tokenizer.ttype == StreamTokenizer.TT_EOF) {</span>
+<span class="nc" id="L279">        errorMessage(&quot;premature end of file&quot;);</span>
+      }
+<span class="fc" id="L281">    }</span>
+
+    /**
+     * Gets token and checks if its end of line.
+     *
+     * @param endOfFileOk 	whether EOF is OK
+     * @throws IOException 	if it doesn't find an end of line
+     */
+    protected void getLastToken(boolean endOfFileOk) throws IOException {
+<span class="pc bpc" id="L290" title="1 of 2 branches missed.">      if ((m_Tokenizer.nextToken() != StreamTokenizer.TT_EOL) &amp;&amp;</span>
+<span class="nc bnc" id="L291" title="All 4 branches missed.">  	((m_Tokenizer.ttype != StreamTokenizer.TT_EOF) || !endOfFileOk)) {</span>
+<span class="nc" id="L292">        errorMessage(&quot;end of line expected&quot;);</span>
+      }
+<span class="fc" id="L294">    }</span>
+
+    /**
+     * Gets the value of an instance's weight (if one exists)
+     *
+     * @return the value of the instance's weight, or NaN
+     * if no weight has been supplied in the file
+     */
+    protected double getInstanceWeight() throws IOException {
+<span class="fc" id="L303">      double weight = Double.NaN;</span>
+<span class="fc" id="L304">      m_Tokenizer.nextToken();</span>
+<span class="pc bpc" id="L305" title="1 of 2 branches missed.">      if (m_Tokenizer.ttype == StreamTokenizer.TT_EOL ||</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">          m_Tokenizer.ttype == StreamTokenizer.TT_EOF) {</span>
+<span class="fc" id="L307">        return weight;</span>
+      }
+      // see if we can read an instance weight
+      //      m_Tokenizer.pushBack();
+<span class="nc bnc" id="L311" title="All 2 branches missed.">      if (m_Tokenizer.ttype == '{') {</span>
+<span class="nc" id="L312">        m_Tokenizer.nextToken();</span>
+<span class="nc" id="L313">        String weightS = m_Tokenizer.sval;</span>
+        // try to parse weight as a double
+        try {
+<span class="nc" id="L316">          weight = Double.parseDouble(weightS);</span>
+<span class="nc" id="L317">        } catch (NumberFormatException e) {</span>
+          // quietly ignore
+<span class="nc" id="L319">          return weight;</span>
+        }
+        // see if we have the closing brace
+<span class="nc" id="L322">        m_Tokenizer.nextToken();</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">        if (m_Tokenizer.ttype != '}') {</span>
+<span class="nc" id="L324">          errorMessage(&quot;Problem reading instance weight&quot;);</span>
+        }
+      }
+<span class="nc" id="L327">      return weight;</span>
+    }
+
+    /**
+     * Gets next token, checking for a premature and of line.
+     *
+     * @throws IOException 	if it finds a premature end of line
+     */
+    protected void getNextToken() throws IOException {
+<span class="pc bpc" id="L336" title="1 of 2 branches missed.">      if (m_Tokenizer.nextToken() == StreamTokenizer.TT_EOL) {</span>
+<span class="nc" id="L337">        errorMessage(&quot;premature end of line&quot;);</span>
+      }
+<span class="pc bpc" id="L339" title="1 of 2 branches missed.">      if (m_Tokenizer.ttype == StreamTokenizer.TT_EOF) {</span>
+<span class="nc" id="L340">        errorMessage(&quot;premature end of file&quot;);</span>
+<span class="fc bfc" id="L341" title="All 2 branches covered.">      } else if ((m_Tokenizer.ttype == '\'') ||</span>
+<span class="pc bpc" id="L342" title="1 of 2 branches missed.">  	       (m_Tokenizer.ttype == '&quot;')) {</span>
+<span class="fc" id="L343">        m_Tokenizer.ttype = StreamTokenizer.TT_WORD;</span>
+<span class="fc bfc" id="L344" title="All 2 branches covered.">      } else if ((m_Tokenizer.ttype == StreamTokenizer.TT_WORD) &amp;&amp;</span>
+<span class="fc bfc" id="L345" title="All 2 branches covered.">  	       (m_Tokenizer.sval.equals(&quot;?&quot;))){</span>
+<span class="fc" id="L346">        m_Tokenizer.ttype = '?';</span>
+      }
+<span class="fc" id="L348">    }</span>
+
+    /**
+     * Initializes the StreamTokenizer used for reading the ARFF file.
+     */
+    protected void initTokenizer(){
+<span class="fc" id="L354">      m_Tokenizer.resetSyntax();</span>
+<span class="fc" id="L355">      m_Tokenizer.whitespaceChars(0, ' ');</span>
+<span class="fc" id="L356">      m_Tokenizer.wordChars(' '+1,'\u00FF');</span>
+<span class="fc" id="L357">      m_Tokenizer.whitespaceChars(',',',');</span>
+<span class="fc" id="L358">      m_Tokenizer.commentChar('%');</span>
+<span class="fc" id="L359">      m_Tokenizer.quoteChar('&quot;');</span>
+<span class="fc" id="L360">      m_Tokenizer.quoteChar('\'');</span>
+<span class="fc" id="L361">      m_Tokenizer.ordinaryChar('{');</span>
+<span class="fc" id="L362">      m_Tokenizer.ordinaryChar('}');</span>
+<span class="fc" id="L363">      m_Tokenizer.eolIsSignificant(true);</span>
+<span class="fc" id="L364">    }</span>
+
+    /**
+     * Reads a single instance using the tokenizer and returns it.
+     *
+     * @param structure 	the dataset header information, will get updated
+     * 				in case of string or relational attributes
+     * @return 			null if end of file has been reached
+     * @throws IOException 	if the information is not read
+     * successfully
+     */
+    public Instance readInstance(Instances structure) throws IOException {
+<span class="fc" id="L376">      return readInstance(structure, true);</span>
+    }
+
+    /**
+     * Reads a single instance using the tokenizer and returns it.
+     *
+     * @param structure 	the dataset header information, will get updated
+     * 				in case of string or relational attributes
+     * @param flag 		if method should test for carriage return after
+     * 				each instance
+     * @return 			null if end of file has been reached
+     * @throws IOException 	if the information is not read
+     * successfully
+     */
+    public Instance readInstance(Instances structure, boolean flag) throws IOException {
+<span class="fc" id="L391">      return getInstance(structure, flag);</span>
+    }
+
+    /**
+     * Reads a single instance using the tokenizer and returns it.
+     *
+     * @param structure 	the dataset header information, will get updated
+     * 				in case of string or relational attributes
+     * @param flag 		if method should test for carriage return after
+     * 				each instance
+     * @return 			null if end of file has been reached
+     * @throws IOException 	if the information is not read
+     * 				successfully
+     */
+    protected Instance getInstance(Instances structure, boolean flag) throws IOException {
+<span class="fc" id="L406">      m_Data = structure;</span>
+
+      // Check if any attributes have been declared.
+<span class="pc bpc" id="L409" title="1 of 2 branches missed.">      if (m_Data.numAttributes() == 0) {</span>
+<span class="nc" id="L410">        errorMessage(&quot;no header information available&quot;);</span>
+      }
+
+      // Check if end of file reached.
+<span class="fc" id="L414">      getFirstToken();</span>
+<span class="fc bfc" id="L415" title="All 2 branches covered.">      if (m_Tokenizer.ttype == StreamTokenizer.TT_EOF) {</span>
+<span class="fc" id="L416">        return null;</span>
+      }
+
+      // Parse instance
+<span class="fc bfc" id="L420" title="All 2 branches covered.">      if (m_Tokenizer.ttype == '{') {</span>
+<span class="fc" id="L421">        return getInstanceSparse(flag);</span>
+      } else {
+<span class="fc" id="L423">        return getInstanceFull(flag);</span>
+      }
+    }
+
+    /**
+     * Reads a single instance using the tokenizer and returns it.
+     *
+     * @param flag 		if method should test for carriage return after
+     * 				each instance
+     * @return 			null if end of file has been reached
+     * @throws IOException 	if the information is not read
+     * 				successfully
+     */
+    protected Instance getInstanceSparse(boolean flag) throws IOException {
+<span class="fc" id="L437">      int valIndex, numValues = 0, maxIndex = -1;</span>
+
+      // Get values
+      do {
+        // Get index
+<span class="fc" id="L442">        getIndex();</span>
+<span class="fc bfc" id="L443" title="All 2 branches covered.">        if (m_Tokenizer.ttype == '}') {</span>
+<span class="fc" id="L444">  	break;</span>
+        }
+
+        // Is index valid?
+        try{
+<span class="fc" id="L449">  	m_IndicesBuffer[numValues] = Integer.valueOf(m_Tokenizer.sval).intValue();</span>
+<span class="nc" id="L450">        } catch (NumberFormatException e) {</span>
+<span class="nc" id="L451">  	errorMessage(&quot;index number expected&quot;);</span>
+        }
+<span class="pc bpc" id="L453" title="1 of 2 branches missed.">        if (m_IndicesBuffer[numValues] &lt;= maxIndex) {</span>
+<span class="nc" id="L454">  	errorMessage(&quot;indices have to be ordered&quot;);</span>
+        }
+<span class="pc bpc" id="L456" title="1 of 2 branches missed.">        if ((m_IndicesBuffer[numValues] &lt; 0) ||</span>
+<span class="pc bpc" id="L457" title="1 of 2 branches missed.">  	  (m_IndicesBuffer[numValues] &gt;= m_Data.numAttributes())) {</span>
+<span class="nc" id="L458">  	errorMessage(&quot;index out of bounds&quot;);</span>
+        }
+<span class="fc" id="L460">        maxIndex = m_IndicesBuffer[numValues];</span>
+
+        // Get value;
+<span class="fc" id="L463">        getNextToken();</span>
+
+        // Check if value is missing.
+<span class="pc bpc" id="L466" title="1 of 2 branches missed.">        if  (m_Tokenizer.ttype == '?') {</span>
+<span class="nc" id="L467">  	m_ValueBuffer[numValues] = Instance.missingValue();</span>
+        } else {
+
+  	// Check if token is valid.
+<span class="pc bpc" id="L471" title="1 of 2 branches missed.">  	if (m_Tokenizer.ttype != StreamTokenizer.TT_WORD) {</span>
+<span class="nc" id="L472">  	  errorMessage(&quot;not a valid value&quot;);</span>
+  	}
+<span class="pc bpc" id="L474" title="3 of 6 branches missed.">          switch (m_Data.attribute(m_IndicesBuffer[numValues]).type()) {</span>
+            case Attribute.NOMINAL:
+              // Check if value appears in header.
+<span class="fc" id="L477">              valIndex =</span>
+<span class="fc" id="L478">                m_Data.attribute(m_IndicesBuffer[numValues]).indexOfValue(m_Tokenizer.sval);</span>
+<span class="pc bpc" id="L479" title="1 of 2 branches missed.">              if (valIndex == -1) {</span>
+<span class="nc" id="L480">                errorMessage(&quot;nominal value not declared in header&quot;);</span>
+              }
+<span class="fc" id="L482">              m_ValueBuffer[numValues] = (double)valIndex;</span>
+<span class="fc" id="L483">              break;</span>
+  	case Attribute.NUMERIC:
+  	  // Check if value is really a number.
+  	  try{
+<span class="fc" id="L487">  	    m_ValueBuffer[numValues] = Double.valueOf(m_Tokenizer.sval).</span>
+<span class="fc" id="L488">  	      doubleValue();</span>
+<span class="nc" id="L489">  	  } catch (NumberFormatException e) {</span>
+<span class="nc" id="L490">  	    errorMessage(&quot;number expected&quot;);</span>
+  	  }
+<span class="nc" id="L492">            break;</span>
+  	case Attribute.STRING:
+<span class="fc" id="L494">  	  m_ValueBuffer[numValues] =</span>
+<span class="fc" id="L495">  	    m_Data.attribute(m_IndicesBuffer[numValues]).addStringValue(m_Tokenizer.sval);</span>
+<span class="fc" id="L496">            break;</span>
+          case Attribute.DATE:
+            try {
+<span class="nc" id="L499">              m_ValueBuffer[numValues] =</span>
+<span class="nc" id="L500">                m_Data.attribute(m_IndicesBuffer[numValues]).parseDate(m_Tokenizer.sval);</span>
+<span class="nc" id="L501">            } catch (ParseException e) {</span>
+<span class="nc" id="L502">              errorMessage(&quot;unparseable date: &quot; + m_Tokenizer.sval);</span>
+            }
+<span class="nc" id="L504">            break;</span>
+          case Attribute.RELATIONAL:
+            try {
+<span class="nc" id="L507">              ArffReader arff = new ArffReader(new StringReader(m_Tokenizer.sval), m_Data.attribute(m_IndicesBuffer[numValues]).relation(), 0);</span>
+<span class="nc" id="L508">              Instances data = arff.getData();</span>
+<span class="nc" id="L509">              m_ValueBuffer[numValues] = m_Data.attribute(m_IndicesBuffer[numValues]).addRelation(data);</span>
+            }
+<span class="nc" id="L511">            catch (Exception e) {</span>
+<span class="nc" id="L512">              throw new IOException(e.toString() + &quot; of line &quot; + getLineNo());</span>
+            }
+            break;
+          default:
+<span class="nc" id="L516">            errorMessage(&quot;unknown attribute type in column &quot; + m_IndicesBuffer[numValues]);</span>
+  	}
+        }
+<span class="fc" id="L519">        numValues++;</span>
+<span class="fc" id="L520">      } while (true);</span>
+
+<span class="fc" id="L522">      double weight = 1.0;</span>
+<span class="pc bpc" id="L523" title="1 of 2 branches missed.">      if (flag) {</span>
+        // check for an instance weight
+<span class="fc" id="L525">        weight = getInstanceWeight();</span>
+<span class="pc bpc" id="L526" title="1 of 2 branches missed.">        if (!Double.isNaN(weight)) {</span>
+<span class="nc" id="L527">          getLastToken(true);</span>
+        } else {
+<span class="fc" id="L529">          weight = 1.0;</span>
+        }
+      }
+
+      // Add instance to dataset
+<span class="fc" id="L534">      double[] tempValues = new double[numValues];</span>
+<span class="fc" id="L535">      int[] tempIndices = new int[numValues];</span>
+<span class="fc" id="L536">      System.arraycopy(m_ValueBuffer, 0, tempValues, 0, numValues);</span>
+<span class="fc" id="L537">      System.arraycopy(m_IndicesBuffer, 0, tempIndices, 0, numValues);</span>
+<span class="fc" id="L538">      Instance inst = new SparseInstance(weight, tempValues, tempIndices, m_Data.numAttributes());</span>
+<span class="fc" id="L539">      inst.setDataset(m_Data);</span>
+
+<span class="fc" id="L541">      return inst;</span>
+    }
+
+    /**
+     * Reads a single instance using the tokenizer and returns it.
+     *
+     * @param flag 		if method should test for carriage return after
+     * 				each instance
+     * @return 			null if end of file has been reached
+     * @throws IOException 	if the information is not read
+     * 				successfully
+     */
+    protected Instance getInstanceFull(boolean flag) throws IOException {
+<span class="fc" id="L554">      double[] instance = new double[m_Data.numAttributes()];</span>
+      int index;
+
+      // Get values for all attributes.
+<span class="fc bfc" id="L558" title="All 2 branches covered.">      for (int i = 0; i &lt; m_Data.numAttributes(); i++){</span>
+        // Get next token
+<span class="fc bfc" id="L560" title="All 2 branches covered.">        if (i &gt; 0) {</span>
+<span class="fc" id="L561">  	getNextToken();</span>
+        }
+
+        // Check if value is missing.
+<span class="fc bfc" id="L565" title="All 2 branches covered.">        if  (m_Tokenizer.ttype == '?') {</span>
+<span class="fc" id="L566">  	instance[i] = Instance.missingValue();</span>
+        } else {
+
+  	// Check if token is valid.
+<span class="pc bpc" id="L570" title="1 of 2 branches missed.">  	if (m_Tokenizer.ttype != StreamTokenizer.TT_WORD) {</span>
+<span class="nc" id="L571">  	  errorMessage(&quot;not a valid value&quot;);</span>
+  	}
+<span class="pc bpc" id="L573" title="3 of 6 branches missed.">          switch (m_Data.attribute(i).type()) {</span>
+          case Attribute.NOMINAL:
+  	  // Check if value appears in header.
+<span class="fc" id="L576">  	  index = m_Data.attribute(i).indexOfValue(m_Tokenizer.sval);</span>
+<span class="pc bpc" id="L577" title="1 of 2 branches missed.">  	  if (index == -1) {</span>
+<span class="nc" id="L578">  	    errorMessage(&quot;nominal value not declared in header&quot;);</span>
+  	  }
+<span class="fc" id="L580">  	  instance[i] = (double)index;</span>
+<span class="fc" id="L581">            break;</span>
+  	case Attribute.NUMERIC:
+  	  // Check if value is really a number.
+  	  try{
+<span class="fc" id="L585">  	    instance[i] = Double.valueOf(m_Tokenizer.sval).</span>
+<span class="fc" id="L586">  	      doubleValue();</span>
+<span class="nc" id="L587">  	  } catch (NumberFormatException e) {</span>
+<span class="nc" id="L588">  	    errorMessage(&quot;number expected&quot;);</span>
+  	  }
+<span class="nc" id="L590">            break;</span>
+  	case Attribute.STRING:
+<span class="fc" id="L592">  	  instance[i] = m_Data.attribute(i).addStringValue(m_Tokenizer.sval);</span>
+<span class="fc" id="L593">            break;</span>
+          case Attribute.DATE:
+            try {
+<span class="nc" id="L596">              instance[i] = m_Data.attribute(i).parseDate(m_Tokenizer.sval);</span>
+<span class="nc" id="L597">            } catch (ParseException e) {</span>
+<span class="nc" id="L598">              errorMessage(&quot;unparseable date: &quot; + m_Tokenizer.sval);</span>
+            }
+<span class="nc" id="L600">            break;</span>
+          case Attribute.RELATIONAL:
+            try {
+<span class="nc" id="L603">              ArffReader arff = new ArffReader(new StringReader(m_Tokenizer.sval), m_Data.attribute(i).relation(), 0);</span>
+<span class="nc" id="L604">              Instances data = arff.getData();</span>
+<span class="nc" id="L605">              instance[i] = m_Data.attribute(i).addRelation(data);</span>
+            }
+<span class="nc" id="L607">            catch (Exception e) {</span>
+<span class="nc" id="L608">              throw new IOException(e.toString() + &quot; of line &quot; + getLineNo());</span>
+            }
+            break;
+          default:
+<span class="nc" id="L612">            errorMessage(&quot;unknown attribute type in column &quot; + i);</span>
+  	}
+        }
+      }
+
+<span class="fc" id="L617">      double weight = 1.0;</span>
+<span class="pc bpc" id="L618" title="1 of 2 branches missed.">      if (flag) {</span>
+        // check for an instance weight
+<span class="fc" id="L620">        weight = getInstanceWeight();</span>
+<span class="pc bpc" id="L621" title="1 of 2 branches missed.">        if (!Double.isNaN(weight)) {</span>
+<span class="nc" id="L622">          getLastToken(true);</span>
+        } else {
+<span class="fc" id="L624">          weight = 1.0;</span>
+        }
+      }
+
+      // Add instance to dataset
+<span class="fc" id="L629">      Instance inst = new Instance(weight, instance);</span>
+<span class="fc" id="L630">      inst.setDataset(m_Data);</span>
+
+<span class="fc" id="L632">      return inst;</span>
+    }
+
+    /**
+     * Reads and stores header of an ARFF file.
+     *
+     * @param capacity 		the number of instances to reserve in the data
+     * 				structure
+     * @throws IOException 	if the information is not read
+     * 				successfully
+     */
+    protected void readHeader(int capacity) throws IOException {
+<span class="fc" id="L644">      m_Lines = 0;</span>
+<span class="fc" id="L645">      String relationName = &quot;&quot;;</span>
+
+      // Get name of relation.
+<span class="fc" id="L648">      getFirstToken();</span>
+<span class="pc bpc" id="L649" title="1 of 2 branches missed.">      if (m_Tokenizer.ttype == StreamTokenizer.TT_EOF) {</span>
+<span class="nc" id="L650">        errorMessage(&quot;premature end of file&quot;);</span>
+      }
+<span class="pc bpc" id="L652" title="1 of 2 branches missed.">      if (Instances.ARFF_RELATION.equalsIgnoreCase(m_Tokenizer.sval)) {</span>
+<span class="fc" id="L653">        getNextToken();</span>
+<span class="fc" id="L654">        relationName = m_Tokenizer.sval;</span>
+<span class="fc" id="L655">        getLastToken(false);</span>
+      } else {
+<span class="nc" id="L657">        errorMessage(&quot;keyword &quot; + Instances.ARFF_RELATION + &quot; expected&quot;);</span>
+      }
+
+      // Create vectors to hold information temporarily.
+<span class="fc" id="L661">      FastVector attributes = new FastVector();</span>
+
+      // Get attribute declarations.
+<span class="fc" id="L664">      getFirstToken();</span>
+<span class="pc bpc" id="L665" title="1 of 2 branches missed.">      if (m_Tokenizer.ttype == StreamTokenizer.TT_EOF) {</span>
+<span class="nc" id="L666">        errorMessage(&quot;premature end of file&quot;);</span>
+      }
+
+<span class="pc bfc" id="L669" title="All 2 branches covered.">      while (Attribute.ARFF_ATTRIBUTE.equalsIgnoreCase(m_Tokenizer.sval)) {</span>
+<span class="fc" id="L670">        attributes = parseAttribute(attributes);</span>
+      }
+
+      // Check if data part follows. We can't easily check for EOL.
+<span class="pc bpc" id="L674" title="1 of 2 branches missed.">      if (!Instances.ARFF_DATA.equalsIgnoreCase(m_Tokenizer.sval)) {</span>
+<span class="nc" id="L675">        errorMessage(&quot;keyword &quot; + Instances.ARFF_DATA + &quot; expected&quot;);</span>
+      }
+
+      // Check if any attributes have been declared.
+<span class="pc bpc" id="L679" title="1 of 2 branches missed.">      if (attributes.size() == 0) {</span>
+<span class="nc" id="L680">        errorMessage(&quot;no attributes declared&quot;);</span>
+      }
+
+<span class="fc" id="L683">      m_Data = new Instances(relationName, attributes, capacity);</span>
+<span class="fc" id="L684">    }</span>
+
+    /**
+     * Parses the attribute declaration.
+     *
+     * @param attributes 		the current attributes vector
+     * @return 			the new attributes vector
+     * @throws IOException 	if the information is not read
+     * 				successfully
+     */
+    protected FastVector parseAttribute(FastVector attributes) throws IOException {
+      String attributeName;
+      FastVector attributeValues;
+
+      // Get attribute name.
+<span class="fc" id="L699">      getNextToken();</span>
+<span class="fc" id="L700">      attributeName = m_Tokenizer.sval;</span>
+<span class="fc" id="L701">      getNextToken();</span>
+
+      // Check if attribute is nominal.
+<span class="fc bfc" id="L704" title="All 2 branches covered.">      if (m_Tokenizer.ttype == StreamTokenizer.TT_WORD) {</span>
+
+        // Attribute is real, integer, or string.
+<span class="fc bfc" id="L707" title="All 2 branches covered.">        if (m_Tokenizer.sval.equalsIgnoreCase(Attribute.ARFF_ATTRIBUTE_REAL) ||</span>
+<span class="pc bpc" id="L708" title="1 of 2 branches missed.">            m_Tokenizer.sval.equalsIgnoreCase(Attribute.ARFF_ATTRIBUTE_INTEGER) ||</span>
+<span class="fc bfc" id="L709" title="All 2 branches covered.">            m_Tokenizer.sval.equalsIgnoreCase(Attribute.ARFF_ATTRIBUTE_NUMERIC)) {</span>
+<span class="fc" id="L710">          attributes.addElement(new Attribute(attributeName, attributes.size()));</span>
+<span class="fc" id="L711">          readTillEOL();</span>
+<span class="pc bpc" id="L712" title="1 of 2 branches missed.">        } else if (m_Tokenizer.sval.equalsIgnoreCase(Attribute.ARFF_ATTRIBUTE_STRING)) {</span>
+<span class="fc" id="L713">          attributes.</span>
+<span class="fc" id="L714">            addElement(new Attribute(attributeName, (FastVector)null,</span>
+<span class="fc" id="L715">                attributes.size()));</span>
+<span class="fc" id="L716">          readTillEOL();</span>
+<span class="nc bnc" id="L717" title="All 2 branches missed.">        } else if (m_Tokenizer.sval.equalsIgnoreCase(Attribute.ARFF_ATTRIBUTE_DATE)) {</span>
+<span class="nc" id="L718">          String format = null;</span>
+<span class="nc bnc" id="L719" title="All 2 branches missed.">          if (m_Tokenizer.nextToken() != StreamTokenizer.TT_EOL) {</span>
+<span class="nc bnc" id="L720" title="All 2 branches missed.">            if ((m_Tokenizer.ttype != StreamTokenizer.TT_WORD) &amp;&amp;</span>
+<span class="nc bnc" id="L721" title="All 2 branches missed.">                (m_Tokenizer.ttype != '\'') &amp;&amp;</span>
+<span class="nc bnc" id="L722" title="All 2 branches missed.">                (m_Tokenizer.ttype != '\&quot;')) {</span>
+<span class="nc" id="L723">              errorMessage(&quot;not a valid date format&quot;);</span>
+            }
+<span class="nc" id="L725">            format = m_Tokenizer.sval;</span>
+<span class="nc" id="L726">            readTillEOL();</span>
+          } else {
+<span class="nc" id="L728">            m_Tokenizer.pushBack();</span>
+          }
+<span class="nc" id="L730">          attributes.addElement(new Attribute(attributeName, format,</span>
+<span class="nc" id="L731">              attributes.size()));</span>
+
+<span class="nc bnc" id="L733" title="All 2 branches missed.">        } else if (m_Tokenizer.sval.equalsIgnoreCase(Attribute.ARFF_ATTRIBUTE_RELATIONAL)) {</span>
+<span class="nc" id="L734">          readTillEOL();</span>
+
+          // Read attributes for subrelation
+          // First, save current set of attributes
+<span class="nc" id="L738">          FastVector atts = attributes;</span>
+<span class="nc" id="L739">          attributes = new FastVector();</span>
+
+          // Now, read attributes until we hit end of declaration of relational value
+<span class="nc" id="L742">          getFirstToken();</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">          if (m_Tokenizer.ttype == StreamTokenizer.TT_EOF) {</span>
+<span class="nc" id="L744">            errorMessage(&quot;premature end of file&quot;);</span>
+          }
+          do {
+<span class="nc bnc" id="L747" title="All 2 branches missed.">            if (Attribute.ARFF_ATTRIBUTE.equalsIgnoreCase(m_Tokenizer.sval)) {</span>
+<span class="nc" id="L748">              attributes = parseAttribute(attributes);</span>
+<span class="nc bnc" id="L749" title="All 2 branches missed.">            } else if (Attribute.ARFF_END_SUBRELATION.equalsIgnoreCase(m_Tokenizer.sval)) {</span>
+<span class="nc" id="L750">              getNextToken();</span>
+<span class="nc bnc" id="L751" title="All 2 branches missed.">              if (!attributeName.equalsIgnoreCase(m_Tokenizer.sval)) {</span>
+<span class="nc" id="L752">                errorMessage(&quot;declaration of subrelation &quot; + attributeName +</span>
+<span class="nc" id="L753">                      &quot; must be terminated by &quot; + &quot;@end &quot; + attributeName);</span>
+              }
+<span class="nc" id="L755">              break;</span>
+            } else {
+<span class="nc" id="L757">              errorMessage(&quot;declaration of subrelation &quot; + attributeName +</span>
+<span class="nc" id="L758">                    &quot; must be terminated by &quot; + &quot;@end &quot; + attributeName);</span>
+            }
+<span class="nc" id="L760">          } while (true);</span>
+
+          // Make relation and restore original set of attributes
+<span class="nc" id="L763">          Instances relation = new Instances(attributeName, attributes, 0);</span>
+<span class="nc" id="L764">          attributes = atts;</span>
+<span class="nc" id="L765">          attributes.addElement(new Attribute(attributeName, relation,</span>
+<span class="nc" id="L766">              attributes.size()));</span>
+        } else {
+<span class="nc" id="L768">          errorMessage(&quot;no valid attribute type or invalid &quot;+</span>
+                &quot;enumeration&quot;);
+        }
+      } else {
+
+        // Attribute is nominal.
+<span class="fc" id="L774">        attributeValues = new FastVector();</span>
+<span class="fc" id="L775">        m_Tokenizer.pushBack();</span>
+
+        // Get values for nominal attribute.
+<span class="pc bpc" id="L778" title="1 of 2 branches missed.">        if (m_Tokenizer.nextToken() != '{') {</span>
+<span class="nc" id="L779">          errorMessage(&quot;{ expected at beginning of enumeration&quot;);</span>
+        }
+<span class="pc bfc" id="L781" title="All 2 branches covered.">        while (m_Tokenizer.nextToken() != '}') {</span>
+<span class="pc bpc" id="L782" title="1 of 2 branches missed.">          if (m_Tokenizer.ttype == StreamTokenizer.TT_EOL) {</span>
+<span class="nc" id="L783">            errorMessage(&quot;} expected at end of enumeration&quot;);</span>
+          } else {
+<span class="fc" id="L785">            attributeValues.addElement(m_Tokenizer.sval);</span>
+          }
+        }
+<span class="fc" id="L788">        attributes.</span>
+<span class="fc" id="L789">          addElement(new Attribute(attributeName, attributeValues,</span>
+<span class="fc" id="L790">              attributes.size()));</span>
+      }
+<span class="fc" id="L792">      getLastToken(false);</span>
+<span class="fc" id="L793">      getFirstToken();</span>
+<span class="pc bpc" id="L794" title="1 of 2 branches missed.">      if (m_Tokenizer.ttype == StreamTokenizer.TT_EOF)</span>
+<span class="nc" id="L795">        errorMessage(&quot;premature end of file&quot;);</span>
+
+<span class="fc" id="L797">      return attributes;</span>
+    }
+
+    /**
+     * Reads and skips all tokens before next end of line token.
+     *
+     * @throws IOException 	in case something goes wrong
+     */
+    protected void readTillEOL() throws IOException {
+<span class="pc bpc" id="L806" title="1 of 2 branches missed.">      while (m_Tokenizer.nextToken() != StreamTokenizer.TT_EOL) {};</span>
+
+<span class="fc" id="L808">      m_Tokenizer.pushBack();</span>
+<span class="fc" id="L809">    }</span>
+
+    /**
+     * Returns the header format
+     *
+     * @return			the header format
+     */
+    public Instances getStructure() {
+<span class="nc" id="L817">      return new Instances(m_Data, 0);</span>
+    }
+
+    /**
+     * Returns the data that was read
+     *
+     * @return			the data
+     */
+    public Instances getData() {
+<span class="fc" id="L826">      return m_Data;</span>
+    }
+
+    /**
+     * Returns the revision string.
+     *
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L835">      return RevisionUtils.extract(&quot;$Revision: 9653 $&quot;);</span>
+    }
+  }
+
+  /**
+   * Returns a string describing this Loader
+   * @return a description of the Loader suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L845">    return &quot;Reads a source that is in arff (attribute relation file format) &quot;</span>
+      +&quot;format. &quot;;
+  }
+
+  /**
+   * Get the file extension used for arff files
+   *
+   * @return the file extension
+   */
+  public String getFileExtension() {
+<span class="nc" id="L855">    return FILE_EXTENSION;</span>
+  }
+
+  /**
+   * Gets all the file extensions used for this type of file
+   *
+   * @return the file extensions
+   */
+  public String[] getFileExtensions() {
+<span class="fc" id="L864">    return new String[]{FILE_EXTENSION, FILE_EXTENSION_COMPRESSED};</span>
+  }
+
+  /**
+   * Returns a description of the file type.
+   *
+   * @return a short file description
+   */
+  public String getFileDescription() {
+<span class="nc" id="L873">    return &quot;Arff data files&quot;;</span>
+  }
+
+  /**
+   * Resets the Loader ready to read a new data set or the
+   * same data set again.
+   *
+   * @throws IOException if something goes wrong
+   */
+  public void reset() throws IOException {
+<span class="nc" id="L883">    m_structure = null;</span>
+<span class="nc" id="L884">    m_ArffReader = null;</span>
+<span class="nc" id="L885">    setRetrieval(NONE);</span>
+
+<span class="nc bnc" id="L887" title="All 4 branches missed.">    if (m_File != null &amp;&amp; !(new File(m_File).isDirectory())) {</span>
+<span class="nc" id="L888">      setFile(new File(m_File));</span>
+<span class="nc bnc" id="L889" title="All 4 branches missed.">    } else if (m_URL != null &amp;&amp; !m_URL.equals(&quot;http://&quot;)) {</span>
+<span class="nc" id="L890">      setURL(m_URL);</span>
+    }
+<span class="nc" id="L892">  }</span>
+
+  /**
+   * Resets the Loader object and sets the source of the data set to be
+   * the supplied url.
+   *
+   * @param url the source url.
+   * @throws IOException if an error occurs
+   */
+  public void setSource(URL url) throws IOException {
+<span class="nc" id="L902">    m_structure = null;</span>
+<span class="nc" id="L903">    setRetrieval(NONE);</span>
+
+<span class="nc" id="L905">    setSource(url.openStream());</span>
+
+<span class="nc" id="L907">    m_URL = url.toString();</span>
+    // make sure that the file is null so that any calls to
+    // reset() work properly
+<span class="nc" id="L910">    m_File = null;</span>
+<span class="nc" id="L911">  }</span>
+
+
+  /**
+   * get the File specified as the source
+   *
+   * @return the source file
+   */
+  public File retrieveFile() {
+<span class="nc" id="L920">    return new File(m_File);</span>
+  }
+
+  /**
+   * sets the source File
+   *
+   * @param file the source file
+   * @throws IOException if an error occurs
+   */
+  public void setFile(File file) throws IOException {
+<span class="nc" id="L930">    m_File = file.getPath();</span>
+<span class="nc" id="L931">    setSource(file);</span>
+<span class="nc" id="L932">  }</span>
+
+  /**
+   * Set the url to load from
+   *
+   * @param url the url to load from
+   * @throws IOException if the url can't be set.
+   */
+  public void setURL(String url) throws IOException {
+<span class="nc" id="L941">    m_URL = url;</span>
+<span class="nc" id="L942">    setSource(new URL(url));</span>
+<span class="nc" id="L943">  }</span>
+
+  /**
+   * Return the current url
+   *
+   * @return the current url
+   */
+  public String retrieveURL() {
+<span class="nc" id="L951">    return m_URL;</span>
+  }
+
+  /**
+   * Resets the Loader object and sets the source of the data set to be
+   * the supplied InputStream.
+   *
+   * @param in the source InputStream.
+   * @throws IOException always thrown.
+   */
+  public void setSource(InputStream in) throws IOException {
+<span class="nc" id="L962">    m_File = (new File(System.getProperty(&quot;user.dir&quot;))).getAbsolutePath();</span>
+<span class="nc" id="L963">    m_URL = &quot;http://&quot;;</span>
+
+<span class="nc" id="L965">    m_sourceReader = new BufferedReader(new InputStreamReader(in));</span>
+<span class="nc" id="L966">  }</span>
+
+  /**
+   * Determines and returns (if possible) the structure (internally the
+   * header) of the data set as an empty set of instances.
+   *
+   * @return the structure of the data set as an empty set of Instances
+   * @throws IOException if an error occurs
+   */
+  public Instances getStructure() throws IOException {
+
+<span class="nc bnc" id="L977" title="All 2 branches missed.">    if (m_structure == null) {</span>
+<span class="nc bnc" id="L978" title="All 2 branches missed.">      if (m_sourceReader == null) {</span>
+<span class="nc" id="L979">        throw new IOException(&quot;No source has been specified&quot;);</span>
+      }
+      try {
+<span class="nc" id="L982">	m_ArffReader = new ArffReader(m_sourceReader, 1);</span>
+<span class="nc" id="L983">	m_structure  = m_ArffReader.getStructure();</span>
+<span class="nc" id="L984">      } catch (Exception ex) {</span>
+<span class="nc" id="L985">	throw new IOException(&quot;Unable to determine structure as arff (Reason: &quot; + ex.toString() + &quot;).&quot;);</span>
+      }
+    }
+
+<span class="nc" id="L989">    return new Instances(m_structure, 0);</span>
+  }
+
+  /**
+   * Return the full data set. If the structure hasn't yet been determined
+   * by a call to getStructure then method should do so before processing
+   * the rest of the data set.
+   *
+   * @return the structure of the data set as an empty set of Instances
+   * @throws IOException if there is no source or parsing fails
+   */
+  public Instances getDataSet() throws IOException {
+
+<span class="nc" id="L1002">    Instances insts = null;</span>
+    try {
+<span class="nc bnc" id="L1004" title="All 2 branches missed.">      if (m_sourceReader == null) {</span>
+<span class="nc" id="L1005">        throw new IOException(&quot;No source has been specified&quot;);</span>
+      }
+<span class="nc bnc" id="L1007" title="All 2 branches missed.">      if (getRetrieval() == INCREMENTAL) {</span>
+<span class="nc" id="L1008">        throw new IOException(&quot;Cannot mix getting Instances in both incremental and batch modes&quot;);</span>
+      }
+<span class="nc" id="L1010">      setRetrieval(BATCH);</span>
+<span class="nc bnc" id="L1011" title="All 2 branches missed.">      if (m_structure == null) {</span>
+<span class="nc" id="L1012">        getStructure();</span>
+      }
+
+      // Read all instances
+      Instance inst;
+<span class="nc" id="L1017">      insts = new Instances(m_structure, 0);</span>
+<span class="nc bnc" id="L1018" title="All 2 branches missed.">      while ((inst = m_ArffReader.readInstance(m_structure)) != null)</span>
+<span class="nc" id="L1019">        insts.add(inst);</span>
+
+      // Instances readIn = new Instances(m_structure);
+<span class="nc" id="L1022">    } finally {</span>
+      // close the stream
+<span class="nc" id="L1024">      m_sourceReader.close();</span>
+<span class="nc" id="L1025">    }</span>
+    
+<span class="nc" id="L1027">    return insts;</span>
+  }
+
+  /**
+   * Read the data set incrementally---get the next instance in the data
+   * set or returns null if there are no
+   * more instances to get. If the structure hasn't yet been
+   * determined by a call to getStructure then method should do so before
+   * returning the next instance in the data set.
+   *
+   * @param structure the dataset header information, will get updated in
+   * case of string or relational attributes
+   * @return the next instance in the data set as an Instance object or null
+   * if there are no more instances to be read
+   * @throws IOException if there is an error during parsing
+   */
+  public Instance getNextInstance(Instances structure) throws IOException {
+
+<span class="nc" id="L1045">    m_structure = structure;</span>
+
+<span class="nc bnc" id="L1047" title="All 2 branches missed.">    if (getRetrieval() == BATCH) {</span>
+<span class="nc" id="L1048">      throw new IOException(&quot;Cannot mix getting Instances in both incremental and batch modes&quot;);</span>
+    }
+<span class="nc" id="L1050">    setRetrieval(INCREMENTAL);</span>
+
+<span class="nc" id="L1052">    Instance current = null;</span>
+<span class="nc bnc" id="L1053" title="All 2 branches missed.">    if (m_sourceReader != null)</span>
+<span class="nc" id="L1054">      current = m_ArffReader.readInstance(m_structure);</span>
+
+<span class="nc bnc" id="L1056" title="All 4 branches missed.">    if ((m_sourceReader != null) &amp;&amp; (current == null)) {</span>
+      try {
+        // close the stream
+<span class="nc" id="L1059">        m_sourceReader.close();</span>
+<span class="nc" id="L1060">        m_sourceReader = null;</span>
+        //        reset();
+<span class="nc" id="L1062">      } catch (Exception ex) {</span>
+<span class="nc" id="L1063">        ex.printStackTrace();</span>
+      }
+    }
+<span class="nc" id="L1066">    return current;</span>
+  }
+
+  /**
+   * Returns the revision string.
+   *
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1075">    return RevisionUtils.extract(&quot;$Revision: 9653 $&quot;);</span>
+  }
+
+  /**
+   * Main method.
+   *
+   * @param args should contain the name of an input file.
+   */
+  public static void main(String [] args) {
+<span class="nc" id="L1084">    runFileLoader(new ArffLoader(), args);</span>
+<span class="nc" id="L1085">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

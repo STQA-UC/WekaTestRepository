@@ -1,0 +1,514 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>AprioriItemSet.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.associations</a> &gt; <span class="el_source">AprioriItemSet.java</span></div><h1>AprioriItemSet.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    AprioriItemSet.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.associations;
+
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.Hashtable;
+
+import weka.core.ContingencyTables;
+import weka.core.FastVector;
+import weka.core.Instances;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+
+/**
+ * Class for storing a set of items. Item sets are stored in a lexicographic
+ * order, which is determined by the header information of the set of instances
+ * used for generating the set of items. All methods in this class assume that
+ * item sets are stored in lexicographic order. The class provides methods that
+ * are used in the Apriori algorithm to construct association rules.
+ * 
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Stefan Mutter (mutter@cs.waikato.ac.nz)
+ * @version $Revision: 9096 $
+ */
+public class AprioriItemSet extends ItemSet implements Serializable,
+    RevisionHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 7684467755712672058L;
+
+  /**
+   * Constructor
+   * 
+   * @param totalTrans the total number of transactions in the data
+   */
+  public AprioriItemSet(int totalTrans) {
+<span class="nc" id="L58">    super(totalTrans);</span>
+<span class="nc" id="L59">  }</span>
+
+  /**
+   * Outputs the confidence for a rule.
+   * 
+   * @param premise the premise of the rule
+   * @param consequence the consequence of the rule
+   * @return the confidence on the training data
+   */
+  public static double confidenceForRule(AprioriItemSet premise,
+      AprioriItemSet consequence) {
+
+<span class="nc" id="L71">    return (double) consequence.m_counter / (double) premise.m_counter;</span>
+  }
+
+  /**
+   * Outputs the lift for a rule. Lift is defined as:&lt;br&gt;
+   * confidence / prob(consequence)
+   * 
+   * @param premise the premise of the rule
+   * @param consequence the consequence of the rule
+   * @param consequenceCount how many times the consequence occurs independent
+   *          of the premise
+   * @return the lift on the training data
+   */
+  public double liftForRule(AprioriItemSet premise, AprioriItemSet consequence,
+      int consequenceCount) {
+<span class="nc" id="L86">    double confidence = confidenceForRule(premise, consequence);</span>
+
+<span class="nc" id="L88">    return confidence</span>
+<span class="nc" id="L89">        / ((double) consequenceCount / (double) m_totalTransactions);</span>
+  }
+
+  /**
+   * Outputs the leverage for a rule. Leverage is defined as: &lt;br&gt;
+   * prob(premise &amp; consequence) - (prob(premise) * prob(consequence))
+   * 
+   * @param premise the premise of the rule
+   * @param consequence the consequence of the rule
+   * @param premiseCount how many times the premise occurs independent of the
+   *          consequent
+   * @param consequenceCount how many times the consequence occurs independent
+   *          of the premise
+   * @return the leverage on the training data
+   */
+  public double leverageForRule(AprioriItemSet premise,
+      AprioriItemSet consequence, int premiseCount, int consequenceCount) {
+<span class="nc" id="L106">    double coverageForItemSet = (double) consequence.m_counter</span>
+<span class="nc" id="L107">        / (double) m_totalTransactions;</span>
+<span class="nc" id="L108">    double expectedCoverageIfIndependent = ((double) premiseCount / (double) m_totalTransactions)</span>
+<span class="nc" id="L109">        * ((double) consequenceCount / (double) m_totalTransactions);</span>
+<span class="nc" id="L110">    double lev = coverageForItemSet - expectedCoverageIfIndependent;</span>
+<span class="nc" id="L111">    return lev;</span>
+  }
+
+  /**
+   * Outputs the conviction for a rule. Conviction is defined as: &lt;br&gt;
+   * prob(premise) * prob(!consequence) / prob(premise &amp; !consequence)
+   * 
+   * @param premise the premise of the rule
+   * @param consequence the consequence of the rule
+   * @param premiseCount how many times the premise occurs independent of the
+   *          consequent
+   * @param consequenceCount how many times the consequence occurs independent
+   *          of the premise
+   * @return the conviction on the training data
+   */
+  public double convictionForRule(AprioriItemSet premise,
+      AprioriItemSet consequence, int premiseCount, int consequenceCount) {
+<span class="nc" id="L128">    double num = (double) premiseCount</span>
+<span class="nc" id="L129">        * (double) (m_totalTransactions - consequenceCount)</span>
+<span class="nc" id="L130">        / m_totalTransactions;</span>
+<span class="nc" id="L131">    double denom = ((premiseCount - consequence.m_counter) + 1);</span>
+
+<span class="nc bnc" id="L133" title="All 4 branches missed.">    if (num &lt; 0 || denom &lt; 0) {</span>
+<span class="nc" id="L134">      System.err.println(&quot;*** &quot; + num + &quot; &quot; + denom);</span>
+<span class="nc" id="L135">      System.err.println(&quot;premis count: &quot; + premiseCount</span>
+<span class="nc" id="L136">          + &quot; consequence count &quot; + consequenceCount + &quot; total trans &quot;</span>
+<span class="nc" id="L137">          + m_totalTransactions);</span>
+    }
+<span class="nc" id="L139">    return num / denom;</span>
+  }
+
+  /**
+   * Generates all rules for an item set.
+   * 
+   * @param minConfidence the minimum confidence the rules have to have
+   * @param hashtables containing all(!) previously generated item sets
+   * @param numItemsInSet the size of the item set for which the rules are to be
+   *          generated
+   * @return all the rules with minimum confidence for the given item set
+   */
+  public FastVector[] generateRules(double minConfidence,
+      FastVector hashtables, int numItemsInSet) {
+
+<span class="nc" id="L154">    FastVector premises = new FastVector(), consequences = new FastVector(), conf = new FastVector();</span>
+<span class="nc" id="L155">    FastVector[] rules = new FastVector[3], moreResults;</span>
+    AprioriItemSet premise, consequence;
+<span class="nc" id="L157">    Hashtable hashtable = (Hashtable) hashtables.elementAt(numItemsInSet - 2);</span>
+
+    // Generate all rules with one item in the consequence.
+<span class="nc bnc" id="L160" title="All 2 branches missed.">    for (int i = 0; i &lt; m_items.length; i++)</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">      if (m_items[i] != -1) {</span>
+<span class="nc" id="L162">        premise = new AprioriItemSet(m_totalTransactions);</span>
+<span class="nc" id="L163">        consequence = new AprioriItemSet(m_totalTransactions);</span>
+<span class="nc" id="L164">        premise.m_items = new int[m_items.length];</span>
+<span class="nc" id="L165">        consequence.m_items = new int[m_items.length];</span>
+<span class="nc" id="L166">        consequence.m_counter = m_counter;</span>
+
+<span class="nc bnc" id="L168" title="All 2 branches missed.">        for (int j = 0; j &lt; m_items.length; j++)</span>
+<span class="nc" id="L169">          consequence.m_items[j] = -1;</span>
+<span class="nc" id="L170">        System.arraycopy(m_items, 0, premise.m_items, 0, m_items.length);</span>
+<span class="nc" id="L171">        premise.m_items[i] = -1;</span>
+
+<span class="nc" id="L173">        consequence.m_items[i] = m_items[i];</span>
+<span class="nc" id="L174">        premise.m_counter = ((Integer) hashtable.get(premise)).intValue();</span>
+<span class="nc" id="L175">        premises.addElement(premise);</span>
+<span class="nc" id="L176">        consequences.addElement(consequence);</span>
+<span class="nc" id="L177">        conf.addElement(new Double(confidenceForRule(premise, consequence)));</span>
+      }
+<span class="nc" id="L179">    rules[0] = premises;</span>
+<span class="nc" id="L180">    rules[1] = consequences;</span>
+<span class="nc" id="L181">    rules[2] = conf;</span>
+<span class="nc" id="L182">    pruneRules(rules, minConfidence);</span>
+
+    // Generate all the other rules
+<span class="nc" id="L185">    moreResults = moreComplexRules(rules, numItemsInSet, 1, minConfidence,</span>
+<span class="nc" id="L186">        hashtables);</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">    if (moreResults != null)</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">      for (int i = 0; i &lt; moreResults[0].size(); i++) {</span>
+<span class="nc" id="L189">        rules[0].addElement(moreResults[0].elementAt(i));</span>
+<span class="nc" id="L190">        rules[1].addElement(moreResults[1].elementAt(i));</span>
+<span class="nc" id="L191">        rules[2].addElement(moreResults[2].elementAt(i));</span>
+      }
+<span class="nc" id="L193">    return rules;</span>
+  }
+
+  /**
+   * Generates all significant rules for an item set.
+   * 
+   * @param minMetric the minimum metric (confidence, lift, leverage,
+   *          improvement) the rules have to have
+   * @param metricType (confidence=0, lift, leverage, improvement)
+   * @param hashtables containing all(!) previously generated item sets
+   * @param numItemsInSet the size of the item set for which the rules are to be
+   *          generated
+   * @param numTransactions
+   * @param significanceLevel the significance level for testing the rules
+   * @return all the rules with minimum metric for the given item set
+   * @exception Exception if something goes wrong
+   */
+  public final FastVector[] generateRulesBruteForce(double minMetric,
+      int metricType, FastVector hashtables, int numItemsInSet,
+      int numTransactions, double significanceLevel) throws Exception {
+
+<span class="nc" id="L214">    FastVector premises = new FastVector(), consequences = new FastVector(), conf = new FastVector(), lift = new FastVector(), lev = new FastVector(), conv = new FastVector();</span>
+<span class="nc" id="L215">    FastVector[] rules = new FastVector[6];</span>
+    AprioriItemSet premise, consequence;
+    Hashtable hashtableForPremise, hashtableForConsequence;
+    int numItemsInPremise, help, max, consequenceUnconditionedCounter;
+<span class="nc" id="L219">    double[][] contingencyTable = new double[2][2];</span>
+<span class="nc" id="L220">    double metric, chiSquared = 0;</span>
+
+    // Generate all possible rules for this item set and test their
+    // significance.
+<span class="nc" id="L224">    max = (int) Math.pow(2, numItemsInSet);</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">    for (int j = 1; j &lt; max; j++) {</span>
+<span class="nc" id="L226">      numItemsInPremise = 0;</span>
+<span class="nc" id="L227">      help = j;</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">      while (help &gt; 0) {</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (help % 2 == 1)</span>
+<span class="nc" id="L230">          numItemsInPremise++;</span>
+<span class="nc" id="L231">        help /= 2;</span>
+      }
+<span class="nc bnc" id="L233" title="All 2 branches missed.">      if (numItemsInPremise &lt; numItemsInSet) {</span>
+<span class="nc" id="L234">        hashtableForPremise = (Hashtable) hashtables</span>
+<span class="nc" id="L235">            .elementAt(numItemsInPremise - 1);</span>
+<span class="nc" id="L236">        hashtableForConsequence = (Hashtable) hashtables</span>
+<span class="nc" id="L237">            .elementAt(numItemsInSet - numItemsInPremise - 1);</span>
+<span class="nc" id="L238">        premise = new AprioriItemSet(m_totalTransactions);</span>
+<span class="nc" id="L239">        consequence = new AprioriItemSet(m_totalTransactions);</span>
+<span class="nc" id="L240">        premise.m_items = new int[m_items.length];</span>
+
+<span class="nc" id="L242">        consequence.m_items = new int[m_items.length];</span>
+<span class="nc" id="L243">        consequence.m_counter = m_counter;</span>
+<span class="nc" id="L244">        help = j;</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        for (int i = 0; i &lt; m_items.length; i++)</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">          if (m_items[i] != -1) {</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            if (help % 2 == 1) {</span>
+<span class="nc" id="L248">              premise.m_items[i] = m_items[i];</span>
+<span class="nc" id="L249">              consequence.m_items[i] = -1;</span>
+            } else {
+<span class="nc" id="L251">              premise.m_items[i] = -1;</span>
+<span class="nc" id="L252">              consequence.m_items[i] = m_items[i];</span>
+            }
+<span class="nc" id="L254">            help /= 2;</span>
+          } else {
+<span class="nc" id="L256">            premise.m_items[i] = -1;</span>
+<span class="nc" id="L257">            consequence.m_items[i] = -1;</span>
+          }
+<span class="nc" id="L259">        premise.m_counter = ((Integer) hashtableForPremise.get(premise))</span>
+<span class="nc" id="L260">            .intValue();</span>
+<span class="nc" id="L261">        consequenceUnconditionedCounter = ((Integer) hashtableForConsequence</span>
+<span class="nc" id="L262">            .get(consequence)).intValue();</span>
+
+<span class="nc bnc" id="L264" title="All 2 branches missed.">        if (significanceLevel != -1) {</span>
+<span class="nc" id="L265">          contingencyTable[0][0] = (consequence.m_counter);</span>
+<span class="nc" id="L266">          contingencyTable[0][1] = (premise.m_counter - consequence.m_counter);</span>
+<span class="nc" id="L267">          contingencyTable[1][0] = (consequenceUnconditionedCounter - consequence.m_counter);</span>
+<span class="nc" id="L268">          contingencyTable[1][1] = (numTransactions - premise.m_counter</span>
+<span class="nc" id="L269">              - consequenceUnconditionedCounter + consequence.m_counter);</span>
+<span class="nc" id="L270">          chiSquared = ContingencyTables.chiSquared(contingencyTable, false);</span>
+        }
+
+<span class="nc bnc" id="L273" title="All 2 branches missed.">        if (metricType == 0) {</span>
+
+<span class="nc" id="L275">          metric = confidenceForRule(premise, consequence);</span>
+
+<span class="nc bnc" id="L277" title="All 2 branches missed.">          if ((!(metric &lt; minMetric))</span>
+<span class="nc bnc" id="L278" title="All 4 branches missed.">              &amp;&amp; (significanceLevel == -1 || !(chiSquared &gt; significanceLevel))) {</span>
+<span class="nc" id="L279">            premises.addElement(premise);</span>
+<span class="nc" id="L280">            consequences.addElement(consequence);</span>
+<span class="nc" id="L281">            conf.addElement(new Double(metric));</span>
+<span class="nc" id="L282">            lift.addElement(new Double(liftForRule(premise, consequence,</span>
+<span class="nc" id="L283">                consequenceUnconditionedCounter)));</span>
+<span class="nc" id="L284">            lev.addElement(new Double(leverageForRule(premise, consequence,</span>
+<span class="nc" id="L285">                premise.m_counter, consequenceUnconditionedCounter)));</span>
+<span class="nc" id="L286">            conv.addElement(new Double(convictionForRule(premise, consequence,</span>
+<span class="nc" id="L287">                premise.m_counter, consequenceUnconditionedCounter)));</span>
+          }
+        } else {
+<span class="nc" id="L290">          double tempConf = confidenceForRule(premise, consequence);</span>
+<span class="nc" id="L291">          double tempLift = liftForRule(premise, consequence,</span>
+<span class="nc" id="L292">              consequenceUnconditionedCounter);</span>
+<span class="nc" id="L293">          double tempLev = leverageForRule(premise, consequence,</span>
+<span class="nc" id="L294">              premise.m_counter, consequenceUnconditionedCounter);</span>
+<span class="nc" id="L295">          double tempConv = convictionForRule(premise, consequence,</span>
+<span class="nc" id="L296">              premise.m_counter, consequenceUnconditionedCounter);</span>
+<span class="nc bnc" id="L297" title="All 4 branches missed.">          switch (metricType) {</span>
+          case 1:
+<span class="nc" id="L299">            metric = tempLift;</span>
+<span class="nc" id="L300">            break;</span>
+          case 2:
+<span class="nc" id="L302">            metric = tempLev;</span>
+<span class="nc" id="L303">            break;</span>
+          case 3:
+<span class="nc" id="L305">            metric = tempConv;</span>
+<span class="nc" id="L306">            break;</span>
+          default:
+<span class="nc" id="L308">            throw new Exception(&quot;ItemSet: Unknown metric type!&quot;);</span>
+          }
+<span class="nc bnc" id="L310" title="All 2 branches missed.">          if (!(metric &lt; minMetric)</span>
+<span class="nc bnc" id="L311" title="All 4 branches missed.">              &amp;&amp; (significanceLevel == -1 || !(chiSquared &gt; significanceLevel))) {</span>
+<span class="nc" id="L312">            premises.addElement(premise);</span>
+<span class="nc" id="L313">            consequences.addElement(consequence);</span>
+<span class="nc" id="L314">            conf.addElement(new Double(tempConf));</span>
+<span class="nc" id="L315">            lift.addElement(new Double(tempLift));</span>
+<span class="nc" id="L316">            lev.addElement(new Double(tempLev));</span>
+<span class="nc" id="L317">            conv.addElement(new Double(tempConv));</span>
+          }
+        }
+      }
+    }
+<span class="nc" id="L322">    rules[0] = premises;</span>
+<span class="nc" id="L323">    rules[1] = consequences;</span>
+<span class="nc" id="L324">    rules[2] = conf;</span>
+<span class="nc" id="L325">    rules[3] = lift;</span>
+<span class="nc" id="L326">    rules[4] = lev;</span>
+<span class="nc" id="L327">    rules[5] = conv;</span>
+<span class="nc" id="L328">    return rules;</span>
+  }
+
+  /**
+   * Subtracts an item set from another one.
+   * 
+   * @param toSubtract the item set to be subtracted from this one.
+   * @return an item set that only contains items form this item sets that are
+   *         not contained by toSubtract
+   */
+  public final AprioriItemSet subtract(AprioriItemSet toSubtract) {
+
+<span class="nc" id="L340">    AprioriItemSet result = new AprioriItemSet(m_totalTransactions);</span>
+
+<span class="nc" id="L342">    result.m_items = new int[m_items.length];</span>
+
+<span class="nc bnc" id="L344" title="All 2 branches missed.">    for (int i = 0; i &lt; m_items.length; i++)</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">      if (toSubtract.m_items[i] == -1)</span>
+<span class="nc" id="L346">        result.m_items[i] = m_items[i];</span>
+      else
+<span class="nc" id="L348">        result.m_items[i] = -1;</span>
+<span class="nc" id="L349">    result.m_counter = 0;</span>
+<span class="nc" id="L350">    return result;</span>
+  }
+
+  /**
+   * Generates rules with more than one item in the consequence.
+   * 
+   * @param rules all the rules having (k-1)-item sets as consequences
+   * @param numItemsInSet the size of the item set for which the rules are to be
+   *          generated
+   * @param numItemsInConsequence the value of (k-1)
+   * @param minConfidence the minimum confidence a rule has to have
+   * @param hashtables the hashtables containing all(!) previously generated
+   *          item sets
+   * @return all the rules having (k)-item sets as consequences
+   */
+  private final FastVector[] moreComplexRules(FastVector[] rules,
+      int numItemsInSet, int numItemsInConsequence, double minConfidence,
+      FastVector hashtables) {
+
+    AprioriItemSet newPremise;
+    FastVector[] result, moreResults;
+<span class="nc" id="L371">    FastVector newConsequences, newPremises = new FastVector(), newConf = new FastVector();</span>
+    Hashtable hashtable;
+
+<span class="nc bnc" id="L374" title="All 2 branches missed.">    if (numItemsInSet &gt; numItemsInConsequence + 1) {</span>
+<span class="nc" id="L375">      hashtable = (Hashtable) hashtables.elementAt(numItemsInSet</span>
+<span class="nc" id="L376">          - numItemsInConsequence - 2);</span>
+<span class="nc" id="L377">      newConsequences = mergeAllItemSets(rules[1], numItemsInConsequence - 1,</span>
+<span class="nc" id="L378">          m_totalTransactions);</span>
+<span class="nc" id="L379">      Enumeration enu = newConsequences.elements();</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">      while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L381">        AprioriItemSet current = (AprioriItemSet) enu.nextElement();</span>
+<span class="nc" id="L382">        current.m_counter = m_counter;</span>
+<span class="nc" id="L383">        newPremise = subtract(current);</span>
+<span class="nc" id="L384">        newPremise.m_counter = ((Integer) hashtable.get(newPremise)).intValue();</span>
+<span class="nc" id="L385">        newPremises.addElement(newPremise);</span>
+<span class="nc" id="L386">        newConf.addElement(new Double(confidenceForRule(newPremise, current)));</span>
+      }
+<span class="nc" id="L388">      result = new FastVector[3];</span>
+<span class="nc" id="L389">      result[0] = newPremises;</span>
+<span class="nc" id="L390">      result[1] = newConsequences;</span>
+<span class="nc" id="L391">      result[2] = newConf;</span>
+<span class="nc" id="L392">      pruneRules(result, minConfidence);</span>
+<span class="nc" id="L393">      moreResults = moreComplexRules(result, numItemsInSet,</span>
+<span class="nc" id="L394">          numItemsInConsequence + 1, minConfidence, hashtables);</span>
+<span class="nc bnc" id="L395" title="All 2 branches missed.">      if (moreResults != null)</span>
+<span class="nc bnc" id="L396" title="All 2 branches missed.">        for (int i = 0; i &lt; moreResults[0].size(); i++) {</span>
+<span class="nc" id="L397">          result[0].addElement(moreResults[0].elementAt(i));</span>
+<span class="nc" id="L398">          result[1].addElement(moreResults[1].elementAt(i));</span>
+<span class="nc" id="L399">          result[2].addElement(moreResults[2].elementAt(i));</span>
+        }
+<span class="nc" id="L401">      return result;</span>
+    } else
+<span class="nc" id="L403">      return null;</span>
+  }
+
+  /**
+   * Returns the contents of an item set as a string.
+   * 
+   * @param instances contains the relevant header information
+   * @return string describing the item set
+   */
+  @Override
+  public final String toString(Instances instances) {
+
+<span class="nc" id="L415">    return super.toString(instances);</span>
+  }
+
+  /**
+   * Converts the header info of the given set of instances into a set of item
+   * sets (singletons). The ordering of values in the header file determines the
+   * lexicographic order.
+   * 
+   * @param instances the set of instances whose header info is to be used
+   * @return a set of item sets, each containing a single item
+   * @exception Exception if singletons can't be generated successfully
+   */
+  public static FastVector singletons(Instances instances) throws Exception {
+
+<span class="nc" id="L429">    FastVector setOfItemSets = new FastVector();</span>
+    ItemSet current;
+
+<span class="nc bnc" id="L432" title="All 2 branches missed.">    for (int i = 0; i &lt; instances.numAttributes(); i++) {</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">      if (instances.attribute(i).isNumeric())</span>
+<span class="nc" id="L434">        throw new Exception(&quot;Can't handle numeric attributes!&quot;);</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">      for (int j = 0; j &lt; instances.attribute(i).numValues(); j++) {</span>
+<span class="nc" id="L436">        current = new AprioriItemSet(instances.numInstances());</span>
+<span class="nc" id="L437">        current.m_items = new int[instances.numAttributes()];</span>
+<span class="nc bnc" id="L438" title="All 2 branches missed.">        for (int k = 0; k &lt; instances.numAttributes(); k++)</span>
+<span class="nc" id="L439">          current.m_items[k] = -1;</span>
+<span class="nc" id="L440">        current.m_items[i] = j;</span>
+<span class="nc" id="L441">        setOfItemSets.addElement(current);</span>
+      }
+    }
+<span class="nc" id="L444">    return setOfItemSets;</span>
+  }
+
+  /**
+   * Merges all item sets in the set of (k-1)-item sets to create the (k)-item
+   * sets and updates the counters.
+   * 
+   * @param itemSets the set of (k-1)-item sets
+   * @param size the value of (k-1)
+   * @param totalTrans the total number of transactions in the data
+   * @return the generated (k)-item sets
+   */
+  public static FastVector mergeAllItemSets(FastVector itemSets, int size,
+      int totalTrans) {
+
+<span class="nc" id="L459">    FastVector newVector = new FastVector();</span>
+    ItemSet result;
+    int numFound, k;
+
+<span class="nc bnc" id="L463" title="All 2 branches missed.">    for (int i = 0; i &lt; itemSets.size(); i++) {</span>
+<span class="nc" id="L464">      ItemSet first = (ItemSet) itemSets.elementAt(i);</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">      out: for (int j = i + 1; j &lt; itemSets.size(); j++) {</span>
+<span class="nc" id="L466">        ItemSet second = (ItemSet) itemSets.elementAt(j);</span>
+<span class="nc" id="L467">        result = new AprioriItemSet(totalTrans);</span>
+<span class="nc" id="L468">        result.m_items = new int[first.m_items.length];</span>
+
+        // Find and copy common prefix of size 'size'
+<span class="nc" id="L471">        numFound = 0;</span>
+<span class="nc" id="L472">        k = 0;</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">        while (numFound &lt; size) {</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">          if (first.m_items[k] == second.m_items[k]) {</span>
+<span class="nc bnc" id="L475" title="All 2 branches missed.">            if (first.m_items[k] != -1)</span>
+<span class="nc" id="L476">              numFound++;</span>
+<span class="nc" id="L477">            result.m_items[k] = first.m_items[k];</span>
+          } else
+            break out;
+<span class="nc" id="L480">          k++;</span>
+        }
+
+        // Check difference
+<span class="nc bnc" id="L484" title="All 2 branches missed.">        while (k &lt; first.m_items.length) {</span>
+<span class="nc bnc" id="L485" title="All 4 branches missed.">          if ((first.m_items[k] != -1) &amp;&amp; (second.m_items[k] != -1))</span>
+<span class="nc" id="L486">            break;</span>
+          else {
+<span class="nc bnc" id="L488" title="All 2 branches missed.">            if (first.m_items[k] != -1)</span>
+<span class="nc" id="L489">              result.m_items[k] = first.m_items[k];</span>
+            else
+<span class="nc" id="L491">              result.m_items[k] = second.m_items[k];</span>
+          }
+<span class="nc" id="L493">          k++;</span>
+        }
+<span class="nc bnc" id="L495" title="All 2 branches missed.">        if (k == first.m_items.length) {</span>
+<span class="nc" id="L496">          result.m_counter = 0;</span>
+<span class="nc" id="L497">          newVector.addElement(result);</span>
+        }
+      }
+    }
+<span class="nc" id="L501">    return newVector;</span>
+  }
+
+  /**
+   * Returns the revision string.
+   * 
+   * @return the revision
+   */
+  @Override
+  public String getRevision() {
+<span class="nc" id="L511">    return RevisionUtils.extract(&quot;$Revision: 9096 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

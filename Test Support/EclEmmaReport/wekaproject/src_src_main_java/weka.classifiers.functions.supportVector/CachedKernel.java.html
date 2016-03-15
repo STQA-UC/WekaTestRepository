@@ -1,0 +1,393 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>CachedKernel.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.functions.supportVector</a> &gt; <span class="el_source">CachedKernel.java</span></div><h1>CachedKernel.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * CachedKernel.java
+ * 
+ * Copyright (C) 2005 University of Waikato, Hamilton, New Zealand
+ */
+
+package weka.classifiers.functions.supportVector;
+
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.Utils;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ * Base class for RBFKernel and PolyKernel that implements a simple LRU.
+ * (least-recently-used) cache if the cache size is set to a value &gt; 0.
+ * Otherwise it uses a full cache.
+ * 
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @author Shane Legg (shane@intelligenesis.net) (sparse vector code)
+ * @author Stuart Inglis (stuart@reeltwo.com) (sparse vector code)
+ * @author J. Lindgren (jtlindgr{at}cs.helsinki.fi) (RBF kernel)
+ * @author Steven Hugg (hugg@fasterlight.com) (refactored, LRU cache)
+ * @author Bernhard Pfahringer (bernhard@cs.waikato.ac.nz) (full cache)
+ * @version $Revision: 4549 $
+ */
+public abstract class CachedKernel 
+  extends Kernel {
+
+  /** for serialization */
+  private static final long serialVersionUID = 702810182699015136L;
+    
+  /** Counts the number of kernel evaluations. */
+  protected int m_kernelEvals;
+
+  /** Counts the number of kernel cache hits. */
+  protected int m_cacheHits;
+
+  /** The size of the cache (a prime number) */
+<span class="pc" id="L59">  protected int m_cacheSize = 250007;</span>
+
+  /** Kernel cache */
+  protected double[] m_storage;
+  protected long[] m_keys;
+
+  /** The kernel matrix if full cache is used (i.e. size is set to 0) */
+  protected double[][] m_kernelMatrix;
+
+  /** The number of instance in the dataset */
+  protected int m_numInsts;
+
+  /** number of cache slots in an entry */
+<span class="pc" id="L72">  protected int m_cacheSlots = 4;</span>
+
+  /**
+   * default constructor - does nothing.
+   */
+  public CachedKernel() {
+<span class="fc" id="L78">    super();</span>
+<span class="fc" id="L79">  }</span>
+  
+  /**
+   * Initializes the kernel cache. The actual size of the cache in bytes is
+   * (64 * cacheSize).
+   * 
+   * @param data	the data to use
+   * @param cacheSize	the cache size
+   * @throws Exception	if something goes wrong
+   */
+  protected CachedKernel(Instances data, int cacheSize) throws Exception {
+<span class="nc" id="L90">    super();</span>
+    
+<span class="nc" id="L92">    setCacheSize(cacheSize);</span>
+    
+<span class="nc" id="L94">    buildKernel(data);</span>
+<span class="nc" id="L95">  }</span>
+  
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return 		an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+    Vector		result;
+    Enumeration		en;
+    
+<span class="fc" id="L106">    result = new Vector();</span>
+
+<span class="fc" id="L108">    en = super.listOptions();</span>
+<span class="fc bfc" id="L109" title="All 2 branches covered.">    while (en.hasMoreElements())</span>
+<span class="fc" id="L110">      result.addElement(en.nextElement());</span>
+
+<span class="fc" id="L112">    result.addElement(new Option(</span>
+<span class="fc" id="L113">	&quot;\tThe size of the cache (a prime number), 0 for full cache and \n&quot;</span>
+	+ &quot;\t-1 to turn it off.\n&quot;
+	+ &quot;\t(default: 250007)&quot;,
+<span class="fc" id="L116">	&quot;C&quot;, 1, &quot;-C &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L118">    return result.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   * @param options 	the list of options as an array of strings
+   * @throws Exception 	if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    String	tmpStr;
+    
+<span class="fc" id="L130">    tmpStr = Utils.getOption('C', options);</span>
+<span class="fc bfc" id="L131" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L132">      setCacheSize(Integer.parseInt(tmpStr));</span>
+    else
+<span class="fc" id="L134">      setCacheSize(250007);</span>
+    
+<span class="fc" id="L136">    super.setOptions(options);</span>
+<span class="fc" id="L137">  }</span>
+
+  /**
+   * Gets the current settings of the Kernel.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    int       i;
+    Vector    result;
+    String[]  options;
+
+<span class="fc" id="L149">    result = new Vector();</span>
+<span class="fc" id="L150">    options = super.getOptions();</span>
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L152">      result.add(options[i]);</span>
+
+<span class="fc" id="L154">    result.add(&quot;-C&quot;);</span>
+<span class="fc" id="L155">    result.add(&quot;&quot; + getCacheSize());</span>
+
+<span class="fc" id="L157">    return (String[]) result.toArray(new String[result.size()]);	  </span>
+  }
+
+  /**
+   * This method is overridden in subclasses to implement specific kernels.
+   * 
+   * @param id1   	the index of instance 1
+   * @param id2		the index of instance 2
+   * @param inst1	the instance 1 object
+   * @return 		the dot product
+   * @throws Exception 	if something goes wrong
+   */
+  protected abstract double evaluate(int id1, int id2, Instance inst1)
+    throws Exception;
+
+  /**
+   * Implements the abstract function of Kernel using the cache. This method
+   * uses the evaluate() method to do the actual dot product.
+   *
+   * @param id1 	the index of the first instance in the dataset
+   * @param id2 	the index of the second instance in the dataset
+   * @param inst1 	the instance corresponding to id1 (used if id1 == -1)
+   * @return 		the result of the kernel function
+   * @throws Exception 	if something goes wrong
+   */
+  public double eval(int id1, int id2, Instance inst1) throws Exception {
+		
+<span class="fc" id="L184">    double result = 0;</span>
+<span class="fc" id="L185">    long key = -1;</span>
+<span class="fc" id="L186">    int location = -1;</span>
+
+    // we can only cache if we know the indexes and caching is not 
+    // disbled (m_cacheSize == -1)
+<span class="fc bfc" id="L190" title="All 4 branches covered.">    if ( (id1 &gt;= 0) &amp;&amp; (m_cacheSize != -1) ) {</span>
+
+      // Use full cache?
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">      if (m_cacheSize == 0) {</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">	if (m_kernelMatrix == null) {</span>
+<span class="nc" id="L195">	  m_kernelMatrix = new double[m_data.numInstances()][];</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">	  for(int i = 0; i &lt; m_data.numInstances(); i++) {</span>
+<span class="nc" id="L197">	    m_kernelMatrix[i] = new double[i + 1];</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">	    for(int j = 0; j &lt;= i; j++) {</span>
+<span class="nc" id="L199">	      m_kernelEvals++;</span>
+<span class="nc" id="L200">	      m_kernelMatrix[i][j] = evaluate(i, j, m_data.instance(i));</span>
+	    }
+	  }
+	} 
+<span class="nc" id="L204">	m_cacheHits++;</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">	result = (id1 &gt; id2) ? m_kernelMatrix[id1][id2] : m_kernelMatrix[id2][id1];</span>
+<span class="nc" id="L206">	return result;</span>
+      }
+
+      // Use LRU cache
+<span class="fc bfc" id="L210" title="All 2 branches covered.">      if (id1 &gt; id2) {</span>
+<span class="fc" id="L211">	key = (id1 + ((long) id2 * m_numInsts));</span>
+      } else {
+<span class="fc" id="L213">	key = (id2 + ((long) id1 * m_numInsts));</span>
+      }
+<span class="fc" id="L215">      location = (int) (key % m_cacheSize) * m_cacheSlots;</span>
+<span class="fc" id="L216">      int loc = location;</span>
+<span class="pc bpc" id="L217" title="1 of 2 branches missed.">      for (int i = 0; i &lt; m_cacheSlots; i++) {</span>
+<span class="fc" id="L218">	long thiskey = m_keys[loc];</span>
+<span class="fc bfc" id="L219" title="All 2 branches covered.">	if (thiskey == 0)</span>
+<span class="fc" id="L220">	  break; // empty slot, so break out of loop early</span>
+<span class="pc bpc" id="L221" title="1 of 2 branches missed.">	if (thiskey == (key + 1)) {</span>
+<span class="fc" id="L222">	  m_cacheHits++;</span>
+	  // move entry to front of cache (LRU) by swapping
+	  // only if it's not already at the front of cache
+<span class="pc bpc" id="L225" title="1 of 2 branches missed.">	  if (i &gt; 0) {</span>
+<span class="nc" id="L226">	    double tmps = m_storage[loc];</span>
+<span class="nc" id="L227">	    m_storage[loc] = m_storage[location];</span>
+<span class="nc" id="L228">	    m_keys[loc] = m_keys[location];</span>
+<span class="nc" id="L229">	    m_storage[location] = tmps;</span>
+<span class="nc" id="L230">	    m_keys[location] = thiskey;</span>
+<span class="nc" id="L231">	    return tmps;</span>
+	  } else
+<span class="fc" id="L233">	    return m_storage[loc];</span>
+	}
+<span class="nc" id="L235">	loc++;</span>
+      }
+    }
+
+<span class="fc" id="L239">    result = evaluate(id1, id2, inst1);</span>
+
+<span class="fc" id="L241">    m_kernelEvals++;</span>
+
+    // store result in cache
+<span class="pc bpc" id="L244" title="1 of 4 branches missed.">    if ( (key != -1) &amp;&amp; (m_cacheSize != -1) ) {</span>
+      // move all cache slots forward one array index
+      // to make room for the new entry
+<span class="fc" id="L247">      System.arraycopy(m_keys, location, m_keys, location + 1,</span>
+<span class="fc" id="L248">		       m_cacheSlots - 1);</span>
+<span class="fc" id="L249">      System.arraycopy(m_storage, location, m_storage, location + 1,</span>
+<span class="fc" id="L250">		       m_cacheSlots - 1);</span>
+<span class="fc" id="L251">      m_storage[location] = result;</span>
+<span class="fc" id="L252">      m_keys[location] = (key + 1);</span>
+    }
+<span class="fc" id="L254">    return result;</span>
+  }
+
+  /**
+   * Returns the number of time Eval has been called.
+   * 
+   * @return 		the number of kernel evaluation.
+   */
+  public int numEvals() {
+<span class="fc" id="L263">    return m_kernelEvals;</span>
+  }
+
+  /**
+   * Returns the number of cache hits on dot products.
+   * 
+   * @return 		the number of cache hits.
+   */
+  public int numCacheHits() {
+<span class="fc" id="L272">    return m_cacheHits;</span>
+  }
+
+  /**
+   * Frees the cache used by the kernel.
+   */
+  public void clean() {
+<span class="fc" id="L279">    m_storage = null;</span>
+<span class="fc" id="L280">    m_keys = null;</span>
+<span class="fc" id="L281">    m_kernelMatrix = null;</span>
+<span class="fc" id="L282">  }</span>
+
+  /**
+   * Calculates a dot product between two instances
+   * 
+   * @param inst1	the first instance
+   * @param inst2	the second instance
+   * @return 		the dot product of the two instances.
+   * @throws Exception	if an error occurs
+   */
+  protected final double dotProd(Instance inst1, Instance inst2)
+    throws Exception {
+
+<span class="fc" id="L295">    double result = 0;</span>
+
+    // we can do a fast dot product
+<span class="fc" id="L298">    int n1 = inst1.numValues();</span>
+<span class="fc" id="L299">    int n2 = inst2.numValues();</span>
+<span class="fc" id="L300">    int classIndex = m_data.classIndex();</span>
+<span class="pc bpc" id="L301" title="1 of 4 branches missed.">    for (int p1 = 0, p2 = 0; p1 &lt; n1 &amp;&amp; p2 &lt; n2;) {</span>
+<span class="fc" id="L302">      int ind1 = inst1.index(p1);</span>
+<span class="fc" id="L303">      int ind2 = inst2.index(p2);</span>
+<span class="pc bpc" id="L304" title="1 of 2 branches missed.">      if (ind1 == ind2) {</span>
+<span class="fc bfc" id="L305" title="All 2 branches covered.">	if (ind1 != classIndex) {</span>
+<span class="fc" id="L306">	  result += inst1.valueSparse(p1) * inst2.valueSparse(p2);</span>
+	}
+<span class="fc" id="L308">	p1++;</span>
+<span class="fc" id="L309">	p2++;</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">      } else if (ind1 &gt; ind2) {</span>
+<span class="nc" id="L311">	p2++;</span>
+      } else {
+<span class="nc" id="L313">	p1++;</span>
+      }
+    }
+<span class="fc" id="L316">    return (result);</span>
+  }
+
+  /**
+   * Sets the size of the cache to use (a prime number)
+   * 
+   * @param value	the size of the cache
+   */
+  public void setCacheSize(int value) {
+<span class="pc bpc" id="L325" title="1 of 2 branches missed.">    if (value &gt;= -1) {</span>
+<span class="fc" id="L326">      m_cacheSize = value;</span>
+<span class="fc" id="L327">      clean();</span>
+    }
+    else {
+<span class="nc" id="L330">      System.out.println(</span>
+<span class="nc" id="L331">	  &quot;Cache size cannot be smaller than -1 (provided: &quot; + value + &quot;)!&quot;);</span>
+    }
+<span class="fc" id="L333">  }</span>
+  
+  /**
+   * Gets the size of the cache
+   * 
+   * @return 		the cache size
+   */
+  public int getCacheSize() {
+<span class="fc" id="L341">    return m_cacheSize;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String cacheSizeTipText() {
+<span class="nc" id="L351">    return &quot;The size of the cache (a prime number), 0 for full cache and -1 to turn it off.&quot;;</span>
+  }
+
+  /**
+   * initializes variables etc.
+   * 
+   * @param data	the data to use
+   */
+  protected void initVars(Instances data) {
+<span class="fc" id="L360">    super.initVars(data);</span>
+    
+<span class="fc" id="L362">    m_kernelEvals = 0;</span>
+<span class="fc" id="L363">    m_cacheHits   = 0;</span>
+<span class="fc" id="L364">    m_numInsts    = m_data.numInstances();</span>
+
+<span class="fc bfc" id="L366" title="All 2 branches covered.">    if (getCacheSize() &gt; 0) {</span>
+      // Use LRU cache
+<span class="fc" id="L368">      m_storage = new double[m_cacheSize * m_cacheSlots];</span>
+<span class="fc" id="L369">      m_keys    = new long[m_cacheSize * m_cacheSlots];</span>
+    } 
+    else {
+<span class="fc" id="L372">      m_storage      = null;</span>
+<span class="fc" id="L373">      m_keys         = null;</span>
+<span class="fc" id="L374">      m_kernelMatrix = null;</span>
+    }
+<span class="fc" id="L376">  }</span>
+  
+  /**
+   * builds the kernel with the given data. Initializes the kernel cache. 
+   * The actual size of the cache in bytes is (64 * cacheSize).
+   * 
+   * @param data	the data to base the kernel on
+   * @throws Exception	if something goes wrong
+   */
+  public void buildKernel(Instances data) throws Exception {
+    // does kernel handle the data?
+<span class="pc bpc" id="L387" title="1 of 2 branches missed.">    if (!getChecksTurnedOff())</span>
+<span class="fc" id="L388">      getCapabilities().testWithFail(data);</span>
+
+<span class="fc" id="L390">    initVars(data);</span>
+<span class="fc" id="L391">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

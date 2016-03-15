@@ -1,0 +1,729 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>SPegasos.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.functions</a> &gt; <span class="el_source">SPegasos.java</span></div><h1>SPegasos.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    SPegasos.java
+ *    Copyright (C) 2009 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.functions;
+
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.Vector;
+
+import weka.classifiers.Classifier;
+import weka.classifiers.UpdateableClassifier;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.NominalToBinary;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+import weka.filters.unsupervised.attribute.Normalize;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Implements the stochastic variant of the Pegasos (Primal Estimated sub-GrAdient SOlver for SVM) method of Shalev-Shwartz et al. (2007). This implementation globally replaces all missing values and transforms nominal attributes into binary ones. It also normalizes all attributes, so the coefficients in the output are based on the normalized data. For more information, see&lt;br/&gt;
+ * &lt;br/&gt;
+ * S. Shalev-Shwartz, Y. Singer, N. Srebro: Pegasos: Primal Estimated sub-GrAdient SOlver for SVM. In: 24th International Conference on MachineLearning, 807-814, 2007.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Shalev-Shwartz2007,
+ *    author = {S. Shalev-Shwartz and Y. Singer and N. Srebro},
+ *    booktitle = {24th International Conference on MachineLearning},
+ *    pages = {807-814},
+ *    title = {Pegasos: Primal Estimated sub-GrAdient SOlver for SVM},
+ *    year = {2007}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -L &amp;lt;double&amp;gt;
+ *  The lambda regularization constant (default = 0.0001)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -E &amp;lt;integer&amp;gt;
+ *  The number of epochs to perform (batch learning only, default = 500)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N
+ *  Don't normalize the data&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Don't replace missing values&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Mark Hall (mhall{[at]}pentaho{[dot]}com)
+ * @version $Revision: 6580 $
+ *
+ */
+<span class="fc" id="L93">public class SPegasos extends Classifier</span>
+  implements TechnicalInformationHandler, UpdateableClassifier,
+    OptionHandler {
+  
+  /** For serialization */
+  private static final long serialVersionUID = -3732968666673530290L;
+  
+  /** Replace missing values */
+  protected ReplaceMissingValues m_replaceMissing;
+  
+  /** Convert nominal attributes to numerically coded binary ones */
+  protected NominalToBinary m_nominalToBinary;
+  
+  /** Normalize the training data */
+  protected Normalize m_normalize;
+  
+  /** The regularization parameter */
+<span class="fc" id="L110">  protected double m_lambda = 0.0001;</span>
+  
+  /** Stores the weights (+ bias in the last element) */
+  protected double[] m_weights;
+  
+  /** Holds the current iteration number */
+  protected double m_t;
+  
+  /**
+   *  The number of epochs to perform (batch learning). Total iterations is
+   *  m_epochs * num instances 
+   */
+<span class="fc" id="L122">  protected int m_epochs = 500;</span>
+  
+  /** 
+   * Turn off normalization of the input data. This option gets
+   * forced for incremental training.
+   */
+<span class="fc" id="L128">  protected boolean m_dontNormalize = false;</span>
+  
+  /**
+   *  Turn off global replacement of missing values. Missing values
+   *  will be ignored instead. This option gets forced for
+   *  incremental training.
+   */
+<span class="fc" id="L135">  protected boolean m_dontReplaceMissing = false;</span>
+  
+  /** Holds the header of the training data */
+  protected Instances m_data;
+  
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L146">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L147">    result.disableAll();</span>
+    
+    //attributes
+<span class="fc" id="L150">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L151">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L152">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="fc" id="L155">    result.enable(Capability.BINARY_CLASS);</span>
+<span class="fc" id="L156">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+    // instances
+<span class="fc" id="L159">    result.setMinimumNumberInstances(0);</span>
+    
+<span class="fc" id="L161">    return result;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String lambdaTipText() {
+<span class="nc" id="L171">    return &quot;The regularization constant. (default = 0.0001)&quot;;</span>
+  }
+  
+  /**
+   * Set the value of lambda to use
+   * 
+   * @param lambda the value of lambda to use
+   */
+  public void setLambda(double lambda) {
+<span class="fc" id="L180">    m_lambda = lambda;</span>
+<span class="fc" id="L181">  }</span>
+  
+  /**
+   * Get the current value of lambda
+   * 
+   * @return the current value of lambda
+   */
+  public double getLambda() {
+<span class="fc" id="L189">    return m_lambda;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String epochsTipText() {
+<span class="nc" id="L199">    return &quot;The number of epochs to perform (batch learning). &quot; +</span>
+    		&quot;The total number of iterations is epochs * num&quot; +
+    		&quot; instances.&quot;;
+  }
+  
+  /**
+   * Set the number of epochs to use
+   * 
+   * @param e the number of epochs to use
+   */
+  public void setEpochs(int e) {
+<span class="fc" id="L210">    m_epochs = e;</span>
+<span class="fc" id="L211">  }</span>
+  
+  /**
+   * Get current number of epochs
+   * 
+   * @return the current number of epochs
+   */
+  public int getEpochs() {
+<span class="fc" id="L219">    return m_epochs;</span>
+  }
+  
+  /**
+   * Turn normalization off/on.
+   * 
+   * @param m true if normalization is to be disabled.
+   */
+  public void setDontNormalize(boolean m) {
+<span class="fc" id="L228">    m_dontNormalize = m;</span>
+<span class="fc" id="L229">  }</span>
+  
+  /**
+   * Get whether normalization has been turned off.
+   * 
+   * @return true if normalization has been disabled.
+   */
+  public boolean getDontNormalize() {
+<span class="fc" id="L237">    return m_dontNormalize;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String dontNormalizeTipText() {
+<span class="nc" id="L247">    return &quot;Turn normalization off&quot;;</span>
+  }
+  
+  /**
+   * Turn global replacement of missing values off/on. If turned off,
+   * then missing values are effectively ignored.
+   * 
+   * @param m true if global replacement of missing values is to be
+   * turned off.
+   */
+  public void setDontReplaceMissing(boolean m) {
+<span class="fc" id="L258">    m_dontReplaceMissing = m;</span>
+<span class="fc" id="L259">  }</span>
+  
+  /**
+   * Get whether global replacement of missing values has been
+   * disabled.
+   * 
+   * @return true if global replacement of missing values has been turned
+   * off
+   */
+  public boolean getDontReplaceMissing() {
+<span class="fc" id="L269">    return m_dontReplaceMissing;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String dontReplaceMissingTipText() {
+<span class="nc" id="L279">    return &quot;Turn off global replacement of missing values&quot;;</span>
+  }
+  
+  /**
+   * Set the loss function to use.
+   * 
+   * @param function the loss function to use.
+   */
+  public void setLossFunction(SelectedTag function) {
+<span class="pc bpc" id="L288" title="1 of 2 branches missed.">    if (function.getTags() == TAGS_SELECTION) {</span>
+<span class="fc" id="L289">      m_loss = function.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L291">  }</span>
+  
+  /**
+   * Get the current loss function.
+   * 
+   * @return the current loss function.
+   */
+  public SelectedTag getLossFunction() {
+<span class="fc" id="L299">    return new SelectedTag(m_loss, TAGS_SELECTION);</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String lossFunctionTipText() {
+<span class="nc" id="L309">    return &quot;The loss function to use. Hinge loss (SVM) &quot; +</span>
+                &quot;or log loss (logistic regression).&quot;;
+  }
+  
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration&lt;Option&gt; listOptions() {
+
+<span class="fc" id="L320">    Vector&lt;Option&gt; newVector = new Vector&lt;Option&gt;();</span>
+<span class="fc" id="L321">    newVector.add(new Option(&quot;\tSet the loss function to minimize. 0 = &quot; +</span>
+        &quot;hinge loss (SVM), 1 = log loss (logistic regression).\n&quot; +
+<span class="fc" id="L323">        &quot;\t(default = 0)&quot;, &quot;F&quot;, 1, &quot;-F&quot;));</span>
+<span class="fc" id="L324">    newVector.add(new Option(&quot;\tThe lambda regularization constant &quot; +</span>
+    		&quot;(default = 0.0001)&quot;,
+<span class="fc" id="L326">    		&quot;L&quot;, 1, &quot;-L &lt;double&gt;&quot;));</span>
+<span class="fc" id="L327">    newVector.add(new Option(&quot;\tThe number of epochs to perform (&quot; +</span>
+<span class="fc" id="L328">    		&quot;batch learning only, default = 500)&quot;, &quot;E&quot;, 1,</span>
+<span class="fc" id="L329">    		&quot;-E &lt;integer&gt;&quot;));</span>
+<span class="fc" id="L330">    newVector.add(new Option(&quot;\tDon't normalize the data&quot;, &quot;N&quot;, 0, &quot;-N&quot;));</span>
+<span class="fc" id="L331">    newVector.add(new Option(&quot;\tDon't replace missing values&quot;, &quot;M&quot;, 0, &quot;-M&quot;));</span>
+    
+<span class="fc" id="L333">    return newVector.elements();</span>
+  }
+  
+  /**
+   * 
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -L &amp;lt;double&amp;gt;
+   *  The lambda regularization constant (default = 0.0001)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -E &amp;lt;integer&amp;gt;
+   *  The number of epochs to perform (batch learning only, default = 500)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N
+   *  Don't normalize the data&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  Don't replace missing values&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="fc" id="L361">    reset();</span>
+    
+<span class="fc" id="L363">    String lossString = Utils.getOption('F', options);</span>
+<span class="fc bfc" id="L364" title="All 2 branches covered.">    if (lossString.length() != 0) {</span>
+<span class="fc" id="L365">      setLossFunction(new SelectedTag(Integer.parseInt(lossString), </span>
+<span class="fc" id="L366">          TAGS_SELECTION));</span>
+    } else {
+<span class="fc" id="L368">      setLossFunction(new SelectedTag(HINGE, TAGS_SELECTION));</span>
+    }
+    
+<span class="fc" id="L371">    String lambdaString = Utils.getOption('L', options);</span>
+<span class="fc bfc" id="L372" title="All 2 branches covered.">    if (lambdaString.length() &gt; 0) {</span>
+<span class="fc" id="L373">      setLambda(Double.parseDouble(lambdaString));</span>
+    }
+    
+<span class="fc" id="L376">    String epochsString = Utils.getOption(&quot;E&quot;, options);</span>
+<span class="fc bfc" id="L377" title="All 2 branches covered.">    if (epochsString.length() &gt; 0) {</span>
+<span class="fc" id="L378">      setEpochs(Integer.parseInt(epochsString));</span>
+    }
+    
+<span class="fc" id="L381">    setDontNormalize(Utils.getFlag(&quot;N&quot;, options));</span>
+<span class="fc" id="L382">    setDontReplaceMissing(Utils.getFlag('M', options));</span>
+<span class="fc" id="L383">  }</span>
+  
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+<span class="fc" id="L391">    ArrayList&lt;String&gt; options = new ArrayList&lt;String&gt;();</span>
+    
+<span class="fc" id="L393">    options.add(&quot;-F&quot;); options.add(&quot;&quot; + getLossFunction().getSelectedTag().getID());</span>
+<span class="fc" id="L394">    options.add(&quot;-L&quot;); options.add(&quot;&quot; + getLambda());</span>
+<span class="fc" id="L395">    options.add(&quot;-E&quot;); options.add(&quot;&quot; + getEpochs());</span>
+<span class="pc bpc" id="L396" title="1 of 2 branches missed.">    if (getDontNormalize()) {</span>
+<span class="nc" id="L397">      options.add(&quot;-N&quot;);</span>
+    }
+<span class="pc bpc" id="L399" title="1 of 2 branches missed.">    if (getDontReplaceMissing()) {</span>
+<span class="nc" id="L400">      options.add(&quot;-M&quot;);</span>
+    }
+    
+<span class="fc" id="L403">    return options.toArray(new String[1]);</span>
+  }
+  
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L412">    return &quot;Implements the stochastic variant of the Pegasos&quot; +</span>
+    		&quot; (Primal Estimated sub-GrAdient SOlver for SVM)&quot; +
+    		&quot; method of Shalev-Shwartz et al. (2007). This implementation&quot; +
+    		&quot; globally replaces all missing values and transforms nominal&quot; +
+    		&quot; attributes into binary ones. It also normalizes all attributes,&quot; +
+    		&quot; so the coefficients in the output are based on the normalized&quot; +
+    		&quot; data. For more information, see\n\n&quot; +
+<span class="nc" id="L419">    		getTechnicalInformation().toString();</span>
+  }
+  
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation result;
+   
+<span class="nc" id="L432">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L433">    result.setValue(Field.AUTHOR, &quot;S. Shalev-Shwartz and Y. Singer and N. Srebro&quot;);</span>
+<span class="nc" id="L434">    result.setValue(Field.YEAR, &quot;2007&quot;);</span>
+<span class="nc" id="L435">    result.setValue(Field.TITLE, &quot;Pegasos: Primal Estimated sub-GrAdient &quot; +</span>
+    		&quot;SOlver for SVM&quot;);
+<span class="nc" id="L437">    result.setValue(Field.BOOKTITLE, &quot;24th International Conference on Machine&quot; +</span>
+    		&quot;Learning&quot;);
+<span class="nc" id="L439">    result.setValue(Field.PAGES, &quot;807-814&quot;);</span>
+    
+<span class="nc" id="L441">    return result;</span>
+  }
+  
+  /**
+   * Reset the classifier.
+   */
+  public void reset() {
+<span class="fc" id="L448">    m_t = 2;</span>
+<span class="fc" id="L449">    m_weights = null;</span>
+<span class="fc" id="L450">  }</span>
+
+  /**
+   * Method for building the classifier.
+   * 
+   * @param data the set of training instances.
+   * @throws Exception if the classifier can't be built successfully.
+   */
+  public void buildClassifier(Instances data) throws Exception {
+<span class="fc" id="L459">    reset();</span>
+    
+    // can classifier handle the data?
+<span class="fc" id="L462">    getCapabilities().testWithFail(data);</span>
+    
+<span class="fc" id="L464">    data = new Instances(data);</span>
+<span class="fc" id="L465">    data.deleteWithMissingClass();</span>
+    
+<span class="pc bpc" id="L467" title="1 of 4 branches missed.">    if (data.numInstances() &gt; 0 &amp;&amp; !m_dontReplaceMissing) {</span>
+<span class="nc" id="L468">      m_replaceMissing = new ReplaceMissingValues();</span>
+<span class="nc" id="L469">      m_replaceMissing.setInputFormat(data);</span>
+<span class="nc" id="L470">      data = Filter.useFilter(data, m_replaceMissing);</span>
+    }
+    
+    // check for only numeric attributes
+<span class="fc" id="L474">    boolean onlyNumeric = true;</span>
+<span class="fc bfc" id="L475" title="All 2 branches covered.">    for (int i = 0; i &lt; data.numAttributes(); i++) {</span>
+<span class="fc bfc" id="L476" title="All 2 branches covered.">      if (i != data.classIndex()) {</span>
+<span class="fc bfc" id="L477" title="All 2 branches covered.">        if (!data.attribute(i).isNumeric()) {</span>
+<span class="fc" id="L478">          onlyNumeric = false;</span>
+<span class="fc" id="L479">          break;</span>
+        }
+      }
+    }
+    
+<span class="fc bfc" id="L484" title="All 2 branches covered.">    if (!onlyNumeric) {</span>
+<span class="fc" id="L485">      m_nominalToBinary = new NominalToBinary();</span>
+<span class="fc" id="L486">      m_nominalToBinary.setInputFormat(data);</span>
+<span class="fc" id="L487">      data = Filter.useFilter(data, m_nominalToBinary);</span>
+    }
+    
+<span class="pc bpc" id="L490" title="3 of 4 branches missed.">    if (!m_dontNormalize &amp;&amp; data.numInstances() &gt; 0) {</span>
+
+<span class="nc" id="L492">      m_normalize = new Normalize();</span>
+<span class="nc" id="L493">      m_normalize.setInputFormat(data);</span>
+<span class="nc" id="L494">      data = Filter.useFilter(data, m_normalize);</span>
+    }
+    
+<span class="fc" id="L497">    m_weights = new double[data.numAttributes() + 1];</span>
+<span class="fc" id="L498">    m_data = new Instances(data, 0);</span>
+    
+<span class="fc bfc" id="L500" title="All 2 branches covered.">    if (data.numInstances() &gt; 0) {</span>
+<span class="fc" id="L501">      train(data);    </span>
+    }
+<span class="fc" id="L503">  }</span>
+  
+  private void train(Instances data) throws Exception {
+<span class="fc bfc" id="L506" title="All 2 branches covered.">    for (int e = 0; e &lt; m_epochs; e++) {</span>
+<span class="fc bfc" id="L507" title="All 2 branches covered.">      for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="fc" id="L508">        updateClassifier(data.instance(i));</span>
+      }
+    }
+<span class="fc" id="L511">  }</span>
+  
+  protected static double dotProd(Instance inst1, double[] weights, int classIndex) {
+<span class="fc" id="L514">    double result = 0;</span>
+
+<span class="fc" id="L516">    int n1 = inst1.numValues();</span>
+<span class="fc" id="L517">    int n2 = weights.length - 1; </span>
+
+<span class="pc bpc" id="L519" title="1 of 4 branches missed.">    for (int p1 = 0, p2 = 0; p1 &lt; n1 &amp;&amp; p2 &lt; n2;) {</span>
+<span class="fc" id="L520">      int ind1 = inst1.index(p1);</span>
+<span class="fc" id="L521">      int ind2 = p2;</span>
+<span class="pc bpc" id="L522" title="1 of 2 branches missed.">      if (ind1 == ind2) {</span>
+<span class="fc bfc" id="L523" title="All 4 branches covered.">        if (ind1 != classIndex &amp;&amp; !inst1.isMissingSparse(p1)) {</span>
+<span class="fc" id="L524">          result += inst1.valueSparse(p1) * weights[p2];</span>
+        }
+<span class="fc" id="L526">        p1++;</span>
+<span class="fc" id="L527">        p2++;</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">      } else if (ind1 &gt; ind2) {</span>
+<span class="nc" id="L529">        p2++;</span>
+      } else {
+<span class="nc" id="L531">        p1++;</span>
+      }
+    }
+<span class="fc" id="L534">    return (result);</span>
+  }
+  
+  protected static final int HINGE = 0;
+  protected static final int LOGLOSS = 1;
+  
+  /** The current loss function to minimize */
+<span class="fc" id="L541">  protected int m_loss = HINGE;</span>
+  
+  /** Loss functions to choose from */
+<span class="fc" id="L544">  public static final Tag [] TAGS_SELECTION = {</span>
+<span class="fc" id="L545">    new Tag(HINGE, &quot;Hinge loss (SVM)&quot;),</span>
+<span class="fc" id="L546">    new Tag(LOGLOSS, &quot;Log loss (logistic regression)&quot;)</span>
+  };
+  
+  protected double dloss(double z) {
+<span class="pc bpc" id="L550" title="1 of 2 branches missed.">    if (m_loss == HINGE) {</span>
+<span class="pc bpc" id="L551" title="1 of 2 branches missed.">      return (z &lt; 1) ? 1 : 0;</span>
+    }
+    
+    // log loss
+<span class="nc bnc" id="L555" title="All 2 branches missed.">    if (z &lt; 0) {</span>
+<span class="nc" id="L556">      return 1.0 / (Math.exp(z) + 1.0);  </span>
+    } else {
+<span class="nc" id="L558">      double t = Math.exp(-z);</span>
+<span class="nc" id="L559">      return t / (t + 1);</span>
+    }
+  }
+        
+  /**
+   * Updates the classifier with the given instance.
+   *
+   * @param instance the new training instance to include in the model 
+   * @exception Exception if the instance could not be incorporated in
+   * the model.
+   */
+  public void updateClassifier(Instance instance) throws Exception {
+<span class="pc bpc" id="L571" title="1 of 2 branches missed.">    if (!instance.classIsMissing()) {</span>
+      
+<span class="fc" id="L573">      double learningRate = 1.0 / (m_lambda * m_t);</span>
+      //double scale = 1.0 - learningRate * m_lambda;
+<span class="fc" id="L575">      double scale = 1.0 - 1.0 / m_t;</span>
+<span class="fc bfc" id="L576" title="All 2 branches covered.">      double y = (instance.classValue() == 0) ? -1 : 1;</span>
+<span class="fc" id="L577">      double wx = dotProd(instance, m_weights, instance.classIndex());</span>
+<span class="fc" id="L578">      double z = y * (wx + m_weights[m_weights.length - 1]);        </span>
+      
+<span class="fc bfc" id="L580" title="All 2 branches covered.">      for (int j = 0; j &lt; m_weights.length - 1; j++) {</span>
+<span class="fc bfc" id="L581" title="All 2 branches covered.">        if (j != instance.classIndex()) {</span>
+<span class="fc" id="L582">          m_weights[j] *= scale;</span>
+        }
+      }
+      
+<span class="pc bpc" id="L586" title="1 of 4 branches missed.">      if (m_loss == LOGLOSS || (z &lt; 1)) {</span>
+<span class="fc" id="L587">        double loss = dloss(z);</span>
+<span class="fc" id="L588">        int n1 = instance.numValues();</span>
+<span class="fc bfc" id="L589" title="All 2 branches covered.">        for (int p1 = 0; p1 &lt; n1; p1++) {</span>
+<span class="fc" id="L590">          int indS = instance.index(p1);</span>
+<span class="fc bfc" id="L591" title="All 4 branches covered.">          if (indS != instance.classIndex() &amp;&amp;  !instance.isMissingSparse(p1)) {</span>
+<span class="fc" id="L592">            double m = learningRate * loss * (instance.valueSparse(p1) * y);</span>
+<span class="fc" id="L593">            m_weights[indS] += m;</span>
+          }
+        }
+        
+        // update the bias
+<span class="fc" id="L598">        m_weights[m_weights.length - 1] += learningRate * loss * y;</span>
+      }
+      
+<span class="fc" id="L601">      double norm = 0;</span>
+<span class="fc bfc" id="L602" title="All 2 branches covered.">      for (int k = 0; k &lt; m_weights.length - 1; k++) {</span>
+<span class="fc bfc" id="L603" title="All 2 branches covered.">        if (k != instance.classIndex()) {</span>
+<span class="fc" id="L604">          norm += (m_weights[k] * m_weights[k]);</span>
+        }
+      }
+      
+<span class="fc" id="L608">      double scale2 = Math.min(1.0, (1.0 / (m_lambda * norm)));</span>
+<span class="fc bfc" id="L609" title="All 2 branches covered.">      if (scale2 &lt; 1.0) {</span>
+<span class="fc" id="L610">        scale2 = Math.sqrt(scale2);</span>
+<span class="fc bfc" id="L611" title="All 2 branches covered.">        for (int j = 0; j &lt; m_weights.length - 1; j++) {</span>
+<span class="fc bfc" id="L612" title="All 2 branches covered.">          if (j != instance.classIndex()) {</span>
+<span class="fc" id="L613">            m_weights[j] *= scale2;</span>
+          }
+        }
+      }
+<span class="fc" id="L617">      m_t++;</span>
+    }
+<span class="fc" id="L619">  }</span>
+  
+  /**
+   * Computes the distribution for a given instance
+   *
+   * @param instance the instance for which distribution is computed
+   * @return the distribution
+   * @throws Exception if the distribution can't be computed successfully
+   */
+  public double[] distributionForInstance(Instance inst) throws Exception {
+<span class="fc" id="L629">    double[] result = new double[2];</span>
+
+<span class="pc bpc" id="L631" title="1 of 2 branches missed.">    if (m_replaceMissing != null) {</span>
+<span class="nc" id="L632">      m_replaceMissing.input(inst);</span>
+<span class="nc" id="L633">      inst = m_replaceMissing.output();</span>
+    }
+
+<span class="fc bfc" id="L636" title="All 2 branches covered.">    if (m_nominalToBinary != null) {</span>
+<span class="fc" id="L637">      m_nominalToBinary.input(inst);</span>
+<span class="fc" id="L638">      inst = m_nominalToBinary.output();</span>
+    }
+
+<span class="pc bpc" id="L641" title="1 of 2 branches missed.">    if (m_normalize != null){</span>
+<span class="nc" id="L642">      m_normalize.input(inst);</span>
+<span class="nc" id="L643">      inst = m_normalize.output();</span>
+    }
+
+<span class="fc" id="L646">    double wx = dotProd(inst, m_weights, inst.classIndex());// * m_wScale;</span>
+<span class="fc" id="L647">    double z = (wx + m_weights[m_weights.length - 1]);</span>
+    //System.out.print(&quot;&quot; + z + &quot;: &quot;);
+    // System.out.println(1.0 / (1.0 + Math.exp(-z)));
+<span class="fc bfc" id="L650" title="All 2 branches covered.">    if (z &lt;= 0) {</span>
+      //  z = 0;
+<span class="pc bpc" id="L652" title="1 of 2 branches missed.">      if (m_loss == LOGLOSS) {</span>
+<span class="nc" id="L653">        result[0] = 1.0 / (1.0 + Math.exp(z));</span>
+<span class="nc" id="L654">        result[1] = 1.0 - result[0];</span>
+      } else {
+<span class="fc" id="L656">        result[0] = 1;</span>
+      }
+    } else {
+<span class="pc bpc" id="L659" title="1 of 2 branches missed.">      if (m_loss == LOGLOSS) {</span>
+<span class="nc" id="L660">        result[1] = 1.0 / (1.0 + Math.exp(-z));</span>
+<span class="nc" id="L661">        result[0] = 1.0 - result[1];</span>
+      } else {
+<span class="fc" id="L663">        result[1] = 1;</span>
+      }
+    }
+<span class="fc" id="L666">    return result;</span>
+  }
+    
+  /**
+   * Prints out the classifier.
+   *
+   * @return a description of the classifier as a string
+   */
+  public String toString() {
+<span class="pc bpc" id="L675" title="1 of 2 branches missed.">    if (m_weights == null) {</span>
+<span class="fc" id="L676">      return &quot;SPegasos: No model built yet.\n&quot;;</span>
+    }
+<span class="nc" id="L678">    StringBuffer buff = new StringBuffer();</span>
+<span class="nc" id="L679">    buff.append(&quot;Loss function: &quot;);</span>
+<span class="nc bnc" id="L680" title="All 2 branches missed.">    if (m_loss == HINGE) {</span>
+<span class="nc" id="L681">      buff.append(&quot;Hinge loss (SVM)\n\n&quot;);</span>
+    } else {
+<span class="nc" id="L683">      buff.append(&quot;Log loss (logistic regression)\n\n&quot;);</span>
+    }
+<span class="nc" id="L685">    int printed = 0;</span>
+    
+<span class="nc bnc" id="L687" title="All 2 branches missed.">    for (int i = 0 ; i &lt; m_weights.length - 1; i++) {</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">      if (i != m_data.classIndex()) {</span>
+<span class="nc bnc" id="L689" title="All 2 branches missed.">        if (printed &gt; 0) {</span>
+<span class="nc" id="L690">          buff.append(&quot; + &quot;);</span>
+        } else {
+<span class="nc" id="L692">          buff.append(&quot;   &quot;);</span>
+        }
+
+<span class="nc" id="L695">        buff.append(Utils.doubleToString(m_weights[i], 12, 4) +</span>
+<span class="nc bnc" id="L696" title="All 2 branches missed.">            &quot; &quot; + ((m_normalize != null) ? &quot;(normalized) &quot; : &quot;&quot;) </span>
+<span class="nc" id="L697">            + m_data.attribute(i).name() + &quot;\n&quot;);</span>
+
+<span class="nc" id="L699">        printed++;</span>
+      }
+    }
+    
+<span class="nc bnc" id="L703" title="All 2 branches missed.">    if (m_weights[m_weights.length - 1] &gt; 0) {</span>
+<span class="nc" id="L704">      buff.append(&quot; + &quot; + Utils.doubleToString(m_weights[m_weights.length - 1], 12, 4));</span>
+    } else {
+<span class="nc" id="L706">      buff.append(&quot; - &quot; + Utils.doubleToString(-m_weights[m_weights.length - 1], 12, 4));</span>
+    }
+    
+<span class="nc" id="L709">    return buff.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return            the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L718">    return RevisionUtils.extract(&quot;$Revision: 6580 $&quot;);</span>
+  }
+  
+  /**
+   * Main method for testing this class.
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L725">    runClassifier(new SPegasos(), args);</span>
+<span class="nc" id="L726">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

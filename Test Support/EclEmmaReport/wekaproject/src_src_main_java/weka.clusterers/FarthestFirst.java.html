@@ -1,0 +1,622 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>FarthestFirst.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.clusterers</a> &gt; <span class="el_source">FarthestFirst.java</span></div><h1>FarthestFirst.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    FarthestFirst.java
+ *    Copyright (C) 2002 University of Waikato, Hamilton, New Zealand
+ *
+ */
+package weka.clusterers;
+
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Cluster data using the FarthestFirst algorithm.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Hochbaum, Shmoys (1985). A best possible heuristic for the k-center problem. Mathematics of Operations Research. 10(2):180-184.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Sanjoy Dasgupta: Performance Guarantees for Hierarchical Clustering. In: 15th Annual Conference on Computational Learning Theory, 351-363, 2002.&lt;br/&gt;
+ * &lt;br/&gt;
+ * Notes:&lt;br/&gt;
+ * - works as a fast simple approximate clusterer&lt;br/&gt;
+ * - modelled after SimpleKMeans, might be a useful initializer for it
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;article{Hochbaum1985,
+ *    author = {Hochbaum and Shmoys},
+ *    journal = {Mathematics of Operations Research},
+ *    number = {2},
+ *    pages = {180-184},
+ *    title = {A best possible heuristic for the k-center problem},
+ *    volume = {10},
+ *    year = {1985}
+ * }
+ * 
+ * &amp;#64;inproceedings{Dasgupta2002,
+ *    author = {Sanjoy Dasgupta},
+ *    booktitle = {15th Annual Conference on Computational Learning Theory},
+ *    pages = {351-363},
+ *    publisher = {Springer},
+ *    title = {Performance Guarantees for Hierarchical Clustering},
+ *    year = {2002}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+ *  number of clusters. (default = 2).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Bernhard Pfahringer (bernhard@cs.waikato.ac.nz)
+ * @version $Revision: 5538 $
+ * @see RandomizableClusterer
+ */
+<span class="nc" id="L100">public class FarthestFirst </span>
+  extends RandomizableClusterer 
+  implements TechnicalInformationHandler {
+
+  //Todo: rewrite to be fully incremental
+  //      cleanup, like deleting m_instances 
+
+  /** for serialization */
+  static final long serialVersionUID = 7499838100631329509L;
+  
+  /**
+   * training instances, not necessary to keep, 
+   * could be replaced by m_ClusterCentroids where needed for header info
+   */
+  protected Instances m_instances;
+
+  /**
+   * replace missing values in training instances
+   */
+  protected ReplaceMissingValues m_ReplaceMissingFilter;
+
+  /**
+   * number of clusters to generate
+   */
+<span class="nc" id="L124">  protected int m_NumClusters = 2;</span>
+
+  /**
+   * holds the cluster centroids
+   */
+  protected Instances m_ClusterCentroids;
+
+  /**
+   * attribute min values
+   */
+  private double [] m_Min;
+  
+  /**
+   * attribute max values
+   */
+  private double [] m_Max;
+
+  /**
+   * Returns a string describing this clusterer
+   * @return a description of the evaluator suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L147">    return &quot;Cluster data using the FarthestFirst algorithm.\n\n&quot;</span>
+      + &quot;For more information see:\n\n&quot;
+<span class="nc" id="L149">      + getTechnicalInformation().toString() + &quot;\n\n&quot;</span>
+<span class="nc" id="L150">      + &quot;Notes:\n&quot;</span>
+<span class="nc" id="L151">      + &quot;- works as a fast simple approximate clusterer\n&quot;</span>
+<span class="nc" id="L152">      + &quot;- modelled after SimpleKMeans, might be a useful initializer for it&quot;;</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    TechnicalInformation 	additional;
+    
+<span class="nc" id="L166">    result = new TechnicalInformation(Type.ARTICLE);</span>
+<span class="nc" id="L167">    result.setValue(Field.AUTHOR, &quot;Hochbaum and Shmoys&quot;);</span>
+<span class="nc" id="L168">    result.setValue(Field.YEAR, &quot;1985&quot;);</span>
+<span class="nc" id="L169">    result.setValue(Field.TITLE, &quot;A best possible heuristic for the k-center problem&quot;);</span>
+<span class="nc" id="L170">    result.setValue(Field.JOURNAL, &quot;Mathematics of Operations Research&quot;);</span>
+<span class="nc" id="L171">    result.setValue(Field.VOLUME, &quot;10&quot;);</span>
+<span class="nc" id="L172">    result.setValue(Field.NUMBER, &quot;2&quot;);</span>
+<span class="nc" id="L173">    result.setValue(Field.PAGES, &quot;180-184&quot;);</span>
+    
+<span class="nc" id="L175">    additional = result.add(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L176">    additional.setValue(Field.AUTHOR, &quot;Sanjoy Dasgupta&quot;);</span>
+<span class="nc" id="L177">    additional.setValue(Field.TITLE, &quot;Performance Guarantees for Hierarchical Clustering&quot;);</span>
+<span class="nc" id="L178">    additional.setValue(Field.BOOKTITLE, &quot;15th Annual Conference on Computational Learning Theory&quot;);</span>
+<span class="nc" id="L179">    additional.setValue(Field.YEAR, &quot;2002&quot;);</span>
+<span class="nc" id="L180">    additional.setValue(Field.PAGES, &quot;351-363&quot;);</span>
+<span class="nc" id="L181">    additional.setValue(Field.PUBLISHER, &quot;Springer&quot;);</span>
+    
+<span class="nc" id="L183">    return result;</span>
+  }
+
+  /**
+   * Returns default capabilities of the clusterer.
+   *
+   * @return      the capabilities of this clusterer
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L192">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L193">    result.disableAll();</span>
+<span class="nc" id="L194">    result.enable(Capability.NO_CLASS);</span>
+
+    // attributes
+<span class="nc" id="L197">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="nc" id="L198">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="nc" id="L199">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="nc" id="L200">    result.enable(Capability.MISSING_VALUES);</span>
+
+<span class="nc" id="L202">    return result;</span>
+  }
+
+  /**
+   * Generates a clusterer. Has to initialize all fields of the clusterer
+   * that are not being set via options.
+   *
+   * @param data set of instances serving as training data 
+   * @throws Exception if the clusterer has not been 
+   * generated successfully
+   */
+  public void buildClusterer(Instances data) throws Exception {
+
+    // can clusterer handle the data?
+<span class="nc" id="L216">    getCapabilities().testWithFail(data);</span>
+
+    //long start = System.currentTimeMillis();
+
+<span class="nc" id="L220">    m_ReplaceMissingFilter = new ReplaceMissingValues();</span>
+<span class="nc" id="L221">    m_ReplaceMissingFilter.setInputFormat(data);</span>
+<span class="nc" id="L222">    m_instances = Filter.useFilter(data, m_ReplaceMissingFilter);</span>
+
+<span class="nc" id="L224">    initMinMax(m_instances);</span>
+
+<span class="nc" id="L226">    m_ClusterCentroids = new Instances(m_instances, m_NumClusters);</span>
+
+<span class="nc" id="L228">    int n = m_instances.numInstances();</span>
+<span class="nc" id="L229">    Random r = new Random(getSeed());</span>
+<span class="nc" id="L230">    boolean[] selected = new boolean[n];</span>
+<span class="nc" id="L231">    double[] minDistance = new double[n];</span>
+
+<span class="nc bnc" id="L233" title="All 2 branches missed.">    for(int i = 0; i&lt;n; i++) minDistance[i] = Double.MAX_VALUE;</span>
+
+<span class="nc" id="L235">    int firstI = r.nextInt(n);</span>
+<span class="nc" id="L236">    m_ClusterCentroids.add(m_instances.instance(firstI));</span>
+<span class="nc" id="L237">    selected[firstI] = true;</span>
+
+<span class="nc" id="L239">    updateMinDistance(minDistance,selected,m_instances,m_instances.instance(firstI));</span>
+
+<span class="nc bnc" id="L241" title="All 2 branches missed.">    if (m_NumClusters &gt; n) m_NumClusters = n;</span>
+
+<span class="nc bnc" id="L243" title="All 2 branches missed.">    for(int i = 1; i &lt; m_NumClusters; i++) {</span>
+<span class="nc" id="L244">      int nextI =  farthestAway(minDistance, selected);</span>
+<span class="nc" id="L245">      m_ClusterCentroids.add(m_instances.instance(nextI));</span>
+<span class="nc" id="L246">      selected[nextI] = true;</span>
+<span class="nc" id="L247">      updateMinDistance(minDistance,selected,m_instances,m_instances.instance(nextI));</span>
+    }
+
+<span class="nc" id="L250">    m_instances = new Instances(m_instances,0);</span>
+    //long end = System.currentTimeMillis();
+    //System.out.println(&quot;Clustering Time = &quot; + (end-start));
+<span class="nc" id="L253">  }</span>
+
+
+  protected void updateMinDistance(double[] minDistance, boolean[] selected, 
+				   Instances data, Instance center) {
+<span class="nc bnc" id="L258" title="All 2 branches missed.">    for(int i = 0; i&lt;selected.length; i++) </span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">      if (!selected[i]) {</span>
+<span class="nc" id="L260">	double d = distance(center,data.instance(i));</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">	if (d&lt;minDistance[i]) </span>
+<span class="nc" id="L262">	  minDistance[i] = d;</span>
+      }
+<span class="nc" id="L264">  }</span>
+
+  protected int farthestAway(double[] minDistance, boolean[] selected) {
+<span class="nc" id="L267">    double maxDistance = -1.0;</span>
+<span class="nc" id="L268">    int maxI = -1;</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">    for(int i = 0; i&lt;selected.length; i++) </span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">      if (!selected[i]) </span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">	if (maxDistance &lt; minDistance[i]) {</span>
+<span class="nc" id="L272">	  maxDistance = minDistance[i];</span>
+<span class="nc" id="L273">	  maxI = i;</span>
+	}
+<span class="nc" id="L275">    return maxI;</span>
+  }
+
+  protected void initMinMax(Instances data) {
+<span class="nc" id="L279">    m_Min = new double [data.numAttributes()];</span>
+<span class="nc" id="L280">    m_Max = new double [data.numAttributes()];</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numAttributes(); i++) {</span>
+<span class="nc" id="L282">      m_Min[i] = m_Max[i] = Double.NaN;</span>
+    }
+
+<span class="nc bnc" id="L285" title="All 2 branches missed.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="nc" id="L286">      updateMinMax(data.instance(i));</span>
+    }
+<span class="nc" id="L288">  }</span>
+
+
+  /**
+   * Updates the minimum and maximum values for all the attributes
+   * based on a new instance.
+   *
+   * @param instance the new instance
+   */
+  private void updateMinMax(Instance instance) {  
+
+<span class="nc bnc" id="L299" title="All 2 branches missed.">    for (int j = 0;j &lt; instance.numAttributes(); j++) {</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">      if (Double.isNaN(m_Min[j])) {</span>
+<span class="nc" id="L301">	m_Min[j] = instance.value(j);</span>
+<span class="nc" id="L302">	m_Max[j] = instance.value(j);</span>
+      } else {
+<span class="nc bnc" id="L304" title="All 2 branches missed.">	if (instance.value(j) &lt; m_Min[j]) {</span>
+<span class="nc" id="L305">	  m_Min[j] = instance.value(j);</span>
+	} else {
+<span class="nc bnc" id="L307" title="All 2 branches missed.">	  if (instance.value(j) &gt; m_Max[j]) {</span>
+<span class="nc" id="L308">	    m_Max[j] = instance.value(j);</span>
+	  }
+	}
+      }
+    }
+<span class="nc" id="L313">  }</span>
+
+
+  /**
+   * clusters an instance that has been through the filters
+   *
+   * @param instance the instance to assign a cluster to
+   * @return a cluster number
+   */
+  protected int clusterProcessedInstance(Instance instance) {
+<span class="nc" id="L323">    double minDist = Double.MAX_VALUE;</span>
+<span class="nc" id="L324">    int bestCluster = 0;</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">    for (int i = 0; i &lt; m_NumClusters; i++) {</span>
+<span class="nc" id="L326">      double dist = distance(instance, m_ClusterCentroids.instance(i));</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">      if (dist &lt; minDist) {</span>
+<span class="nc" id="L328">	minDist = dist;</span>
+<span class="nc" id="L329">	bestCluster = i;</span>
+      }
+    }
+<span class="nc" id="L332">    return bestCluster;</span>
+  }
+
+  /**
+   * Classifies a given instance.
+   *
+   * @param instance the instance to be assigned to a cluster
+   * @return the number of the assigned cluster as an integer
+   * if the class is enumerated, otherwise the predicted value
+   * @throws Exception if instance could not be classified
+   * successfully
+   */
+  public int clusterInstance(Instance instance) throws Exception {
+<span class="nc" id="L345">    m_ReplaceMissingFilter.input(instance);</span>
+<span class="nc" id="L346">    m_ReplaceMissingFilter.batchFinished();</span>
+<span class="nc" id="L347">    Instance inst = m_ReplaceMissingFilter.output();</span>
+
+<span class="nc" id="L349">    return clusterProcessedInstance(inst);</span>
+  }
+
+  /**
+   * Calculates the distance between two instances
+   *
+   * @param first the first instance
+   * @param second the second instance
+   * @return the distance between the two given instances, between 0 and 1
+   */          
+  protected double distance(Instance first, Instance second) {  
+
+<span class="nc" id="L361">    double distance = 0;</span>
+    int firstI, secondI;
+
+<span class="nc" id="L364">    for (int p1 = 0, p2 = 0; </span>
+<span class="nc bnc" id="L365" title="All 4 branches missed.">	 p1 &lt; first.numValues() || p2 &lt; second.numValues();) {</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">      if (p1 &gt;= first.numValues()) {</span>
+<span class="nc" id="L367">	firstI = m_instances.numAttributes();</span>
+      } else {
+<span class="nc" id="L369">	firstI = first.index(p1); </span>
+      }
+<span class="nc bnc" id="L371" title="All 2 branches missed.">      if (p2 &gt;= second.numValues()) {</span>
+<span class="nc" id="L372">	secondI = m_instances.numAttributes();</span>
+      } else {
+<span class="nc" id="L374">	secondI = second.index(p2);</span>
+      }
+<span class="nc bnc" id="L376" title="All 2 branches missed.">      if (firstI == m_instances.classIndex()) {</span>
+<span class="nc" id="L377">	p1++; continue;</span>
+      } 
+<span class="nc bnc" id="L379" title="All 2 branches missed.">      if (secondI == m_instances.classIndex()) {</span>
+<span class="nc" id="L380">	p2++; continue;</span>
+      } 
+      double diff;
+<span class="nc bnc" id="L383" title="All 2 branches missed.">      if (firstI == secondI) {</span>
+<span class="nc" id="L384">	diff = difference(firstI, </span>
+<span class="nc" id="L385">			  first.valueSparse(p1),</span>
+<span class="nc" id="L386">			  second.valueSparse(p2));</span>
+<span class="nc" id="L387">	p1++; p2++;</span>
+<span class="nc bnc" id="L388" title="All 2 branches missed.">      } else if (firstI &gt; secondI) {</span>
+<span class="nc" id="L389">	diff = difference(secondI, </span>
+<span class="nc" id="L390">			  0, second.valueSparse(p2));</span>
+<span class="nc" id="L391">	p2++;</span>
+      } else {
+<span class="nc" id="L393">	diff = difference(firstI, </span>
+<span class="nc" id="L394">			  first.valueSparse(p1), 0);</span>
+<span class="nc" id="L395">	p1++;</span>
+      }
+<span class="nc" id="L397">      distance += diff * diff;</span>
+    }
+    
+<span class="nc" id="L400">    return Math.sqrt(distance / m_instances.numAttributes());</span>
+  }
+
+  /**
+   * Computes the difference between two given attribute
+   * values.
+   */
+  protected double difference(int index, double val1, double val2) {
+
+<span class="nc bnc" id="L409" title="All 3 branches missed.">    switch (m_instances.attribute(index).type()) {</span>
+    case Attribute.NOMINAL:
+      
+      // If attribute is nominal
+<span class="nc bnc" id="L413" title="All 2 branches missed.">      if (Instance.isMissingValue(val1) || </span>
+<span class="nc bnc" id="L414" title="All 2 branches missed.">	  Instance.isMissingValue(val2) ||</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">	  ((int)val1 != (int)val2)) {</span>
+<span class="nc" id="L416">	return 1;</span>
+      } else {
+<span class="nc" id="L418">	return 0;</span>
+      }
+    case Attribute.NUMERIC:
+
+      // If attribute is numeric
+<span class="nc bnc" id="L423" title="All 2 branches missed.">      if (Instance.isMissingValue(val1) || </span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">	  Instance.isMissingValue(val2)) {</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">	if (Instance.isMissingValue(val1) &amp;&amp; </span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">	    Instance.isMissingValue(val2)) {</span>
+<span class="nc" id="L427">	  return 1;</span>
+	} else {
+	  double diff;
+<span class="nc bnc" id="L430" title="All 2 branches missed.">	  if (Instance.isMissingValue(val2)) {</span>
+<span class="nc" id="L431">	    diff = norm(val1, index);</span>
+	  } else {
+<span class="nc" id="L433">	    diff = norm(val2, index);</span>
+	  }
+<span class="nc bnc" id="L435" title="All 2 branches missed.">	  if (diff &lt; 0.5) {</span>
+<span class="nc" id="L436">	    diff = 1.0 - diff;</span>
+	  }
+<span class="nc" id="L438">	  return diff;</span>
+	}
+      } else {
+<span class="nc" id="L441">	return norm(val1, index) - norm(val2, index);</span>
+      }
+    default:
+<span class="nc" id="L444">      return 0;</span>
+    }
+  }
+
+  /**
+   * Normalizes a given value of a numeric attribute.
+   *
+   * @param x the value to be normalized
+   * @param i the attribute's index
+   * @return the normalized value
+   */
+  protected double norm(double x, int i) {
+
+<span class="nc bnc" id="L457" title="All 4 branches missed.">    if (Double.isNaN(m_Min[i]) || Utils.eq(m_Max[i],m_Min[i])) {</span>
+<span class="nc" id="L458">      return 0;</span>
+    } else {
+<span class="nc" id="L460">      return (x - m_Min[i]) / (m_Max[i] - m_Min[i]);</span>
+    }
+  }
+
+  /**
+   * Returns the number of clusters.
+   *
+   * @return the number of clusters generated for a training dataset.
+   * @throws Exception if number of clusters could not be returned
+   * successfully
+   */
+  public int numberOfClusters() throws Exception {
+<span class="nc" id="L472">    return m_NumClusters;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   * 
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions () {
+<span class="nc" id="L481">    Vector result = new Vector();</span>
+    
+<span class="nc" id="L483">    result.addElement(new Option(</span>
+<span class="nc" id="L484">	&quot;\tnumber of clusters. (default = 2).&quot;, </span>
+<span class="nc" id="L485">	&quot;N&quot;, 1, &quot;-N &lt;num&gt;&quot;));</span>
+    
+<span class="nc" id="L487">    Enumeration en = super.listOptions();</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">    while (en.hasMoreElements())</span>
+<span class="nc" id="L489">      result.addElement(en.nextElement());</span>
+    
+<span class="nc" id="L491">    return  result.elements();</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String numClustersTipText() {
+<span class="nc" id="L500">    return &quot;set number of clusters&quot;;</span>
+  }
+
+  /**
+   * set the number of clusters to generate
+   *
+   * @param n the number of clusters to generate
+   * @throws Exception if number of clusters is negative
+   */
+  public void setNumClusters(int n) throws Exception {
+<span class="nc bnc" id="L510" title="All 2 branches missed.">    if (n &lt; 0) {</span>
+<span class="nc" id="L511">      throw new Exception(&quot;Number of clusters must be &gt; 0&quot;);</span>
+    }
+<span class="nc" id="L513">    m_NumClusters = n;</span>
+<span class="nc" id="L514">  }</span>
+
+  /**
+   * gets the number of clusters to generate
+   *
+   * @return the number of clusters to generate
+   */
+  public int getNumClusters() {
+<span class="nc" id="L522">    return m_NumClusters;</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+   *  number of clusters. (default = 2).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions (String[] options)
+    throws Exception {
+
+<span class="nc" id="L546">    String optionString = Utils.getOption('N', options);</span>
+
+<span class="nc bnc" id="L548" title="All 2 branches missed.">    if (optionString.length() != 0) {</span>
+<span class="nc" id="L549">      setNumClusters(Integer.parseInt(optionString));</span>
+    }
+    
+<span class="nc" id="L552">    super.setOptions(options);</span>
+<span class="nc" id="L553">  }</span>
+
+  /**
+   * Gets the current settings of FarthestFirst
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions () {
+    int       	i;
+    Vector    	result;
+    String[]  	options;
+
+<span class="nc" id="L565">    result = new Vector();</span>
+
+<span class="nc" id="L567">    result.add(&quot;-N&quot;);</span>
+<span class="nc" id="L568">    result.add(&quot;&quot; + getNumClusters());</span>
+
+<span class="nc" id="L570">    options = super.getOptions();</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="nc" id="L572">      result.add(options[i]);</span>
+
+<span class="nc" id="L574">    return (String[]) result.toArray(new String[result.size()]);	  </span>
+  }
+
+  /**
+   * return a string describing this clusterer
+   *
+   * @return a description of the clusterer as a string
+   */
+  public String toString() {
+<span class="nc" id="L583">    StringBuffer temp = new StringBuffer();</span>
+
+<span class="nc" id="L585">    temp.append(&quot;\n FarthestFirst\n==============\n&quot;);</span>
+
+<span class="nc" id="L587">    temp.append(&quot;\nCluster centroids:\n&quot;);</span>
+<span class="nc bnc" id="L588" title="All 2 branches missed.">    for (int i = 0; i &lt; m_NumClusters; i++) {</span>
+<span class="nc" id="L589">      temp.append(&quot;\nCluster &quot;+i+&quot;\n\t&quot;);</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">      for (int j = 0; j &lt; m_ClusterCentroids.numAttributes(); j++) {</span>
+<span class="nc bnc" id="L591" title="All 2 branches missed.">	if (m_ClusterCentroids.attribute(j).isNominal()) {</span>
+<span class="nc" id="L592">	  temp.append(&quot; &quot;+m_ClusterCentroids.attribute(j).</span>
+<span class="nc" id="L593">		      value((int)m_ClusterCentroids.instance(i).value(j)));</span>
+	} else {
+<span class="nc" id="L595">	  temp.append(&quot; &quot;+m_ClusterCentroids.instance(i).value(j));</span>
+	}
+      }
+    }
+<span class="nc" id="L599">    temp.append(&quot;\n\n&quot;);</span>
+<span class="nc" id="L600">    return temp.toString();</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L609">    return RevisionUtils.extract(&quot;$Revision: 5538 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain the following arguments: &lt;p&gt;
+   * -t training file [-N number of clusters]
+   */
+  public static void main (String[] argv) {
+<span class="nc" id="L619">    runClusterer(new FarthestFirst(), argv);</span>
+<span class="nc" id="L620">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

@@ -1,0 +1,554 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>MIOptimalBall.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.mi</a> &gt; <span class="el_source">MIOptimalBall.java</span></div><h1>MIOptimalBall.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * MIOptimalBall.java
+ * Copyright (C) 2005 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.mi;
+
+import weka.classifiers.Classifier;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.MultiInstanceCapabilitiesHandler;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.core.matrix.DoubleVector;
+import weka.filters.Filter;
+import weka.filters.unsupervised.attribute.MultiInstanceToPropositional;
+import weka.filters.unsupervised.attribute.Normalize;
+import weka.filters.unsupervised.attribute.PropositionalToMultiInstance;
+import weka.filters.unsupervised.attribute.Standardize;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * This classifier tries to find a suitable ball in the multiple-instance space, with a certain data point in the instance space as a ball center. The possible ball center is a certain instance in a positive bag. The possible radiuses are those which can achieve the highest classification accuracy. The model selects the maximum radius as the radius of the optimal ball.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information about this algorithm, see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Peter Auer, Ronald Ortner: A Boosting Approach to Multiple Instance Learning. In: 15th European Conference on Machine Learning, 63-74, 2004.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;inproceedings{Auer2004,
+ *    author = {Peter Auer and Ronald Ortner},
+ *    booktitle = {15th European Conference on Machine Learning},
+ *    note = {LNAI 3201},
+ *    pages = {63-74},
+ *    publisher = {Springer},
+ *    title = {A Boosting Approach to Multiple Instance Learning},
+ *    year = {2004}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+ *  Whether to 0=normalize/1=standardize/2=neither. 
+ *  (default 0=normalize)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ * 
+ * @author Lin Dong (ld21@cs.waikato.ac.nz)
+ * @version $Revision: 9144 $ 
+ */
+<span class="fc" id="L90">public class MIOptimalBall </span>
+  extends Classifier 
+  implements OptionHandler, WeightedInstancesHandler, 
+             MultiInstanceCapabilitiesHandler, TechnicalInformationHandler {  
+
+  /** for serialization */
+  static final long serialVersionUID = -6465750129576777254L;
+  
+  /** center of the optimal ball */
+  protected double[] m_Center;
+
+  /** radius of the optimal ball */
+  protected double m_Radius;
+
+  /** the distances from each instance in a positive bag to each bag*/
+  protected double [][][]m_Distance;
+
+  /** The filter used to standardize/normalize all values. */
+<span class="fc" id="L108">  protected Filter m_Filter = null;</span>
+
+  /** Whether to normalize/standardize/neither */
+<span class="fc" id="L111">  protected int m_filterType = FILTER_NORMALIZE;</span>
+
+  /** Normalize training data */
+  public static final int FILTER_NORMALIZE = 0;
+  /** Standardize training data */
+  public static final int FILTER_STANDARDIZE = 1;
+  /** No normalization/standardization */
+  public static final int FILTER_NONE = 2;
+  /** The filter to apply to the training data */
+<span class="fc" id="L120">  public static final Tag [] TAGS_FILTER = {</span>
+<span class="fc" id="L121">    new Tag(FILTER_NORMALIZE, &quot;Normalize training data&quot;),</span>
+<span class="fc" id="L122">    new Tag(FILTER_STANDARDIZE, &quot;Standardize training data&quot;),</span>
+<span class="fc" id="L123">    new Tag(FILTER_NONE, &quot;No normalization/standardization&quot;),</span>
+  };
+
+  /** filter used to convert the MI dataset into single-instance dataset */
+<span class="fc" id="L127">  protected MultiInstanceToPropositional m_ConvertToSI = new MultiInstanceToPropositional();</span>
+
+  /** filter used to convert the single-instance dataset into MI dataset */
+<span class="fc" id="L130">  protected PropositionalToMultiInstance m_ConvertToMI = new PropositionalToMultiInstance();</span>
+
+  /**
+   * Returns a string describing this filter
+   *
+   * @return a description of the filter suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L139">    return</span>
+<span class="nc" id="L140">         &quot;This classifier tries to find a suitable ball in the &quot;</span>
+       + &quot;multiple-instance space, with a certain data point in the instance &quot;
+       + &quot;space as a ball center. The possible ball center is a certain &quot;
+       + &quot;instance in a positive bag. The possible radiuses are those which can &quot;
+       + &quot;achieve the highest classification accuracy. The model selects the &quot;
+       + &quot;maximum radius as the radius of the optimal ball.\n\n&quot;
+       + &quot;For more information about this algorithm, see:\n\n&quot;
+<span class="nc" id="L147">       + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L160">    result = new TechnicalInformation(Type.INPROCEEDINGS);</span>
+<span class="nc" id="L161">    result.setValue(Field.AUTHOR, &quot;Peter Auer and Ronald Ortner&quot;);</span>
+<span class="nc" id="L162">    result.setValue(Field.TITLE, &quot;A Boosting Approach to Multiple Instance Learning&quot;);</span>
+<span class="nc" id="L163">    result.setValue(Field.BOOKTITLE, &quot;15th European Conference on Machine Learning&quot;);</span>
+<span class="nc" id="L164">    result.setValue(Field.YEAR, &quot;2004&quot;);</span>
+<span class="nc" id="L165">    result.setValue(Field.PAGES, &quot;63-74&quot;);</span>
+<span class="nc" id="L166">    result.setValue(Field.PUBLISHER, &quot;Springer&quot;);</span>
+<span class="nc" id="L167">    result.setValue(Field.NOTE, &quot;LNAI 3201&quot;);</span>
+    
+<span class="nc" id="L169">    return result;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L178">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L179">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L182">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L183">    result.enable(Capability.RELATIONAL_ATTRIBUTES);</span>
+
+    // class
+<span class="fc" id="L186">    result.enable(Capability.BINARY_CLASS);</span>
+<span class="fc" id="L187">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+    // other
+<span class="fc" id="L190">    result.enable(Capability.ONLY_MULTIINSTANCE);</span>
+    
+<span class="fc" id="L192">    return result;</span>
+  }
+
+  /**
+   * Returns the capabilities of this multi-instance classifier for the
+   * relational data.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getMultiInstanceCapabilities() {
+<span class="fc" id="L203">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L204">    result.disableAll();</span>
+    
+    // attributes
+<span class="fc" id="L207">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L208">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L209">    result.enable(Capability.DATE_ATTRIBUTES);</span>
+<span class="fc" id="L210">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L213">    result.disableAllClasses();</span>
+<span class="fc" id="L214">    result.enable(Capability.NO_CLASS);</span>
+    
+<span class="fc" id="L216">    return result;</span>
+  }
+
+  /**
+   * Builds the classifier
+   *
+   * @param data the training data to be used for generating the
+   * boosted classifier.
+   * @throws Exception if the classifier could not be built successfully
+   */
+  public void buildClassifier(Instances data) throws Exception {
+    // can classifier handle the data?
+<span class="fc" id="L228">    getCapabilities().testWithFail(data);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L231">    Instances train = new Instances(data);</span>
+<span class="fc" id="L232">    train.deleteWithMissingClass();</span>
+    
+<span class="fc" id="L234">    int numAttributes = train.attribute(1).relation().numAttributes();	</span>
+<span class="fc" id="L235">    m_Center = new double[numAttributes];</span>
+
+<span class="pc bpc" id="L237" title="1 of 2 branches missed.">    if (getDebug())</span>
+<span class="nc" id="L238">      System.out.println(&quot;Start training ...&quot;); </span>
+
+    // convert the training dataset into single-instance dataset
+<span class="fc" id="L241">    m_ConvertToSI.setInputFormat(train);	</span>
+<span class="fc" id="L242">    train = Filter.useFilter( train, m_ConvertToSI);</span>
+
+<span class="pc bpc" id="L244" title="1 of 2 branches missed.">    if (m_filterType == FILTER_STANDARDIZE) </span>
+<span class="nc" id="L245">      m_Filter = new Standardize();</span>
+<span class="pc bpc" id="L246" title="1 of 2 branches missed.">    else if (m_filterType == FILTER_NORMALIZE)</span>
+<span class="fc" id="L247">      m_Filter = new Normalize();</span>
+    else 
+<span class="nc" id="L249">      m_Filter = null;</span>
+
+<span class="pc bpc" id="L251" title="1 of 2 branches missed.">    if (m_Filter!=null) {</span>
+      // normalize/standardize the converted training dataset
+<span class="fc" id="L253">      m_Filter.setInputFormat(train);</span>
+<span class="fc" id="L254">      train = Filter.useFilter(train, m_Filter);</span>
+    }
+
+    // convert the single-instance dataset into multi-instance dataset
+<span class="fc" id="L258">    m_ConvertToMI.setInputFormat(train);</span>
+<span class="fc" id="L259">    train = Filter.useFilter(train, m_ConvertToMI);</span>
+
+    /*calculate all the distances (and store them in m_Distance[][][]), which
+      are from each instance in all positive bags to all bags */
+<span class="fc" id="L263">    calculateDistance(train);</span>
+
+    /*find the suitable ball center (m_Center) and the corresponding radius (m_Radius)*/
+<span class="fc" id="L266">    findRadius(train); </span>
+
+<span class="pc bpc" id="L268" title="1 of 2 branches missed.">    if (getDebug())</span>
+<span class="nc" id="L269">      System.out.println(&quot;Finish building optimal ball model&quot;);</span>
+<span class="fc" id="L270">  }		</span>
+
+
+
+  /** 
+   * calculate the distances from each instance in a positive bag to each bag.
+   * All result distances are stored in m_Distance[i][j][k], where
+   * m_Distance[i][j][k] refers the distances from the jth instance in ith bag
+   * to the kth bag 
+   * 
+   * @param train the multi-instance dataset (with relational attribute)   
+   */
+  public void calculateDistance (Instances train) {
+<span class="fc" id="L283">    int numBags =train.numInstances();</span>
+    int numInstances;
+    Instance tempCenter;
+
+<span class="fc" id="L287">    m_Distance = new double [numBags][][];</span>
+<span class="fc bfc" id="L288" title="All 2 branches covered.">    for (int i=0; i&lt;numBags; i++) {</span>
+<span class="fc bfc" id="L289" title="All 2 branches covered.">      if (train.instance(i).classValue() == 1.0) { //positive bag</span>
+<span class="fc" id="L290">        numInstances = train.instance(i).relationalValue(1).numInstances();</span>
+<span class="fc" id="L291">        m_Distance[i]= new double[numInstances][];</span>
+<span class="fc bfc" id="L292" title="All 2 branches covered.">        for (int j=0; j&lt;numInstances; j++) {</span>
+<span class="fc" id="L293">          tempCenter = train.instance(i).relationalValue(1).instance(j);</span>
+<span class="fc" id="L294">          m_Distance[i][j]=new double [numBags];  //store the distance from one center to all the bags</span>
+<span class="fc bfc" id="L295" title="All 2 branches covered.">          for (int k=0; k&lt;numBags; k++){</span>
+<span class="fc bfc" id="L296" title="All 2 branches covered.">            if (i==k)</span>
+<span class="fc" id="L297">              m_Distance[i][j][k]= 0;     </span>
+            else 
+<span class="fc" id="L299">              m_Distance[i][j][k]= minBagDistance (tempCenter, train.instance(k));    	    </span>
+          }
+        }
+      } 
+    }
+<span class="fc" id="L304">  } </span>
+
+  /**
+   * Calculate the distance from one data point to a bag
+   *
+   * @param center the data point in instance space
+   * @param bag the bag 
+   * @return the double value as the distance.
+   */
+  public double minBagDistance (Instance center, Instance bag){
+    double distance;
+<span class="fc" id="L315">    double minDistance = Double.MAX_VALUE;</span>
+<span class="fc" id="L316">    Instances temp = bag.relationalValue(1);  </span>
+    //calculate the distance from the data point to each instance in the bag and return the minimum distance 
+<span class="fc bfc" id="L318" title="All 2 branches covered.">    for (int i=0; i&lt;temp.numInstances(); i++){</span>
+<span class="fc" id="L319">      distance =0;</span>
+<span class="fc bfc" id="L320" title="All 2 branches covered.">      for (int j=0; j&lt;center.numAttributes(); j++)</span>
+<span class="fc" id="L321">        distance += (center.value(j)-temp.instance(i).value(j))*(center.value(j)-temp.instance(i).value(j));</span>
+
+<span class="fc bfc" id="L323" title="All 2 branches covered.">      if (minDistance&gt;distance)</span>
+<span class="fc" id="L324">        minDistance = distance;</span>
+    }
+<span class="fc" id="L326">    return Math.sqrt(minDistance); </span>
+  }
+
+  /**
+   * Find the maximum radius for the optimal ball.
+   *
+   * @param train the multi-instance data 
+   */ 
+  public void findRadius(Instances train) {
+    int numBags, numInstances;
+    double radius, bagDistance;
+<span class="fc" id="L337">    int highestCount=0;</span>
+
+<span class="fc" id="L339">    numBags = train.numInstances();</span>
+    //try each instance in all positive bag as a ball center (tempCenter),   	
+<span class="fc bfc" id="L341" title="All 2 branches covered.">    for (int i=0; i&lt;numBags; i++) {</span>
+<span class="fc bfc" id="L342" title="All 2 branches covered.">      if (train.instance(i).classValue()== 1.0) {//positive bag   </span>
+<span class="fc" id="L343">        numInstances = train.instance(i).relationalValue(1).numInstances();</span>
+<span class="fc bfc" id="L344" title="All 2 branches covered.">        for (int j=0; j&lt;numInstances; j++) {   	    		</span>
+<span class="fc" id="L345">          Instance tempCenter = train.instance(i).relationalValue(1).instance(j);</span>
+
+          //set the possible set of ball radius corresponding to each tempCenter,
+<span class="fc" id="L348">          double sortedDistance[] = sortArray(m_Distance[i][j]); //sort the distance value    	          </span>
+<span class="fc bfc" id="L349" title="All 2 branches covered.">          for (int k=1; k&lt;sortedDistance.length; k++){</span>
+<span class="fc" id="L350">            radius = sortedDistance[k]-(sortedDistance[k]-sortedDistance[k-1])/2.0 ;</span>
+
+            //evaluate the performance on the training data according to
+            //the curren selected tempCenter and the set of radius   
+<span class="fc" id="L354">            int correctCount =0;</span>
+<span class="fc bfc" id="L355" title="All 2 branches covered.">            for (int n=0; n&lt;numBags; n++){</span>
+<span class="fc" id="L356">              bagDistance=m_Distance[i][j][n];  </span>
+<span class="fc bfc" id="L357" title="All 4 branches covered.">              if ((bagDistance &lt;= radius &amp;&amp; train.instance(n).classValue()==1.0) </span>
+<span class="pc bpc" id="L358" title="1 of 4 branches missed.">                  ||(bagDistance &gt; radius &amp;&amp; train.instance(n).classValue ()==0.0))</span>
+<span class="fc" id="L359">                correctCount += train.instance(n).weight();</span>
+
+            }
+
+            //and keep the track of the ball center and the maximum radius which can achieve the highest accuracy. 
+<span class="fc bfc" id="L364" title="All 6 branches covered.">            if (correctCount &gt; highestCount || (correctCount==highestCount &amp;&amp; radius &gt; m_Radius)){</span>
+<span class="fc" id="L365">              highestCount = correctCount;</span>
+<span class="fc" id="L366">              m_Radius = radius;</span>
+<span class="fc bfc" id="L367" title="All 2 branches covered.">              for (int p=0; p&lt;tempCenter.numAttributes(); p++)</span>
+<span class="fc" id="L368">                m_Center[p]= tempCenter.value(p);</span>
+            }      
+          }
+        }
+      }
+    } 
+<span class="fc" id="L374">  }</span>
+
+  /**
+   * Sort the array.
+   *
+   * @param distance the array need to be sorted
+   * @return sorted array
+   */ 
+  public double [] sortArray(double [] distance) {
+<span class="fc" id="L383">    double [] sorted = new double [distance.length];</span>
+
+    //make a copy of the array
+<span class="fc" id="L386">    double []disCopy = new double[distance.length];</span>
+<span class="fc bfc" id="L387" title="All 2 branches covered.">    for (int i=0;i&lt;distance.length; i++)</span>
+<span class="fc" id="L388">      disCopy[i]= distance[i];</span>
+
+<span class="fc" id="L390">    DoubleVector sortVector = new DoubleVector(disCopy);</span>
+<span class="fc" id="L391">    sortVector.sort();</span>
+<span class="fc" id="L392">    sorted = sortVector.getArrayCopy(); </span>
+<span class="fc" id="L393">    return sorted;</span>
+  }
+
+
+  /**
+   * Computes the distribution for a given multiple instance
+   *
+   * @param newBag the instance for which distribution is computed
+   * @return the distribution
+   * @throws Exception if the distribution can't be computed successfully
+   */
+  public double[] distributionForInstance(Instance newBag)
+    throws Exception {  
+
+<span class="fc" id="L407">    double [] distribution = new double[2];	</span>
+    double distance; 
+<span class="fc" id="L409">    distribution[0]=0;	 </span>
+<span class="fc" id="L410">    distribution[1]=0;</span>
+
+<span class="fc" id="L412">    Instances insts = new Instances(newBag.dataset(),0);</span>
+<span class="fc" id="L413">    insts.add(newBag);  </span>
+
+    // Filter instances 
+<span class="fc" id="L416">    insts= Filter.useFilter( insts, m_ConvertToSI); 	</span>
+<span class="pc bpc" id="L417" title="1 of 2 branches missed.">    if (m_Filter!=null) </span>
+<span class="fc" id="L418">      insts = Filter.useFilter(insts, m_Filter);     </span>
+
+    //calculate the distance from each single instance to the ball center
+<span class="fc" id="L421">    int numInsts = insts.numInstances(); 		</span>
+<span class="fc" id="L422">    insts.deleteAttributeAt(0); //remove the bagIndex attribute, no use for the distance calculation</span>
+
+<span class="fc bfc" id="L424" title="All 2 branches covered.">    for (int i=0; i&lt;numInsts; i++){</span>
+<span class="fc" id="L425">      distance =0;	   </span>
+<span class="fc bfc" id="L426" title="All 2 branches covered.">      for (int j=0; j&lt;insts.numAttributes()-1; j++)</span>
+<span class="fc" id="L427">        distance += (insts.instance(i).value(j) - m_Center[j])*(insts.instance(i).value(j)-m_Center[j]);  </span>
+
+<span class="fc bfc" id="L429" title="All 2 branches covered.">      if (distance &lt;=m_Radius*m_Radius){  // check whether this single instance is inside the ball</span>
+<span class="fc" id="L430">        distribution[1]=1.0;  //predicted as a positive bag   	  </span>
+<span class="fc" id="L431">        break;</span>
+      }	
+    }
+
+<span class="fc" id="L435">    distribution[0]= 1-distribution[1]; </span>
+
+<span class="fc" id="L437">    return distribution; </span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="fc" id="L446">    Vector result = new Vector();</span>
+
+<span class="fc" id="L448">    result.addElement(new Option(</span>
+<span class="fc" id="L449">          &quot;\tWhether to 0=normalize/1=standardize/2=neither. \n&quot;</span>
+          + &quot;\t(default 0=normalize)&quot;,
+<span class="fc" id="L451">          &quot;N&quot;, 1, &quot;-N &lt;num&gt;&quot;));</span>
+
+<span class="fc" id="L453">    return result.elements();</span>
+  }
+
+  /**
+   * Gets the current settings of the classifier.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+    Vector        result;
+    
+<span class="fc" id="L464">    result = new Vector();</span>
+
+<span class="pc bpc" id="L466" title="1 of 2 branches missed.">    if (getDebug())</span>
+<span class="nc" id="L467">      result.add(&quot;-D&quot;);</span>
+    
+<span class="fc" id="L469">    result.add(&quot;-N&quot;);</span>
+<span class="fc" id="L470">    result.add(&quot;&quot; + m_filterType);</span>
+
+<span class="fc" id="L472">    return (String[]) result.toArray(new String[result.size()]);</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+   *  Whether to 0=normalize/1=standardize/2=neither. 
+   *  (default 0=normalize)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   * 
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported 
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="fc" id="L491">    setDebug(Utils.getFlag('D', options));</span>
+
+<span class="fc" id="L493">    String nString = Utils.getOption('N', options);</span>
+<span class="fc bfc" id="L494" title="All 2 branches covered.">    if (nString.length() != 0) {</span>
+<span class="fc" id="L495">      setFilterType(new SelectedTag(Integer.parseInt(nString), TAGS_FILTER));</span>
+    } else {
+<span class="fc" id="L497">      setFilterType(new SelectedTag(FILTER_NORMALIZE, TAGS_FILTER));</span>
+    }
+<span class="fc" id="L499">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String filterTypeTipText() {
+<span class="nc" id="L508">    return &quot;The filter type for transforming the training data.&quot;;</span>
+  }
+
+  /**
+   * Sets how the training data will be transformed. Should be one of
+   * FILTER_NORMALIZE, FILTER_STANDARDIZE, FILTER_NONE.
+   *
+   * @param newType the new filtering mode
+   */
+  public void setFilterType(SelectedTag newType) {
+
+<span class="pc bpc" id="L519" title="1 of 2 branches missed.">    if (newType.getTags() == TAGS_FILTER) {</span>
+<span class="fc" id="L520">      m_filterType = newType.getSelectedTag().getID();</span>
+    }
+<span class="fc" id="L522">  }</span>
+
+  /**
+   * Gets how the training data will be transformed. Will be one of
+   * FILTER_NORMALIZE, FILTER_STANDARDIZE, FILTER_NONE.
+   *
+   * @return the filtering mode
+   */
+  public SelectedTag getFilterType() {
+
+<span class="nc" id="L532">    return new SelectedTag(m_filterType, TAGS_FILTER);</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L541">    return RevisionUtils.extract(&quot;$Revision: 9144 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain the command line arguments to the
+   * scheme (see Evaluation)
+   */
+  public static void main(String[] argv) {
+<span class="nc" id="L551">    runClassifier(new MIOptimalBall(), argv);</span>
+<span class="nc" id="L552">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

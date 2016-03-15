@@ -1,0 +1,2023 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>SimpleCart.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees</a> &gt; <span class="el_source">SimpleCart.java</span></div><h1>SimpleCart.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * SimpleCart.java
+ * Copyright (C) 2007 Haijian Shi
+ *
+ */
+
+package weka.classifiers.trees;
+
+import weka.classifiers.Evaluation;
+import weka.classifiers.RandomizableClassifier;
+import weka.core.AdditionalMeasureProducer;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.RevisionUtils;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+import weka.core.matrix.Matrix;
+
+import java.util.Arrays;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class implementing minimal cost-complexity pruning.&lt;br/&gt;
+ * Note when dealing with missing values, use &quot;fractional instances&quot; method instead of surrogate split method.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Leo Breiman, Jerome H. Friedman, Richard A. Olshen, Charles J. Stone (1984). Classification and Regression Trees. Wadsworth International Group, Belmont, California.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;	
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;book{Breiman1984,
+ *    address = {Belmont, California},
+ *    author = {Leo Breiman and Jerome H. Friedman and Richard A. Olshen and Charles J. Stone},
+ *    publisher = {Wadsworth International Group},
+ *    title = {Classification and Regression Trees},
+ *    year = {1984}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 1)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;min no&amp;gt;
+ *  The minimal number of instances at the terminal nodes.
+ *  (default 2)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;num folds&amp;gt;
+ *  The number of folds used in the minimal cost-complexity pruning.
+ *  (default 5)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -U
+ *  Don't use the minimal cost-complexity pruning.
+ *  (default yes).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -H
+ *  Don't use the heuristic method for binary split.
+ *  (default true).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -A
+ *  Use 1 SE rule to make pruning decision.
+ *  (default no).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -C
+ *  Percentage of training data size (0-1].
+ *  (default 1).&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Haijian Shi (hs69@cs.waikato.ac.nz)
+ * @version $Revision: 5535 $
+ */
+<span class="fc" id="L112">public class SimpleCart</span>
+  extends RandomizableClassifier
+  implements AdditionalMeasureProducer, TechnicalInformationHandler {
+
+  /** For serialization.	 */
+  private static final long serialVersionUID = 4154189200352566053L;
+
+  /** Training data.  */
+  protected Instances m_train;
+
+  /** Successor nodes. */
+  protected SimpleCart[] m_Successors;
+
+  /** Attribute used to split data. */
+  protected Attribute m_Attribute;
+
+  /** Split point for a numeric attribute. */
+  protected double m_SplitValue;
+
+  /** Split subset used to split data for nominal attributes. */
+  protected String m_SplitString;
+
+  /** Class value if the node is leaf. */
+  protected double m_ClassValue;
+
+  /** Class attriubte of data. */
+  protected Attribute m_ClassAttribute;
+
+  /** Minimum number of instances in at the terminal nodes. */
+<span class="fc" id="L141">  protected double m_minNumObj = 2;</span>
+
+  /** Number of folds for minimal cost-complexity pruning. */
+<span class="fc" id="L144">  protected int m_numFoldsPruning = 5;</span>
+
+  /** Alpha-value (for pruning) at the node. */
+  protected double m_Alpha;
+
+  /** Number of training examples misclassified by the model (subtree rooted). */
+  protected double m_numIncorrectModel;
+
+  /** Number of training examples misclassified by the model (subtree not rooted). */
+  protected double m_numIncorrectTree;
+
+  /** Indicate if the node is a leaf node. */
+  protected boolean m_isLeaf;
+
+  /** If use minimal cost-compexity pruning. */
+<span class="fc" id="L159">  protected boolean m_Prune = true;</span>
+
+  /** Total number of instances used to build the classifier. */
+  protected int m_totalTrainInstances;
+
+  /** Proportion for each branch. */
+  protected double[] m_Props;
+
+  /** Class probabilities. */
+<span class="fc" id="L168">  protected double[] m_ClassProbs = null;</span>
+
+  /** Distributions of leaf node (or temporary leaf node in minimal cost-complexity pruning) */
+  protected double[] m_Distribution;
+
+  /** If use huristic search for nominal attributes in multi-class problems (default true). */
+<span class="fc" id="L174">  protected boolean m_Heuristic = true;</span>
+
+  /** If use the 1SE rule to make final decision tree. */
+<span class="fc" id="L177">  protected boolean m_UseOneSE = false;</span>
+
+  /** Training data size. */
+<span class="fc" id="L180">  protected double m_SizePer = 1;</span>
+
+  /**
+   * Return a description suitable for displaying in the explorer/experimenter.
+   * 
+   * @return 		a description suitable for displaying in the 
+   * 			explorer/experimenter
+   */
+  public String globalInfo() {
+<span class="nc" id="L189">    return  </span>
+<span class="nc" id="L190">        &quot;Class implementing minimal cost-complexity pruning.\n&quot;</span>
+      + &quot;Note when dealing with missing values, use \&quot;fractional &quot;
+      + &quot;instances\&quot; method instead of surrogate split method.\n\n&quot;
+      + &quot;For more information, see:\n\n&quot;
+<span class="nc" id="L194">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return 		the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L207">    result = new TechnicalInformation(Type.BOOK);</span>
+<span class="nc" id="L208">    result.setValue(Field.AUTHOR, &quot;Leo Breiman and Jerome H. Friedman and Richard A. Olshen and Charles J. Stone&quot;);</span>
+<span class="nc" id="L209">    result.setValue(Field.YEAR, &quot;1984&quot;);</span>
+<span class="nc" id="L210">    result.setValue(Field.TITLE, &quot;Classification and Regression Trees&quot;);</span>
+<span class="nc" id="L211">    result.setValue(Field.PUBLISHER, &quot;Wadsworth International Group&quot;);</span>
+<span class="nc" id="L212">    result.setValue(Field.ADDRESS, &quot;Belmont, California&quot;);</span>
+    
+<span class="nc" id="L214">    return result;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   * 
+   * @return 		the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L223">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L224">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L227">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L228">    result.enable(Capability.NUMERIC_ATTRIBUTES);</span>
+<span class="fc" id="L229">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L232">    result.enable(Capability.NOMINAL_CLASS);</span>
+
+<span class="fc" id="L234">    return result;</span>
+  }
+
+  /**
+   * Build the classifier.
+   * 
+   * @param data 	the training instances
+   * @throws Exception 	if something goes wrong
+   */
+  public void buildClassifier(Instances data) throws Exception {
+
+<span class="fc" id="L245">    getCapabilities().testWithFail(data);</span>
+<span class="fc" id="L246">    data = new Instances(data);        </span>
+<span class="fc" id="L247">    data.deleteWithMissingClass();</span>
+
+    // unpruned CART decision tree
+<span class="pc bpc" id="L250" title="1 of 2 branches missed.">    if (!m_Prune) {</span>
+
+      // calculate sorted indices and weights, and compute initial class counts.
+<span class="nc" id="L253">      int[][] sortedIndices = new int[data.numAttributes()][0];</span>
+<span class="nc" id="L254">      double[][] weights = new double[data.numAttributes()][0];</span>
+<span class="nc" id="L255">      double[] classProbs = new double[data.numClasses()];</span>
+<span class="nc" id="L256">      double totalWeight = computeSortedInfo(data,sortedIndices, weights,classProbs);</span>
+
+<span class="nc" id="L258">      makeTree(data, data.numInstances(),sortedIndices,weights,classProbs,</span>
+<span class="nc" id="L259">	  totalWeight,m_minNumObj, m_Heuristic);</span>
+<span class="nc" id="L260">      return;</span>
+    }
+
+<span class="fc" id="L263">    Random random = new Random(m_Seed);</span>
+<span class="fc" id="L264">    Instances cvData = new Instances(data);</span>
+<span class="fc" id="L265">    cvData.randomize(random);</span>
+<span class="fc" id="L266">    cvData = new Instances(cvData,0,(int)(cvData.numInstances()*m_SizePer)-1);</span>
+<span class="fc" id="L267">    cvData.stratify(m_numFoldsPruning);</span>
+
+<span class="fc" id="L269">    double[][] alphas = new double[m_numFoldsPruning][];</span>
+<span class="fc" id="L270">    double[][] errors = new double[m_numFoldsPruning][];</span>
+
+    // calculate errors and alphas for each fold
+<span class="fc bfc" id="L273" title="All 2 branches covered.">    for (int i = 0; i &lt; m_numFoldsPruning; i++) {</span>
+
+      //for every fold, grow tree on training set and fix error on test set.
+<span class="fc" id="L276">      Instances train = cvData.trainCV(m_numFoldsPruning, i);</span>
+<span class="fc" id="L277">      Instances test = cvData.testCV(m_numFoldsPruning, i);</span>
+
+      // calculate sorted indices and weights, and compute initial class counts for each fold
+<span class="fc" id="L280">      int[][] sortedIndices = new int[train.numAttributes()][0];</span>
+<span class="fc" id="L281">      double[][] weights = new double[train.numAttributes()][0];</span>
+<span class="fc" id="L282">      double[] classProbs = new double[train.numClasses()];</span>
+<span class="fc" id="L283">      double totalWeight = computeSortedInfo(train,sortedIndices, weights,classProbs);</span>
+
+<span class="fc" id="L285">      makeTree(train, train.numInstances(),sortedIndices,weights,classProbs,</span>
+<span class="fc" id="L286">	  totalWeight,m_minNumObj, m_Heuristic);</span>
+
+<span class="fc" id="L288">      int numNodes = numInnerNodes();</span>
+<span class="fc" id="L289">      alphas[i] = new double[numNodes + 2];</span>
+<span class="fc" id="L290">      errors[i] = new double[numNodes + 2];</span>
+
+      // prune back and log alpha-values and errors on test set
+<span class="fc" id="L293">      prune(alphas[i], errors[i], test);</span>
+    }
+
+    // calculate sorted indices and weights, and compute initial class counts on all training instances
+<span class="fc" id="L297">    int[][] sortedIndices = new int[data.numAttributes()][0];</span>
+<span class="fc" id="L298">    double[][] weights = new double[data.numAttributes()][0];</span>
+<span class="fc" id="L299">    double[] classProbs = new double[data.numClasses()];</span>
+<span class="fc" id="L300">    double totalWeight = computeSortedInfo(data,sortedIndices, weights,classProbs);</span>
+
+    //build tree using all the data
+<span class="fc" id="L303">    makeTree(data, data.numInstances(),sortedIndices,weights,classProbs,</span>
+<span class="fc" id="L304">	totalWeight,m_minNumObj, m_Heuristic);</span>
+
+<span class="fc" id="L306">    int numNodes = numInnerNodes();</span>
+
+<span class="fc" id="L308">    double[] treeAlphas = new double[numNodes + 2];</span>
+
+    // prune back and log alpha-values
+<span class="fc" id="L311">    int iterations = prune(treeAlphas, null, null);</span>
+
+<span class="fc" id="L313">    double[] treeErrors = new double[numNodes + 2];</span>
+
+    // for each pruned subtree, find the cross-validated error
+<span class="fc bfc" id="L316" title="All 2 branches covered.">    for (int i = 0; i &lt;= iterations; i++){</span>
+      //compute midpoint alphas
+<span class="fc" id="L318">      double alpha = Math.sqrt(treeAlphas[i] * treeAlphas[i+1]);</span>
+<span class="fc" id="L319">      double error = 0;</span>
+<span class="fc bfc" id="L320" title="All 2 branches covered.">      for (int k = 0; k &lt; m_numFoldsPruning; k++) {</span>
+<span class="fc" id="L321">	int l = 0;</span>
+<span class="fc bfc" id="L322" title="All 2 branches covered.">	while (alphas[k][l] &lt;= alpha) l++;</span>
+<span class="fc" id="L323">	error += errors[k][l - 1];</span>
+      }
+<span class="fc" id="L325">      treeErrors[i] = error/m_numFoldsPruning;</span>
+    }
+
+    // find best alpha
+<span class="fc" id="L329">    int best = -1;</span>
+<span class="fc" id="L330">    double bestError = Double.MAX_VALUE;</span>
+<span class="fc bfc" id="L331" title="All 2 branches covered.">    for (int i = iterations; i &gt;= 0; i--) {</span>
+<span class="fc bfc" id="L332" title="All 2 branches covered.">      if (treeErrors[i] &lt; bestError) {</span>
+<span class="fc" id="L333">	bestError = treeErrors[i];</span>
+<span class="fc" id="L334">	best = i;</span>
+      }
+    }
+
+    // 1 SE rule to choose expansion
+<span class="pc bpc" id="L339" title="1 of 2 branches missed.">    if (m_UseOneSE) {</span>
+<span class="nc" id="L340">      double oneSE = Math.sqrt(bestError*(1-bestError)/(data.numInstances()));</span>
+<span class="nc bnc" id="L341" title="All 2 branches missed.">      for (int i = iterations; i &gt;= 0; i--) {</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">	if (treeErrors[i] &lt;= bestError+oneSE) {</span>
+<span class="nc" id="L343">	  best = i;</span>
+<span class="nc" id="L344">	  break;</span>
+	}
+      }
+    }
+
+<span class="fc" id="L349">    double bestAlpha = Math.sqrt(treeAlphas[best] * treeAlphas[best + 1]);</span>
+
+    //&quot;unprune&quot; final tree (faster than regrowing it)
+<span class="fc" id="L352">    unprune();</span>
+<span class="fc" id="L353">    prune(bestAlpha);        </span>
+<span class="fc" id="L354">  }</span>
+
+  /**
+   * Make binary decision tree recursively.
+   * 
+   * @param data 		the training instances
+   * @param totalInstances 	total number of instances
+   * @param sortedIndices 	sorted indices of the instances
+   * @param weights 		weights of the instances
+   * @param classProbs 		class probabilities
+   * @param totalWeight 	total weight of instances
+   * @param minNumObj 		minimal number of instances at leaf nodes
+   * @param useHeuristic 	if use heuristic search for nominal attributes in multi-class problem
+   * @throws Exception 		if something goes wrong
+   */
+  protected void makeTree(Instances data, int totalInstances, int[][] sortedIndices,
+      double[][] weights, double[] classProbs, double totalWeight, double minNumObj,
+      boolean useHeuristic) throws Exception{
+
+    // if no instances have reached this node (normally won't happen)
+<span class="pc bpc" id="L374" title="1 of 2 branches missed.">    if (totalWeight == 0){</span>
+<span class="nc" id="L375">      m_Attribute = null;</span>
+<span class="nc" id="L376">      m_ClassValue = Instance.missingValue();</span>
+<span class="nc" id="L377">      m_Distribution = new double[data.numClasses()];</span>
+<span class="nc" id="L378">      return;</span>
+    }
+
+<span class="fc" id="L381">    m_totalTrainInstances = totalInstances;</span>
+<span class="fc" id="L382">    m_isLeaf = true;</span>
+
+<span class="fc" id="L384">    m_ClassProbs = new double[classProbs.length];</span>
+<span class="fc" id="L385">    m_Distribution = new double[classProbs.length];</span>
+<span class="fc" id="L386">    System.arraycopy(classProbs, 0, m_ClassProbs, 0, classProbs.length);</span>
+<span class="fc" id="L387">    System.arraycopy(classProbs, 0, m_Distribution, 0, classProbs.length);</span>
+<span class="pc bpc" id="L388" title="1 of 2 branches missed.">    if (Utils.sum(m_ClassProbs)!=0) Utils.normalize(m_ClassProbs);</span>
+
+    // Compute class distributions and value of splitting
+    // criterion for each attribute
+<span class="fc" id="L392">    double[][][] dists = new double[data.numAttributes()][0][0];</span>
+<span class="fc" id="L393">    double[][] props = new double[data.numAttributes()][0];</span>
+<span class="fc" id="L394">    double[][] totalSubsetWeights = new double[data.numAttributes()][2];</span>
+<span class="fc" id="L395">    double[] splits = new double[data.numAttributes()];</span>
+<span class="fc" id="L396">    String[] splitString = new String[data.numAttributes()];</span>
+<span class="fc" id="L397">    double[] giniGains = new double[data.numAttributes()];</span>
+
+    // for each attribute find split information
+<span class="fc bfc" id="L400" title="All 2 branches covered.">    for (int i = 0; i &lt; data.numAttributes(); i++) {</span>
+<span class="fc" id="L401">      Attribute att = data.attribute(i);</span>
+<span class="fc bfc" id="L402" title="All 2 branches covered.">      if (i==data.classIndex()) continue;</span>
+<span class="fc bfc" id="L403" title="All 2 branches covered.">      if (att.isNumeric()) {</span>
+	// numeric attribute
+<span class="fc" id="L405">	splits[i] = numericDistribution(props, dists, att, sortedIndices[i],</span>
+<span class="fc" id="L406">	    weights[i], totalSubsetWeights, giniGains, data);</span>
+      } else {
+	// nominal attribute
+<span class="fc" id="L409">	splitString[i] = nominalDistribution(props, dists, att, sortedIndices[i],</span>
+<span class="fc" id="L410">	    weights[i], totalSubsetWeights, giniGains, data, useHeuristic);</span>
+      }
+    }
+
+    // Find best attribute (split with maximum Gini gain)
+<span class="fc" id="L415">    int attIndex = Utils.maxIndex(giniGains);</span>
+<span class="fc" id="L416">    m_Attribute = data.attribute(attIndex);</span>
+
+<span class="fc" id="L418">    m_train = new Instances(data, sortedIndices[attIndex].length);</span>
+<span class="fc bfc" id="L419" title="All 2 branches covered.">    for (int i=0; i&lt;sortedIndices[attIndex].length; i++) {</span>
+<span class="fc" id="L420">      Instance inst = data.instance(sortedIndices[attIndex][i]);</span>
+<span class="fc" id="L421">      Instance instCopy = (Instance)inst.copy();</span>
+<span class="fc" id="L422">      instCopy.setWeight(weights[attIndex][i]);</span>
+<span class="fc" id="L423">      m_train.add(instCopy);</span>
+    }
+
+    // Check if node does not contain enough instances, or if it can not be split,
+    // or if it is pure. If does, make leaf.
+<span class="fc bfc" id="L428" title="All 4 branches covered.">    if (totalWeight &lt; 2 * minNumObj || giniGains[attIndex]==0 ||</span>
+<span class="pc bpc" id="L429" title="2 of 4 branches missed.">	props[attIndex][0]==0 || props[attIndex][1]==0) {</span>
+<span class="fc" id="L430">      makeLeaf(data);</span>
+    }
+    
+    else {            
+<span class="fc" id="L434">      m_Props = props[attIndex];</span>
+<span class="fc" id="L435">      int[][][] subsetIndices = new int[2][data.numAttributes()][0];</span>
+<span class="fc" id="L436">      double[][][] subsetWeights = new double[2][data.numAttributes()][0];</span>
+
+      // numeric split
+<span class="fc bfc" id="L439" title="All 2 branches covered.">      if (m_Attribute.isNumeric()) m_SplitValue = splits[attIndex];</span>
+
+      // nominal split
+<span class="fc" id="L442">      else m_SplitString = splitString[attIndex];</span>
+
+<span class="fc" id="L444">      splitData(subsetIndices, subsetWeights, m_Attribute, m_SplitValue,</span>
+<span class="fc" id="L445">	  m_SplitString, sortedIndices, weights, data);</span>
+      
+      // If split of the node results in a node with less than minimal number of isntances, 
+      // make the node leaf node.
+<span class="fc bfc" id="L449" title="All 2 branches covered.">      if (subsetIndices[0][attIndex].length&lt;minNumObj ||</span>
+<span class="fc bfc" id="L450" title="All 2 branches covered.">	  subsetIndices[1][attIndex].length&lt;minNumObj) {</span>
+<span class="fc" id="L451">	makeLeaf(data);</span>
+<span class="fc" id="L452">	return;</span>
+      }
+
+      // Otherwise, split the node.
+<span class="fc" id="L456">      m_isLeaf = false;</span>
+<span class="fc" id="L457">      m_Successors = new SimpleCart[2];</span>
+<span class="fc bfc" id="L458" title="All 2 branches covered.">      for (int i = 0; i &lt; 2; i++) {</span>
+<span class="fc" id="L459">	m_Successors[i] = new SimpleCart();</span>
+<span class="fc" id="L460">	m_Successors[i].makeTree(data, m_totalTrainInstances, subsetIndices[i],</span>
+<span class="fc" id="L461">	    subsetWeights[i],dists[attIndex][i], totalSubsetWeights[attIndex][i],</span>
+<span class="fc" id="L462">	    minNumObj, useHeuristic);</span>
+      }
+    }
+<span class="fc" id="L465">  }</span>
+
+  /**
+   * Prunes the original tree using the CART pruning scheme, given a 
+   * cost-complexity parameter alpha.
+   * 
+   * @param alpha 	the cost-complexity parameter
+   * @throws Exception 	if something goes wrong
+   */
+  public void prune(double alpha) throws Exception {
+
+    Vector nodeList;
+
+    // determine training error of pruned subtrees (both with and without replacing a subtree),
+    // and calculate alpha-values from them
+<span class="fc" id="L480">    modelErrors();</span>
+<span class="fc" id="L481">    treeErrors();</span>
+<span class="fc" id="L482">    calculateAlphas();</span>
+
+    // get list of all inner nodes in the tree
+<span class="fc" id="L485">    nodeList = getInnerNodes();</span>
+
+<span class="fc bfc" id="L487" title="All 2 branches covered.">    boolean prune = (nodeList.size() &gt; 0);</span>
+<span class="fc" id="L488">    double preAlpha = Double.MAX_VALUE;</span>
+<span class="fc bfc" id="L489" title="All 2 branches covered.">    while (prune) {</span>
+
+      // select node with minimum alpha
+<span class="fc" id="L492">      SimpleCart nodeToPrune = nodeToPrune(nodeList);</span>
+
+      // want to prune if its alpha is smaller than alpha
+<span class="fc bfc" id="L495" title="All 2 branches covered.">      if (nodeToPrune.m_Alpha &gt; alpha) {</span>
+<span class="fc" id="L496">	break;</span>
+      }
+
+<span class="fc" id="L499">      nodeToPrune.makeLeaf(nodeToPrune.m_train);</span>
+
+      // normally would not happen
+<span class="pc bpc" id="L502" title="1 of 2 branches missed.">      if (nodeToPrune.m_Alpha==preAlpha) {</span>
+<span class="nc" id="L503">	nodeToPrune.makeLeaf(nodeToPrune.m_train);</span>
+<span class="nc" id="L504">	treeErrors();</span>
+<span class="nc" id="L505">	calculateAlphas();</span>
+<span class="nc" id="L506">	nodeList = getInnerNodes();</span>
+<span class="nc bnc" id="L507" title="All 2 branches missed.">	prune = (nodeList.size() &gt; 0);</span>
+<span class="nc" id="L508">	continue;</span>
+      }
+<span class="fc" id="L510">      preAlpha = nodeToPrune.m_Alpha;</span>
+
+      //update tree errors and alphas
+<span class="fc" id="L513">      treeErrors();</span>
+<span class="fc" id="L514">      calculateAlphas();</span>
+
+<span class="fc" id="L516">      nodeList = getInnerNodes();</span>
+<span class="fc bfc" id="L517" title="All 2 branches covered.">      prune = (nodeList.size() &gt; 0);</span>
+    }
+<span class="fc" id="L519">  }</span>
+
+  /**
+   * Method for performing one fold in the cross-validation of minimal 
+   * cost-complexity pruning. Generates a sequence of alpha-values with error 
+   * estimates for the corresponding (partially pruned) trees, given the test 
+   * set of that fold.
+   *
+   * @param alphas 	array to hold the generated alpha-values
+   * @param errors 	array to hold the corresponding error estimates
+   * @param test 	test set of that fold (to obtain error estimates)
+   * @return 		the iteration of the pruning
+   * @throws Exception 	if something goes wrong
+   */
+  public int prune(double[] alphas, double[] errors, Instances test) 
+    throws Exception {
+
+    Vector nodeList;
+
+    // determine training error of subtrees (both with and without replacing a subtree), 
+    // and calculate alpha-values from them
+<span class="fc" id="L540">    modelErrors();</span>
+<span class="fc" id="L541">    treeErrors();</span>
+<span class="fc" id="L542">    calculateAlphas();</span>
+
+    // get list of all inner nodes in the tree
+<span class="fc" id="L545">    nodeList = getInnerNodes();</span>
+
+<span class="fc bfc" id="L547" title="All 2 branches covered.">    boolean prune = (nodeList.size() &gt; 0);</span>
+
+    //alpha_0 is always zero (unpruned tree)
+<span class="fc" id="L550">    alphas[0] = 0;</span>
+
+    Evaluation eval;
+
+    // error of unpruned tree
+<span class="fc bfc" id="L555" title="All 2 branches covered.">    if (errors != null) {</span>
+<span class="fc" id="L556">      eval = new Evaluation(test);</span>
+<span class="fc" id="L557">      eval.evaluateModel(this, test);</span>
+<span class="fc" id="L558">      errors[0] = eval.errorRate();</span>
+    }
+
+<span class="fc" id="L561">    int iteration = 0;</span>
+<span class="fc" id="L562">    double preAlpha = Double.MAX_VALUE;</span>
+<span class="fc bfc" id="L563" title="All 2 branches covered.">    while (prune) {</span>
+
+<span class="fc" id="L565">      iteration++;</span>
+
+      // get node with minimum alpha
+<span class="fc" id="L568">      SimpleCart nodeToPrune = nodeToPrune(nodeList);</span>
+
+      // do not set m_sons null, want to unprune
+<span class="fc" id="L571">      nodeToPrune.m_isLeaf = true;</span>
+
+      // normally would not happen
+<span class="pc bpc" id="L574" title="1 of 2 branches missed.">      if (nodeToPrune.m_Alpha==preAlpha) {</span>
+<span class="nc" id="L575">	iteration--;</span>
+<span class="nc" id="L576">	treeErrors();</span>
+<span class="nc" id="L577">	calculateAlphas();</span>
+<span class="nc" id="L578">	nodeList = getInnerNodes();</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">	prune = (nodeList.size() &gt; 0);</span>
+<span class="nc" id="L580">	continue;</span>
+      }
+
+      // get alpha-value of node
+<span class="fc" id="L584">      alphas[iteration] = nodeToPrune.m_Alpha;</span>
+
+      // log error
+<span class="fc bfc" id="L587" title="All 2 branches covered.">      if (errors != null) {</span>
+<span class="fc" id="L588">	eval = new Evaluation(test);</span>
+<span class="fc" id="L589">	eval.evaluateModel(this, test);</span>
+<span class="fc" id="L590">	errors[iteration] = eval.errorRate();</span>
+      }
+<span class="fc" id="L592">      preAlpha = nodeToPrune.m_Alpha;</span>
+
+      //update errors/alphas
+<span class="fc" id="L595">      treeErrors();</span>
+<span class="fc" id="L596">      calculateAlphas();</span>
+
+<span class="fc" id="L598">      nodeList = getInnerNodes();</span>
+<span class="fc bfc" id="L599" title="All 2 branches covered.">      prune = (nodeList.size() &gt; 0);</span>
+    }
+
+    //set last alpha 1 to indicate end
+<span class="fc" id="L603">    alphas[iteration + 1] = 1.0;</span>
+<span class="fc" id="L604">    return iteration;</span>
+  }
+
+  /**
+   * Method to &quot;unprune&quot; the CART tree. Sets all leaf-fields to false.
+   * Faster than re-growing the tree because CART do not have to be fit again.
+   */
+  protected void unprune() {
+<span class="fc bfc" id="L612" title="All 2 branches covered.">    if (m_Successors != null) {</span>
+<span class="fc" id="L613">      m_isLeaf = false;</span>
+<span class="fc bfc" id="L614" title="All 2 branches covered.">      for (int i = 0; i &lt; m_Successors.length; i++) m_Successors[i].unprune();</span>
+    }
+<span class="fc" id="L616">  }</span>
+
+  /**
+   * Compute distributions, proportions and total weights of two successor 
+   * nodes for a given numeric attribute.
+   * 
+   * @param props 		proportions of each two branches for each attribute
+   * @param dists 		class distributions of two branches for each attribute
+   * @param att 		numeric att split on
+   * @param sortedIndices 	sorted indices of instances for the attirubte
+   * @param weights 		weights of instances for the attirbute
+   * @param subsetWeights 	total weight of two branches split based on the attribute
+   * @param giniGains 		Gini gains for each attribute 
+   * @param data 		training instances
+   * @return 			Gini gain the given numeric attribute
+   * @throws Exception 		if something goes wrong
+   */
+  protected double numericDistribution(double[][] props, double[][][] dists,
+      Attribute att, int[] sortedIndices, double[] weights, double[][] subsetWeights,
+      double[] giniGains, Instances data)
+    throws Exception {
+
+<span class="fc" id="L638">    double splitPoint = Double.NaN;</span>
+<span class="fc" id="L639">    double[][] dist = null;</span>
+<span class="fc" id="L640">    int numClasses = data.numClasses();</span>
+    int i; // differ instances with or without missing values
+
+<span class="fc" id="L643">    double[][] currDist = new double[2][numClasses];</span>
+<span class="fc" id="L644">    dist = new double[2][numClasses];</span>
+
+    // Move all instances without missing values into second subset
+<span class="fc" id="L647">    double[] parentDist = new double[numClasses];</span>
+<span class="fc" id="L648">    int missingStart = 0;</span>
+<span class="fc bfc" id="L649" title="All 2 branches covered.">    for (int j = 0; j &lt; sortedIndices.length; j++) {</span>
+<span class="fc" id="L650">      Instance inst = data.instance(sortedIndices[j]);</span>
+<span class="fc bfc" id="L651" title="All 2 branches covered.">      if (!inst.isMissing(att)) {</span>
+<span class="fc" id="L652">	missingStart ++;</span>
+<span class="fc" id="L653">	currDist[1][(int)inst.classValue()] += weights[j];</span>
+      }
+<span class="fc" id="L655">      parentDist[(int)inst.classValue()] += weights[j];</span>
+    }
+<span class="fc" id="L657">    System.arraycopy(currDist[1], 0, dist[1], 0, dist[1].length);</span>
+
+    // Try all possible split points
+<span class="fc" id="L660">    double currSplit = data.instance(sortedIndices[0]).value(att);</span>
+    double currGiniGain;
+<span class="fc" id="L662">    double bestGiniGain = -Double.MAX_VALUE;</span>
+
+<span class="fc bfc" id="L664" title="All 2 branches covered.">    for (i = 0; i &lt; sortedIndices.length; i++) {</span>
+<span class="fc" id="L665">      Instance inst = data.instance(sortedIndices[i]);</span>
+<span class="fc bfc" id="L666" title="All 2 branches covered.">      if (inst.isMissing(att)) {</span>
+<span class="fc" id="L667">	break;</span>
+      }
+<span class="fc bfc" id="L669" title="All 2 branches covered.">      if (inst.value(att) &gt; currSplit) {</span>
+
+<span class="fc" id="L671">	double[][] tempDist = new double[2][numClasses];</span>
+<span class="fc bfc" id="L672" title="All 2 branches covered.">	for (int k=0; k&lt;2; k++) {</span>
+	  //tempDist[k] = currDist[k];
+<span class="fc" id="L674">	  System.arraycopy(currDist[k], 0, tempDist[k], 0, tempDist[k].length);</span>
+	}
+
+<span class="fc" id="L677">	double[] tempProps = new double[2];</span>
+<span class="fc bfc" id="L678" title="All 2 branches covered.">	for (int k=0; k&lt;2; k++) {</span>
+<span class="fc" id="L679">	  tempProps[k] = Utils.sum(tempDist[k]);</span>
+	}
+
+<span class="pc bpc" id="L682" title="1 of 2 branches missed.">	if (Utils.sum(tempProps) !=0) Utils.normalize(tempProps);</span>
+
+	// split missing values
+<span class="fc" id="L685">	int index = missingStart;</span>
+<span class="fc bfc" id="L686" title="All 2 branches covered.">	while (index &lt; sortedIndices.length) {</span>
+<span class="fc" id="L687">	  Instance insta = data.instance(sortedIndices[index]);</span>
+<span class="fc bfc" id="L688" title="All 2 branches covered.">	  for (int j = 0; j &lt; 2; j++) {</span>
+<span class="fc" id="L689">	    tempDist[j][(int)insta.classValue()] += tempProps[j] * weights[index];</span>
+	  }
+<span class="fc" id="L691">	  index++;</span>
+	}
+
+<span class="fc" id="L694">	currGiniGain = computeGiniGain(parentDist,tempDist);</span>
+
+<span class="fc bfc" id="L696" title="All 2 branches covered.">	if (currGiniGain &gt; bestGiniGain) {</span>
+<span class="fc" id="L697">	  bestGiniGain = currGiniGain;</span>
+
+	  // clean split point
+//	  splitPoint = Math.rint((inst.value(att) + currSplit)/2.0*100000)/100000.0;
+<span class="fc" id="L701">	  splitPoint = (inst.value(att) + currSplit) / 2.0;</span>
+
+<span class="fc bfc" id="L703" title="All 2 branches covered.">	  for (int j = 0; j &lt; currDist.length; j++) {</span>
+<span class="fc" id="L704">	    System.arraycopy(tempDist[j], 0, dist[j], 0,</span>
+<span class="fc" id="L705">		dist[j].length);</span>
+	  }
+	}
+      }
+<span class="fc" id="L709">      currSplit = inst.value(att);</span>
+<span class="fc" id="L710">      currDist[0][(int)inst.classValue()] += weights[i];</span>
+<span class="fc" id="L711">      currDist[1][(int)inst.classValue()] -= weights[i];</span>
+    }
+
+    // Compute weights
+<span class="fc" id="L715">    int attIndex = att.index();</span>
+<span class="fc" id="L716">    props[attIndex] = new double[2];</span>
+<span class="fc bfc" id="L717" title="All 2 branches covered.">    for (int k = 0; k &lt; 2; k++) {</span>
+<span class="fc" id="L718">      props[attIndex][k] = Utils.sum(dist[k]);</span>
+    }
+<span class="fc bfc" id="L720" title="All 2 branches covered.">    if (Utils.sum(props[attIndex]) != 0) Utils.normalize(props[attIndex]);</span>
+
+    // Compute subset weights
+<span class="fc" id="L723">    subsetWeights[attIndex] = new double[2];</span>
+<span class="fc bfc" id="L724" title="All 2 branches covered.">    for (int j = 0; j &lt; 2; j++) {</span>
+<span class="fc" id="L725">      subsetWeights[attIndex][j] += Utils.sum(dist[j]);</span>
+    }
+
+    // clean Gini gain
+    //giniGains[attIndex] = Math.rint(bestGiniGain*10000000)/10000000.0;
+<span class="fc" id="L730">    giniGains[attIndex] = bestGiniGain;</span>
+<span class="fc" id="L731">    dists[attIndex] = dist;</span>
+
+<span class="fc" id="L733">    return splitPoint;</span>
+  }
+
+  /**
+   * Compute distributions, proportions and total weights of two successor 
+   * nodes for a given nominal attribute.
+   * 
+   * @param props 		proportions of each two branches for each attribute
+   * @param dists 		class distributions of two branches for each attribute
+   * @param att 		numeric att split on
+   * @param sortedIndices 	sorted indices of instances for the attirubte
+   * @param weights 		weights of instances for the attirbute
+   * @param subsetWeights 	total weight of two branches split based on the attribute
+   * @param giniGains 		Gini gains for each attribute 
+   * @param data 		training instances
+   * @param useHeuristic 	if use heuristic search
+   * @return 			Gini gain for the given nominal attribute
+   * @throws Exception 		if something goes wrong
+   */
+  protected String nominalDistribution(double[][] props, double[][][] dists,
+      Attribute att, int[] sortedIndices, double[] weights, double[][] subsetWeights,
+      double[] giniGains, Instances data, boolean useHeuristic)
+    throws Exception {
+
+<span class="fc" id="L757">    String[] values = new String[att.numValues()];</span>
+<span class="fc" id="L758">    int numCat = values.length; // number of values of the attribute</span>
+<span class="fc" id="L759">    int numClasses = data.numClasses();</span>
+
+<span class="fc" id="L761">    String bestSplitString = &quot;&quot;;</span>
+<span class="fc" id="L762">    double bestGiniGain = -Double.MAX_VALUE;</span>
+
+    // class frequency for each value
+<span class="fc" id="L765">    int[] classFreq = new int[numCat];</span>
+<span class="fc bfc" id="L766" title="All 2 branches covered.">    for (int j=0; j&lt;numCat; j++) classFreq[j] = 0;</span>
+
+<span class="fc" id="L768">    double[] parentDist = new double[numClasses];</span>
+<span class="fc" id="L769">    double[][] currDist = new double[2][numClasses];</span>
+<span class="fc" id="L770">    double[][] dist = new double[2][numClasses];</span>
+<span class="fc" id="L771">    int missingStart = 0;</span>
+
+<span class="fc bfc" id="L773" title="All 2 branches covered.">    for (int i = 0; i &lt; sortedIndices.length; i++) {</span>
+<span class="fc" id="L774">      Instance inst = data.instance(sortedIndices[i]);</span>
+<span class="fc bfc" id="L775" title="All 2 branches covered.">      if (!inst.isMissing(att)) {</span>
+<span class="fc" id="L776">	missingStart++;</span>
+<span class="fc" id="L777">	classFreq[(int)inst.value(att)] ++;</span>
+      }
+<span class="fc" id="L779">      parentDist[(int)inst.classValue()] += weights[i];</span>
+    }
+
+    // count the number of values that class frequency is not 0
+<span class="fc" id="L783">    int nonEmpty = 0;</span>
+<span class="fc bfc" id="L784" title="All 2 branches covered.">    for (int j=0; j&lt;numCat; j++) {</span>
+<span class="fc bfc" id="L785" title="All 2 branches covered.">      if (classFreq[j]!=0) nonEmpty ++;</span>
+    }
+
+    // attribute values that class frequency is not 0
+<span class="fc" id="L789">    String[] nonEmptyValues = new String[nonEmpty];</span>
+<span class="fc" id="L790">    int nonEmptyIndex = 0;</span>
+<span class="fc bfc" id="L791" title="All 2 branches covered.">    for (int j=0; j&lt;numCat; j++) {</span>
+<span class="fc bfc" id="L792" title="All 2 branches covered.">      if (classFreq[j]!=0) {</span>
+<span class="fc" id="L793">	nonEmptyValues[nonEmptyIndex] = att.value(j);</span>
+<span class="fc" id="L794">	nonEmptyIndex ++;</span>
+      }
+    }
+
+    // attribute values that class frequency is 0
+<span class="fc" id="L799">    int empty = numCat - nonEmpty;</span>
+<span class="fc" id="L800">    String[] emptyValues = new String[empty];</span>
+<span class="fc" id="L801">    int emptyIndex = 0;</span>
+<span class="fc bfc" id="L802" title="All 2 branches covered.">    for (int j=0; j&lt;numCat; j++) {</span>
+<span class="fc bfc" id="L803" title="All 2 branches covered.">      if (classFreq[j]==0) {</span>
+<span class="fc" id="L804">	emptyValues[emptyIndex] = att.value(j);</span>
+<span class="fc" id="L805">	emptyIndex ++;</span>
+      }
+    }
+
+<span class="fc bfc" id="L809" title="All 2 branches covered.">    if (nonEmpty&lt;=1) {</span>
+<span class="fc" id="L810">      giniGains[att.index()] = 0;</span>
+<span class="fc" id="L811">      return &quot;&quot;;</span>
+    }
+
+    // for tow-class probloms
+<span class="fc bfc" id="L815" title="All 2 branches covered.">    if (data.numClasses()==2) {</span>
+
+      //// Firstly, for attribute values which class frequency is not zero
+
+      // probability of class 0 for each attribute value
+<span class="fc" id="L820">      double[] pClass0 = new double[nonEmpty];</span>
+      // class distribution for each attribute value
+<span class="fc" id="L822">      double[][] valDist = new double[nonEmpty][2];</span>
+
+<span class="fc bfc" id="L824" title="All 2 branches covered.">      for (int j=0; j&lt;nonEmpty; j++) {</span>
+<span class="fc bfc" id="L825" title="All 2 branches covered.">	for (int k=0; k&lt;2; k++) {</span>
+<span class="fc" id="L826">	  valDist[j][k] = 0;</span>
+	}
+      }
+
+<span class="fc bfc" id="L830" title="All 2 branches covered.">      for (int i = 0; i &lt; sortedIndices.length; i++) {</span>
+<span class="fc" id="L831">	Instance inst = data.instance(sortedIndices[i]);</span>
+<span class="fc bfc" id="L832" title="All 2 branches covered.">	if (inst.isMissing(att)) {</span>
+<span class="fc" id="L833">	  break;</span>
+	}
+
+<span class="pc bpc" id="L836" title="1 of 2 branches missed.">	for (int j=0; j&lt;nonEmpty; j++) {</span>
+<span class="fc bfc" id="L837" title="All 2 branches covered.">	  if (att.value((int)inst.value(att)).compareTo(nonEmptyValues[j])==0) {</span>
+<span class="fc" id="L838">	    valDist[j][(int)inst.classValue()] += inst.weight();</span>
+<span class="fc" id="L839">	    break;</span>
+	  }
+	}
+      }
+
+<span class="fc bfc" id="L844" title="All 2 branches covered.">      for (int j=0; j&lt;nonEmpty; j++) {</span>
+<span class="fc" id="L845">	double distSum = Utils.sum(valDist[j]);</span>
+<span class="pc bpc" id="L846" title="1 of 2 branches missed.">	if (distSum==0) pClass0[j]=0;</span>
+<span class="fc" id="L847">	else pClass0[j] = valDist[j][0]/distSum;</span>
+      }
+
+      // sort category according to the probability of the first class
+<span class="fc" id="L851">      String[] sortedValues = new String[nonEmpty];</span>
+<span class="fc bfc" id="L852" title="All 2 branches covered.">      for (int j=0; j&lt;nonEmpty; j++) {</span>
+<span class="fc" id="L853">	sortedValues[j] = nonEmptyValues[Utils.minIndex(pClass0)];</span>
+<span class="fc" id="L854">	pClass0[Utils.minIndex(pClass0)] = Double.MAX_VALUE;</span>
+      }
+
+      // Find a subset of attribute values that maximize Gini decrease
+
+      // for the attribute values that class frequency is not 0
+<span class="fc" id="L860">      String tempStr = &quot;&quot;;</span>
+
+<span class="fc bfc" id="L862" title="All 2 branches covered.">      for (int j=0; j&lt;nonEmpty-1; j++) {</span>
+<span class="fc" id="L863">	currDist = new double[2][numClasses];</span>
+<span class="pc bpc" id="L864" title="1 of 2 branches missed.">	if (tempStr==&quot;&quot;) tempStr=&quot;(&quot; + sortedValues[j] + &quot;)&quot;;</span>
+<span class="nc" id="L865">	else tempStr += &quot;|&quot;+ &quot;(&quot; + sortedValues[j] + &quot;)&quot;;</span>
+<span class="fc bfc" id="L866" title="All 2 branches covered.">	for (int i=0; i&lt;sortedIndices.length;i++) {</span>
+<span class="fc" id="L867">	  Instance inst = data.instance(sortedIndices[i]);</span>
+<span class="fc bfc" id="L868" title="All 2 branches covered.">	  if (inst.isMissing(att)) {</span>
+<span class="fc" id="L869">	    break;</span>
+	  }
+
+<span class="fc bfc" id="L872" title="All 2 branches covered.">	  if (tempStr.indexOf</span>
+<span class="fc" id="L873">	      (&quot;(&quot; + att.value((int)inst.value(att)) + &quot;)&quot;)!=-1) {</span>
+<span class="fc" id="L874">	    currDist[0][(int)inst.classValue()] += weights[i];</span>
+<span class="fc" id="L875">	  } else currDist[1][(int)inst.classValue()] += weights[i];</span>
+	}
+
+<span class="fc" id="L878">	double[][] tempDist = new double[2][numClasses];</span>
+<span class="fc bfc" id="L879" title="All 2 branches covered.">	for (int kk=0; kk&lt;2; kk++) {</span>
+<span class="fc" id="L880">	  tempDist[kk] = currDist[kk];</span>
+	}
+
+<span class="fc" id="L883">	double[] tempProps = new double[2];</span>
+<span class="fc bfc" id="L884" title="All 2 branches covered.">	for (int kk=0; kk&lt;2; kk++) {</span>
+<span class="fc" id="L885">	  tempProps[kk] = Utils.sum(tempDist[kk]);</span>
+	}
+
+<span class="pc bpc" id="L888" title="1 of 2 branches missed.">	if (Utils.sum(tempProps)!=0) Utils.normalize(tempProps);</span>
+
+	// split missing values
+<span class="fc" id="L891">	int mstart = missingStart;</span>
+<span class="fc bfc" id="L892" title="All 2 branches covered.">	while (mstart &lt; sortedIndices.length) {</span>
+<span class="fc" id="L893">	  Instance insta = data.instance(sortedIndices[mstart]);</span>
+<span class="fc bfc" id="L894" title="All 2 branches covered.">	  for (int jj = 0; jj &lt; 2; jj++) {</span>
+<span class="fc" id="L895">	    tempDist[jj][(int)insta.classValue()] += tempProps[jj] * weights[mstart];</span>
+	  }
+<span class="fc" id="L897">	  mstart++;</span>
+	}
+
+<span class="fc" id="L900">	double currGiniGain = computeGiniGain(parentDist,tempDist);</span>
+
+<span class="pc bpc" id="L902" title="1 of 2 branches missed.">	if (currGiniGain&gt;bestGiniGain) {</span>
+<span class="fc" id="L903">	  bestGiniGain = currGiniGain;</span>
+<span class="fc" id="L904">	  bestSplitString = tempStr;</span>
+<span class="fc bfc" id="L905" title="All 2 branches covered.">	  for (int jj = 0; jj &lt; 2; jj++) {</span>
+	    //dist[jj] = new double[currDist[jj].length];
+<span class="fc" id="L907">	    System.arraycopy(tempDist[jj], 0, dist[jj], 0,</span>
+<span class="fc" id="L908">		dist[jj].length);</span>
+	  }
+	}
+      }
+    }
+
+    // multi-class problems - exhaustive search
+<span class="pc bpc" id="L915" title="2 of 4 branches missed.">    else if (!useHeuristic || nonEmpty&lt;=4) {</span>
+
+      // Firstly, for attribute values which class frequency is not zero
+<span class="fc bfc" id="L918" title="All 2 branches covered.">      for (int i=0; i&lt;(int)Math.pow(2,nonEmpty-1); i++) {</span>
+<span class="fc" id="L919">	String tempStr=&quot;&quot;;</span>
+<span class="fc" id="L920">	currDist = new double[2][numClasses];</span>
+	int mod;
+<span class="fc" id="L922">	int bit10 = i;</span>
+<span class="fc bfc" id="L923" title="All 2 branches covered.">	for (int j=nonEmpty-1; j&gt;=0; j--) {</span>
+<span class="fc" id="L924">	  mod = bit10%2; // convert from 10bit to 2bit</span>
+<span class="fc bfc" id="L925" title="All 2 branches covered.">	  if (mod==1) {</span>
+<span class="pc bpc" id="L926" title="1 of 2 branches missed.">	    if (tempStr==&quot;&quot;) tempStr = &quot;(&quot;+nonEmptyValues[j]+&quot;)&quot;;</span>
+<span class="nc" id="L927">	    else tempStr += &quot;|&quot; + &quot;(&quot;+nonEmptyValues[j]+&quot;)&quot;;</span>
+	  }
+<span class="fc" id="L929">	  bit10 = bit10/2;</span>
+	}
+<span class="fc bfc" id="L931" title="All 2 branches covered.">	for (int j=0; j&lt;sortedIndices.length;j++) {</span>
+<span class="fc" id="L932">	  Instance inst = data.instance(sortedIndices[j]);</span>
+<span class="pc bpc" id="L933" title="1 of 2 branches missed.">	  if (inst.isMissing(att)) {</span>
+<span class="nc" id="L934">	    break;</span>
+	  }
+
+<span class="fc bfc" id="L937" title="All 2 branches covered.">	  if (tempStr.indexOf(&quot;(&quot;+att.value((int)inst.value(att))+&quot;)&quot;)!=-1) {</span>
+<span class="fc" id="L938">	    currDist[0][(int)inst.classValue()] += weights[j];</span>
+<span class="fc" id="L939">	  } else currDist[1][(int)inst.classValue()] += weights[j];</span>
+	}
+
+<span class="fc" id="L942">	double[][] tempDist = new double[2][numClasses];</span>
+<span class="fc bfc" id="L943" title="All 2 branches covered.">	for (int k=0; k&lt;2; k++) {</span>
+<span class="fc" id="L944">	  tempDist[k] = currDist[k];</span>
+	}
+
+<span class="fc" id="L947">	double[] tempProps = new double[2];</span>
+<span class="fc bfc" id="L948" title="All 2 branches covered.">	for (int k=0; k&lt;2; k++) {</span>
+<span class="fc" id="L949">	  tempProps[k] = Utils.sum(tempDist[k]);</span>
+	}
+
+<span class="pc bpc" id="L952" title="1 of 2 branches missed.">	if (Utils.sum(tempProps)!=0) Utils.normalize(tempProps);</span>
+
+	// split missing values
+<span class="fc" id="L955">	int index = missingStart;</span>
+<span class="pc bpc" id="L956" title="1 of 2 branches missed.">	while (index &lt; sortedIndices.length) {</span>
+<span class="nc" id="L957">	  Instance insta = data.instance(sortedIndices[index]);</span>
+<span class="nc bnc" id="L958" title="All 2 branches missed.">	  for (int j = 0; j &lt; 2; j++) {</span>
+<span class="nc" id="L959">	    tempDist[j][(int)insta.classValue()] += tempProps[j] * weights[index];</span>
+	  }
+<span class="nc" id="L961">	  index++;</span>
+	}
+
+<span class="fc" id="L964">	double currGiniGain = computeGiniGain(parentDist,tempDist);</span>
+
+<span class="fc bfc" id="L966" title="All 2 branches covered.">	if (currGiniGain&gt;bestGiniGain) {</span>
+<span class="fc" id="L967">	  bestGiniGain = currGiniGain;</span>
+<span class="fc" id="L968">	  bestSplitString = tempStr;</span>
+<span class="fc bfc" id="L969" title="All 2 branches covered.">	  for (int j = 0; j &lt; 2; j++) {</span>
+	    //dist[jj] = new double[currDist[jj].length];
+<span class="fc" id="L971">	    System.arraycopy(tempDist[j], 0, dist[j], 0,</span>
+<span class="fc" id="L972">		dist[j].length);</span>
+	  }
+	}
+      }
+    }
+
+    // huristic search to solve multi-classes problems
+    else {
+      // Firstly, for attribute values which class frequency is not zero
+<span class="nc" id="L981">      int n = nonEmpty;</span>
+<span class="nc" id="L982">      int k = data.numClasses();  // number of classes of the data</span>
+<span class="nc" id="L983">      double[][] P = new double[n][k];      // class probability matrix</span>
+<span class="nc" id="L984">      int[] numInstancesValue = new int[n]; // number of instances for an attribute value</span>
+<span class="nc" id="L985">      double[] meanClass = new double[k];   // vector of mean class probability</span>
+<span class="nc" id="L986">      int numInstances = data.numInstances(); // total number of instances</span>
+
+      // initialize the vector of mean class probability
+<span class="nc bnc" id="L989" title="All 2 branches missed.">      for (int j=0; j&lt;meanClass.length; j++) meanClass[j]=0;</span>
+
+<span class="nc bnc" id="L991" title="All 2 branches missed.">      for (int j=0; j&lt;numInstances; j++) {</span>
+<span class="nc" id="L992">	Instance inst = (Instance)data.instance(j);</span>
+<span class="nc" id="L993">	int valueIndex = 0; // attribute value index in nonEmptyValues</span>
+<span class="nc bnc" id="L994" title="All 2 branches missed.">	for (int i=0; i&lt;nonEmpty; i++) {</span>
+<span class="nc bnc" id="L995" title="All 2 branches missed.">	  if (att.value((int)inst.value(att)).compareToIgnoreCase(nonEmptyValues[i])==0){</span>
+<span class="nc" id="L996">	    valueIndex = i;</span>
+<span class="nc" id="L997">	    break;</span>
+	  }
+	}
+<span class="nc" id="L1000">	P[valueIndex][(int)inst.classValue()]++;</span>
+<span class="nc" id="L1001">	numInstancesValue[valueIndex]++;</span>
+<span class="nc" id="L1002">	meanClass[(int)inst.classValue()]++;</span>
+      }
+
+      // calculate the class probability matrix
+<span class="nc bnc" id="L1006" title="All 2 branches missed.">      for (int i=0; i&lt;P.length; i++) {</span>
+<span class="nc bnc" id="L1007" title="All 2 branches missed.">	for (int j=0; j&lt;P[0].length; j++) {</span>
+<span class="nc bnc" id="L1008" title="All 2 branches missed.">	  if (numInstancesValue[i]==0) P[i][j]=0;</span>
+<span class="nc" id="L1009">	  else P[i][j]/=numInstancesValue[i];</span>
+	}
+      }
+
+      //calculate the vector of mean class probability
+<span class="nc bnc" id="L1014" title="All 2 branches missed.">      for (int i=0; i&lt;meanClass.length; i++) {</span>
+<span class="nc" id="L1015">	meanClass[i]/=numInstances;</span>
+      }
+
+      // calculate the covariance matrix
+<span class="nc" id="L1019">      double[][] covariance = new double[k][k];</span>
+<span class="nc bnc" id="L1020" title="All 2 branches missed.">      for (int i1=0; i1&lt;k; i1++) {</span>
+<span class="nc bnc" id="L1021" title="All 2 branches missed.">	for (int i2=0; i2&lt;k; i2++) {</span>
+<span class="nc" id="L1022">	  double element = 0;</span>
+<span class="nc bnc" id="L1023" title="All 2 branches missed.">	  for (int j=0; j&lt;n; j++) {</span>
+<span class="nc" id="L1024">	    element += (P[j][i2]-meanClass[i2])*(P[j][i1]-meanClass[i1])</span>
+<span class="nc" id="L1025">	    *numInstancesValue[j];</span>
+	  }
+<span class="nc" id="L1027">	  covariance[i1][i2] = element;</span>
+	}
+      }
+
+<span class="nc" id="L1031">      Matrix matrix = new Matrix(covariance);</span>
+<span class="nc" id="L1032">      weka.core.matrix.EigenvalueDecomposition eigen =</span>
+<span class="nc" id="L1033">	new weka.core.matrix.EigenvalueDecomposition(matrix);</span>
+<span class="nc" id="L1034">      double[] eigenValues = eigen.getRealEigenvalues();</span>
+
+      // find index of the largest eigenvalue
+<span class="nc" id="L1037">      int index=0;</span>
+<span class="nc" id="L1038">      double largest = eigenValues[0];</span>
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">      for (int i=1; i&lt;eigenValues.length; i++) {</span>
+<span class="nc bnc" id="L1040" title="All 2 branches missed.">	if (eigenValues[i]&gt;largest) {</span>
+<span class="nc" id="L1041">	  index=i;</span>
+<span class="nc" id="L1042">	  largest = eigenValues[i];</span>
+	}
+      }
+
+      // calculate the first principle component
+<span class="nc" id="L1047">      double[] FPC = new double[k];</span>
+<span class="nc" id="L1048">      Matrix eigenVector = eigen.getV();</span>
+<span class="nc" id="L1049">      double[][] vectorArray = eigenVector.getArray();</span>
+<span class="nc bnc" id="L1050" title="All 2 branches missed.">      for (int i=0; i&lt;FPC.length; i++) {</span>
+<span class="nc" id="L1051">	FPC[i] = vectorArray[i][index];</span>
+      }
+
+      // calculate the first principle component scores
+      //System.out.println(&quot;the first principle component scores: &quot;);
+<span class="nc" id="L1056">      double[] Sa = new double[n];</span>
+<span class="nc bnc" id="L1057" title="All 2 branches missed.">      for (int i=0; i&lt;Sa.length; i++) {</span>
+<span class="nc" id="L1058">	Sa[i]=0;</span>
+<span class="nc bnc" id="L1059" title="All 2 branches missed.">	for (int j=0; j&lt;k; j++) {</span>
+<span class="nc" id="L1060">	  Sa[i] += FPC[j]*P[i][j];</span>
+	}
+      }
+
+      // sort category according to Sa(s)
+<span class="nc" id="L1065">      double[] pCopy = new double[n];</span>
+<span class="nc" id="L1066">      System.arraycopy(Sa,0,pCopy,0,n);</span>
+<span class="nc" id="L1067">      String[] sortedValues = new String[n];</span>
+<span class="nc" id="L1068">      Arrays.sort(Sa);</span>
+
+<span class="nc bnc" id="L1070" title="All 2 branches missed.">      for (int j=0; j&lt;n; j++) {</span>
+<span class="nc" id="L1071">	sortedValues[j] = nonEmptyValues[Utils.minIndex(pCopy)];</span>
+<span class="nc" id="L1072">	pCopy[Utils.minIndex(pCopy)] = Double.MAX_VALUE;</span>
+      }
+
+      // for the attribute values that class frequency is not 0
+<span class="nc" id="L1076">      String tempStr = &quot;&quot;;</span>
+
+<span class="nc bnc" id="L1078" title="All 2 branches missed.">      for (int j=0; j&lt;nonEmpty-1; j++) {</span>
+<span class="nc" id="L1079">	currDist = new double[2][numClasses];</span>
+<span class="nc bnc" id="L1080" title="All 2 branches missed.">	if (tempStr==&quot;&quot;) tempStr=&quot;(&quot; + sortedValues[j] + &quot;)&quot;;</span>
+<span class="nc" id="L1081">	else tempStr += &quot;|&quot;+ &quot;(&quot; + sortedValues[j] + &quot;)&quot;;</span>
+<span class="nc bnc" id="L1082" title="All 2 branches missed.">	for (int i=0; i&lt;sortedIndices.length;i++) {</span>
+<span class="nc" id="L1083">	  Instance inst = data.instance(sortedIndices[i]);</span>
+<span class="nc bnc" id="L1084" title="All 2 branches missed.">	  if (inst.isMissing(att)) {</span>
+<span class="nc" id="L1085">	    break;</span>
+	  }
+
+<span class="nc bnc" id="L1088" title="All 2 branches missed.">	  if (tempStr.indexOf</span>
+<span class="nc" id="L1089">	      (&quot;(&quot; + att.value((int)inst.value(att)) + &quot;)&quot;)!=-1) {</span>
+<span class="nc" id="L1090">	    currDist[0][(int)inst.classValue()] += weights[i];</span>
+<span class="nc" id="L1091">	  } else currDist[1][(int)inst.classValue()] += weights[i];</span>
+	}
+
+<span class="nc" id="L1094">	double[][] tempDist = new double[2][numClasses];</span>
+<span class="nc bnc" id="L1095" title="All 2 branches missed.">	for (int kk=0; kk&lt;2; kk++) {</span>
+<span class="nc" id="L1096">	  tempDist[kk] = currDist[kk];</span>
+	}
+
+<span class="nc" id="L1099">	double[] tempProps = new double[2];</span>
+<span class="nc bnc" id="L1100" title="All 2 branches missed.">	for (int kk=0; kk&lt;2; kk++) {</span>
+<span class="nc" id="L1101">	  tempProps[kk] = Utils.sum(tempDist[kk]);</span>
+	}
+
+<span class="nc bnc" id="L1104" title="All 2 branches missed.">	if (Utils.sum(tempProps)!=0) Utils.normalize(tempProps);</span>
+
+	// split missing values
+<span class="nc" id="L1107">	int mstart = missingStart;</span>
+<span class="nc bnc" id="L1108" title="All 2 branches missed.">	while (mstart &lt; sortedIndices.length) {</span>
+<span class="nc" id="L1109">	  Instance insta = data.instance(sortedIndices[mstart]);</span>
+<span class="nc bnc" id="L1110" title="All 2 branches missed.">	  for (int jj = 0; jj &lt; 2; jj++) {</span>
+<span class="nc" id="L1111">	    tempDist[jj][(int)insta.classValue()] += tempProps[jj] * weights[mstart];</span>
+	  }
+<span class="nc" id="L1113">	  mstart++;</span>
+	}
+
+<span class="nc" id="L1116">	double currGiniGain = computeGiniGain(parentDist,tempDist);</span>
+
+<span class="nc bnc" id="L1118" title="All 2 branches missed.">	if (currGiniGain&gt;bestGiniGain) {</span>
+<span class="nc" id="L1119">	  bestGiniGain = currGiniGain;</span>
+<span class="nc" id="L1120">	  bestSplitString = tempStr;</span>
+<span class="nc bnc" id="L1121" title="All 2 branches missed.">	  for (int jj = 0; jj &lt; 2; jj++) {</span>
+	    //dist[jj] = new double[currDist[jj].length];
+<span class="nc" id="L1123">	    System.arraycopy(tempDist[jj], 0, dist[jj], 0,</span>
+<span class="nc" id="L1124">		dist[jj].length);</span>
+	  }
+	}
+      }
+    }
+
+    // Compute weights
+<span class="fc" id="L1131">    int attIndex = att.index();        </span>
+<span class="fc" id="L1132">    props[attIndex] = new double[2];</span>
+<span class="fc bfc" id="L1133" title="All 2 branches covered.">    for (int k = 0; k &lt; 2; k++) {</span>
+<span class="fc" id="L1134">      props[attIndex][k] = Utils.sum(dist[k]);</span>
+    }
+
+<span class="pc bpc" id="L1137" title="1 of 2 branches missed.">    if (!(Utils.sum(props[attIndex]) &gt; 0)) {</span>
+<span class="nc bnc" id="L1138" title="All 2 branches missed.">      for (int k = 0; k &lt; props[attIndex].length; k++) {</span>
+<span class="nc" id="L1139">	props[attIndex][k] = 1.0 / (double)props[attIndex].length;</span>
+      }
+    } else {
+<span class="fc" id="L1142">      Utils.normalize(props[attIndex]);</span>
+    }
+
+
+    // Compute subset weights
+<span class="fc" id="L1147">    subsetWeights[attIndex] = new double[2];</span>
+<span class="fc bfc" id="L1148" title="All 2 branches covered.">    for (int j = 0; j &lt; 2; j++) {</span>
+<span class="fc" id="L1149">      subsetWeights[attIndex][j] += Utils.sum(dist[j]);</span>
+    }
+
+    // Then, for the attribute values that class frequency is 0, split it into the
+    // most frequent branch
+<span class="pc bpc" id="L1154" title="1 of 2 branches missed.">    for (int j=0; j&lt;empty; j++) {</span>
+<span class="nc bnc" id="L1155" title="All 2 branches missed.">      if (props[attIndex][0]&gt;=props[attIndex][1]) {</span>
+<span class="nc bnc" id="L1156" title="All 2 branches missed.">	if (bestSplitString==&quot;&quot;) bestSplitString = &quot;(&quot; + emptyValues[j] + &quot;)&quot;;</span>
+<span class="nc" id="L1157">	else bestSplitString += &quot;|&quot; + &quot;(&quot; + emptyValues[j] + &quot;)&quot;;</span>
+      }
+    }
+
+    // clean Gini gain for the attribute
+    //giniGains[attIndex] = Math.rint(bestGiniGain*10000000)/10000000.0;
+<span class="fc" id="L1163">    giniGains[attIndex] = bestGiniGain;</span>
+
+<span class="fc" id="L1165">    dists[attIndex] = dist;</span>
+<span class="fc" id="L1166">    return bestSplitString;</span>
+  }
+
+
+  /**
+   * Split data into two subsets and store sorted indices and weights for two
+   * successor nodes.
+   * 
+   * @param subsetIndices 	sorted indecis of instances for each attribute 
+   * 				for two successor node
+   * @param subsetWeights 	weights of instances for each attribute for 
+   * 				two successor node
+   * @param att 		attribute the split based on
+   * @param splitPoint 		split point the split based on if att is numeric
+   * @param splitStr 		split subset the split based on if att is nominal
+   * @param sortedIndices 	sorted indices of the instances to be split
+   * @param weights 		weights of the instances to bes split
+   * @param data 		training data
+   * @throws Exception 		if something goes wrong  
+   */
+  protected void splitData(int[][][] subsetIndices, double[][][] subsetWeights,
+      Attribute att, double splitPoint, String splitStr, int[][] sortedIndices,
+      double[][] weights, Instances data) throws Exception {
+
+    int j;
+    // For each attribute
+<span class="fc bfc" id="L1192" title="All 2 branches covered.">    for (int i = 0; i &lt; data.numAttributes(); i++) {</span>
+<span class="fc bfc" id="L1193" title="All 2 branches covered.">      if (i==data.classIndex()) continue;</span>
+<span class="fc" id="L1194">      int[] num = new int[2];</span>
+<span class="fc bfc" id="L1195" title="All 2 branches covered.">      for (int k = 0; k &lt; 2; k++) {</span>
+<span class="fc" id="L1196">	subsetIndices[k][i] = new int[sortedIndices[i].length];</span>
+<span class="fc" id="L1197">	subsetWeights[k][i] = new double[weights[i].length];</span>
+      }
+
+<span class="fc bfc" id="L1200" title="All 2 branches covered.">      for (j = 0; j &lt; sortedIndices[i].length; j++) {</span>
+<span class="fc" id="L1201">	Instance inst = data.instance(sortedIndices[i][j]);</span>
+<span class="fc bfc" id="L1202" title="All 2 branches covered.">	if (inst.isMissing(att)) {</span>
+	  // Split instance up
+<span class="fc bfc" id="L1204" title="All 2 branches covered.">	  for (int k = 0; k &lt; 2; k++) {</span>
+<span class="pc bpc" id="L1205" title="1 of 2 branches missed.">	    if (m_Props[k] &gt; 0) {</span>
+<span class="fc" id="L1206">	      subsetIndices[k][i][num[k]] = sortedIndices[i][j];</span>
+<span class="fc" id="L1207">	      subsetWeights[k][i][num[k]] = m_Props[k] * weights[i][j];</span>
+<span class="fc" id="L1208">	      num[k]++;</span>
+	    }
+	  }
+	} else {
+	  int subset;
+<span class="fc bfc" id="L1213" title="All 2 branches covered.">	  if (att.isNumeric())  {</span>
+<span class="fc bfc" id="L1214" title="All 2 branches covered.">	    subset = (inst.value(att) &lt; splitPoint) ? 0 : 1;</span>
+	  } else { // nominal attribute
+<span class="fc bfc" id="L1216" title="All 2 branches covered.">	    if (splitStr.indexOf</span>
+<span class="fc" id="L1217">		(&quot;(&quot; + att.value((int)inst.value(att.index()))+&quot;)&quot;)!=-1) {</span>
+<span class="fc" id="L1218">	      subset = 0;</span>
+<span class="fc" id="L1219">	    } else subset = 1;</span>
+	  }
+<span class="fc" id="L1221">	  subsetIndices[subset][i][num[subset]] = sortedIndices[i][j];</span>
+<span class="fc" id="L1222">	  subsetWeights[subset][i][num[subset]] = weights[i][j];</span>
+<span class="fc" id="L1223">	  num[subset]++;</span>
+	}
+      }
+
+      // Trim arrays
+<span class="fc bfc" id="L1228" title="All 2 branches covered.">      for (int k = 0; k &lt; 2; k++) {</span>
+<span class="fc" id="L1229">	int[] copy = new int[num[k]];</span>
+<span class="fc" id="L1230">	System.arraycopy(subsetIndices[k][i], 0, copy, 0, num[k]);</span>
+<span class="fc" id="L1231">	subsetIndices[k][i] = copy;</span>
+<span class="fc" id="L1232">	double[] copyWeights = new double[num[k]];</span>
+<span class="fc" id="L1233">	System.arraycopy(subsetWeights[k][i], 0 ,copyWeights, 0, num[k]);</span>
+<span class="fc" id="L1234">	subsetWeights[k][i] = copyWeights;</span>
+      }
+    }
+<span class="fc" id="L1237">  }</span>
+
+  /**
+   * Updates the numIncorrectModel field for all nodes when subtree (to be 
+   * pruned) is rooted. This is needed for calculating the alpha-values.
+   * 
+   * @throws Exception 	if something goes wrong
+   */
+  public void modelErrors() throws Exception{
+<span class="fc" id="L1246">    Evaluation eval = new Evaluation(m_train);</span>
+
+<span class="fc bfc" id="L1248" title="All 2 branches covered.">    if (!m_isLeaf) {</span>
+<span class="fc" id="L1249">      m_isLeaf = true; //temporarily make leaf</span>
+
+      // calculate distribution for evaluation
+<span class="fc" id="L1252">      eval.evaluateModel(this, m_train);</span>
+<span class="fc" id="L1253">      m_numIncorrectModel = eval.incorrect();</span>
+
+<span class="fc" id="L1255">      m_isLeaf = false;</span>
+
+<span class="fc bfc" id="L1257" title="All 2 branches covered.">      for (int i = 0; i &lt; m_Successors.length; i++)</span>
+<span class="fc" id="L1258">	m_Successors[i].modelErrors();</span>
+
+    } else {
+<span class="fc" id="L1261">      eval.evaluateModel(this, m_train);</span>
+<span class="fc" id="L1262">      m_numIncorrectModel = eval.incorrect();</span>
+    }       
+<span class="fc" id="L1264">  }</span>
+
+  /**
+   * Updates the numIncorrectTree field for all nodes. This is needed for
+   * calculating the alpha-values.
+   * 
+   * @throws Exception 	if something goes wrong
+   */
+  public void treeErrors() throws Exception {
+<span class="fc bfc" id="L1273" title="All 2 branches covered.">    if (m_isLeaf) {</span>
+<span class="fc" id="L1274">      m_numIncorrectTree = m_numIncorrectModel;</span>
+    } else {
+<span class="fc" id="L1276">      m_numIncorrectTree = 0;</span>
+<span class="fc bfc" id="L1277" title="All 2 branches covered.">      for (int i = 0; i &lt; m_Successors.length; i++) {</span>
+<span class="fc" id="L1278">	m_Successors[i].treeErrors();</span>
+<span class="fc" id="L1279">	m_numIncorrectTree += m_Successors[i].m_numIncorrectTree;</span>
+      }
+    }
+<span class="fc" id="L1282">  }</span>
+
+  /**
+   * Updates the alpha field for all nodes.
+   * 
+   * @throws Exception 	if something goes wrong
+   */
+  public void calculateAlphas() throws Exception {
+
+<span class="fc bfc" id="L1291" title="All 2 branches covered.">    if (!m_isLeaf) {</span>
+<span class="fc" id="L1292">      double errorDiff = m_numIncorrectModel - m_numIncorrectTree;</span>
+<span class="fc bfc" id="L1293" title="All 2 branches covered.">      if (errorDiff &lt;=0) {</span>
+	//split increases training error (should not normally happen).
+	//prune it instantly.
+<span class="fc" id="L1296">	makeLeaf(m_train);</span>
+<span class="fc" id="L1297">	m_Alpha = Double.MAX_VALUE;</span>
+      } else {
+	//compute alpha
+<span class="fc" id="L1300">	errorDiff /= m_totalTrainInstances;</span>
+<span class="fc" id="L1301">	m_Alpha = errorDiff / (double)(numLeaves() - 1);</span>
+<span class="fc" id="L1302">	long alphaLong = Math.round(m_Alpha*Math.pow(10,10));</span>
+<span class="fc" id="L1303">	m_Alpha = (double)alphaLong/Math.pow(10,10);</span>
+<span class="fc bfc" id="L1304" title="All 2 branches covered.">	for (int i = 0; i &lt; m_Successors.length; i++) {</span>
+<span class="fc" id="L1305">	  m_Successors[i].calculateAlphas();</span>
+	}
+      }
+    } else {
+      //alpha = infinite for leaves (do not want to prune)
+<span class="fc" id="L1310">      m_Alpha = Double.MAX_VALUE;</span>
+    }
+<span class="fc" id="L1312">  }</span>
+
+  /**
+   * Find the node with minimal alpha value. If two nodes have the same alpha, 
+   * choose the one with more leave nodes.
+   * 
+   * @param nodeList 	list of inner nodes
+   * @return 		the node to be pruned
+   */
+  protected SimpleCart nodeToPrune(Vector nodeList) {
+<span class="pc bpc" id="L1322" title="1 of 2 branches missed.">    if (nodeList.size()==0) return null;</span>
+<span class="fc bfc" id="L1323" title="All 2 branches covered.">    if (nodeList.size()==1) return (SimpleCart)nodeList.elementAt(0);</span>
+<span class="fc" id="L1324">    SimpleCart returnNode = (SimpleCart)nodeList.elementAt(0);</span>
+<span class="fc" id="L1325">    double baseAlpha = returnNode.m_Alpha;</span>
+<span class="fc bfc" id="L1326" title="All 2 branches covered.">    for (int i=1; i&lt;nodeList.size(); i++) {</span>
+<span class="fc" id="L1327">      SimpleCart node = (SimpleCart)nodeList.elementAt(i);</span>
+<span class="fc bfc" id="L1328" title="All 2 branches covered.">      if (node.m_Alpha &lt; baseAlpha) {</span>
+<span class="fc" id="L1329">	baseAlpha = node.m_Alpha;</span>
+<span class="fc" id="L1330">	returnNode = node;</span>
+<span class="fc bfc" id="L1331" title="All 2 branches covered.">      } else if (node.m_Alpha == baseAlpha) { // break tie</span>
+<span class="pc bpc" id="L1332" title="1 of 2 branches missed.">	if (node.numLeaves()&gt;returnNode.numLeaves()) {</span>
+<span class="nc" id="L1333">	  returnNode = node;</span>
+	}
+      }
+    }
+<span class="fc" id="L1337">    return returnNode;</span>
+  }
+
+  /**
+   * Compute sorted indices, weights and class probabilities for a given 
+   * dataset. Return total weights of the data at the node.
+   * 
+   * @param data 		training data
+   * @param sortedIndices 	sorted indices of instances at the node
+   * @param weights 		weights of instances at the node
+   * @param classProbs 		class probabilities at the node
+   * @return total 		weights of instances at the node
+   * @throws Exception 		if something goes wrong
+   */
+  protected double computeSortedInfo(Instances data, int[][] sortedIndices, double[][] weights,
+      double[] classProbs) throws Exception {
+
+    // Create array of sorted indices and weights
+<span class="fc" id="L1355">    double[] vals = new double[data.numInstances()];</span>
+<span class="fc bfc" id="L1356" title="All 2 branches covered.">    for (int j = 0; j &lt; data.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L1357" title="All 2 branches covered.">      if (j==data.classIndex()) continue;</span>
+<span class="fc" id="L1358">      weights[j] = new double[data.numInstances()];</span>
+
+<span class="fc bfc" id="L1360" title="All 2 branches covered.">      if (data.attribute(j).isNominal()) {</span>
+
+	// Handling nominal attributes. Putting indices of
+	// instances with missing values at the end.
+<span class="fc" id="L1364">	sortedIndices[j] = new int[data.numInstances()];</span>
+<span class="fc" id="L1365">	int count = 0;</span>
+<span class="fc bfc" id="L1366" title="All 2 branches covered.">	for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="fc" id="L1367">	  Instance inst = data.instance(i);</span>
+<span class="fc bfc" id="L1368" title="All 2 branches covered.">	  if (!inst.isMissing(j)) {</span>
+<span class="fc" id="L1369">	    sortedIndices[j][count] = i;</span>
+<span class="fc" id="L1370">	    weights[j][count] = inst.weight();</span>
+<span class="fc" id="L1371">	    count++;</span>
+	  }
+	}
+<span class="fc bfc" id="L1374" title="All 2 branches covered.">	for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="fc" id="L1375">	  Instance inst = data.instance(i);</span>
+<span class="fc bfc" id="L1376" title="All 2 branches covered.">	  if (inst.isMissing(j)) {</span>
+<span class="fc" id="L1377">	    sortedIndices[j][count] = i;</span>
+<span class="fc" id="L1378">	    weights[j][count] = inst.weight();</span>
+<span class="fc" id="L1379">	    count++;</span>
+	  }
+	}
+      } else {
+
+	// Sorted indices are computed for numeric attributes
+	// missing values instances are put to end 
+<span class="fc bfc" id="L1386" title="All 2 branches covered.">	for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="fc" id="L1387">	  Instance inst = data.instance(i);</span>
+<span class="fc" id="L1388">	  vals[i] = inst.value(j);</span>
+	}
+<span class="fc" id="L1390">	sortedIndices[j] = Utils.sort(vals);</span>
+<span class="fc bfc" id="L1391" title="All 2 branches covered.">	for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="fc" id="L1392">	  weights[j][i] = data.instance(sortedIndices[j][i]).weight();</span>
+	}
+      }
+    }
+
+    // Compute initial class counts
+<span class="fc" id="L1398">    double totalWeight = 0;</span>
+<span class="fc bfc" id="L1399" title="All 2 branches covered.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="fc" id="L1400">      Instance inst = data.instance(i);</span>
+<span class="fc" id="L1401">      classProbs[(int)inst.classValue()] += inst.weight();</span>
+<span class="fc" id="L1402">      totalWeight += inst.weight();</span>
+    }
+
+<span class="fc" id="L1405">    return totalWeight;</span>
+  }
+
+  /**
+   * Compute and return gini gain for given distributions of a node and its 
+   * successor nodes.
+   * 
+   * @param parentDist 	class distributions of parent node
+   * @param childDist 	class distributions of successor nodes
+   * @return 		Gini gain computed
+   */
+  protected double computeGiniGain(double[] parentDist, double[][] childDist) {
+<span class="fc" id="L1417">    double totalWeight = Utils.sum(parentDist);</span>
+<span class="pc bpc" id="L1418" title="1 of 2 branches missed.">    if (totalWeight==0) return 0;</span>
+
+<span class="fc" id="L1420">    double leftWeight = Utils.sum(childDist[0]);</span>
+<span class="fc" id="L1421">    double rightWeight = Utils.sum(childDist[1]);</span>
+
+<span class="fc" id="L1423">    double parentGini = computeGini(parentDist, totalWeight);</span>
+<span class="fc" id="L1424">    double leftGini = computeGini(childDist[0],leftWeight);</span>
+<span class="fc" id="L1425">    double rightGini = computeGini(childDist[1], rightWeight);</span>
+
+<span class="fc" id="L1427">    return parentGini - leftWeight/totalWeight*leftGini -</span>
+<span class="fc" id="L1428">    rightWeight/totalWeight*rightGini;</span>
+  }
+
+  /**
+   * Compute and return gini index for a given distribution of a node.
+   * 
+   * @param dist 	class distributions
+   * @param total 	class distributions
+   * @return 		Gini index of the class distributions
+   */
+  protected double computeGini(double[] dist, double total) {
+<span class="fc bfc" id="L1439" title="All 2 branches covered.">    if (total==0) return 0;</span>
+<span class="fc" id="L1440">    double val = 0;</span>
+<span class="fc bfc" id="L1441" title="All 2 branches covered.">    for (int i=0; i&lt;dist.length; i++) {</span>
+<span class="fc" id="L1442">      val += (dist[i]/total)*(dist[i]/total);</span>
+    }
+<span class="fc" id="L1444">    return 1- val;</span>
+  }
+
+  /**
+   * Computes class probabilities for instance using the decision tree.
+   * 
+   * @param instance 	the instance for which class probabilities is to be computed
+   * @return 		the class probabilities for the given instance
+   * @throws Exception 	if something goes wrong
+   */
+  public double[] distributionForInstance(Instance instance)
+  throws Exception {
+<span class="fc bfc" id="L1456" title="All 2 branches covered.">    if (!m_isLeaf) {</span>
+      // value of split attribute is missing
+<span class="fc bfc" id="L1458" title="All 2 branches covered.">      if (instance.isMissing(m_Attribute)) {</span>
+<span class="fc" id="L1459">	double[] returnedDist = new double[m_ClassProbs.length];</span>
+
+<span class="fc bfc" id="L1461" title="All 2 branches covered.">	for (int i = 0; i &lt; m_Successors.length; i++) {</span>
+<span class="fc" id="L1462">	  double[] help =</span>
+<span class="fc" id="L1463">	    m_Successors[i].distributionForInstance(instance);</span>
+<span class="pc bpc" id="L1464" title="1 of 2 branches missed.">	  if (help != null) {</span>
+<span class="fc bfc" id="L1465" title="All 2 branches covered.">	    for (int j = 0; j &lt; help.length; j++) {</span>
+<span class="fc" id="L1466">	      returnedDist[j] += m_Props[i] * help[j];</span>
+	    }
+	  }
+	}
+<span class="fc" id="L1470">	return returnedDist;</span>
+      }
+
+      // split attribute is nonimal
+<span class="fc bfc" id="L1474" title="All 2 branches covered.">      else if (m_Attribute.isNominal()) {</span>
+<span class="fc bfc" id="L1475" title="All 2 branches covered.">	if (m_SplitString.indexOf(&quot;(&quot; +</span>
+<span class="fc" id="L1476">	    m_Attribute.value((int)instance.value(m_Attribute)) + &quot;)&quot;)!=-1)</span>
+<span class="fc" id="L1477">	  return  m_Successors[0].distributionForInstance(instance);</span>
+<span class="fc" id="L1478">	else return  m_Successors[1].distributionForInstance(instance);</span>
+      }
+
+      // split attribute is numeric
+      else {
+<span class="fc bfc" id="L1483" title="All 2 branches covered.">	if (instance.value(m_Attribute) &lt; m_SplitValue)</span>
+<span class="fc" id="L1484">	  return m_Successors[0].distributionForInstance(instance);</span>
+	else
+<span class="fc" id="L1486">	  return m_Successors[1].distributionForInstance(instance);</span>
+      }
+    }
+
+    // leaf node
+<span class="fc" id="L1491">    else return m_ClassProbs;</span>
+  }
+
+  /**
+   * Make the node leaf node.
+   * 
+   * @param data 	trainging data
+   */
+  protected void makeLeaf(Instances data) {
+<span class="fc" id="L1500">    m_Attribute = null;</span>
+<span class="fc" id="L1501">    m_isLeaf = true;</span>
+<span class="fc" id="L1502">    m_ClassValue=Utils.maxIndex(m_ClassProbs);</span>
+<span class="fc" id="L1503">    m_ClassAttribute = data.classAttribute();</span>
+<span class="fc" id="L1504">  }</span>
+
+  /**
+   * Prints the decision tree using the protected toString method from below.
+   * 
+   * @return 		a textual description of the classifier
+   */
+  public String toString() {
+<span class="pc bpc" id="L1512" title="2 of 4 branches missed.">    if ((m_ClassProbs == null) &amp;&amp; (m_Successors == null)) {</span>
+<span class="fc" id="L1513">      return &quot;CART Tree: No model built yet.&quot;;</span>
+    }
+
+<span class="nc" id="L1516">    return &quot;CART Decision Tree\n&quot; + toString(0)+&quot;\n\n&quot;</span>
+<span class="nc" id="L1517">    +&quot;Number of Leaf Nodes: &quot;+numLeaves()+&quot;\n\n&quot; +</span>
+<span class="nc" id="L1518">    &quot;Size of the Tree: &quot;+numNodes();</span>
+  }
+
+  /**
+   * Outputs a tree at a certain level.
+   * 
+   * @param level 	the level at which the tree is to be printed
+   * @return 		a tree at a certain level
+   */
+  protected String toString(int level) {
+
+<span class="nc" id="L1529">    StringBuffer text = new StringBuffer();</span>
+    // if leaf nodes
+<span class="nc bnc" id="L1531" title="All 2 branches missed.">    if (m_Attribute == null) {</span>
+<span class="nc bnc" id="L1532" title="All 2 branches missed.">      if (Instance.isMissingValue(m_ClassValue)) {</span>
+<span class="nc" id="L1533">	text.append(&quot;: null&quot;);</span>
+      } else {
+<span class="nc" id="L1535">	double correctNum = (int)(m_Distribution[Utils.maxIndex(m_Distribution)]*100)/</span>
+<span class="nc" id="L1536">	100.0;</span>
+<span class="nc" id="L1537">	double wrongNum = (int)((Utils.sum(m_Distribution) -</span>
+<span class="nc" id="L1538">	    m_Distribution[Utils.maxIndex(m_Distribution)])*100)/100.0;</span>
+<span class="nc" id="L1539">	String str = &quot;(&quot;  + correctNum + &quot;/&quot; + wrongNum + &quot;)&quot;;</span>
+<span class="nc" id="L1540">	text.append(&quot;: &quot; + m_ClassAttribute.value((int) m_ClassValue)+ str);</span>
+      }
+    } else {
+<span class="nc bnc" id="L1543" title="All 2 branches missed.">      for (int j = 0; j &lt; 2; j++) {</span>
+<span class="nc" id="L1544">	text.append(&quot;\n&quot;);</span>
+<span class="nc bnc" id="L1545" title="All 2 branches missed.">	for (int i = 0; i &lt; level; i++) {</span>
+<span class="nc" id="L1546">	  text.append(&quot;|  &quot;);</span>
+	}
+<span class="nc bnc" id="L1548" title="All 2 branches missed.">	if (j==0) {</span>
+<span class="nc bnc" id="L1549" title="All 2 branches missed.">	  if (m_Attribute.isNumeric())</span>
+<span class="nc" id="L1550">	    text.append(m_Attribute.name() + &quot; &lt; &quot; + m_SplitValue);</span>
+	  else
+<span class="nc" id="L1552">	    text.append(m_Attribute.name() + &quot;=&quot; + m_SplitString);</span>
+	} else {
+<span class="nc bnc" id="L1554" title="All 2 branches missed.">	  if (m_Attribute.isNumeric())</span>
+<span class="nc" id="L1555">	    text.append(m_Attribute.name() + &quot; &gt;= &quot; + m_SplitValue);</span>
+	  else
+<span class="nc" id="L1557">	    text.append(m_Attribute.name() + &quot;!=&quot; + m_SplitString);</span>
+	}
+<span class="nc" id="L1559">	text.append(m_Successors[j].toString(level + 1));</span>
+      }
+    }
+<span class="nc" id="L1562">    return text.toString();</span>
+  }
+
+  /**
+   * Compute size of the tree.
+   * 
+   * @return 		size of the tree
+   */
+  public int numNodes() {
+<span class="nc bnc" id="L1571" title="All 2 branches missed.">    if (m_isLeaf) {</span>
+<span class="nc" id="L1572">      return 1;</span>
+    } else {
+<span class="nc" id="L1574">      int size =1;</span>
+<span class="nc bnc" id="L1575" title="All 2 branches missed.">      for (int i=0;i&lt;m_Successors.length;i++) {</span>
+<span class="nc" id="L1576">	size+=m_Successors[i].numNodes();</span>
+      }
+<span class="nc" id="L1578">      return size;</span>
+    }
+  }
+
+  /**
+   * Method to count the number of inner nodes in the tree.
+   * 
+   * @return 		the number of inner nodes
+   */
+  public int numInnerNodes(){
+<span class="fc bfc" id="L1588" title="All 2 branches covered.">    if (m_Attribute==null) return 0;</span>
+<span class="fc" id="L1589">    int numNodes = 1;</span>
+<span class="fc bfc" id="L1590" title="All 2 branches covered.">    for (int i = 0; i &lt; m_Successors.length; i++)</span>
+<span class="fc" id="L1591">      numNodes += m_Successors[i].numInnerNodes();</span>
+<span class="fc" id="L1592">    return numNodes;</span>
+  }
+
+  /**
+   * Return a list of all inner nodes in the tree.
+   * 
+   * @return 		the list of all inner nodes
+   */
+  protected Vector getInnerNodes(){
+<span class="fc" id="L1601">    Vector nodeList = new Vector();</span>
+<span class="fc" id="L1602">    fillInnerNodes(nodeList);</span>
+<span class="fc" id="L1603">    return nodeList;</span>
+  }
+
+  /**
+   * Fills a list with all inner nodes in the tree.
+   * 
+   * @param nodeList 	the list to be filled
+   */
+  protected void fillInnerNodes(Vector nodeList) {
+<span class="fc bfc" id="L1612" title="All 2 branches covered.">    if (!m_isLeaf) {</span>
+<span class="fc" id="L1613">      nodeList.add(this);</span>
+<span class="fc bfc" id="L1614" title="All 2 branches covered.">      for (int i = 0; i &lt; m_Successors.length; i++)</span>
+<span class="fc" id="L1615">	m_Successors[i].fillInnerNodes(nodeList);</span>
+    }
+<span class="fc" id="L1617">  }</span>
+
+  /**
+   * Compute number of leaf nodes.
+   * 
+   * @return 		number of leaf nodes
+   */
+  public int numLeaves() {
+<span class="fc bfc" id="L1625" title="All 2 branches covered.">    if (m_isLeaf) return 1;</span>
+    else {
+<span class="fc" id="L1627">      int size=0;</span>
+<span class="fc bfc" id="L1628" title="All 2 branches covered.">      for (int i=0;i&lt;m_Successors.length;i++) {</span>
+<span class="fc" id="L1629">	size+=m_Successors[i].numLeaves();</span>
+      }
+<span class="fc" id="L1631">      return size;</span>
+    }
+  }
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return 		an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+    Vector 	result;
+    Enumeration	en;
+    
+<span class="fc" id="L1644">    result = new Vector();</span>
+    
+<span class="fc" id="L1646">    en = super.listOptions();</span>
+<span class="fc bfc" id="L1647" title="All 2 branches covered.">    while (en.hasMoreElements())</span>
+<span class="fc" id="L1648">      result.addElement(en.nextElement());</span>
+
+<span class="fc" id="L1650">    result.addElement(new Option(</span>
+<span class="fc" id="L1651">	&quot;\tThe minimal number of instances at the terminal nodes.\n&quot; </span>
+	+ &quot;\t(default 2)&quot;,
+<span class="fc" id="L1653">	&quot;M&quot;, 1, &quot;-M &lt;min no&gt;&quot;));</span>
+    
+<span class="fc" id="L1655">    result.addElement(new Option(</span>
+<span class="fc" id="L1656">	&quot;\tThe number of folds used in the minimal cost-complexity pruning.\n&quot;</span>
+	+ &quot;\t(default 5)&quot;,
+<span class="fc" id="L1658">	&quot;N&quot;, 1, &quot;-N &lt;num folds&gt;&quot;));</span>
+    
+<span class="fc" id="L1660">    result.addElement(new Option(</span>
+<span class="fc" id="L1661">	&quot;\tDon't use the minimal cost-complexity pruning.\n&quot;</span>
+	+ &quot;\t(default yes).&quot;,
+<span class="fc" id="L1663">	&quot;U&quot;, 0, &quot;-U&quot;));</span>
+    
+<span class="fc" id="L1665">    result.addElement(new Option(</span>
+<span class="fc" id="L1666">	&quot;\tDon't use the heuristic method for binary split.\n&quot;</span>
+	+ &quot;\t(default true).&quot;,
+<span class="fc" id="L1668">	&quot;H&quot;, 0, &quot;-H&quot;));</span>
+    
+<span class="fc" id="L1670">    result.addElement(new Option(</span>
+<span class="fc" id="L1671">	&quot;\tUse 1 SE rule to make pruning decision.\n&quot;</span>
+	+ &quot;\t(default no).&quot;,
+<span class="fc" id="L1673">	&quot;A&quot;, 0, &quot;-A&quot;));</span>
+    
+<span class="fc" id="L1675">    result.addElement(new Option(</span>
+<span class="fc" id="L1676">	&quot;\tPercentage of training data size (0-1].\n&quot; </span>
+	+ &quot;\t(default 1).&quot;,
+<span class="fc" id="L1678">	&quot;C&quot;, 1, &quot;-C&quot;));</span>
+
+<span class="fc" id="L1680">    return result.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 1)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -D
+   *  If set, classifier is run in debug mode and
+   *  may output additional info to the console&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;min no&amp;gt;
+   *  The minimal number of instances at the terminal nodes.
+   *  (default 2)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;num folds&amp;gt;
+   *  The number of folds used in the minimal cost-complexity pruning.
+   *  (default 5)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -U
+   *  Don't use the minimal cost-complexity pruning.
+   *  (default yes).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -H
+   *  Don't use the heuristic method for binary split.
+   *  (default true).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -A
+   *  Use 1 SE rule to make pruning decision.
+   *  (default no).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -C
+   *  Percentage of training data size (0-1].
+   *  (default 1).&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   * 
+   * @param options the list of options as an array of strings
+   * @throws Exception if an options is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+    String	tmpStr;
+    
+<span class="fc" id="L1729">    super.setOptions(options);</span>
+    
+<span class="fc" id="L1731">    tmpStr = Utils.getOption('M', options);</span>
+<span class="fc bfc" id="L1732" title="All 2 branches covered.">    if (tmpStr.length() != 0)</span>
+<span class="fc" id="L1733">      setMinNumObj(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L1735">      setMinNumObj(2);</span>
+
+<span class="fc" id="L1737">    tmpStr = Utils.getOption('N', options);</span>
+<span class="fc bfc" id="L1738" title="All 2 branches covered.">    if (tmpStr.length()!=0)</span>
+<span class="fc" id="L1739">      setNumFoldsPruning(Integer.parseInt(tmpStr));</span>
+    else
+<span class="fc" id="L1741">      setNumFoldsPruning(5);</span>
+
+<span class="pc bpc" id="L1743" title="1 of 2 branches missed.">    setUsePrune(!Utils.getFlag('U',options));</span>
+<span class="pc bpc" id="L1744" title="1 of 2 branches missed.">    setHeuristic(!Utils.getFlag('H',options));</span>
+<span class="fc" id="L1745">    setUseOneSE(Utils.getFlag('A',options));</span>
+
+<span class="fc" id="L1747">    tmpStr = Utils.getOption('C', options);</span>
+<span class="fc bfc" id="L1748" title="All 2 branches covered.">    if (tmpStr.length()!=0)</span>
+<span class="fc" id="L1749">      setSizePer(Double.parseDouble(tmpStr));</span>
+    else
+<span class="fc" id="L1751">      setSizePer(1);</span>
+
+<span class="fc" id="L1753">    Utils.checkForRemainingOptions(options);</span>
+<span class="fc" id="L1754">  }</span>
+
+  /**
+   * Gets the current settings of the classifier.
+   * 
+   * @return 		the current setting of the classifier
+   */
+  public String[] getOptions() {
+    int       	i;
+    Vector    	result;
+    String[]  	options;
+
+<span class="fc" id="L1766">    result = new Vector();</span>
+
+<span class="fc" id="L1768">    options = super.getOptions();</span>
+<span class="fc bfc" id="L1769" title="All 2 branches covered.">    for (i = 0; i &lt; options.length; i++)</span>
+<span class="fc" id="L1770">      result.add(options[i]);</span>
+
+<span class="fc" id="L1772">    result.add(&quot;-M&quot;);</span>
+<span class="fc" id="L1773">    result.add(&quot;&quot; + getMinNumObj());</span>
+    
+<span class="fc" id="L1775">    result.add(&quot;-N&quot;);</span>
+<span class="fc" id="L1776">    result.add(&quot;&quot; + getNumFoldsPruning());</span>
+    
+<span class="pc bpc" id="L1778" title="1 of 2 branches missed.">    if (!getUsePrune())</span>
+<span class="nc" id="L1779">      result.add(&quot;-U&quot;);</span>
+    
+<span class="pc bpc" id="L1781" title="1 of 2 branches missed.">    if (!getHeuristic())</span>
+<span class="nc" id="L1782">      result.add(&quot;-H&quot;);</span>
+    
+<span class="pc bpc" id="L1784" title="1 of 2 branches missed.">    if (getUseOneSE())</span>
+<span class="nc" id="L1785">      result.add(&quot;-A&quot;);</span>
+    
+<span class="fc" id="L1787">    result.add(&quot;-C&quot;);</span>
+<span class="fc" id="L1788">    result.add(&quot;&quot; + getSizePer());</span>
+
+<span class="fc" id="L1790">    return (String[]) result.toArray(new String[result.size()]);	  </span>
+  }
+
+  /**
+   * Return an enumeration of the measure names.
+   * 
+   * @return 		an enumeration of the measure names
+   */
+  public Enumeration enumerateMeasures() {
+<span class="nc" id="L1799">    Vector result = new Vector();</span>
+    
+<span class="nc" id="L1801">    result.addElement(&quot;measureTreeSize&quot;);</span>
+    
+<span class="nc" id="L1803">    return result.elements();</span>
+  }
+
+  /**
+   * Return number of tree size.
+   * 
+   * @return 		number of tree size
+   */
+  public double measureTreeSize() {
+<span class="nc" id="L1812">    return numNodes();</span>
+  }
+
+  /**
+   * Returns the value of the named measure.
+   * 
+   * @param additionalMeasureName 	the name of the measure to query for its value
+   * @return 				the value of the named measure
+   * @throws IllegalArgumentException 	if the named measure is not supported
+   */
+  public double getMeasure(String additionalMeasureName) {
+<span class="nc bnc" id="L1823" title="All 2 branches missed.">    if (additionalMeasureName.compareToIgnoreCase(&quot;measureTreeSize&quot;) == 0) {</span>
+<span class="nc" id="L1824">      return measureTreeSize();</span>
+    } else {
+<span class="nc" id="L1826">      throw new IllegalArgumentException(additionalMeasureName</span>
+<span class="nc" id="L1827">	  + &quot; not supported (Cart pruning)&quot;);</span>
+    }
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String minNumObjTipText() {
+<span class="nc" id="L1838">    return &quot;The minimal number of observations at the terminal nodes (default 2).&quot;;</span>
+  }
+
+  /**
+   * Set minimal number of instances at the terminal nodes.
+   * 
+   * @param value 	minimal number of instances at the terminal nodes
+   */
+  public void setMinNumObj(double value) {
+<span class="fc" id="L1847">    m_minNumObj = value;</span>
+<span class="fc" id="L1848">  }</span>
+
+  /**
+   * Get minimal number of instances at the terminal nodes.
+   * 
+   * @return 		minimal number of instances at the terminal nodes
+   */
+  public double getMinNumObj() {
+<span class="fc" id="L1856">    return m_minNumObj;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui
+   */
+  public String numFoldsPruningTipText() {
+<span class="nc" id="L1866">    return &quot;The number of folds in the internal cross-validation (default 5).&quot;;</span>
+  }
+
+  /** 
+   * Set number of folds in internal cross-validation.
+   * 
+   * @param value 	number of folds in internal cross-validation.
+   */
+  public void setNumFoldsPruning(int value) {
+<span class="fc" id="L1875">    m_numFoldsPruning = value;</span>
+<span class="fc" id="L1876">  }</span>
+
+  /**
+   * Set number of folds in internal cross-validation.
+   * 
+   * @return 		number of folds in internal cross-validation.
+   */
+  public int getNumFoldsPruning() {
+<span class="fc" id="L1884">    return m_numFoldsPruning;</span>
+  }
+
+  /**
+   * Return the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for displaying in 
+   * 			the explorer/experimenter gui.
+   */
+  public String usePruneTipText() {
+<span class="nc" id="L1894">    return &quot;Use minimal cost-complexity pruning (default yes).&quot;;</span>
+  }
+
+  /** 
+   * Set if use minimal cost-complexity pruning.
+   * 
+   * @param value 	if use minimal cost-complexity pruning
+   */
+  public void setUsePrune(boolean value) {
+<span class="fc" id="L1903">    m_Prune = value;</span>
+<span class="fc" id="L1904">  }</span>
+
+  /** 
+   * Get if use minimal cost-complexity pruning.
+   * 
+   * @return 		if use minimal cost-complexity pruning
+   */
+  public boolean getUsePrune() {
+<span class="fc" id="L1912">    return m_Prune;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui.
+   */
+  public String heuristicTipText() {
+<span class="nc" id="L1922">    return </span>
+<span class="nc" id="L1923">        &quot;If heuristic search is used for binary split for nominal attributes &quot;</span>
+      + &quot;in multi-class problems (default yes).&quot;;
+  }
+
+  /**
+   * Set if use heuristic search for nominal attributes in multi-class problems.
+   * 
+   * @param value 	if use heuristic search for nominal attributes in 
+   * 			multi-class problems
+   */
+  public void setHeuristic(boolean value) {
+<span class="fc" id="L1934">    m_Heuristic = value;</span>
+<span class="fc" id="L1935">  }</span>
+
+  /** 
+   * Get if use heuristic search for nominal attributes in multi-class problems.
+   * 
+   * @return 		if use heuristic search for nominal attributes in 
+   * 			multi-class problems
+   */
+<span class="fc" id="L1943">  public boolean getHeuristic() {return m_Heuristic;}</span>
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui.
+   */
+  public String useOneSETipText() {
+<span class="nc" id="L1952">    return &quot;Use the 1SE rule to make pruning decisoin.&quot;;</span>
+  }
+
+  /** 
+   * Set if use the 1SE rule to choose final model.
+   * 
+   * @param value 	if use the 1SE rule to choose final model
+   */
+  public void setUseOneSE(boolean value) {
+<span class="fc" id="L1961">    m_UseOneSE = value;</span>
+<span class="fc" id="L1962">  }</span>
+
+  /**
+   * Get if use the 1SE rule to choose final model.
+   * 
+   * @return 		if use the 1SE rule to choose final model
+   */
+  public boolean getUseOneSE() {
+<span class="fc" id="L1970">    return m_UseOneSE;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * 
+   * @return 		tip text for this property suitable for
+   * 			displaying in the explorer/experimenter gui.
+   */
+  public String sizePerTipText() {
+<span class="nc" id="L1980">    return &quot;The percentage of the training set size (0-1, 0 not included).&quot;;</span>
+  }
+
+  /** 
+   * Set training set size.
+   * 
+   * @param value 	training set size
+   */  
+  public void setSizePer(double value) {
+<span class="pc bpc" id="L1989" title="2 of 4 branches missed.">    if ((value &lt;= 0) || (value &gt; 1))</span>
+<span class="nc" id="L1990">      System.err.println(</span>
+<span class="nc" id="L1991">	  &quot;The percentage of the training set size must be in range 0 to 1 &quot;</span>
+	  + &quot;(0 not included) - ignored!&quot;);
+    else
+<span class="fc" id="L1994">      m_SizePer = value;</span>
+<span class="fc" id="L1995">  }</span>
+
+  /**
+   * Get training set size.
+   * 
+   * @return 		training set size
+   */
+  public double getSizePer() {
+<span class="fc" id="L2003">    return m_SizePer;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L2012">    return RevisionUtils.extract(&quot;$Revision: 5535 $&quot;);</span>
+  }
+
+  /**
+   * Main method.
+   * @param args the options for the classifier
+   */
+  public static void main(String[] args) {
+<span class="nc" id="L2020">    runClassifier(new SimpleCart(), args);</span>
+<span class="nc" id="L2021">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

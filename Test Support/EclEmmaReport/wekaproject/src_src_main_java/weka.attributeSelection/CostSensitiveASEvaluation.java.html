@@ -1,0 +1,582 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>CostSensitiveASEvaluation.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.attributeSelection</a> &gt; <span class="el_source">CostSensitiveASEvaluation.java</span></div><h1>CostSensitiveASEvaluation.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    CostSensitiveASEvaluation.java
+ *    Copyright (C) 2008 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package  weka.attributeSelection;
+
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.SelectedTag;
+import weka.core.Tag;
+import weka.classifiers.CostMatrix;
+import weka.core.WeightedInstancesHandler;
+import weka.core.RevisionUtils;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.StringReader;
+import java.io.StringWriter;
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.Random;
+import java.util.Vector;
+import java.util.ArrayList;
+
+/**
+ * Abstract base class for cost-sensitive subset and attribute evaluators.
+ *
+ * @author Mark Hall (mhall{[at]}pentaho{[dot]}com)
+ * @version $Revision: 5562 $
+ */
+<span class="pc" id="L55">public abstract class CostSensitiveASEvaluation</span>
+  extends ASEvaluation
+  implements OptionHandler, Serializable {
+
+  /** for serialization */
+  static final long serialVersionUID = -7045833833363396977L;
+
+  /** load cost matrix on demand */
+  public static final int MATRIX_ON_DEMAND = 1;
+  /** use explicit cost matrix */
+  public static final int MATRIX_SUPPLIED = 2;
+  /** Specify possible sources of the cost matrix */
+<span class="fc" id="L67">  public static final Tag [] TAGS_MATRIX_SOURCE = {</span>
+<span class="fc" id="L68">    new Tag(MATRIX_ON_DEMAND, &quot;Load cost matrix on demand&quot;),</span>
+<span class="fc" id="L69">    new Tag(MATRIX_SUPPLIED, &quot;Use explicit cost matrix&quot;)</span>
+  };
+
+  /** Indicates the current cost matrix source */
+<span class="nc" id="L73">  protected int m_MatrixSource = MATRIX_ON_DEMAND;</span>
+
+  /** 
+   * The directory used when loading cost files on demand, null indicates
+   * current directory 
+   */
+<span class="nc" id="L79">  protected File m_OnDemandDirectory = new File(System.getProperty(&quot;user.dir&quot;));</span>
+
+  /** The name of the cost file, for command line options */
+  protected String m_CostFile;
+
+  /** The cost matrix */
+<span class="nc" id="L85">  protected CostMatrix m_CostMatrix = new CostMatrix(1);</span>
+
+  /** The base evaluator to use */
+  protected ASEvaluation m_evaluator;
+
+  /** random number seed */
+<span class="nc" id="L91">  protected int m_seed = 1;</span>
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+
+<span class="nc" id="L100">    Vector newVector = new Vector(4);</span>
+
+<span class="nc" id="L102">    newVector.addElement(new Option(</span>
+<span class="nc" id="L103">                                    &quot;\tFile name of a cost matrix to use. If this is not supplied,\n&quot;</span>
+                                    +&quot;\ta cost matrix will be loaded on demand. The name of the\n&quot;
+                                    +&quot;\ton-demand file is the relation name of the training data\n&quot;
+                                    +&quot;\tplus \&quot;.cost\&quot;, and the path to the on-demand file is\n&quot;
+                                    +&quot;\tspecified with the -N option.&quot;,
+<span class="nc" id="L108">                                    &quot;C&quot;, 1, &quot;-C &lt;cost file name&gt;&quot;));</span>
+<span class="nc" id="L109">    newVector.addElement(new Option(</span>
+<span class="nc" id="L110">                                    &quot;\tName of a directory to search for cost files when loading\n&quot;</span>
+                                    +&quot;\tcosts on demand (default current directory).&quot;,
+<span class="nc" id="L112">                                    &quot;N&quot;, 1, &quot;-N &lt;directory&gt;&quot;));</span>
+<span class="nc" id="L113">    newVector.addElement(new Option(</span>
+<span class="nc" id="L114">                                    &quot;\tThe cost matrix in Matlab single line format.&quot;,</span>
+<span class="nc" id="L115">                                    &quot;cost-matrix&quot;, 1, &quot;-cost-matrix &lt;matrix&gt;&quot;));</span>
+<span class="nc" id="L116">    newVector.addElement(new Option(</span>
+<span class="nc" id="L117">                                    &quot;\tThe seed to use for random number generation.&quot;,</span>
+<span class="nc" id="L118">                                    &quot;S&quot;, 1, &quot;-S &lt;integer&gt;&quot;));</span>
+
+<span class="nc" id="L120">    newVector.addElement(new Option(</span>
+<span class="nc" id="L121">                                    &quot;\tFull name of base evaluator. Options after -- are &quot;</span>
+                                    +&quot;passed to the evaluator.\n&quot;
+<span class="nc" id="L123">                                    + &quot;\t(default: &quot; + defaultEvaluatorString() +&quot;)&quot;,</span>
+<span class="nc" id="L124">                                    &quot;W&quot;, 1, &quot;-W&quot;));</span>
+
+<span class="nc bnc" id="L126" title="All 2 branches missed.">    if (m_evaluator instanceof OptionHandler) {</span>
+<span class="nc" id="L127">      newVector.addElement(new Option(</span>
+<span class="nc" id="L128">                                      &quot;&quot;,</span>
+<span class="nc" id="L129">                                      &quot;&quot;, 0, &quot;\nOptions specific to evaluator &quot;</span>
+<span class="nc" id="L130">                                      + m_evaluator.getClass().getName() + &quot;:&quot;));</span>
+<span class="nc" id="L131">      Enumeration enu = ((OptionHandler)m_evaluator).listOptions();</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">      while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L133">        newVector.addElement(enu.nextElement());</span>
+      }
+    }
+
+
+<span class="nc" id="L138">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -C &amp;lt;cost file name&amp;gt;
+   *  File name of a cost matrix to use. If this is not supplied,
+   *  a cost matrix will be loaded on demand. The name of the
+   *  on-demand file is the relation name of the training data
+   *  plus &quot;.cost&quot;, and the path to the on-demand file is
+   *  specified with the -N option.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;directory&amp;gt;
+   *  Name of a directory to search for cost files when loading
+   *  costs on demand (default current directory).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -cost-matrix &amp;lt;matrix&amp;gt;
+   *  The cost matrix in Matlab single line format.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;integer&amp;gt;
+   *  The seed to use for random number generation.&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W
+   *  Full name of base evaluator.
+   *  (default: weka.attributeSelection.CfsSubsetEval)&lt;/pre&gt;
+   *
+   * Options after -- are passed to the designated evaluator.&lt;p&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="nc" id="L173">    String costFile = Utils.getOption('C', options);</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">    if (costFile.length() != 0) {</span>
+      try {
+<span class="nc" id="L176">	setCostMatrix(new CostMatrix(new BufferedReader(</span>
+<span class="nc" id="L177">                                                        new FileReader(costFile))));</span>
+<span class="nc" id="L178">      } catch (Exception ex) {</span>
+	// now flag as possible old format cost matrix. Delay cost matrix
+	// loading until buildClassifer is called
+<span class="nc" id="L181">	setCostMatrix(null);</span>
+      }
+<span class="nc" id="L183">      setCostMatrixSource(new SelectedTag(MATRIX_SUPPLIED,</span>
+<span class="nc" id="L184">                                          TAGS_MATRIX_SOURCE));</span>
+<span class="nc" id="L185">      m_CostFile = costFile;</span>
+    } else {
+<span class="nc" id="L187">      setCostMatrixSource(new SelectedTag(MATRIX_ON_DEMAND, </span>
+<span class="nc" id="L188">                                          TAGS_MATRIX_SOURCE));</span>
+    }
+    
+<span class="nc" id="L191">    String demandDir = Utils.getOption('N', options);</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">    if (demandDir.length() != 0) {</span>
+<span class="nc" id="L193">      setOnDemandDirectory(new File(demandDir));</span>
+    }
+
+<span class="nc" id="L196">    String cost_matrix = Utils.getOption(&quot;cost-matrix&quot;, options);</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">    if (cost_matrix.length() != 0) {</span>
+<span class="nc" id="L198">      StringWriter writer = new StringWriter();</span>
+<span class="nc" id="L199">      CostMatrix.parseMatlab(cost_matrix).write(writer);</span>
+<span class="nc" id="L200">      setCostMatrix(new CostMatrix(new StringReader(writer.toString())));</span>
+<span class="nc" id="L201">      setCostMatrixSource(new SelectedTag(MATRIX_SUPPLIED,</span>
+<span class="nc" id="L202">                                          TAGS_MATRIX_SOURCE));</span>
+    }
+
+<span class="nc" id="L205">    String seed = Utils.getOption('S', options);</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">    if (seed.length() != 0) {</span>
+<span class="nc" id="L207">      setSeed(Integer.parseInt(seed));</span>
+    } else {
+<span class="nc" id="L209">      setSeed(1);</span>
+    }
+
+<span class="nc" id="L212">    String evaluatorName = Utils.getOption('W', options);</span>
+    
+<span class="nc bnc" id="L214" title="All 2 branches missed.">    if (evaluatorName.length() &gt; 0) { </span>
+      
+      // This is just to set the evaluator in case the option 
+      // parsing fails.
+<span class="nc" id="L218">      setEvaluator(ASEvaluation.forName(evaluatorName, null));</span>
+<span class="nc" id="L219">      setEvaluator(ASEvaluation.forName(evaluatorName,</span>
+<span class="nc" id="L220">                                        Utils.partitionOptions(options)));</span>
+    } else {
+      
+      // This is just to set the classifier in case the option 
+      // parsing fails.
+<span class="nc" id="L225">      setEvaluator(ASEvaluation.forName(defaultEvaluatorString(), null));</span>
+<span class="nc" id="L226">      setEvaluator(ASEvaluation.forName(defaultEvaluatorString(),</span>
+<span class="nc" id="L227">                                        Utils.partitionOptions(options)));</span>
+    }
+<span class="nc" id="L229">  }</span>
+
+  /**
+   * Gets the current settings of the subset evaluator.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String[] getOptions() {
+<span class="nc" id="L237">    ArrayList&lt;String&gt; options = new ArrayList&lt;String&gt;();</span>
+
+<span class="nc bnc" id="L239" title="All 2 branches missed.">    if (m_MatrixSource == MATRIX_SUPPLIED) {</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">      if (m_CostFile != null) {</span>
+<span class="nc" id="L241">        options.add(&quot;-C&quot;);</span>
+<span class="nc" id="L242">        options.add(&quot;&quot; + m_CostFile);</span>
+      }
+      else {
+<span class="nc" id="L245">        options.add(&quot;-cost-matrix&quot;);</span>
+<span class="nc" id="L246">        options.add(getCostMatrix().toMatlab());</span>
+      }
+    } else {
+<span class="nc" id="L249">      options.add(&quot;-N&quot;);</span>
+<span class="nc" id="L250">      options.add(&quot;&quot; + getOnDemandDirectory());</span>
+    }
+
+<span class="nc" id="L253">    options.add(&quot;-S&quot;);</span>
+<span class="nc" id="L254">    options.add(&quot;&quot; + getSeed());</span>
+
+<span class="nc" id="L256">    options.add(&quot;-W&quot;);</span>
+<span class="nc" id="L257">    options.add(m_evaluator.getClass().getName());</span>
+
+<span class="nc bnc" id="L259" title="All 2 branches missed.">    if (m_evaluator instanceof OptionHandler) {</span>
+<span class="nc" id="L260">      String[] evaluatorOptions = ((OptionHandler)m_evaluator).getOptions();</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">      if (evaluatorOptions.length &gt; 0) {</span>
+<span class="nc" id="L262">        options.add(&quot;--&quot;);</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        for (int i = 0; i &lt; evaluatorOptions.length; i++) {</span>
+<span class="nc" id="L264">          options.add(evaluatorOptions[i]);</span>
+        }
+      }
+    }
+
+<span class="nc" id="L269">    return options.toArray(new String[0]);</span>
+  }
+
+  /**
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L278">    return &quot;A meta subset evaluator that makes its base subset evaluator cost-sensitive. &quot;;</span>
+  }
+
+  /**
+   * Return the name of the default evaluator.
+   *
+   * @return the name of the default evaluator
+   */
+  public String defaultEvaluatorString() {
+<span class="nc" id="L287">    return &quot;weka.attributeSelection.CfsSubsetEval&quot;;</span>
+  }
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String costMatrixSourceTipText() {
+
+<span class="nc" id="L296">    return &quot;Sets where to get the cost matrix. The two options are&quot;</span>
+      + &quot;to use the supplied explicit cost matrix (the setting of the &quot;
+      + &quot;costMatrix property), or to load a cost matrix from a file when &quot;
+      + &quot;required (this file will be loaded from the directory set by the &quot;
+      + &quot;onDemandDirectory property and will be named relation_name&quot; 
+<span class="nc" id="L301">      + CostMatrix.FILE_EXTENSION + &quot;).&quot;;</span>
+  }
+
+  /**
+   * Gets the source location method of the cost matrix. Will be one of
+   * MATRIX_ON_DEMAND or MATRIX_SUPPLIED.
+   *
+   * @return the cost matrix source.
+   */
+  public SelectedTag getCostMatrixSource() {
+
+<span class="nc" id="L312">    return new SelectedTag(m_MatrixSource, TAGS_MATRIX_SOURCE);</span>
+  }
+
+  /**
+   * Sets the source location of the cost matrix. Values other than
+   * MATRIX_ON_DEMAND or MATRIX_SUPPLIED will be ignored.
+   *
+   * @param newMethod the cost matrix location method.
+   */
+  public void setCostMatrixSource(SelectedTag newMethod) {
+    
+<span class="nc bnc" id="L323" title="All 2 branches missed.">    if (newMethod.getTags() == TAGS_MATRIX_SOURCE) {</span>
+<span class="nc" id="L324">      m_MatrixSource = newMethod.getSelectedTag().getID();</span>
+    }
+<span class="nc" id="L326">  }</span>
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String onDemandDirectoryTipText() {
+
+<span class="nc" id="L334">    return &quot;Sets the directory where cost files are loaded from. This option &quot;</span>
+      + &quot;is used when the costMatrixSource is set to \&quot;On Demand\&quot;.&quot;;
+  }
+
+  /**
+   * Returns the directory that will be searched for cost files when
+   * loading on demand.
+   *
+   * @return The cost file search directory.
+   */
+  public File getOnDemandDirectory() {
+
+<span class="nc" id="L346">    return m_OnDemandDirectory;</span>
+  }
+
+  /**
+   * Sets the directory that will be searched for cost files when
+   * loading on demand.
+   *
+   * @param newDir The cost file search directory.
+   */
+  public void setOnDemandDirectory(File newDir) {
+
+<span class="nc bnc" id="L357" title="All 2 branches missed.">    if (newDir.isDirectory()) {</span>
+<span class="nc" id="L358">      m_OnDemandDirectory = newDir;</span>
+    } else {
+<span class="nc" id="L360">      m_OnDemandDirectory = new File(newDir.getParent());</span>
+    }
+<span class="nc" id="L362">    m_MatrixSource = MATRIX_ON_DEMAND;</span>
+<span class="nc" id="L363">  }</span>
+
+  /**
+   * Gets the evaluator specification string, which contains the class name of
+   * the evaluator and any options to the evaluator
+   *
+   * @return the evaluator string.
+   */
+  protected String getEvaluatorSpec() {
+    
+<span class="nc" id="L373">    ASEvaluation ase = getEvaluator();</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">    if (ase instanceof OptionHandler) {</span>
+<span class="nc" id="L375">      return ase.getClass().getName() + &quot; &quot;</span>
+<span class="nc" id="L376">	+ Utils.joinOptions(((OptionHandler)ase).getOptions());</span>
+    }
+<span class="nc" id="L378">    return ase.getClass().getName();</span>
+  }
+
+  /**
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String costMatrixTipText() {
+<span class="nc" id="L386">    return &quot;Sets the cost matrix explicitly. This matrix is used if the &quot;</span>
+      + &quot;costMatrixSource property is set to \&quot;Supplied\&quot;.&quot;;
+  }
+
+  /**
+   * Gets the misclassification cost matrix.
+   *
+   * @return the cost matrix
+   */
+  public CostMatrix getCostMatrix() {
+    
+<span class="nc" id="L397">    return m_CostMatrix;</span>
+  }
+  
+  /**
+   * Sets the misclassification cost matrix.
+   *
+   * @param newCostMatrix the cost matrix
+   */
+  public void setCostMatrix(CostMatrix newCostMatrix) {
+    
+<span class="nc" id="L407">    m_CostMatrix = newCostMatrix;</span>
+<span class="nc" id="L408">    m_MatrixSource = MATRIX_SUPPLIED;</span>
+<span class="nc" id="L409">  }</span>
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String seedTipText() {
+<span class="nc" id="L417">    return &quot;The random number seed to be used.&quot;;</span>
+  }
+
+  /**
+   * Set the seed for random number generation.
+   *
+   * @param seed the seed 
+   */
+  public void setSeed(int seed) {
+
+<span class="nc" id="L427">    m_seed = seed;</span>
+<span class="nc" id="L428">  }</span>
+
+  /**
+   * Gets the seed for the random number generations.
+   *
+   * @return the seed for the random number generation
+   */
+  public int getSeed() {
+    
+<span class="nc" id="L437">    return m_seed;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String evaluatorTipText() {
+<span class="nc" id="L446">    return &quot;The base evaluator to be used.&quot;;</span>
+  }
+
+  /**
+   * Set the base evaluator.
+   *
+   * @param newEvaluator the evaluator to use.
+   * @throws IllegalArgumentException if the evaluator is of the wrong type
+   */
+  public void setEvaluator(ASEvaluation newEvaluator) throws IllegalArgumentException {
+
+<span class="nc" id="L457">    m_evaluator = newEvaluator;</span>
+<span class="nc" id="L458">  }</span>
+
+  /**
+   * Get the evaluator used as the base evaluator.
+   *
+   * @return the evaluator used as the base evaluator
+   */
+  public ASEvaluation getEvaluator() {
+
+<span class="nc" id="L467">    return m_evaluator;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+    Capabilities result;
+
+<span class="nc bnc" id="L478" title="All 2 branches missed.">    if (getEvaluator() != null) {</span>
+<span class="nc" id="L479">      result = getEvaluator().getCapabilities();</span>
+    } else {
+<span class="nc" id="L481">      result = new Capabilities(this);</span>
+<span class="nc" id="L482">      result.disableAll();</span>
+    }
+
+    // class
+<span class="nc" id="L486">    result.disableAllClasses();</span>
+<span class="nc" id="L487">    result.disableAllClassDependencies();</span>
+<span class="nc" id="L488">    result.enable(Capability.NOMINAL_CLASS);</span>
+    
+<span class="nc" id="L490">    return result;</span>
+  }
+
+  /**
+   * Generates a attribute evaluator. Has to initialize all fields of the 
+   * evaluator that are not being set via options.
+   *
+   * @param data set of instances serving as training data 
+   * @exception Exception if the evaluator has not been 
+   * generated successfully
+   */
+  public void buildEvaluator(Instances data) throws Exception {
+    // can evaluator handle the data?
+<span class="nc" id="L503">    getCapabilities().testWithFail(data);</span>
+
+    // remove instances with missing class
+<span class="nc" id="L506">    data = new Instances(data);</span>
+<span class="nc" id="L507">    data.deleteWithMissingClass();</span>
+
+<span class="nc bnc" id="L509" title="All 2 branches missed.">    if (m_evaluator == null) {</span>
+<span class="nc" id="L510">      throw new Exception(&quot;No base evaluator has been set!&quot;);</span>
+    }
+
+<span class="nc bnc" id="L513" title="All 2 branches missed.">    if (m_MatrixSource == MATRIX_ON_DEMAND) {</span>
+<span class="nc" id="L514">      String costName = data.relationName() + CostMatrix.FILE_EXTENSION;</span>
+<span class="nc" id="L515">      File costFile = new File(getOnDemandDirectory(), costName);</span>
+<span class="nc bnc" id="L516" title="All 2 branches missed.">      if (!costFile.exists()) {</span>
+<span class="nc" id="L517">        throw new Exception(&quot;On-demand cost file doesn't exist: &quot; + costFile);</span>
+      }
+<span class="nc" id="L519">      setCostMatrix(new CostMatrix(new BufferedReader(</span>
+<span class="nc" id="L520">                                                      new FileReader(costFile))));</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">    } else if (m_CostMatrix == null) {</span>
+      // try loading an old format cost file
+<span class="nc" id="L523">      m_CostMatrix = new CostMatrix(data.numClasses());</span>
+<span class="nc" id="L524">      m_CostMatrix.readOldFormat(new BufferedReader(</span>
+<span class="nc" id="L525">                                                    new FileReader(m_CostFile)));</span>
+    }
+    
+<span class="nc" id="L528">    Random random = null;</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">    if (!(m_evaluator instanceof WeightedInstancesHandler)) {</span>
+<span class="nc" id="L530">      random = new Random(m_seed);</span>
+    }
+<span class="nc" id="L532">    data = m_CostMatrix.applyCostMatrix(data, random);</span>
+<span class="nc" id="L533">    m_evaluator.buildEvaluator(data);</span>
+<span class="nc" id="L534">  }</span>
+
+  /**
+   * Provides a chance for a attribute evaluator to do any special
+   * post processing of the selected attribute set.
+   *
+   * @param attributeSet the set of attributes found by the search
+   * @return a possibly ranked list of postprocessed attributes
+   * @exception Exception if postprocessing fails for some reason
+   */
+  public int [] postProcess(int [] attributeSet) 
+    throws Exception {
+<span class="nc" id="L546">    return m_evaluator.postProcess(attributeSet);</span>
+  }
+
+  /**
+   * Output a representation of this evaluator
+   * 
+   * @return a string representation of the classifier
+   */
+  public String toString() {
+
+<span class="nc bnc" id="L556" title="All 2 branches missed.">    if (m_evaluator == null) {</span>
+<span class="nc" id="L557">      return &quot;CostSensitiveASEvaluation: No model built yet.&quot;;</span>
+    }
+  
+<span class="nc bnc" id="L560" title="All 2 branches missed.">    String result = (m_evaluator instanceof AttributeEvaluator)</span>
+<span class="nc" id="L561">      ? &quot;CostSensitiveAttributeEval using &quot;</span>
+<span class="nc" id="L562">      : &quot;CostSensitiveSubsetEval using &quot;;</span>
+
+<span class="nc" id="L564">    result += &quot;\n\n&quot; + getEvaluatorSpec()</span>
+<span class="nc" id="L565">      + &quot;\n\nEvaluator\n&quot;</span>
+<span class="nc" id="L566">      + m_evaluator.toString()</span>
+<span class="nc" id="L567">      + &quot;\n\nCost Matrix\n&quot;</span>
+<span class="nc" id="L568">      + m_CostMatrix.toString();</span>
+    
+<span class="nc" id="L570">    return result;</span>
+  }
+
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L579">    return RevisionUtils.extract(&quot;$Revision: 5562 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

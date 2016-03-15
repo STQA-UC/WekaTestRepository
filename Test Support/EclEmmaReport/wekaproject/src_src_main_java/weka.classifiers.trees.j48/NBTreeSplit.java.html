@@ -1,0 +1,413 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>NBTreeSplit.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.trees.j48</a> &gt; <span class="el_source">NBTreeSplit.java</span></div><h1>NBTreeSplit.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    NBTreeSplit.java
+ *    Copyright (C) 2004 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.classifiers.trees.j48;
+
+import weka.classifiers.bayes.NaiveBayesUpdateable;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionUtils;
+import weka.filters.Filter;
+import weka.filters.supervised.attribute.Discretize;
+
+import java.util.Random;
+
+/**
+ * Class implementing a NBTree split on an attribute.
+ *
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @version $Revision: 1.5 $
+ */
+public class NBTreeSplit
+  extends ClassifierSplitModel{
+
+  /** for serialization */
+  private static final long serialVersionUID = 8922627123884975070L;
+
+  /** Desired number of branches. */
+  private int m_complexityIndex;  
+
+  /** Attribute to split on. */
+  private int m_attIndex;         
+
+  /** Minimum number of objects in a split.   */
+  private int m_minNoObj;         
+
+  /** Value of split point. */
+  private double m_splitPoint;   
+
+  /** The sum of the weights of the instances. */
+  private double m_sumOfWeights;  
+
+  /** The weight of the instances incorrectly classified by the 
+      naive bayes models arising from this split*/
+  private double m_errors;
+
+  private C45Split m_c45S;
+
+  /** The global naive bayes model for this node */
+  NBTreeNoSplit m_globalNB;
+
+  /**
+   * Initializes the split model.
+   */
+<span class="nc" id="L73">  public NBTreeSplit(int attIndex, int minNoObj, double sumOfWeights) {</span>
+    
+    // Get index of attribute to split on.
+<span class="nc" id="L76">    m_attIndex = attIndex;</span>
+        
+    // Set minimum number of objects.
+<span class="nc" id="L79">    m_minNoObj = minNoObj;</span>
+
+    // Set the sum of the weights
+<span class="nc" id="L82">    m_sumOfWeights = sumOfWeights;</span>
+    
+<span class="nc" id="L84">  }</span>
+
+  /**
+   * Creates a NBTree-type split on the given data. Assumes that none of
+   * the class values is missing.
+   *
+   * @exception Exception if something goes wrong
+   */
+  public void buildClassifier(Instances trainInstances) 
+       throws Exception {
+
+    // Initialize the remaining instance variables.
+<span class="nc" id="L96">    m_numSubsets = 0;</span>
+<span class="nc" id="L97">    m_splitPoint = Double.MAX_VALUE;</span>
+<span class="nc" id="L98">    m_errors = 0;</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">    if (m_globalNB != null) {</span>
+<span class="nc" id="L100">      m_errors = m_globalNB.getErrors();</span>
+    }
+
+    // Different treatment for enumerated and numeric
+    // attributes.
+<span class="nc bnc" id="L105" title="All 2 branches missed.">    if (trainInstances.attribute(m_attIndex).isNominal()) {</span>
+<span class="nc" id="L106">      m_complexityIndex = trainInstances.attribute(m_attIndex).numValues();</span>
+<span class="nc" id="L107">      handleEnumeratedAttribute(trainInstances);</span>
+    }else{
+<span class="nc" id="L109">      m_complexityIndex = 2;</span>
+<span class="nc" id="L110">      trainInstances.sort(trainInstances.attribute(m_attIndex));</span>
+<span class="nc" id="L111">      handleNumericAttribute(trainInstances);</span>
+    }
+<span class="nc" id="L113">  }</span>
+
+  /**
+   * Returns index of attribute for which split was generated.
+   */
+  public final int attIndex() {
+    
+<span class="nc" id="L120">    return m_attIndex;</span>
+  }
+
+  /**
+   * Creates split on enumerated attribute.
+   *
+   * @exception Exception if something goes wrong
+   */
+  private void handleEnumeratedAttribute(Instances trainInstances)
+       throws Exception {
+
+<span class="nc" id="L131">    m_c45S = new C45Split(m_attIndex, 2, m_sumOfWeights);</span>
+<span class="nc" id="L132">    m_c45S.buildClassifier(trainInstances);</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">    if (m_c45S.numSubsets() == 0) {</span>
+<span class="nc" id="L134">      return;</span>
+    }
+<span class="nc" id="L136">    m_errors = 0;</span>
+    Instance instance;
+
+<span class="nc" id="L139">    Instances [] trainingSets = new Instances [m_complexityIndex];</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">    for (int i = 0; i &lt; m_complexityIndex; i++) {</span>
+<span class="nc" id="L141">      trainingSets[i] = new Instances(trainInstances, 0);</span>
+    }
+    /*    m_distribution = new Distribution(m_complexityIndex,
+	  trainInstances.numClasses()); */
+    int subset;
+<span class="nc bnc" id="L146" title="All 2 branches missed.">    for (int i = 0; i &lt; trainInstances.numInstances(); i++) {</span>
+<span class="nc" id="L147">      instance = trainInstances.instance(i);</span>
+<span class="nc" id="L148">      subset = m_c45S.whichSubset(instance);</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">      if (subset &gt; -1) {</span>
+<span class="nc" id="L150">	trainingSets[subset].add((Instance)instance.copy());</span>
+      } else {
+<span class="nc" id="L152">	double [] weights = m_c45S.weights(instance);</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">	for (int j = 0; j &lt; m_complexityIndex; j++) {</span>
+	  try {
+<span class="nc" id="L155">	    Instance temp = (Instance) instance.copy();</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">	    if (weights.length == m_complexityIndex) {</span>
+<span class="nc" id="L157">	      temp.setWeight(temp.weight() * weights[j]);</span>
+	    } else {
+<span class="nc" id="L159">	      temp.setWeight(temp.weight() / m_complexityIndex);</span>
+	    }
+<span class="nc" id="L161">	    trainingSets[j].add(temp);</span>
+<span class="nc" id="L162">	  } catch (Exception ex) {</span>
+<span class="nc" id="L163">	    ex.printStackTrace();</span>
+<span class="nc" id="L164">	    System.err.println(&quot;*** &quot;+m_complexityIndex);</span>
+<span class="nc" id="L165">	    System.err.println(weights.length);</span>
+<span class="nc" id="L166">	    System.exit(1);</span>
+	  }
+	}
+      }
+    }
+
+    /*    // compute weights (weights of instances per subset
+    m_weights = new double [m_complexityIndex];
+    for (int i = 0; i &lt; m_complexityIndex; i++) {
+      m_weights[i] = trainingSets[i].sumOfWeights();
+    }
+    Utils.normalize(m_weights); */
+
+    /*
+    // Only Instances with known values are relevant.
+    Enumeration enu = trainInstances.enumerateInstances();
+    while (enu.hasMoreElements()) {
+      instance = (Instance) enu.nextElement();
+      if (!instance.isMissing(m_attIndex)) {
+	//	m_distribution.add((int)instance.value(m_attIndex),instance);
+	trainingSets[(int)instances.value(m_attIndex)].add(instance);
+      } else {
+	// add these to the error count
+	m_errors += instance.weight();
+      }
+      } */
+
+<span class="nc" id="L193">    Random r = new Random(1);</span>
+<span class="nc" id="L194">    int minNumCount = 0;</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">    for (int i = 0; i &lt; m_complexityIndex; i++) {</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">      if (trainingSets[i].numInstances() &gt;= 5) {</span>
+<span class="nc" id="L197">	minNumCount++;</span>
+	// Discretize the sets
+<span class="nc" id="L199">	Discretize disc = new Discretize();</span>
+<span class="nc" id="L200">	disc.setInputFormat(trainingSets[i]);</span>
+<span class="nc" id="L201">	trainingSets[i] = Filter.useFilter(trainingSets[i], disc);</span>
+
+<span class="nc" id="L203">	trainingSets[i].randomize(r);</span>
+<span class="nc" id="L204">	trainingSets[i].stratify(5);</span>
+<span class="nc" id="L205">	NaiveBayesUpdateable fullModel = new NaiveBayesUpdateable();</span>
+<span class="nc" id="L206">	fullModel.buildClassifier(trainingSets[i]);</span>
+
+	// add the errors for this branch of the split
+<span class="nc" id="L209">	m_errors += NBTreeNoSplit.crossValidate(fullModel, trainingSets[i], r);</span>
+      } else {
+	// if fewer than min obj then just count them as errors
+<span class="nc bnc" id="L212" title="All 2 branches missed.">	for (int j = 0; j &lt; trainingSets[i].numInstances(); j++) {</span>
+<span class="nc" id="L213">	  m_errors += trainingSets[i].instance(j).weight();</span>
+	}
+      }
+    }
+    
+    // Check if there are at least five instances in at least two of the subsets
+    // subsets.
+<span class="nc bnc" id="L220" title="All 2 branches missed.">    if (minNumCount &gt; 1) {</span>
+<span class="nc" id="L221">      m_numSubsets = m_complexityIndex;</span>
+    }
+<span class="nc" id="L223">  }</span>
+
+  /**
+   * Creates split on numeric attribute.
+   *
+   * @exception Exception if something goes wrong
+   */
+  private void handleNumericAttribute(Instances trainInstances)
+       throws Exception {
+
+<span class="nc" id="L233">    m_c45S = new C45Split(m_attIndex, 2, m_sumOfWeights);</span>
+<span class="nc" id="L234">    m_c45S.buildClassifier(trainInstances);</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">    if (m_c45S.numSubsets() == 0) {</span>
+<span class="nc" id="L236">      return;</span>
+    }
+<span class="nc" id="L238">    m_errors = 0;</span>
+
+<span class="nc" id="L240">    Instances [] trainingSets = new Instances [m_complexityIndex];</span>
+<span class="nc" id="L241">    trainingSets[0] = new Instances(trainInstances, 0);</span>
+<span class="nc" id="L242">    trainingSets[1] = new Instances(trainInstances, 0);</span>
+<span class="nc" id="L243">    int subset = -1;</span>
+    
+    // populate the subsets
+<span class="nc bnc" id="L246" title="All 2 branches missed.">    for (int i = 0; i &lt; trainInstances.numInstances(); i++) {</span>
+<span class="nc" id="L247">      Instance instance = trainInstances.instance(i);</span>
+<span class="nc" id="L248">      subset = m_c45S.whichSubset(instance);</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">      if (subset != -1) {</span>
+<span class="nc" id="L250">	trainingSets[subset].add((Instance)instance.copy());</span>
+      } else {
+<span class="nc" id="L252">	double [] weights = m_c45S.weights(instance);</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">	for (int j = 0; j &lt; m_complexityIndex; j++) {</span>
+<span class="nc" id="L254">	  Instance temp = (Instance)instance.copy();</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">	  if (weights.length == m_complexityIndex) {</span>
+<span class="nc" id="L256">	    temp.setWeight(temp.weight() * weights[j]);</span>
+	  } else {
+<span class="nc" id="L258">	    temp.setWeight(temp.weight() / m_complexityIndex);</span>
+	  }
+<span class="nc" id="L260">	  trainingSets[j].add(temp); </span>
+	}
+      }
+    }
+    
+    /*    // compute weights (weights of instances per subset
+    m_weights = new double [m_complexityIndex];
+    for (int i = 0; i &lt; m_complexityIndex; i++) {
+      m_weights[i] = trainingSets[i].sumOfWeights();
+    }
+    Utils.normalize(m_weights); */
+
+<span class="nc" id="L272">    Random r = new Random(1);</span>
+<span class="nc" id="L273">    int minNumCount = 0;</span>
+<span class="nc bnc" id="L274" title="All 2 branches missed.">    for (int i = 0; i &lt; m_complexityIndex; i++) {</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">      if (trainingSets[i].numInstances() &gt; 5) {</span>
+<span class="nc" id="L276">	minNumCount++;</span>
+	// Discretize the sets
+<span class="nc" id="L278">		Discretize disc = new Discretize();</span>
+<span class="nc" id="L279">	disc.setInputFormat(trainingSets[i]);</span>
+<span class="nc" id="L280">	trainingSets[i] = Filter.useFilter(trainingSets[i], disc);</span>
+
+<span class="nc" id="L282">	trainingSets[i].randomize(r);</span>
+<span class="nc" id="L283">	trainingSets[i].stratify(5);</span>
+<span class="nc" id="L284">	NaiveBayesUpdateable fullModel = new NaiveBayesUpdateable();</span>
+<span class="nc" id="L285">	fullModel.buildClassifier(trainingSets[i]);</span>
+
+	// add the errors for this branch of the split
+<span class="nc" id="L288">	m_errors += NBTreeNoSplit.crossValidate(fullModel, trainingSets[i], r);</span>
+      } else {
+<span class="nc bnc" id="L290" title="All 2 branches missed.">	for (int j = 0; j &lt; trainingSets[i].numInstances(); j++) {</span>
+<span class="nc" id="L291">	  m_errors += trainingSets[i].instance(j).weight();</span>
+	}
+      }
+    }
+    
+    // Check if minimum number of Instances in at least two
+    // subsets.
+<span class="nc bnc" id="L298" title="All 2 branches missed.">    if (minNumCount &gt; 1) {</span>
+<span class="nc" id="L299">      m_numSubsets = m_complexityIndex;</span>
+    }
+<span class="nc" id="L301">  }</span>
+
+  /**
+   * Returns index of subset instance is assigned to.
+   * Returns -1 if instance is assigned to more than one subset.
+   *
+   * @exception Exception if something goes wrong
+   */
+  public final int whichSubset(Instance instance) 
+    throws Exception {
+    
+<span class="nc" id="L312">    return m_c45S.whichSubset(instance);</span>
+  }
+
+  /**
+   * Returns weights if instance is assigned to more than one subset.
+   * Returns null if instance is only assigned to one subset.
+   */
+  public final double [] weights(Instance instance) {
+<span class="nc" id="L320">    return m_c45S.weights(instance);</span>
+    //     return m_weights;
+  }
+
+  /**
+   * Returns a string containing java source code equivalent to the test
+   * made at this node. The instance being tested is called &quot;i&quot;.
+   *
+   * @param index index of the nominal value tested
+   * @param data the data containing instance structure info
+   * @return a value of type 'String'
+   */
+  public final String sourceExpression(int index, Instances data) {
+<span class="nc" id="L333">    return m_c45S.sourceExpression(index, data);</span>
+  }
+
+  /**
+   * Prints the condition satisfied by instances in a subset.
+   *
+   * @param index of subset 
+   * @param data training set.
+   */
+  public final String rightSide(int index,Instances data) {
+<span class="nc" id="L343">    return m_c45S.rightSide(index, data);</span>
+  }
+
+  /**
+   * Prints left side of condition..
+   *
+   * @param data training set.
+   */
+  public final String leftSide(Instances data) {
+
+<span class="nc" id="L353">    return m_c45S.leftSide(data);</span>
+  }
+
+  /**
+   * Return the probability for a class value
+   *
+   * @param classIndex the index of the class value
+   * @param instance the instance to generate a probability for
+   * @param theSubset the subset to consider
+   * @return a probability
+   * @exception Exception if an error occurs
+   */
+  public double classProb(int classIndex, Instance instance, int theSubset) 
+    throws Exception {
+
+    // use the global naive bayes model
+<span class="nc bnc" id="L369" title="All 2 branches missed.">    if (theSubset &gt; -1) {</span>
+<span class="nc" id="L370">      return m_globalNB.classProb(classIndex, instance, theSubset);</span>
+    } else {
+<span class="nc" id="L372">      throw new Exception(&quot;This shouldn't happen!!!&quot;);</span>
+    }
+  }
+
+  /**
+   * Return the global naive bayes model for this node
+   *
+   * @return a &lt;code&gt;NBTreeNoSplit&lt;/code&gt; value
+   */
+  public NBTreeNoSplit getGlobalModel() {
+<span class="nc" id="L382">    return m_globalNB;</span>
+  }
+
+  /**
+   * Set the global naive bayes model for this node
+   *
+   * @param global a &lt;code&gt;NBTreeNoSplit&lt;/code&gt; value
+   */
+  public void setGlobalModel(NBTreeNoSplit global) {
+<span class="nc" id="L391">    m_globalNB = global;</span>
+<span class="nc" id="L392">  }</span>
+
+  /**
+   * Return the errors made by the naive bayes models arising
+   * from this split.
+   *
+   * @return a &lt;code&gt;double&lt;/code&gt; value
+   */
+  public double getErrors() {
+<span class="nc" id="L401">    return m_errors;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L410">    return RevisionUtils.extract(&quot;$Revision: 1.5 $&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

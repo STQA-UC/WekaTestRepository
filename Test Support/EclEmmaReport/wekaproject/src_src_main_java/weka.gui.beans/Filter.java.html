@@ -1,0 +1,1032 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Filter.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.gui.beans</a> &gt; <span class="el_source">Filter.java</span></div><h1>Filter.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">/*</span>
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Filter.java
+ *    Copyright (C) 2002 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.gui.beans;
+
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.OptionHandler;
+import weka.core.Utils;
+import weka.filters.AllFilter;
+import weka.filters.StreamableFilter;
+import weka.filters.SupervisedFilter;
+import weka.gui.Logger;
+
+import java.awt.BorderLayout;
+import java.beans.EventSetDescriptor;
+import java.io.Serializable;
+import java.util.Enumeration;
+import java.util.EventObject;
+import java.util.Hashtable;
+import java.util.Vector;
+
+import javax.swing.JPanel;
+
+/**
+ * A wrapper bean for Weka filters
+ *
+ * @author &lt;a href=&quot;mailto:mhall@cs.waikato.ac.nz&quot;&gt;Mark Hall&lt;/a&gt;
+ * @version $Revision: 7059 $
+ */
+<span class="nc" id="L50">public class Filter</span>
+  extends JPanel
+  implements BeanCommon, Visible, WekaWrapper,
+	     Serializable, UserRequestAcceptor,
+	     TrainingSetListener, TestSetListener,
+	     TrainingSetProducer, TestSetProducer,
+	     DataSource, DataSourceListener, 
+	     InstanceListener, EventConstraints {
+
+  /** for serialization */
+  private static final long serialVersionUID = 8249759470189439321L;
+
+<span class="nc" id="L62">  protected BeanVisual m_visual = </span>
+<span class="nc" id="L63">    new BeanVisual(&quot;Filter&quot;,</span>
+<span class="nc" id="L64">		   BeanVisual.ICON_PATH+&quot;DefaultFilter.gif&quot;,</span>
+<span class="nc" id="L65">		   BeanVisual.ICON_PATH+&quot;DefaultFilter_animated.gif&quot;);</span>
+
+<span class="nc" id="L67">  private static int IDLE = 0;</span>
+<span class="nc" id="L68">  private static int FILTERING_TRAINING = 1;</span>
+<span class="nc" id="L69">  private static int FILTERING_TEST = 2;</span>
+<span class="nc" id="L70">  private int m_state = IDLE;</span>
+
+<span class="nc" id="L72">  protected Thread m_filterThread = null;</span>
+
+  private transient Instances m_trainingSet;
+  private transient Instances m_testingSet;
+
+  /**
+   * Global info for the wrapped filter (if it exists).
+   */
+  protected String m_globalInfo;
+
+  /**
+   * Objects talking to us
+   */
+<span class="nc" id="L85">  private Hashtable m_listenees = new Hashtable();</span>
+
+  /**
+   * Objects listening for training set events
+   */
+<span class="nc" id="L90">  private Vector m_trainingListeners = new Vector();</span>
+
+  /**
+   * Objects listening for test set events
+   */
+<span class="nc" id="L95">  private Vector m_testListeners = new Vector();</span>
+
+  /**
+   * Objects listening for instance events
+   */
+<span class="nc" id="L100">  private Vector m_instanceListeners = new Vector();</span>
+
+  /**
+   * Objects listening for data set events
+   */
+<span class="nc" id="L105">  private Vector m_dataListeners = new Vector();</span>
+
+  /**
+   * The filter to use.
+   */
+<span class="nc" id="L110">  private weka.filters.Filter m_Filter = new AllFilter();</span>
+
+  /**
+   * Instance event object for passing on filtered instance streams
+   */
+<span class="nc" id="L115">  private InstanceEvent m_ie = new InstanceEvent(this);</span>
+
+  /**
+   * Logging.
+   */
+<span class="nc" id="L120">  private transient Logger m_log = null;</span>
+  
+  /**
+   * Counts incoming streamed instances.
+   */
+  private transient int m_instanceCount;
+  
+  /**
+   * Global info (if it exists) for the wrapped filter
+   *
+   * @return the global info
+   */
+  public String globalInfo() {
+<span class="nc" id="L133">    return m_globalInfo;</span>
+  }
+
+<span class="nc" id="L136">  public Filter() {</span>
+<span class="nc" id="L137">    setLayout(new BorderLayout());</span>
+<span class="nc" id="L138">    add(m_visual, BorderLayout.CENTER);</span>
+<span class="nc" id="L139">    setFilter(m_Filter);</span>
+<span class="nc" id="L140">  }</span>
+
+  /**
+   * Set a custom (descriptive) name for this bean
+   * 
+   * @param name the name to use
+   */
+  public void setCustomName(String name) {
+<span class="nc" id="L148">    m_visual.setText(name);</span>
+<span class="nc" id="L149">  }</span>
+
+  /**
+   * Get the custom (descriptive) name for this bean (if one has been set)
+   * 
+   * @return the custom name (or the default name)
+   */
+  public String getCustomName() {
+<span class="nc" id="L157">    return m_visual.getText();</span>
+  }
+
+  /**
+   * Set the filter to be wrapped by this bean
+   *
+   * @param c a &lt;code&gt;weka.filters.Filter&lt;/code&gt; value
+   */
+  public void setFilter(weka.filters.Filter c) {
+<span class="nc" id="L166">    boolean loadImages = true;</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">    if (c.getClass().getName().</span>
+<span class="nc" id="L168">	compareTo(m_Filter.getClass().getName()) == 0) {</span>
+<span class="nc" id="L169">      loadImages = false;</span>
+    }
+<span class="nc" id="L171">    m_Filter = c;</span>
+<span class="nc" id="L172">    String filterName = c.getClass().toString();</span>
+<span class="nc" id="L173">    filterName = filterName.substring(filterName.</span>
+<span class="nc" id="L174">				      indexOf('.')+1, </span>
+<span class="nc" id="L175">				      filterName.length());</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">    if (loadImages) {</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">      if (m_Filter instanceof Visible) {</span>
+<span class="nc" id="L178">        m_visual = ((Visible) m_Filter).getVisual();</span>
+      } else {
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        if (!m_visual.loadIcons(BeanVisual.ICON_PATH+filterName+&quot;.gif&quot;,</span>
+<span class="nc" id="L181">                                BeanVisual.ICON_PATH+filterName+&quot;_animated.gif&quot;)) {</span>
+<span class="nc" id="L182">          useDefaultVisual();</span>
+        }
+      }
+    }
+<span class="nc" id="L186">    m_visual.setText(filterName.substring(filterName.lastIndexOf('.')+1,</span>
+<span class="nc" id="L187">					  filterName.length()));</span>
+
+<span class="nc bnc" id="L189" title="All 4 branches missed.">    if (m_Filter instanceof LogWriter &amp;&amp; m_log != null) {</span>
+<span class="nc" id="L190">      ((LogWriter) m_Filter).setLog(m_log);</span>
+    }
+
+<span class="nc bnc" id="L193" title="All 2 branches missed.">    if (!(m_Filter instanceof StreamableFilter) &amp;&amp;</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">	(m_listenees.containsKey(&quot;instance&quot;))) {</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L196">	m_log.logMessage(&quot;[Filter] &quot; + </span>
+<span class="nc" id="L197">	    statusMessagePrefix() + &quot; WARNING : &quot;</span>
+<span class="nc" id="L198">	    + m_Filter.getClass().getName()</span>
+<span class="nc" id="L199">	    + &quot; is not an incremental filter&quot;);</span>
+<span class="nc" id="L200">	m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L201">	    + &quot;WARNING: Not an incremental filter.&quot;);</span>
+      }
+    }
+    
+    // get global info
+<span class="nc" id="L206">    m_globalInfo = KnowledgeFlowApp.getGlobalInfo(m_Filter);</span>
+<span class="nc" id="L207">  }</span>
+
+  public weka.filters.Filter getFilter() {
+<span class="nc" id="L210">    return m_Filter;</span>
+  }
+
+  /**
+   * Set the filter to be wrapped by this bean
+   *
+   * @param algorithm a weka.filters.Filter
+   * @exception IllegalArgumentException if an error occurs
+   */
+  public void setWrappedAlgorithm(Object algorithm) {
+    
+<span class="nc bnc" id="L221" title="All 2 branches missed.">    if (!(algorithm instanceof weka.filters.Filter)) { </span>
+<span class="nc" id="L222">      throw new IllegalArgumentException(algorithm.getClass()+ Messages.getInstance().getString(&quot;Filter_SetWrappedAlgorithm_IllegalArgumentException_Text&quot;));</span>
+    }
+<span class="nc" id="L224">    setFilter((weka.filters.Filter)algorithm);</span>
+<span class="nc" id="L225">  }</span>
+
+  /**
+   * Get the filter wrapped by this bean
+   *
+   * @return an &lt;code&gt;Object&lt;/code&gt; value
+   */
+  public Object getWrappedAlgorithm() {
+<span class="nc" id="L233">    return getFilter();</span>
+  }
+
+  /**
+   * Accept a training set
+   *
+   * @param e a &lt;code&gt;TrainingSetEvent&lt;/code&gt; value
+   */
+  public void acceptTrainingSet(TrainingSetEvent e) {
+<span class="nc" id="L242">    processTrainingOrDataSourceEvents(e);</span>
+<span class="nc" id="L243">  }</span>
+
+<span class="nc" id="L245">  private boolean m_structurePassedOn = false;</span>
+  /**
+   * Accept an instance for processing by StreamableFilters only
+   *
+   * @param e an &lt;code&gt;InstanceEvent&lt;/code&gt; value
+   */
+  public void acceptInstance(InstanceEvent e) {
+    // to do!
+<span class="nc bnc" id="L253" title="All 2 branches missed.">    if (m_filterThread != null) {</span>
+<span class="nc" id="L254">      String messg = Messages.getInstance().getString(&quot;Filter_AcceptInstance_Mess_Text_First&quot;) + statusMessagePrefix() </span>
+<span class="nc" id="L255">        + Messages.getInstance().getString(&quot;Filter_AcceptInstance_Mess_Text_Second&quot;);</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L257">	m_log.logMessage(messg);</span>
+<span class="nc" id="L258">	m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L259">	    + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_First&quot;));</span>
+      } else {
+<span class="nc" id="L261">	System.err.println(messg);</span>
+      }
+<span class="nc" id="L263">      return;</span>
+    }
+<span class="nc bnc" id="L265" title="All 2 branches missed.">    if (!(m_Filter instanceof StreamableFilter)) {</span>
+<span class="nc" id="L266">      stop(); // stop all processing</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">      if (m_log != null) {</span>
+<span class="nc" id="L268">	m_log.logMessage(Messages.getInstance().getString(&quot;Filter_AcceptInstance_LogMessage_Text_First&quot;) + statusMessagePrefix() </span>
+<span class="nc" id="L269">	    + Messages.getInstance().getString(&quot;Filter_AcceptInstance_LogMessage_Text_Second&quot;) + m_Filter.getClass().getName()</span>
+<span class="nc" id="L270">	    + Messages.getInstance().getString(&quot;Filter_AcceptInstance_LogMessage_Text_Third&quot;));</span>
+<span class="nc" id="L271">	m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L272">	    + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Second&quot;));</span>
+      }
+<span class="nc" id="L274">      return;</span>
+    }
+<span class="nc bnc" id="L276" title="All 2 branches missed.">    if (e.getStatus() == InstanceEvent.FORMAT_AVAILABLE) {</span>
+      try {
+<span class="nc" id="L278">        m_instanceCount = 0;</span>
+        //notifyInstanceListeners(e);
+	//	Instances dataset = e.getInstance().dataset();
+<span class="nc" id="L281">	Instances dataset = e.getStructure();</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">	if (m_Filter instanceof SupervisedFilter) {</span>
+	  // defualt to last column if no class is set
+<span class="nc bnc" id="L284" title="All 2 branches missed.">	  if (dataset.classIndex() &lt; 0) {</span>
+<span class="nc" id="L285">	    dataset.setClassIndex(dataset.numAttributes()-1);</span>
+	  }
+	}
+	// initialize filter
+<span class="nc" id="L289">	m_Filter.setInputFormat(dataset);</span>
+	// attempt to determine post-filtering
+	// structure. If successful this can be passed on to instance
+	// listeners as a new FORMAT_AVAILABLE event.
+<span class="nc" id="L293">	m_structurePassedOn = false;</span>
+	try {
+<span class="nc bnc" id="L295" title="All 2 branches missed.">	  if (m_Filter.isOutputFormatDefined()) {</span>
+//	    System.err.println(&quot;Filter - passing on output format...&quot;);
+	    //	    System.err.println(m_Filter.getOutputFormat());
+<span class="nc" id="L298">	    m_ie.setStructure(m_Filter.getOutputFormat());</span>
+<span class="nc" id="L299">	    notifyInstanceListeners(m_ie);</span>
+<span class="nc" id="L300">	    m_structurePassedOn = true;</span>
+	  }
+<span class="nc" id="L302">	} catch (Exception ex) {</span>
+<span class="nc" id="L303">	  stop(); // stop all processing</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">	  if (m_log != null) {</span>
+<span class="nc" id="L305">	    m_log.logMessage(Messages.getInstance().getString(&quot;Filter_AcceptInstance_LogMessage_Text_Fourth&quot;) + statusMessagePrefix() </span>
+<span class="nc" id="L306">                + Messages.getInstance().getString(&quot;Filter_AcceptInstance_LogMessage_Text_Fifth&quot;) </span>
+<span class="nc" id="L307">                + ex.getMessage());</span>
+<span class="nc" id="L308">	    m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L309">	        +Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Third&quot;));</span>
+	  } else {
+<span class="nc" id="L311">	    System.err.println(Messages.getInstance().getString(&quot;Filter_AcceptInstance_Error_Text_First&quot;) + statusMessagePrefix() </span>
+<span class="nc" id="L312">	        + Messages.getInstance().getString(&quot;Filter_AcceptInstance_Error_Text_Second&quot;));</span>
+	  }
+	}
+<span class="nc" id="L315">      } catch (Exception ex) {</span>
+<span class="nc" id="L316">	ex.printStackTrace();</span>
+      }
+<span class="nc" id="L318">      return;</span>
+    }
+   
+<span class="nc bnc" id="L321" title="All 2 branches missed.">    if (e.getStatus() == InstanceEvent.BATCH_FINISHED) {</span>
+      // get the last instance (if available)
+      try {
+<span class="nc bnc" id="L324" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L325">          m_log.statusMessage(statusMessagePrefix() </span>
+<span class="nc" id="L326">              + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Fourth&quot;));</span>
+        }
+<span class="nc bnc" id="L328" title="All 2 branches missed.">        if (m_Filter.input(e.getInstance())) {</span>
+<span class="nc" id="L329">          Instance filteredInstance = m_Filter.output();</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">          if (filteredInstance != null) {</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">            if (!m_structurePassedOn) {</span>
+              // pass on the new structure first
+<span class="nc" id="L333">              m_ie.setStructure(new Instances(filteredInstance.dataset(), 0));</span>
+<span class="nc" id="L334">              notifyInstanceListeners(m_ie);</span>
+<span class="nc" id="L335">              m_structurePassedOn = true;</span>
+            }
+
+<span class="nc" id="L338">            m_ie.setInstance(filteredInstance);</span>
+            
+            // if there are instances pending for output don't want to send
+            // a batch finisehd at this point...
+            //System.err.println(&quot;Filter - in batch finisehd...&quot;);
+<span class="nc bnc" id="L343" title="All 4 branches missed.">            if (m_Filter.batchFinished() &amp;&amp; m_Filter.numPendingOutput() &gt; 0) {</span>
+<span class="nc" id="L344">              m_ie.setStatus(InstanceEvent.INSTANCE_AVAILABLE);</span>
+            } else {
+<span class="nc" id="L346">              m_ie.setStatus(e.getStatus());</span>
+            }
+<span class="nc" id="L348">            notifyInstanceListeners(m_ie);</span>
+          }
+        }
+<span class="nc bnc" id="L351" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L352">          m_log.statusMessage(statusMessagePrefix() + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Fourth_Alpha&quot;));</span>
+        }
+<span class="nc" id="L354">      } catch (Exception ex) {</span>
+<span class="nc" id="L355">        stop(); // stop all processing</span>
+<span class="nc bnc" id="L356" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L357">          m_log.logMessage(Messages.getInstance().getString(&quot;Filter_AcceptInstance_LogMessage_Text_Sixth&quot;)</span>
+<span class="nc" id="L358">              + statusMessagePrefix() + ex.getMessage());</span>
+<span class="nc" id="L359">          m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L360">              + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Fifth&quot;));</span>
+        }
+<span class="nc" id="L362">        ex.printStackTrace();</span>
+      }
+      
+      // check for any pending instances that we might need to pass on
+      try {
+<span class="nc bnc" id="L367" title="All 4 branches missed.">        if (m_Filter.batchFinished() &amp;&amp; m_Filter.numPendingOutput() &gt; 0) {</span>
+<span class="nc bnc" id="L368" title="All 2 branches missed.">          if (m_log != null) {</span>
+<span class="nc" id="L369">            m_log.statusMessage(statusMessagePrefix() </span>
+<span class="nc" id="L370">                + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Sixth&quot;));</span>
+          }
+<span class="nc" id="L372">          Instance filteredInstance = m_Filter.output();</span>
+<span class="nc bnc" id="L373" title="All 2 branches missed.">          if (filteredInstance != null) {</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">            if (!m_structurePassedOn) {</span>
+              // pass on the new structure first
+<span class="nc" id="L376">              m_ie.setStructure(new Instances(filteredInstance.dataset(), 0));</span>
+<span class="nc" id="L377">              notifyInstanceListeners(m_ie);</span>
+<span class="nc" id="L378">              m_structurePassedOn = true;</span>
+            }
+
+<span class="nc" id="L381">            m_ie.setInstance(filteredInstance);</span>
+            
+            //TODO here is the problem I think
+<span class="nc" id="L384">            m_ie.setStatus(InstanceEvent.INSTANCE_AVAILABLE);</span>
+<span class="nc" id="L385">            notifyInstanceListeners(m_ie);</span>
+          }
+<span class="nc bnc" id="L387" title="All 2 branches missed.">          while (m_Filter.numPendingOutput() &gt; 0) {</span>
+<span class="nc" id="L388">            filteredInstance = m_Filter.output();</span>
+<span class="nc" id="L389">            m_ie.setInstance(filteredInstance);</span>
+//            System.err.println(&quot;Filter - sending pending...&quot;);
+<span class="nc bnc" id="L391" title="All 2 branches missed.">            if (m_Filter.numPendingOutput() == 0) {</span>
+<span class="nc" id="L392">              m_ie.setStatus(InstanceEvent.BATCH_FINISHED);</span>
+            } else {
+<span class="nc" id="L394">              m_ie.setStatus(InstanceEvent.INSTANCE_AVAILABLE);</span>
+            }
+<span class="nc" id="L396">            notifyInstanceListeners(m_ie);</span>
+          }
+<span class="nc bnc" id="L398" title="All 2 branches missed.">          if (m_log != null) {</span>
+<span class="nc" id="L399">            m_log.statusMessage(statusMessagePrefix() + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Seventh&quot;));</span>
+          }
+        }
+<span class="nc" id="L402">      } catch (Exception ex) {</span>
+<span class="nc" id="L403">        stop(); // stop all processing</span>
+<span class="nc bnc" id="L404" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L405">          m_log.logMessage(Messages.getInstance().getString(&quot;Filter_AcceptInstance_LogMessage_Text_Seventh&quot;) </span>
+<span class="nc" id="L406">              + statusMessagePrefix() </span>
+<span class="nc" id="L407">              + ex.toString());</span>
+<span class="nc" id="L408">          m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L409">              + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Eighth&quot;));</span>
+        }
+<span class="nc" id="L411">        ex.printStackTrace();</span>
+      }
+    } else {
+      // pass instance through the filter
+      try {
+<span class="nc bnc" id="L416" title="All 2 branches missed.">        if (!m_Filter.input(e.getInstance())) {</span>
+//          System.err.println(&quot;Filter - inputing instance into filter...&quot;);
+          /* if (m_log != null) {
+            m_log.logMessage(&quot;ERROR : filter not ready to output instance&quot;);
+          } */
+          
+          // quietly return. Filter might be able to output some instances
+          // once the batch is finished.
+<span class="nc" id="L424">          return;</span>
+        }
+
+        // collect output instance.
+<span class="nc" id="L428">        Instance filteredInstance = m_Filter.output();</span>
+<span class="nc bnc" id="L429" title="All 2 branches missed.">        if (filteredInstance == null) {</span>
+<span class="nc" id="L430">          return;</span>
+        }
+<span class="nc" id="L432">        m_instanceCount++;</span>
+        
+<span class="nc bnc" id="L434" title="All 2 branches missed.">        if (!m_structurePassedOn) {</span>
+          // pass on the new structure first
+<span class="nc" id="L436">          m_ie.setStructure(new Instances(filteredInstance.dataset(), 0));</span>
+<span class="nc" id="L437">          notifyInstanceListeners(m_ie);</span>
+<span class="nc" id="L438">          m_structurePassedOn = true;</span>
+        }
+
+<span class="nc" id="L441">        m_ie.setInstance(filteredInstance);</span>
+<span class="nc" id="L442">        m_ie.setStatus(e.getStatus());</span>
+        
+<span class="nc bnc" id="L444" title="All 4 branches missed.">        if (m_log != null &amp;&amp; (m_instanceCount % 10000 == 0)) {</span>
+<span class="nc" id="L445">          m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L446">              + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Nineth&quot;) + m_instanceCount + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Tenth&quot;));</span>
+        }
+<span class="nc" id="L448">        notifyInstanceListeners(m_ie);</span>
+<span class="nc" id="L449">      } catch (Exception ex) {</span>
+<span class="nc" id="L450">        stop(); // stop all processing</span>
+<span class="nc bnc" id="L451" title="All 2 branches missed.">        if (m_log != null) {</span>
+<span class="nc" id="L452">          m_log.logMessage(Messages.getInstance().getString(&quot;Filter_AcceptInstance_LogMessage_Text_Eighth&quot;) + statusMessagePrefix() </span>
+<span class="nc" id="L453">              + ex.toString());</span>
+<span class="nc" id="L454">          m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L455">              + Messages.getInstance().getString(&quot;Filter_AcceptInstance_StatusMessage_Text_Eleventh&quot;));</span>
+        }
+<span class="nc" id="L457">        ex.printStackTrace();</span>
+      }
+    }
+<span class="nc" id="L460">  }</span>
+
+  private void processTrainingOrDataSourceEvents(final EventObject e) {
+<span class="nc" id="L463">    boolean structureOnly = false;</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">    if (e instanceof DataSetEvent) {</span>
+<span class="nc" id="L465">      structureOnly = ((DataSetEvent)e).isStructureOnly();</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">      if(structureOnly){</span>
+<span class="nc" id="L467">       notifyDataOrTrainingListeners(e);  </span>
+      }
+    }
+<span class="nc bnc" id="L470" title="All 2 branches missed.">    if (e instanceof TrainingSetEvent) {</span>
+<span class="nc" id="L471">      structureOnly = ((TrainingSetEvent)e).isStructureOnly();</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">      if(structureOnly){</span>
+<span class="nc" id="L473">       notifyDataOrTrainingListeners(e);  </span>
+      }
+    }
+<span class="nc bnc" id="L476" title="All 4 branches missed.">    if (structureOnly &amp;&amp; !(m_Filter instanceof StreamableFilter)) {</span>
+<span class="nc" id="L477">      return; // nothing can be done</span>
+    }
+    
+<span class="nc bnc" id="L480" title="All 2 branches missed.">    if (m_filterThread == null) {</span>
+      try {
+<span class="nc bnc" id="L482" title="All 2 branches missed.">	if (m_state == IDLE) {</span>
+<span class="nc" id="L483">	  synchronized (this) {</span>
+<span class="nc" id="L484">	    m_state = FILTERING_TRAINING;</span>
+	  }
+<span class="nc bnc" id="L486" title="All 2 branches missed.">	  m_trainingSet = (e instanceof TrainingSetEvent) </span>
+<span class="nc" id="L487">	    ? ((TrainingSetEvent)e).getTrainingSet()</span>
+<span class="nc" id="L488">	    : ((DataSetEvent)e).getDataSet();</span>
+
+//	  final String oldText = m_visual.getText();
+<span class="nc" id="L491">	  m_filterThread = new Thread() {</span>
+	      public void run() {
+		try {
+<span class="nc bnc" id="L494" title="All 2 branches missed.">		  if (m_trainingSet != null) {</span>
+<span class="nc" id="L495">		    m_visual.setAnimated();</span>
+//		    m_visual.setText(&quot;Filtering training data...&quot;);
+<span class="nc bnc" id="L497" title="All 2 branches missed.">		    if (m_log != null) {</span>
+<span class="nc" id="L498">		      m_log.statusMessage(statusMessagePrefix() </span>
+<span class="nc" id="L499">		          + Messages.getInstance().getString(&quot;Filter_ProcessTrainingOrDataSourceEvents_StatusMessage_Text_First&quot;)</span>
+<span class="nc" id="L500">		          + m_trainingSet.relationName() + Messages.getInstance().getString(&quot;Filter_ProcessTrainingOrDataSourceEvents_StatusMessage_Text_Second&quot;));</span>
+		    }
+<span class="nc" id="L502">		    m_Filter.setInputFormat(m_trainingSet);</span>
+<span class="nc" id="L503">		    Instances filteredData = </span>
+<span class="nc" id="L504">		      weka.filters.Filter.useFilter(m_trainingSet, m_Filter);</span>
+//		    m_visual.setText(oldText);
+<span class="nc" id="L506">		    m_visual.setStatic();</span>
+		    EventObject ne;
+<span class="nc bnc" id="L508" title="All 2 branches missed.">		    if (e instanceof TrainingSetEvent) {</span>
+<span class="nc" id="L509">		      ne = new TrainingSetEvent(weka.gui.beans.Filter.this, </span>
+<span class="nc" id="L510">						filteredData);</span>
+<span class="nc" id="L511">		      ((TrainingSetEvent)ne).m_setNumber =</span>
+<span class="nc" id="L512">			((TrainingSetEvent)e).m_setNumber;</span>
+<span class="nc" id="L513">		      ((TrainingSetEvent)ne).m_maxSetNumber = </span>
+<span class="nc" id="L514">			((TrainingSetEvent)e).m_maxSetNumber;</span>
+		    } else {
+<span class="nc" id="L516">		      ne = new DataSetEvent(weka.gui.beans.Filter.this,</span>
+<span class="nc" id="L517">					    filteredData);</span>
+		    }
+
+<span class="nc" id="L520">		    notifyDataOrTrainingListeners(ne);</span>
+		  }
+<span class="nc" id="L522">		} catch (Exception ex) {</span>
+<span class="nc" id="L523">		  ex.printStackTrace();</span>
+<span class="nc bnc" id="L524" title="All 2 branches missed.">                  if (m_log != null) {</span>
+<span class="nc" id="L525">                    m_log.logMessage(Messages.getInstance().getString(&quot;Filter_ProcessTrainingOrDataSourceEvents_LogMessage_Text_First&quot;) + statusMessagePrefix() </span>
+<span class="nc" id="L526">                        + ex.getMessage());</span>
+<span class="nc" id="L527">                    m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L528">                        + Messages.getInstance().getString(&quot;Filter_ProcessTrainingOrDataSourceEvents_StatusMessage_Text_Third&quot;));</span>
+//                    m_log.statusMessage(&quot;Problem filtering: see log for details.&quot;);
+                  }
+<span class="nc" id="L531">                  Filter.this.stop(); // stop all processing</span>
+<span class="nc" id="L532">		} finally {</span>
+//		  m_visual.setText(oldText);
+<span class="nc" id="L534">		  m_visual.setStatic();</span>
+<span class="nc" id="L535">		  m_state = IDLE;</span>
+<span class="nc bnc" id="L536" title="All 6 branches missed.">		  if (isInterrupted()) {</span>
+<span class="nc" id="L537">		    m_trainingSet = null;</span>
+<span class="nc bnc" id="L538" title="All 6 branches missed.">		    if (m_log != null) {</span>
+<span class="nc" id="L539">		      m_log.logMessage(Messages.getInstance().getString(&quot;Filter_ProcessTrainingOrDataSourceEvents_LogMessage_Text_Second&quot;) + statusMessagePrefix()</span>
+<span class="nc" id="L540">                                       + Messages.getInstance().getString(&quot;Filter_ProcessTrainingOrDataSourceEvents_LogMessage_Text_Third&quot;));</span>
+<span class="nc" id="L541">		      m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L542">		          + Messages.getInstance().getString(&quot;Filter_ProcessTrainingOrDataSourceEvents_StatusMessage_Text_Fifth&quot;));</span>
+		    }		    
+		  } else {
+<span class="nc bnc" id="L545" title="All 6 branches missed.">		    if (m_log != null) {</span>
+<span class="nc" id="L546">		      m_log.statusMessage(statusMessagePrefix() + Messages.getInstance().getString(&quot;Filter_ProcessTrainingOrDataSourceEvents_StatusMessage_Text_Sixth&quot;));</span>
+		    }
+		  }
+<span class="nc" id="L549">		  block(false);</span>
+<span class="nc" id="L550">		}</span>
+<span class="nc" id="L551">	      }</span>
+	    };
+<span class="nc" id="L553">	  m_filterThread.setPriority(Thread.MIN_PRIORITY);</span>
+<span class="nc" id="L554">	  m_filterThread.start();</span>
+<span class="nc" id="L555">	  block(true);</span>
+<span class="nc" id="L556">	  m_filterThread = null;</span>
+<span class="nc" id="L557">	  m_state = IDLE;</span>
+	}
+<span class="nc" id="L559">      } catch (Exception ex) {</span>
+<span class="nc" id="L560">	ex.printStackTrace();</span>
+      }
+    }
+<span class="nc" id="L563">  }</span>
+
+  /**
+   * Accept a test set
+   *
+   * @param e a &lt;code&gt;TestSetEvent&lt;/code&gt; value
+   */
+  public void acceptTestSet(final TestSetEvent e) {
+<span class="nc bnc" id="L571" title="All 2 branches missed.">      if(e.isStructureOnly())</span>
+<span class="nc" id="L572">            notifyTestListeners(e);</span>
+<span class="nc bnc" id="L573" title="All 2 branches missed.">      if (m_trainingSet != null &amp;&amp; </span>
+<span class="nc bnc" id="L574" title="All 2 branches missed.">	m_trainingSet.equalHeaders(e.getTestSet()) &amp;&amp; </span>
+<span class="nc bnc" id="L575" title="All 2 branches missed.">	m_filterThread == null) {</span>
+      try {
+<span class="nc bnc" id="L577" title="All 2 branches missed.">	if (m_state == IDLE) {</span>
+<span class="nc" id="L578">	  m_state = FILTERING_TEST;</span>
+	}
+<span class="nc" id="L580">	m_testingSet = e.getTestSet();</span>
+        //	final String oldText = m_visual.getText();
+<span class="nc" id="L582">	m_filterThread = new Thread() {</span>
+	    public void run() {
+	      try {
+<span class="nc bnc" id="L585" title="All 2 branches missed.">		if (m_testingSet != null) {</span>
+<span class="nc" id="L586">		  m_visual.setAnimated();</span>
+                  //		  m_visual.setText(&quot;Filtering test data...&quot;);
+<span class="nc bnc" id="L588" title="All 2 branches missed.">		  if (m_log != null) {</span>
+<span class="nc" id="L589">		    m_log.statusMessage(statusMessagePrefix() </span>
+<span class="nc" id="L590">		        + Messages.getInstance().getString(&quot;Filter_AcceptTestSet_StatusMessage_Text_First&quot;)</span>
+<span class="nc" id="L591">			+ m_testingSet.relationName() + Messages.getInstance().getString(&quot;Filter_AcceptTestSet_StatusMessage_Text_Second&quot;));</span>
+		  }
+<span class="nc" id="L593">		  Instances filteredTest = </span>
+<span class="nc" id="L594">		    weka.filters.Filter.useFilter(m_testingSet, m_Filter);</span>
+                  //		  m_visual.setText(oldText);
+<span class="nc" id="L596">		  m_visual.setStatic();</span>
+<span class="nc" id="L597">		  TestSetEvent ne =</span>
+<span class="nc" id="L598">		    new TestSetEvent(weka.gui.beans.Filter.this,</span>
+<span class="nc" id="L599">				     filteredTest);</span>
+<span class="nc" id="L600">		  ne.m_setNumber = e.m_setNumber;</span>
+<span class="nc" id="L601">		  ne.m_maxSetNumber = e.m_maxSetNumber;</span>
+<span class="nc" id="L602">		  notifyTestListeners(ne);</span>
+		}
+<span class="nc" id="L604">	      } catch (Exception ex) {</span>
+<span class="nc" id="L605">		ex.printStackTrace();</span>
+<span class="nc bnc" id="L606" title="All 2 branches missed.">                if (m_log != null) {</span>
+<span class="nc" id="L607">                  m_log.logMessage(Messages.getInstance().getString(&quot;Filter_AcceptTestSet_LogMessage_Text_First&quot;) + statusMessagePrefix() </span>
+<span class="nc" id="L608">                      + ex.getMessage());</span>
+<span class="nc" id="L609">                  m_log.statusMessage(statusMessagePrefix() </span>
+<span class="nc" id="L610">                      + Messages.getInstance().getString(&quot;Filter_AcceptTestSet_StatusMessage_Text_Third&quot;));</span>
+                }
+<span class="nc" id="L612">                Filter.this.stop();</span>
+<span class="nc" id="L613">	      } finally {</span>
+                //		m_visual.setText(oldText);
+<span class="nc" id="L615">		m_visual.setStatic();</span>
+<span class="nc" id="L616">		m_state = IDLE;</span>
+<span class="nc bnc" id="L617" title="All 6 branches missed.">		if (isInterrupted()) {</span>
+<span class="nc" id="L618">		  m_trainingSet = null;</span>
+<span class="nc bnc" id="L619" title="All 6 branches missed.">		  if (m_log != null) {</span>
+<span class="nc" id="L620">		      m_log.logMessage(Messages.getInstance().getString(&quot;Filter_AcceptTestSet_LogMessage_Text_Second&quot;) + statusMessagePrefix()</span>
+<span class="nc" id="L621">                                       + Messages.getInstance().getString(&quot;Filter_AcceptTestSet_LogMessage_Text_Third&quot;));</span>
+<span class="nc" id="L622">		      m_log.statusMessage(statusMessagePrefix()</span>
+<span class="nc" id="L623">		          + Messages.getInstance().getString(&quot;Filter_AcceptTestSet_StatusMessage_Text_Fourth&quot;));</span>
+//		    m_log.statusMessage(&quot;OK&quot;);
+		  }
+		} else {
+<span class="nc bnc" id="L627" title="All 6 branches missed.">		  if (m_log != null) {</span>
+<span class="nc" id="L628">		    m_log.statusMessage(statusMessagePrefix() + Messages.getInstance().getString(&quot;Filter_AcceptTestSet_StatusMessage_Text_Fifth&quot;));</span>
+		  }
+		}
+<span class="nc" id="L631">		block(false);</span>
+<span class="nc" id="L632">	      }</span>
+<span class="nc" id="L633">	    }</span>
+	  };
+<span class="nc" id="L635">	m_filterThread.setPriority(Thread.MIN_PRIORITY);</span>
+<span class="nc" id="L636">	m_filterThread.start();</span>
+<span class="nc" id="L637">	block(true);</span>
+<span class="nc" id="L638">	m_filterThread = null;</span>
+<span class="nc" id="L639">	m_state = IDLE;</span>
+<span class="nc" id="L640">      } catch (Exception ex) {</span>
+<span class="nc" id="L641">	ex.printStackTrace();</span>
+      }
+    }
+<span class="nc" id="L644">  }</span>
+
+  /**
+   * Accept a data set
+   *
+   * @param e a &lt;code&gt;DataSetEvent&lt;/code&gt; value
+   */
+  public void acceptDataSet(DataSetEvent e) {
+<span class="nc" id="L652">    processTrainingOrDataSourceEvents(e);</span>
+<span class="nc" id="L653">  }</span>
+
+  /**
+   * Set the visual appearance of this bean
+   *
+   * @param newVisual a &lt;code&gt;BeanVisual&lt;/code&gt; value
+   */
+  public void setVisual(BeanVisual newVisual) {
+<span class="nc" id="L661">    m_visual = newVisual;</span>
+<span class="nc" id="L662">  }</span>
+
+  /**
+   * Get the visual appearance of this bean
+   *
+   * @return a &lt;code&gt;BeanVisual&lt;/code&gt; value
+   */
+  public BeanVisual getVisual() {
+<span class="nc" id="L670">    return m_visual;</span>
+  }
+
+  /**
+   * Use the default visual appearance
+   */
+  public void useDefaultVisual() {
+<span class="nc" id="L677">    m_visual.loadIcons(BeanVisual.ICON_PATH+&quot;DefaultFilter.gif&quot;,</span>
+<span class="nc" id="L678">		       BeanVisual.ICON_PATH+&quot;DefaultFilter_animated.gif&quot;);</span>
+<span class="nc" id="L679">  }</span>
+
+  /**
+   * Add a training set listener
+   *
+   * @param tsl a &lt;code&gt;TrainingSetListener&lt;/code&gt; value
+   */
+  public synchronized void addTrainingSetListener(TrainingSetListener tsl) {
+<span class="nc" id="L687">    m_trainingListeners.addElement(tsl);</span>
+<span class="nc" id="L688">  }</span>
+  
+  /**
+   * Remove a training set listener
+   *
+   * @param tsl a &lt;code&gt;TrainingSetListener&lt;/code&gt; value
+   */
+  public synchronized void removeTrainingSetListener(TrainingSetListener tsl) {
+<span class="nc" id="L696">     m_trainingListeners.removeElement(tsl);</span>
+<span class="nc" id="L697">  }</span>
+
+  /**
+   * Add a test set listener
+   *
+   * @param tsl a &lt;code&gt;TestSetListener&lt;/code&gt; value
+   */
+  public synchronized void addTestSetListener(TestSetListener tsl) {
+<span class="nc" id="L705">    m_testListeners.addElement(tsl);</span>
+<span class="nc" id="L706">  }</span>
+  
+  /**
+   * Remove a test set listener
+   *
+   * @param tsl a &lt;code&gt;TestSetListener&lt;/code&gt; value
+   */
+  public synchronized void removeTestSetListener(TestSetListener tsl) {
+<span class="nc" id="L714">    m_testListeners.removeElement(tsl);</span>
+<span class="nc" id="L715">  }</span>
+
+  /**
+   * Add a data source listener
+   *
+   * @param dsl a &lt;code&gt;DataSourceListener&lt;/code&gt; value
+   */
+  public synchronized void addDataSourceListener(DataSourceListener dsl) {
+<span class="nc" id="L723">    m_dataListeners.addElement(dsl);</span>
+<span class="nc" id="L724">  }</span>
+
+  /**
+   * Remove a data source listener
+   *
+   * @param dsl a &lt;code&gt;DataSourceListener&lt;/code&gt; value
+   */
+  public synchronized void removeDataSourceListener(DataSourceListener dsl) {
+<span class="nc" id="L732">    m_dataListeners.remove(dsl);</span>
+<span class="nc" id="L733">  }</span>
+
+  /**
+   * Add an instance listener
+   *
+   * @param tsl an &lt;code&gt;InstanceListener&lt;/code&gt; value
+   */
+  public synchronized void addInstanceListener(InstanceListener tsl) {
+<span class="nc" id="L741">    m_instanceListeners.addElement(tsl);</span>
+<span class="nc" id="L742">  }</span>
+
+  /**
+   * Remove an instance listener
+   *
+   * @param tsl an &lt;code&gt;InstanceListener&lt;/code&gt; value
+   */
+  public synchronized void removeInstanceListener(InstanceListener tsl) {
+<span class="nc" id="L750">    m_instanceListeners.removeElement(tsl);</span>
+<span class="nc" id="L751">  }</span>
+
+  private void notifyDataOrTrainingListeners(EventObject ce) {
+    Vector l;
+<span class="nc" id="L755">    synchronized (this) {</span>
+<span class="nc bnc" id="L756" title="All 2 branches missed.">      l = (ce instanceof TrainingSetEvent)</span>
+<span class="nc" id="L757">	? (Vector)m_trainingListeners.clone()</span>
+<span class="nc" id="L758">	: (Vector)m_dataListeners.clone();</span>
+    }
+<span class="nc bnc" id="L760" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L761" title="All 2 branches missed.">      for(int i = 0; i &lt; l.size(); i++) {</span>
+<span class="nc bnc" id="L762" title="All 2 branches missed.">	if (ce instanceof TrainingSetEvent) {</span>
+<span class="nc" id="L763">	  ((TrainingSetListener)l.elementAt(i)).</span>
+<span class="nc" id="L764">	    acceptTrainingSet((TrainingSetEvent)ce);</span>
+	} else {
+<span class="nc" id="L766">	  ((DataSourceListener)l.elementAt(i)).acceptDataSet((DataSetEvent)ce);</span>
+	}
+      }
+    }
+<span class="nc" id="L770">  }</span>
+
+  private void notifyTestListeners(TestSetEvent ce) {
+    Vector l;
+<span class="nc" id="L774">    synchronized (this) {</span>
+<span class="nc" id="L775">      l = (Vector)m_testListeners.clone();</span>
+    }
+<span class="nc bnc" id="L777" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L778" title="All 2 branches missed.">      for(int i = 0; i &lt; l.size(); i++) {</span>
+<span class="nc" id="L779">	((TestSetListener)l.elementAt(i)).acceptTestSet(ce);</span>
+      }
+    }
+<span class="nc" id="L782">  }</span>
+
+  protected void notifyInstanceListeners(InstanceEvent tse) {
+    Vector l;
+<span class="nc" id="L786">    synchronized (this) {</span>
+<span class="nc" id="L787">      l = (Vector)m_instanceListeners.clone();</span>
+    }
+<span class="nc bnc" id="L789" title="All 2 branches missed.">    if (l.size() &gt; 0) {</span>
+<span class="nc bnc" id="L790" title="All 2 branches missed.">      for(int i = 0; i &lt; l.size(); i++) {</span>
+	//	System.err.println(&quot;Notifying instance listeners &quot;
+	//			   +&quot;(Filter)&quot;);
+<span class="nc" id="L793">	((InstanceListener)l.elementAt(i)).acceptInstance(tse);</span>
+      }
+    }
+<span class="nc" id="L796">  }</span>
+  
+  /**
+   * Returns true if, at this time, 
+   * the object will accept a connection with respect to the supplied
+   * event name
+   *
+   * @param eventName the event
+   * @return true if the object will accept a connection
+   */
+  public boolean connectionAllowed(String eventName) {
+
+<span class="nc bnc" id="L808" title="All 2 branches missed.">    if (m_listenees.containsKey(eventName)) {</span>
+<span class="nc" id="L809">      return false;</span>
+    }
+
+    /* reject a test event if we don't have a training or data set event
+    if (eventName.compareTo(&quot;testSet&quot;) == 0) {
+      if (!m_listenees.containsKey(&quot;trainingSet&quot;) &amp;&amp;
+	  !m_listenees.containsKey(&quot;dataSet&quot;)) {
+	return false;
+      }
+      } */
+    
+    // will need to reject train/test listener if we have a
+    // data source listener and vis versa
+<span class="nc bnc" id="L822" title="All 2 branches missed.">    if (m_listenees.containsKey(&quot;dataSet&quot;) &amp;&amp;</span>
+<span class="nc bnc" id="L823" title="All 2 branches missed.">	(eventName.compareTo(&quot;trainingSet&quot;) == 0 ||</span>
+<span class="nc bnc" id="L824" title="All 2 branches missed.">	 eventName.compareTo(&quot;testSet&quot;) == 0 ||</span>
+<span class="nc bnc" id="L825" title="All 2 branches missed.">	eventName.compareTo(&quot;instance&quot;) == 0)) {</span>
+<span class="nc" id="L826">      return false;</span>
+    }
+
+<span class="nc bnc" id="L829" title="All 2 branches missed.">    if ((m_listenees.containsKey(&quot;trainingSet&quot;) ||</span>
+<span class="nc bnc" id="L830" title="All 2 branches missed.">	 m_listenees.containsKey(&quot;testSet&quot;)) &amp;&amp;</span>
+<span class="nc bnc" id="L831" title="All 2 branches missed.">	(eventName.compareTo(&quot;dataSet&quot;) == 0 || </span>
+<span class="nc bnc" id="L832" title="All 2 branches missed.">	eventName.compareTo(&quot;instance&quot;) == 0)) {</span>
+<span class="nc" id="L833">      return false;</span>
+    }
+
+<span class="nc bnc" id="L836" title="All 2 branches missed.">    if (m_listenees.containsKey(&quot;instance&quot;) &amp;&amp;</span>
+<span class="nc bnc" id="L837" title="All 2 branches missed.">	(eventName.compareTo(&quot;trainingSet&quot;) == 0 ||</span>
+<span class="nc bnc" id="L838" title="All 2 branches missed.">	 eventName.compareTo(&quot;testSet&quot;) == 0 ||</span>
+<span class="nc bnc" id="L839" title="All 2 branches missed.">	 eventName.compareTo(&quot;dataSet&quot;) == 0)) {</span>
+<span class="nc" id="L840">      return false;</span>
+    }
+
+    // reject an instance event connection if our filter isn't
+    // streamable
+<span class="nc bnc" id="L845" title="All 2 branches missed.">    if (eventName.compareTo(&quot;instance&quot;) == 0 &amp;&amp;</span>
+<span class="nc bnc" id="L846" title="All 2 branches missed.">	!(m_Filter instanceof StreamableFilter)) {</span>
+<span class="nc" id="L847">      return false;</span>
+    }
+<span class="nc" id="L849">    return true;</span>
+  }
+
+  /**
+   * Returns true if, at this time, 
+   * the object will accept a connection according to the supplied
+   * EventSetDescriptor
+   *
+   * @param esd the EventSetDescriptor
+   * @return true if the object will accept a connection
+   */
+  public boolean connectionAllowed(EventSetDescriptor esd) {
+<span class="nc" id="L861">    return connectionAllowed(esd.getName());</span>
+  }
+
+  /**
+   * Notify this object that it has been registered as a listener with
+   * a source with respect to the supplied event name
+   *
+   * @param eventName
+   * @param source the source with which this object has been registered as
+   * a listener
+   */
+  public synchronized void connectionNotification(String eventName,
+						  Object source) {
+<span class="nc bnc" id="L874" title="All 2 branches missed.">    if (connectionAllowed(eventName)) {</span>
+<span class="nc" id="L875">      m_listenees.put(eventName, source);</span>
+<span class="nc bnc" id="L876" title="All 2 branches missed.">      if (m_Filter instanceof ConnectionNotificationConsumer) {</span>
+<span class="nc" id="L877">        ((ConnectionNotificationConsumer) m_Filter).</span>
+<span class="nc" id="L878">          connectionNotification(eventName, source);</span>
+      }
+    }
+<span class="nc" id="L881">  }</span>
+
+  /**
+   * Notify this object that it has been deregistered as a listener with
+   * a source with respect to the supplied event name
+   *
+   * @param eventName the event
+   * @param source the source with which this object has been registered as
+   * a listener
+   */
+  public synchronized void disconnectionNotification(String eventName,
+						     Object source) {
+<span class="nc bnc" id="L893" title="All 2 branches missed.">    if (m_Filter instanceof ConnectionNotificationConsumer) {</span>
+<span class="nc" id="L894">      ((ConnectionNotificationConsumer) m_Filter).</span>
+<span class="nc" id="L895">        disconnectionNotification(eventName, source);</span>
+    }
+<span class="nc" id="L897">    m_listenees.remove(eventName);</span>
+<span class="nc" id="L898">  }</span>
+
+  /**
+   * Function used to stop code that calls acceptTrainingSet, acceptTestSet,
+   * or acceptDataSet. This is 
+   * needed as filtering is performed inside a separate
+   * thread of execution.
+   *
+   * @param tf a &lt;code&gt;boolean&lt;/code&gt; value
+   */
+  private synchronized void block(boolean tf) {
+<span class="nc bnc" id="L909" title="All 2 branches missed.">    if (tf) {</span>
+      try {
+	// only block if thread is still doing something useful!
+<span class="nc bnc" id="L912" title="All 4 branches missed.">	if (m_filterThread.isAlive() &amp;&amp; m_state != IDLE) {</span>
+<span class="nc" id="L913">	  wait();</span>
+	}
+<span class="nc" id="L915">      } catch (InterruptedException ex) {</span>
+      }
+    } else {
+<span class="nc" id="L918">      notifyAll();</span>
+    }
+<span class="nc" id="L920">  }</span>
+
+  /**
+   * Stop all action if possible
+   */
+  public void stop() {
+    // tell all listenees (upstream beans) to stop
+<span class="nc" id="L927">    Enumeration en = m_listenees.keys();</span>
+<span class="nc bnc" id="L928" title="All 2 branches missed.">    while (en.hasMoreElements()) {</span>
+<span class="nc" id="L929">      Object tempO = m_listenees.get(en.nextElement());</span>
+<span class="nc bnc" id="L930" title="All 2 branches missed.">      if (tempO instanceof BeanCommon) {</span>
+<span class="nc" id="L931">	((BeanCommon)tempO).stop();</span>
+      }
+    }
+    
+    // stop the filter thread
+<span class="nc bnc" id="L936" title="All 2 branches missed.">    if (m_filterThread != null) {</span>
+<span class="nc" id="L937">      m_filterThread.interrupt();</span>
+<span class="nc" id="L938">      m_filterThread.stop();</span>
+<span class="nc" id="L939">      m_filterThread = null;</span>
+<span class="nc" id="L940">      m_visual.setStatic();</span>
+    }
+<span class="nc" id="L942">  }</span>
+  
+  /**
+   * Returns true if. at this time, the bean is busy with some
+   * (i.e. perhaps a worker thread is performing some calculation).
+   * 
+   * @return true if the bean is busy.
+   */
+  public boolean isBusy() {
+<span class="nc bnc" id="L951" title="All 2 branches missed.">    return (m_filterThread != null);</span>
+  }
+  
+  /**
+   * Set a logger
+   *
+   * @param logger a &lt;code&gt;Logger&lt;/code&gt; value
+   */
+  public void setLog(Logger logger) {
+<span class="nc" id="L960">    m_log = logger;</span>
+
+<span class="nc bnc" id="L962" title="All 4 branches missed.">    if (m_Filter != null &amp;&amp; m_Filter instanceof LogWriter) {</span>
+<span class="nc" id="L963">      ((LogWriter) m_Filter).setLog(m_log);</span>
+    }
+<span class="nc" id="L965">  }</span>
+
+  /**
+   * Return an enumeration of user requests
+   *
+   * @return an &lt;code&gt;Enumeration&lt;/code&gt; value
+   */
+  public Enumeration enumerateRequests() {
+<span class="nc" id="L973">    Vector newVector = new Vector(0);</span>
+<span class="nc bnc" id="L974" title="All 2 branches missed.">    if (m_filterThread != null) {</span>
+<span class="nc" id="L975">      newVector.addElement(&quot;Stop&quot;);</span>
+    }
+<span class="nc" id="L977">    return newVector.elements();</span>
+  }
+
+  /**
+   * Perform the named request
+   *
+   * @param request a &lt;code&gt;String&lt;/code&gt; value
+   * @exception IllegalArgumentException if an error occurs
+   */
+  public void performRequest(String request) {
+<span class="nc bnc" id="L987" title="All 2 branches missed.">    if (request.compareTo(&quot;Stop&quot;) == 0) {</span>
+<span class="nc" id="L988">      stop();</span>
+    } else {
+<span class="nc" id="L990">      throw new IllegalArgumentException(request</span>
+<span class="nc" id="L991">					 + Messages.getInstance().getString(&quot;Filter_PerformRequest_IllegalArgumentException_Text&quot;));</span>
+    }
+<span class="nc" id="L993">  }</span>
+
+  /**
+   * Returns true, if at the current time, the named event could
+   * be generated. Assumes that supplied event names are names of
+   * events that could be generated by this bean.
+   *
+   * @param eventName the name of the event in question
+   * @return true if the named event could be generated at this point in
+   * time
+   */
+  public boolean eventGeneratable(String eventName) {
+    // can't generate the named even if we are not receiving it as an
+    // input!
+<span class="nc bnc" id="L1007" title="All 2 branches missed.">    if (!m_listenees.containsKey(eventName)) {</span>
+<span class="nc" id="L1008">      return false;</span>
+    }
+<span class="nc" id="L1010">    Object source = m_listenees.get(eventName);</span>
+<span class="nc bnc" id="L1011" title="All 2 branches missed.">    if (source instanceof EventConstraints) {</span>
+<span class="nc bnc" id="L1012" title="All 2 branches missed.">      if (!((EventConstraints)source).eventGeneratable(eventName)) {</span>
+<span class="nc" id="L1013">	return false;</span>
+      }
+    }
+<span class="nc bnc" id="L1016" title="All 2 branches missed.">    if (eventName.compareTo(&quot;instance&quot;) == 0) {</span>
+<span class="nc bnc" id="L1017" title="All 2 branches missed.">      if (!(m_Filter instanceof StreamableFilter)) {</span>
+<span class="nc" id="L1018">	return false;</span>
+      }
+    }
+<span class="nc" id="L1021">    return true;</span>
+  }
+  
+  private String statusMessagePrefix() {
+<span class="nc" id="L1025">    return getCustomName() + &quot;$&quot; + hashCode() + &quot;|&quot;</span>
+<span class="nc bnc" id="L1026" title="All 2 branches missed.">    + ((m_Filter instanceof OptionHandler &amp;&amp;</span>
+<span class="nc bnc" id="L1027" title="All 2 branches missed.">        Utils.joinOptions(((OptionHandler)m_Filter).getOptions()).length() &gt; 0) </span>
+<span class="nc" id="L1028">        ? Utils.joinOptions(((OptionHandler)m_Filter).getOptions()) + &quot;|&quot;</span>
+<span class="nc" id="L1029">            : &quot;&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

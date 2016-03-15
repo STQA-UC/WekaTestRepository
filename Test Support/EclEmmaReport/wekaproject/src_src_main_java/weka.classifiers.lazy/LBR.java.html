@@ -1,0 +1,1239 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>LBR.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.classifiers.lazy</a> &gt; <span class="el_source">LBR.java</span></div><h1>LBR.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    aint with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+
+/*
+ *    LBR.java
+ *    The naive Bayesian classifier provides a simple and effective approach to 
+ *    classifier learning, but its attribute independence assumption is often 
+ *    violated in the real world. Lazy Bayesian Rules selectively relaxes the 
+ *    independence assumption, achieving lower error rates over a range of 
+ *    learning tasks.  LBR defers processing to classification time, making it 
+ *    a highly efficient and accurate classification algorithm when small
+ *    numbers of objects are to be classified.
+ *
+ *    For more information, see
+ &lt;!-- technical-plaintext-start --&gt;
+ * Zijian Zheng, G. Webb (2000). Lazy Learning of Bayesian Rules. Machine Learning. 4(1):53-84.
+ &lt;!-- technical-plaintext-end --&gt;
+ *
+ *    http://www.cm.deakin.edu.au/webb
+ *
+ *    Copyright (C) 2001 Deakin University
+ *    School of Computing and Mathematics
+ *    Deakin University
+ *    Geelong, Vic, 3217, Australia
+ *
+ *    Email: zhw@deakin.edu.au
+ *
+ */
+
+package weka.classifiers.lazy;
+
+import weka.classifiers.Classifier;
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Statistics;
+import weka.core.TechnicalInformation;
+import weka.core.TechnicalInformationHandler;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.core.TechnicalInformation.Field;
+import weka.core.TechnicalInformation.Type;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Lazy Bayesian Rules Classifier. The naive Bayesian classifier provides a simple and effective approach to classifier learning, but its attribute independence assumption is often violated in the real world. Lazy Bayesian Rules selectively relaxes the independence assumption, achieving lower error rates over a range of learning tasks. LBR defers processing to classification time, making it a highly efficient and accurate classification algorithm when small numbers of objects are to be classified.&lt;br/&gt;
+ * &lt;br/&gt;
+ * For more information, see:&lt;br/&gt;
+ * &lt;br/&gt;
+ * Zijian Zheng, G. Webb (2000). Lazy Learning of Bayesian Rules. Machine Learning. 4(1):53-84.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- technical-bibtex-start --&gt;
+ * BibTeX:
+ * &lt;pre&gt;
+ * &amp;#64;article{Zheng2000,
+ *    author = {Zijian Zheng and G. Webb},
+ *    journal = {Machine Learning},
+ *    number = {1},
+ *    pages = {53-84},
+ *    title = {Lazy Learning of Bayesian Rules},
+ *    volume = {4},
+ *    year = {2000}
+ * }
+ * &lt;/pre&gt;
+ * &lt;p/&gt;
+ &lt;!-- technical-bibtex-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -D
+ *  If set, classifier is run in debug mode and
+ *  may output additional info to the console&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author Zhihai Wang (zhw@deakin.edu.au) : July 2001 implemented the algorithm
+ * @author Jason Wells (wells@deakin.edu.au) : November 2001 added instance referencing via indexes
+ * @version $Revision: 5525 $
+ */
+<span class="fc" id="L103">public class LBR </span>
+  extends Classifier
+  implements TechnicalInformationHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = 5648559277738985156L;
+  
+  /**
+   * Class for handling instances and the associated attributes. &lt;p&gt;
+   * Enables a set of indexes to a given dataset to be created and used
+   * with an algorithm.  This reduces the memory overheads and time required 
+   * when manipulating and referencing Instances and their Attributes.  
+   */
+  public class Indexes
+    implements Serializable, RevisionHandler {
+
+    /** for serialization */
+    private static final long serialVersionUID = -2771490019751421307L;
+    
+    /** the array instance indexes **/
+    public boolean [] m_InstIndexes;
+    
+    /** the array attribute indexes **/
+    public boolean [] m_AttIndexes;
+    
+    /** the number of instances indexed **/
+    private int m_NumInstances;
+    
+    /** the number of attributes indexed **/
+    private int m_NumAtts;
+    
+    /** the array of instance indexes that are set to a either true or false **/
+    public int [] m_SequentialInstIndexes;
+    
+    /** an array of attribute indexes that are set to either true or false **/
+    public int [] m_SequentialAttIndexes;
+    
+    /** flag to check if sequential array must be rebuilt due to changes to the instance index*/
+<span class="pc" id="L141">    private boolean m_SequentialInstanceIndex_valid = false;</span>
+    
+   /** flag to check if sequential array must be rebuilt due to changes to the attribute index */
+<span class="pc" id="L144">    private boolean m_SequentialAttIndex_valid = false;</span>
+    
+    /** the number of instances &quot;in use&quot;  or set to a the original value (true or false) **/
+    public int m_NumInstsSet;
+    
+    /** the number of attributes &quot;in use&quot;  or set to a the original value (true or false) **/
+    public int m_NumAttsSet;
+    
+    /** the number of sequential instances &quot;in use&quot;  or set to a the original value (true or false) **/
+    public int m_NumSeqInstsSet;
+    
+    /** the number of sequential attributes &quot;in use&quot;  or set to a the original value (true or false) **/
+    public int m_NumSeqAttsSet;
+    
+    /** the Class Index for the data set **/
+    public int m_ClassIndex;
+    
+    /**
+     * constructor
+     * @param numInstances the number of instances in dataset
+     * @param numAtts the number of attributes in dataset
+     * @param value either true or false
+     * @param classIndex  Set to -1 if you want class attribute switched on or the value of the instances 
+     * class index will be switched of and the class attibute will not be considered.
+     */
+<span class="fc" id="L169">    public Indexes(int numInstances, int numAtts, boolean value, int classIndex) {</span>
+      /* to create an empty DATASET with all attributes indexed use FALSE
+       * to create a index of all instances and attributes use TRUE
+       */
+      // initialise counts
+<span class="fc" id="L174">      m_NumInstsSet =  m_NumInstances = numInstances;</span>
+<span class="fc" id="L175">      m_NumAttsSet = m_NumAtts = numAtts;</span>
+      
+<span class="fc" id="L177">      m_InstIndexes = new boolean [(int)numInstances];</span>
+      
+      /* set all indexes to value */
+<span class="fc" id="L180">      int i = 0;</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">      while(i &lt; numInstances) {</span>
+<span class="fc" id="L182">	m_InstIndexes[i] = value;</span>
+<span class="fc" id="L183">	i++;</span>
+      }
+      
+<span class="fc" id="L186">      m_AttIndexes = new boolean [(int)numAtts];</span>
+      
+      /* set all indexes to true */
+<span class="fc" id="L189">      i = 0;</span>
+<span class="fc bfc" id="L190" title="All 2 branches covered.">      while(i &lt; numAtts) {</span>
+<span class="fc" id="L191">	m_AttIndexes[i] = true;</span>
+<span class="fc" id="L192">	i++;</span>
+      }
+      // if the value is false the dataset has no instances therefore no instances are set
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">      if(value == false)</span>
+<span class="nc" id="L196">        m_NumInstsSet = 0;</span>
+      // no sequential array has been created
+<span class="fc" id="L198">      m_SequentialInstanceIndex_valid = false;</span>
+<span class="fc" id="L199">      m_SequentialAttIndex_valid = false;</span>
+      
+      // switch class attr to false as the class is not used in the dataset.  Set to -1 if you want the class attr included
+<span class="pc bpc" id="L202" title="1 of 2 branches missed.">      if(classIndex != -1)</span>
+<span class="fc" id="L203">        setAttIndex(classIndex, false);</span>
+<span class="fc" id="L204">      m_ClassIndex = classIndex;</span>
+<span class="fc" id="L205">    }</span>
+    
+    /**
+     * constructor
+     * @param FromIndexes the object you want to copy
+     */
+<span class="nc" id="L211">    public Indexes(Indexes FromIndexes) {</span>
+      // set counts to the FromIndexes counts
+<span class="nc" id="L213">      m_NumInstances = FromIndexes.getNumInstances();</span>
+<span class="nc" id="L214">      m_NumInstsSet = FromIndexes.m_NumInstsSet;</span>
+<span class="nc" id="L215">      m_NumAtts = FromIndexes.m_NumAtts;</span>
+<span class="nc" id="L216">      m_NumAttsSet = FromIndexes.m_NumAttsSet;</span>
+<span class="nc" id="L217">      m_InstIndexes = new boolean [m_NumInstances];</span>
+      
+<span class="nc" id="L219">      System.arraycopy(FromIndexes.m_InstIndexes, 0, m_InstIndexes, 0, m_NumInstances);</span>
+      
+<span class="nc" id="L221">      m_AttIndexes = new boolean [(int)m_NumAtts];</span>
+      
+<span class="nc" id="L223">      System.arraycopy(FromIndexes.m_AttIndexes, 0, m_AttIndexes, 0, m_NumAtts);</span>
+<span class="nc" id="L224">      m_ClassIndex = FromIndexes.m_ClassIndex;</span>
+<span class="nc" id="L225">      m_SequentialInstanceIndex_valid = false;</span>
+<span class="nc" id="L226">      m_SequentialAttIndex_valid = false;</span>
+<span class="nc" id="L227">    }</span>
+    
+    /**
+     * 
+     * Changes the boolean value at the specified index in the InstIndexes array
+     *
+     * @param index the index of the instance
+     * @param value the value to set at the specified index
+     *
+     */
+    public void setInstanceIndex(int index, boolean value) {
+<span class="pc bpc" id="L238" title="2 of 4 branches missed.">      if(index &lt; 0 || index &gt;= m_NumInstances)</span>
+<span class="nc" id="L239">	throw new IllegalArgumentException(&quot;Invalid Instance Index value&quot;);</span>
+      // checks that the index isn't alreading set to value
+<span class="pc bpc" id="L241" title="1 of 2 branches missed.">      if(m_InstIndexes[(int)index] != value) {</span>
+	
+	// set the value
+<span class="fc" id="L244">	m_InstIndexes[(int)index] = value;</span>
+	
+	// a change has been made, so sequential array is invalid
+<span class="fc" id="L247">	m_SequentialInstanceIndex_valid = false;</span>
+	
+	// change the number of values &quot;in use&quot; to appropriate value
+<span class="pc bpc" id="L250" title="1 of 2 branches missed.">	if(value == false)</span>
+<span class="nc" id="L251">	  m_NumInstsSet--;</span>
+	else
+<span class="fc" id="L253">	  m_NumInstsSet++;</span>
+      }
+<span class="fc" id="L255">   }</span>
+    
+    /**
+     * 
+     * Changes the boolean value at the specified index in the InstIndexes array
+     *
+     * @param Attributes array of attributes
+     * @param value the value to set at the specified index
+     *
+     */
+    public void setAtts(int [] Attributes, boolean value) {
+<span class="nc bnc" id="L266" title="All 2 branches missed.">      for(int i = 0; i &lt; m_NumAtts; i++) {</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        m_AttIndexes[i] = !value;</span>
+      }
+<span class="nc bnc" id="L269" title="All 2 branches missed.">      for (int i = 0; i &lt; Attributes.length; i++)  {</span>
+<span class="nc" id="L270">        m_AttIndexes[Attributes[i]] = value;</span>
+      }
+<span class="nc" id="L272">      m_NumAttsSet = Attributes.length;</span>
+<span class="nc" id="L273">      m_SequentialAttIndex_valid = false;</span>
+<span class="nc" id="L274">    }</span>
+    
+    /**
+     * 
+     * Changes the boolean value at the specified index in the InstIndexes array
+     *
+     * @param Instances array of instances
+     * @param value the value to set at the specified index
+     *
+     */
+    public void setInsts(int [] Instances, boolean value) {
+<span class="nc bnc" id="L285" title="All 2 branches missed.">      resetInstanceIndex(!value);</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">      for (int i = 0; i &lt; Instances.length; i++)  {</span>
+<span class="nc" id="L287">        m_InstIndexes[Instances[i]] = value;</span>
+      }
+<span class="nc" id="L289">      m_NumInstsSet = Instances.length;</span>
+<span class="nc" id="L290">      m_SequentialInstanceIndex_valid = false;</span>
+<span class="nc" id="L291">    }</span>
+    
+    
+    /**
+     * 
+     * Changes the boolean value at the specified index in the AttIndexes array
+     *
+     * @param index the index of the instance
+     * @param value the value to set at the specified index
+     *
+     */
+    public void setAttIndex(int index, boolean value) {
+<span class="pc bpc" id="L303" title="2 of 4 branches missed.">      if(index &lt; 0 || index &gt;= m_NumAtts)</span>
+<span class="nc" id="L304">	throw new IllegalArgumentException(&quot;Invalid Attribute Index value&quot;);</span>
+      // checks that the index isn't alreading set to value
+<span class="pc bpc" id="L306" title="1 of 2 branches missed.">      if(m_AttIndexes[(int)index] != value) {</span>
+	
+	// set the value
+<span class="fc" id="L309">	m_AttIndexes[(int)index] = value;</span>
+	
+	// a change has been made, so sparse array is invalid
+<span class="fc" id="L312">	m_SequentialAttIndex_valid = false;  </span>
+	
+	 // change the number of values &quot;in use&quot; to appropriate value
+<span class="pc bpc" id="L315" title="1 of 2 branches missed.">	if(value == false)</span>
+<span class="fc" id="L316">	  m_NumAttsSet--;</span>
+	else
+<span class="nc" id="L318">	  m_NumAttsSet++;</span>
+      }
+<span class="fc" id="L320">    }</span>
+    
+    /**
+     * 
+     * Returns the boolean value at the specified index in the Instance Index array
+     *
+     * @param index the index of the instance
+     * @return the boolean value at the specified index
+     */
+    public boolean getInstanceIndex(int index) {
+      
+<span class="nc bnc" id="L331" title="All 4 branches missed.">      if(index &lt; 0 || index &gt;= m_NumInstances)</span>
+<span class="nc" id="L332">	throw new IllegalArgumentException(&quot;Invalid index value&quot;);</span>
+      
+<span class="nc" id="L334">      return m_InstIndexes[(int)index]; </span>
+    }
+    
+    /**
+     * 
+     * Returns the boolean value at the specified index in the Sequential Instance Indexes array
+     *
+     * @param index the index of the instance
+     * @return the requested value
+     */
+    public int getSequentialInstanceIndex(int index) {
+      
+<span class="nc bnc" id="L346" title="All 4 branches missed.">      if(index &lt; 0 || index &gt;= m_NumInstances)</span>
+<span class="nc" id="L347">	throw new IllegalArgumentException(&quot;Invalid index value&quot;);</span>
+      
+<span class="nc" id="L349">      return m_SequentialInstIndexes[(int)index]; </span>
+    }
+    
+    /**
+     * 
+     * Resets the boolean value in the Instance Indexes array to a specified value
+     *
+     * @param value the value to set all indexes
+     * 
+    */
+    public void resetInstanceIndex(boolean value) {
+<span class="fc" id="L360">      m_NumInstsSet = m_NumInstances;</span>
+<span class="fc bfc" id="L361" title="All 2 branches covered.">      for(int i = 0; i &lt; m_NumInstances; i++) {</span>
+<span class="fc" id="L362">	m_InstIndexes[i] = value;</span>
+      }
+<span class="pc bpc" id="L364" title="1 of 2 branches missed.">      if(value == false)</span>
+<span class="fc" id="L365">	m_NumInstsSet =  0;</span>
+<span class="fc" id="L366">      m_SequentialInstanceIndex_valid = false;</span>
+<span class="fc" id="L367">    }</span>
+    
+   /**
+    * 
+    * Resets the boolean values in Attribute and Instance array to reflect an empty dataset withthe same attributes set as in the incoming Indexes Object
+    *
+    * @param FromIndexes the Indexes to be copied
+    * 
+    */
+    public void resetDatasetBasedOn(Indexes FromIndexes) {
+<span class="fc" id="L377">      resetInstanceIndex(false);</span>
+<span class="fc" id="L378">      resetAttIndexTo(FromIndexes);</span>
+<span class="fc" id="L379">    }</span>
+   
+    /**
+     * 
+     * Resets the boolean value in AttIndexes array
+     *
+     * @param value the value to set the attributes to
+     * 
+     */
+    public void resetAttIndex(boolean value) {
+<span class="nc" id="L389">      m_NumAttsSet =  m_NumAtts;</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">      for(int i = 0; i &lt; m_NumAtts; i++) {</span>
+<span class="nc" id="L391">	m_AttIndexes[i] = value;</span>
+      }
+<span class="nc bnc" id="L393" title="All 2 branches missed.">      if(m_ClassIndex != -1)</span>
+<span class="nc" id="L394">	setAttIndex(m_ClassIndex, false);</span>
+<span class="nc bnc" id="L395" title="All 2 branches missed.">      if(value == false)</span>
+<span class="nc" id="L396">	m_NumAttsSet =  0;</span>
+<span class="nc" id="L397">     m_SequentialAttIndex_valid = false;</span>
+<span class="nc" id="L398">    }</span>
+    
+    /**
+     * 
+     * Resets the boolean value in AttIndexes array based on another set of Indexes
+     *
+     * @param FromIndexes the Indexes to be copied
+     * 
+    */
+    public void resetAttIndexTo(Indexes FromIndexes) {
+<span class="fc" id="L408">      System.arraycopy(FromIndexes.m_AttIndexes, 0, m_AttIndexes, 0, m_NumAtts);</span>
+<span class="fc" id="L409">      m_NumAttsSet =  FromIndexes.getNumAttributesSet();</span>
+<span class="fc" id="L410">      m_ClassIndex = FromIndexes.m_ClassIndex;</span>
+<span class="fc" id="L411">      m_SequentialAttIndex_valid = false;</span>
+<span class="fc" id="L412">    }</span>
+    
+    /**
+     * 
+     * Returns the boolean value at the specified index in the Attribute Indexes array
+     *
+     * @param index the index of the Instance
+     * @return the boolean value
+     */
+    public boolean getAttIndex(int index) {
+      
+<span class="nc bnc" id="L423" title="All 4 branches missed.">      if(index &lt; 0 || index &gt;= m_NumAtts)</span>
+<span class="nc" id="L424">         throw new IllegalArgumentException(&quot;Invalid index value&quot;);</span>
+      
+<span class="nc" id="L426">      return m_AttIndexes[(int)index];</span>
+    }
+    
+    /**
+     * 
+     * Returns the boolean value at the specified index in the Sequential Attribute Indexes array
+     *
+     * @param index the index of the Attribute
+     * @return the requested value
+     */
+    public int getSequentialAttIndex(int index) {
+      
+<span class="nc bnc" id="L438" title="All 4 branches missed.">      if(index &lt; 0 || index &gt;= m_NumAtts)</span>
+<span class="nc" id="L439">	throw new IllegalArgumentException(&quot;Invalid index value&quot;);</span>
+      
+<span class="nc" id="L441">      return m_SequentialAttIndexes[(int)index];</span>
+    }
+    
+    /**
+     * 
+     * Returns the number of instances &quot;in use&quot;
+     * 
+     * @return the number of instances &quot;in use&quot;
+     */
+    public int getNumInstancesSet() {
+      
+<span class="fc" id="L452">      return m_NumInstsSet;</span>
+   }
+
+    /**
+     * 
+     * Returns the number of instances in the dataset
+     * 
+     * @return the number of instances in the dataset
+     */
+    public int getNumInstances() {
+      
+<span class="fc" id="L463">      return m_NumInstances;</span>
+    }
+
+    /**
+     * 
+     * Returns the number of instances in the Sequential array
+     * 
+     * @return the number of instances in the sequential array
+     */
+    public int getSequentialNumInstances() {
+      // will always be the number set as the sequential array is for referencing only
+<span class="nc" id="L474">      return m_NumSeqInstsSet;</span>
+    }
+    
+    /**
+     * 
+     * Returns the number of attributes in the dataset
+     * 
+     * @return the number of attributes
+     */
+    public int getNumAttributes() {
+      
+<span class="nc" id="L485">      return m_NumAtts;</span>
+    }
+   
+    /**
+     * 
+     * Returns the number of attributes &quot;in use&quot;
+     * 
+     * @return the number of attributes &quot;in use&quot;
+     */
+    public int getNumAttributesSet() {
+      
+<span class="fc" id="L496">      return m_NumAttsSet;</span>
+    }
+    
+    /**
+     * 
+     * Returns the number of attributes in the Sequential array
+     * 
+     * @return the number of attributes in the sequentual array
+     */
+    public int getSequentialNumAttributes() {
+      // will always be the number set as the sequential array is for referencing only
+<span class="nc" id="L507">      return m_NumSeqAttsSet;</span>
+    }
+    
+    /**
+     * 
+     * Returns whether or not the Sequential Instance Index requires rebuilding due to a change 
+     * 
+     * @return true if the sequential instance index needs rebuilding
+     */
+    public boolean isSequentialInstanceIndexValid() {
+      
+<span class="nc" id="L518">      return m_SequentialInstanceIndex_valid;</span>
+    }
+    
+    /**
+     * 
+     * Returns whether or not the Sequential Attribute Index requires rebuilding due to a change 
+     * 
+     * @return true if the sequential attribute index needs rebuilding
+     */
+    public boolean isSequentialAttIndexValid() {
+      
+<span class="nc" id="L529">      return m_SequentialAttIndex_valid;</span>
+    }
+    
+    /**
+     * 
+     * Sets both the Instance and Attribute indexes to a specified value
+     * 
+     * @param value the value for the Instance and Attribute indices
+     */
+    public void setSequentialDataset(boolean value) {
+<span class="fc" id="L539">      setSequentialInstanceIndex(value);</span>
+<span class="fc" id="L540">      setSequentialAttIndex(value);</span>
+<span class="fc" id="L541">    }</span>
+    
+    /**
+     * 
+     * A Sequential Instance index is all those Instances that are set to the specified value placed in a sequential array.
+     * Each value in the sequential array contains the Instance index within the Indexes.
+     *
+     * @param value the sequential instance index
+     */
+    public void setSequentialInstanceIndex(boolean value) {
+      
+<span class="fc bfc" id="L552" title="All 2 branches covered.">      if(m_SequentialInstanceIndex_valid == true)</span>
+<span class="fc" id="L553">	return;</span>
+      
+      /* needs to be recalculated */
+      int size;
+<span class="fc" id="L557">      size = m_NumInstsSet;</span>
+      
+<span class="fc" id="L559">      m_SequentialInstIndexes = new int [(int)size];</span>
+      
+<span class="fc" id="L561">      int j = 0;</span>
+<span class="fc bfc" id="L562" title="All 2 branches covered.">      for(int i = 0; i &lt; m_NumInstances; i++) {</span>
+<span class="fc bfc" id="L563" title="All 2 branches covered.">	if(m_InstIndexes[i] == value) {</span>
+<span class="fc" id="L564">	  m_SequentialInstIndexes[j] = i;</span>
+<span class="fc" id="L565">	  j++;</span>
+	}
+      }
+      
+<span class="fc" id="L569">      m_SequentialInstanceIndex_valid = true;</span>
+<span class="fc" id="L570">      m_NumSeqInstsSet = j;</span>
+<span class="fc" id="L571">    }</span>
+    
+    /**
+     * 
+     * A Sequential Attribute index is all those Attributes that are set to the specified value placed in a sequential array.
+     * Each value in the sequential array contains the Attribute index within the Indexes
+     * 
+     * @param value the sequential attribute index
+     */
+    public void setSequentialAttIndex(boolean value) {
+      
+<span class="fc bfc" id="L582" title="All 2 branches covered.">      if(m_SequentialAttIndex_valid == true)</span>
+<span class="fc" id="L583">	return;</span>
+      
+      /* needs to be recalculated */
+      int size;
+<span class="fc" id="L587">      size = m_NumAttsSet;</span>
+      
+<span class="fc" id="L589">      m_SequentialAttIndexes = new int [(int)size];</span>
+      
+<span class="fc" id="L591">      int j = 0;</span>
+<span class="fc bfc" id="L592" title="All 2 branches covered.">      for(int i = 0; i &lt; m_NumAtts; i++) {</span>
+<span class="fc bfc" id="L593" title="All 2 branches covered.">	if(m_AttIndexes[i] == value) {</span>
+<span class="fc" id="L594">	  m_SequentialAttIndexes[j] = i;</span>
+<span class="fc" id="L595">	  j++;</span>
+	 }
+      }
+      
+<span class="fc" id="L599">      m_SequentialAttIndex_valid = true;</span>
+<span class="fc" id="L600">      m_NumSeqAttsSet = j;</span>
+<span class="fc" id="L601">    }</span>
+    
+    /**
+     * Returns the revision string.
+     * 
+     * @return		the revision
+     */
+    public String getRevision() {
+<span class="nc" id="L609">      return RevisionUtils.extract(&quot;$Revision: 5525 $&quot;);</span>
+    }
+  } /* end of Indexes inner-class */
+  
+
+  /** All the counts for nominal attributes. */
+  protected int [][][] m_Counts;
+  /** All the counts for nominal attributes. */
+  protected int [][][] m_tCounts;
+  /** The prior probabilities of the classes. */
+  protected int [] m_Priors;
+  /** The prior probabilities of the classes. */
+  protected int [] m_tPriors;
+  
+  /** number of attributes for the dataset ***/
+  protected int m_numAtts;
+  
+  /** number of classes for dataset ***/
+  protected int m_numClasses;
+  
+ /** number of instances in dataset ***/
+  protected int m_numInsts;
+  
+  /** The set of instances used for current training. */
+<span class="fc" id="L633">  protected Instances m_Instances = null;</span>
+  
+  /** leave-one-out errors on the training dataset. */
+  protected int m_Errors;
+  
+  /** leave-one-out error flags on the training dataaet. */
+  protected boolean [] m_ErrorFlags;
+  
+  /** best attribute's index list. maybe as output result */
+<span class="fc" id="L642">  protected ArrayList leftHand = new ArrayList();</span>
+  
+  /** significantly lower */
+  protected static final double SIGNLOWER = 0.05;
+  
+  /** following is defined by wangzh, 
+   * the number of instances to be classified incorrectly
+   * on the subset. */
+  protected boolean [] m_subOldErrorFlags;
+  
+  /** the number of instances to be classified incorrectly
+   * besides the subset. */
+<span class="fc" id="L654">  protected int m_RemainderErrors = 0;</span>
+  
+  /** the number of instance to be processed */
+<span class="fc" id="L657">  protected int m_Number = 0;</span>
+  
+  /** the Number of Instances to be used in building a classifiers */
+<span class="fc" id="L660">  protected int m_NumberOfInstances = 0;</span>
+  
+  /** for printing in n-fold cross validation */
+<span class="fc" id="L663">  protected boolean m_NCV = false;</span>
+  
+  /** index of instances and attributes for the given dataset */
+  protected Indexes m_subInstances;
+  
+  /** index of instances and attributes for the given dataset */
+  protected Indexes tempSubInstances;
+  
+  /** probability values array */
+  protected double [] posteriorsArray;
+  protected int bestCnt;
+  protected int tempCnt;
+  protected int forCnt;
+  protected int whileCnt;
+
+  /**
+   * @return a description of the classifier suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+
+<span class="nc" id="L684">    return </span>
+<span class="nc" id="L685">        &quot;Lazy Bayesian Rules Classifier. The naive Bayesian classifier &quot;</span>
+      + &quot;provides a simple and effective approach to classifier learning, &quot;
+      + &quot;but its attribute independence assumption is often violated in the &quot;
+      + &quot;real world. Lazy Bayesian Rules selectively relaxes the independence &quot;
+      + &quot;assumption, achieving lower error rates over a range of learning &quot;
+      + &quot;tasks. LBR defers processing to classification time, making it a &quot;
+      + &quot;highly efficient and accurate classification algorithm when small &quot;
+      + &quot;numbers of objects are to be classified.\n\n&quot;
+      + &quot;For more information, see:\n\n&quot;
+<span class="nc" id="L694">      + getTechnicalInformation().toString();</span>
+  }
+
+  /**
+   * Returns an instance of a TechnicalInformation object, containing 
+   * detailed information about the technical background of this class,
+   * e.g., paper reference or book this class is based on.
+   * 
+   * @return the technical information about this class
+   */
+  public TechnicalInformation getTechnicalInformation() {
+    TechnicalInformation 	result;
+    
+<span class="nc" id="L707">    result = new TechnicalInformation(Type.ARTICLE);</span>
+<span class="nc" id="L708">    result.setValue(Field.AUTHOR, &quot;Zijian Zheng and G. Webb&quot;);</span>
+<span class="nc" id="L709">    result.setValue(Field.YEAR, &quot;2000&quot;);</span>
+<span class="nc" id="L710">    result.setValue(Field.TITLE, &quot;Lazy Learning of Bayesian Rules&quot;);</span>
+<span class="nc" id="L711">    result.setValue(Field.JOURNAL, &quot;Machine Learning&quot;);</span>
+<span class="nc" id="L712">    result.setValue(Field.VOLUME, &quot;4&quot;);</span>
+<span class="nc" id="L713">    result.setValue(Field.NUMBER, &quot;1&quot;);</span>
+<span class="nc" id="L714">    result.setValue(Field.PAGES, &quot;53-84&quot;);</span>
+    
+<span class="nc" id="L716">    return result;</span>
+  }
+
+  /**
+   * Returns default capabilities of the classifier.
+   *
+   * @return      the capabilities of this classifier
+   */
+  public Capabilities getCapabilities() {
+<span class="fc" id="L725">    Capabilities result = super.getCapabilities();</span>
+<span class="fc" id="L726">    result.disableAll();</span>
+
+    // attributes
+<span class="fc" id="L729">    result.enable(Capability.NOMINAL_ATTRIBUTES);</span>
+<span class="fc" id="L730">    result.enable(Capability.MISSING_VALUES);</span>
+
+    // class
+<span class="fc" id="L733">    result.enable(Capability.NOMINAL_CLASS);</span>
+<span class="fc" id="L734">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+
+    // instances
+<span class="fc" id="L737">    result.setMinimumNumberInstances(0);</span>
+
+<span class="fc" id="L739">    return result;</span>
+  }
+
+  /**
+   * For lazy learning, building classifier is only to prepare their inputs
+   * until classification time.
+   *
+   * @param instances set of instances serving as training data
+   * @throws Exception if the preparation has not been generated.
+   */
+  public void buildClassifier(Instances instances) throws Exception {
+    int attIndex, i, j;
+<span class="fc" id="L751">    bestCnt = 0;</span>
+<span class="fc" id="L752">    tempCnt = 0;</span>
+<span class="fc" id="L753">    forCnt = 0;</span>
+<span class="fc" id="L754">    whileCnt = 0;</span>
+    
+    // can classifier handle the data?
+<span class="fc" id="L757">    getCapabilities().testWithFail(instances);</span>
+
+    // remove instances with missing class
+<span class="fc" id="L760">    instances = new Instances(instances);</span>
+<span class="fc" id="L761">    instances.deleteWithMissingClass();</span>
+    
+<span class="fc" id="L763">    m_numAtts = instances.numAttributes();</span>
+<span class="fc" id="L764">    m_numClasses = instances.numClasses();</span>
+<span class="fc" id="L765">    m_numInsts = instances.numInstances();</span>
+
+    // Reserve space
+<span class="fc" id="L768">    m_Counts = new int[m_numClasses][m_numAtts][0];</span>
+<span class="fc" id="L769">    m_Priors = new int[m_numClasses];</span>
+<span class="fc" id="L770">    m_tCounts = new int[m_numClasses][m_numAtts][0];</span>
+<span class="fc" id="L771">    m_tPriors = new int[m_numClasses];</span>
+<span class="fc" id="L772">    m_subOldErrorFlags = new boolean[m_numInsts+1];</span>
+    
+<span class="fc" id="L774">    m_Instances = instances;</span>
+    
+<span class="fc" id="L776">    m_subInstances = new Indexes(m_numInsts, m_numAtts, true, m_Instances.classIndex());</span>
+<span class="fc" id="L777">    tempSubInstances = new Indexes(m_numInsts, m_numAtts, true, m_Instances.classIndex());</span>
+    
+    
+<span class="fc" id="L780">    posteriorsArray = new double[m_numClasses];</span>
+    
+    // prepare arrays
+<span class="fc bfc" id="L783" title="All 2 branches covered.">    for (attIndex = 0; attIndex &lt; m_numAtts; attIndex++) {</span>
+<span class="fc" id="L784">      Attribute attribute = (Attribute) instances.attribute(attIndex);</span>
+<span class="fc bfc" id="L785" title="All 2 branches covered.">      for (j = 0; j &lt; m_numClasses; j++) {</span>
+<span class="fc" id="L786">        m_Counts[j][attIndex] = new int[attribute.numValues()];</span>
+<span class="fc" id="L787">        m_tCounts[j][attIndex] = new int[attribute.numValues()];</span>
+      }
+    }
+
+    // Compute counts and priors
+<span class="fc bfc" id="L792" title="All 2 branches covered.">    for(i = 0; i &lt; m_numInsts; i++) {</span>
+<span class="fc" id="L793">      Instance instance = (Instance) instances.instance(i);</span>
+<span class="fc" id="L794">      int classValue = (int)instance.classValue();</span>
+      // pointer for more efficient access to counts matrix in loop
+<span class="fc" id="L796">      int [][] countsPointer = m_tCounts[classValue];</span>
+<span class="fc bfc" id="L797" title="All 2 branches covered.">      for(attIndex = 0; attIndex &lt; m_numAtts; attIndex++) {</span>
+<span class="fc" id="L798">        countsPointer[attIndex][(int)instance.value(attIndex)]++;</span>
+      }
+<span class="fc" id="L800">      m_tPriors[classValue]++;</span>
+    }
+    
+    // Step 2: Leave-one-out on the training data set.
+    // get m_Errors and its flags array using leave-one-out.
+<span class="fc" id="L805">    m_ErrorFlags = new boolean[m_numInsts];</span>
+    
+<span class="fc" id="L807">    m_Errors = leaveOneOut(m_subInstances, m_tCounts, m_tPriors, m_ErrorFlags);</span>
+
+<span class="pc bpc" id="L809" title="1 of 2 branches missed.">    if (m_Number == 0) {</span>
+<span class="fc" id="L810">      m_NumberOfInstances = m_Instances.numInstances();</span>
+    } else {
+<span class="nc" id="L812">      System.out.println(&quot; &quot;);</span>
+<span class="nc" id="L813">      System.out.println(&quot;N-Fold Cross Validation: &quot;);</span>
+<span class="nc" id="L814">      m_NCV = true;</span>
+    }
+<span class="fc" id="L816">  }</span>
+  
+  /**
+   * Calculates the class membership probabilities
+   * for the given test instance.
+   * This is the most important method for Lazy Bayesian Rule algorithm.
+   *
+   * @param testInstance the instance to be classified
+   * @return predicted class probability distribution
+   * @throws Exception if distribution can't be computed
+   */
+  public double[] distributionForInstance(Instance testInstance)
+  throws Exception {
+    
+    int inst;
+<span class="fc" id="L831">    int subAttrIndex = 0;</span>
+<span class="fc" id="L832">    int subInstIndex = 0;</span>
+<span class="fc" id="L833">    int tempInstIndex = 0;</span>
+    int attributeBest;
+<span class="fc" id="L835">    int subLocalErrors = 0;</span>
+<span class="fc" id="L836">    int tempErrorsBest = 0;</span>
+<span class="fc" id="L837">    boolean [] tempErrorFlagBest = null;</span>
+<span class="fc" id="L838">    int [] tempD_subsetBestInsts = null;</span>
+<span class="fc" id="L839">    int [] tempD_subsetBestAtts = null;</span>
+<span class="fc" id="L840">    Indexes subInstances = new Indexes(m_numInsts, m_numAtts, true, m_Instances.classIndex());</span>
+    
+<span class="fc" id="L842">    boolean [] subLocalErrorFlags = new  boolean [(int)subInstances.getNumInstances()+1];</span>
+    // Step 2': Get localErrors, localErrorFlags, and training data set.
+<span class="fc" id="L844">    int localErrors = m_Errors;</span>
+<span class="fc" id="L845">    boolean [] localErrorFlags = (boolean []) m_ErrorFlags.clone();</span>
+    
+    // The number of errors on New, Not on Old in the subset.
+<span class="fc" id="L848">    int errorsNewNotOld = 0;</span>
+    // The number of errors on Old, Not on New in the subset.
+<span class="fc" id="L850">    int errorsOldNotNew = 0;</span>
+    
+    // Step 3:
+<span class="fc" id="L853">    leftHand.clear();</span>
+
+    // Step 4: Beginning Repeat.
+    // Selecting all the attributes that can be moved to the lefthand.
+<span class="fc bfc" id="L857" title="All 2 branches covered.">    while (localErrors &gt;= 5) {</span>
+<span class="fc" id="L858">      attributeBest = -1;</span>
+<span class="fc" id="L859">      whileCnt++;</span>
+      // Step 5:
+<span class="fc" id="L861">      tempErrorsBest = subInstances.getNumInstancesSet() + 1;</span>
+<span class="fc" id="L862">      subInstances.setSequentialDataset(true);</span>
+      // Step 6: selecting an attribute.
+<span class="fc bfc" id="L864" title="All 2 branches covered.">      for (int attr = 0; attr &lt; subInstances.m_NumSeqAttsSet; attr++){</span>
+<span class="fc" id="L865">        forCnt++;</span>
+<span class="fc" id="L866">        subAttrIndex = subInstances.m_SequentialAttIndexes[attr];</span>
+        // Step 7: get the corresponding subset.
+        
+<span class="fc" id="L869">        m_RemainderErrors = 0;</span>
+
+        // reset array to true
+<span class="fc bfc" id="L872" title="All 2 branches covered.">        for(int i = 0; i &lt; m_numInsts; i++) {</span>
+<span class="fc" id="L873">          m_subOldErrorFlags[i] = true;</span>
+        }
+        // reset indexes to reflect an empty dataset but with the same attrs as another dataset
+<span class="fc" id="L876">        tempSubInstances.resetDatasetBasedOn(subInstances);</span>
+        // Get subset of the instances and its m_LastSecondErrors
+<span class="fc bfc" id="L878" title="All 2 branches covered.">        for(inst = 0; inst &lt; subInstances.m_NumSeqInstsSet; inst++) {</span>
+<span class="fc" id="L879">          subInstIndex = subInstances.m_SequentialInstIndexes[inst];</span>
+<span class="fc bfc" id="L880" title="All 2 branches covered.">          if (m_Instances.instance(subInstIndex).value(subAttrIndex) == testInstance.value(subAttrIndex))  {</span>
+            // add instance to subset list
+<span class="fc" id="L882">            tempSubInstances.setInstanceIndex(subInstIndex, true);</span>
+<span class="fc bfc" id="L883" title="All 2 branches covered.">            if (localErrorFlags[subInstIndex] == false ) {</span>
+<span class="fc" id="L884">              m_subOldErrorFlags[subInstIndex] = false;</span>
+            }
+          }
+          else  {
+<span class="fc bfc" id="L888" title="All 2 branches covered.">            if (localErrorFlags[subInstIndex] == false ) {</span>
+<span class="fc" id="L889">              m_RemainderErrors++;</span>
+            }
+          }
+        } // end of for
+
+        // Step 7':
+<span class="pc bpc" id="L895" title="1 of 2 branches missed.">        if (tempSubInstances.m_NumInstsSet &lt; subInstances.m_NumInstsSet) {</span>
+          // remove attribute from index
+<span class="fc" id="L897">          tempSubInstances.setAttIndex(subAttrIndex, false);</span>
+          // Step 9: create a classifier on the subset.
+          // Compute counts and priors
+          // create sequential index of instances and attributes that are to be considered
+                
+<span class="fc" id="L902">          localNaiveBayes(tempSubInstances);</span>
+          
+<span class="fc" id="L904">          subLocalErrors = leaveOneOut(tempSubInstances, m_Counts, m_Priors, subLocalErrorFlags);</span>
+
+<span class="fc" id="L906">          errorsNewNotOld = 0;</span>
+<span class="fc" id="L907">          errorsOldNotNew = 0;</span>
+          
+<span class="fc" id="L909">          tempSubInstances.setSequentialDataset(true);</span>
+          
+<span class="fc bfc" id="L911" title="All 2 branches covered.">          for(int t_inst = 0; t_inst &lt; tempSubInstances.m_NumSeqInstsSet; t_inst++) {</span>
+<span class="fc" id="L912">            tempInstIndex = tempSubInstances.m_SequentialInstIndexes[t_inst];</span>
+<span class="fc bfc" id="L913" title="All 2 branches covered.">            if (subLocalErrorFlags[tempInstIndex] == false) {</span>
+              // The number of errors on New, Not on Old in the subset.
+<span class="pc bpc" id="L915" title="1 of 2 branches missed.">              if (m_subOldErrorFlags[tempInstIndex] == true) {</span>
+<span class="nc" id="L916">                errorsNewNotOld ++;</span>
+              }
+            } else {
+              // The number of errors on Old, Not on New in the subset.
+<span class="fc bfc" id="L920" title="All 2 branches covered.">              if(m_subOldErrorFlags[tempInstIndex] == false) {</span>
+<span class="fc" id="L921">                errorsOldNotNew ++;</span>
+              }
+            }
+          } //end of for
+          
+          // Step 10 and Step 11:
+<span class="fc" id="L927">          int tempErrors = subLocalErrors + m_RemainderErrors;</span>
+          // Step 12:
+          // Step 13: stopping criteria.
+<span class="pc bpc" id="L930" title="2 of 4 branches missed.">          if((tempErrors &lt; tempErrorsBest) &amp;&amp; (binomP(errorsNewNotOld, errorsNewNotOld + errorsOldNotNew, 0.5 ) &lt; SIGNLOWER))      {</span>
+            // Step 14:
+<span class="nc" id="L932">            tempCnt++;</span>
+            // --------------------------------------------------
+            //tempD_subsetBest = new Indexes(tempSubInstances);
+            
+            // -------------------------------------------------------------------------------
+<span class="nc" id="L937">            tempSubInstances.setSequentialDataset(true);</span>
+<span class="nc" id="L938">            tempD_subsetBestInsts = (int []) tempSubInstances.m_SequentialInstIndexes.clone();</span>
+<span class="nc" id="L939">            tempD_subsetBestAtts = (int []) tempSubInstances.m_SequentialAttIndexes.clone();</span>
+            // -------------------------------------------------------------------------------
+            // Step 15:
+<span class="nc" id="L942">            tempErrorsBest = tempErrors;</span>
+
+<span class="nc" id="L944">            tempErrorFlagBest = (boolean []) subLocalErrorFlags.clone();</span>
+
+            // Step 16:
+<span class="nc" id="L947">            attributeBest = subAttrIndex;</span>
+          } // end of if
+        } // end of if
+      } // end of main for
+      
+      // Step 20:
+<span class="pc bpc" id="L953" title="1 of 2 branches missed.">      if(attributeBest != -1)  {</span>
+<span class="nc" id="L954">        bestCnt++;</span>
+        // Step 21:
+<span class="nc" id="L956">        leftHand.add(testInstance.attribute(attributeBest));</span>
+        // ------------------------------------------------
+        // Step 22:
+        //tempD_subsetBest.setAttIndex(attributeBest, false);
+        //subInstances = tempD_subsetBest;
+        // ------------------------------------------------ 
+<span class="nc" id="L962">        subInstances.setInsts(tempD_subsetBestInsts, true);</span>
+<span class="nc" id="L963">        subInstances.setAtts(tempD_subsetBestAtts, true);</span>
+<span class="nc" id="L964">        subInstances.setAttIndex(attributeBest, false);</span>
+        // -------------------------------------------------
+        // Step 25:
+<span class="nc" id="L967">        localErrors = tempErrorsBest;</span>
+<span class="nc" id="L968">        localErrorFlags =  tempErrorFlagBest;</span>
+        
+      } else {
+        break;
+      }
+    } // end of while
+    
+    // Step 27:
+<span class="fc" id="L976">    localNaiveBayes(subInstances);</span>
+<span class="fc" id="L977">    return localDistributionForInstance(testInstance, subInstances);</span>
+  }
+  
+  /**
+   * Returns a description of the classifier.
+   *
+   * @return a description of the classifier as a string.
+   */
+  public String toString() {
+    
+<span class="pc bpc" id="L987" title="1 of 2 branches missed.">    if (m_Instances == null) {</span>
+<span class="fc" id="L988">      return &quot;Lazy Bayesian Rule: No model built yet.&quot;;</span>
+    }
+    
+    try {
+<span class="nc" id="L992">      StringBuffer text = new StringBuffer</span>
+<span class="nc" id="L993">      (&quot;=== LBR Run information ===\n\n&quot;);</span>
+      
+<span class="nc" id="L995">      text.append(&quot;Scheme:       weka.classifiers.LBR\n&quot;);</span>
+      
+<span class="nc" id="L997">      text.append(&quot;Relation:     &quot;</span>
+<span class="nc" id="L998">      + m_Instances.attribute(m_Instances.classIndex()).name()</span>
+<span class="nc" id="L999">      + &quot;\n&quot;);</span>
+      
+<span class="nc" id="L1001">      text.append(&quot;Instances:    &quot;+m_Instances.numInstances()+&quot;\n&quot;);</span>
+      
+<span class="nc" id="L1003">      text.append(&quot;Attributes:   &quot;+m_Instances.numAttributes()+&quot;\n&quot;);</span>
+      
+      // Remains are printed by Evaulation.java
+<span class="nc" id="L1006">      return text.toString();</span>
+<span class="nc" id="L1007">    } catch (Exception e) {</span>
+<span class="nc" id="L1008">      e.printStackTrace();</span>
+<span class="nc" id="L1009">      return &quot;Can't Print Lazy Bayes Rule Classifier!&quot;;</span>
+    }
+  }
+
+  /**
+   * Leave-one-out strategy. For a given sample data set with n instances,
+   * using (n - 1) instances by leaving one out and tested on the single
+   * remaining case.
+   * This is repeated n times in turn.
+   * The final &quot;Error&quot; is the sum of the instances to be classified
+   * incorrectly.
+   *
+   * @param instanceIndex set of instances serving as training data.
+   * @param counts serving as all the counts of training data.
+   * @param priors serving as the number of instances in each class.
+   * @param errorFlags for the errors
+   *
+   * @return error flag array about each instance.
+   * @throws Exception if something goes wrong
+   **/
+  public int leaveOneOut(Indexes instanceIndex, int [][][] counts, int [] priors, boolean [] errorFlags)  throws Exception {
+    
+    
+    // ###### START LEAVE ONE OUT #############
+    int tempClassValue;
+    double posteriors;
+    double sumForPriors;
+    double sumForCounts;
+<span class="fc" id="L1037">    double max = 0;</span>
+<span class="fc" id="L1038">    int maxIndex = 0;</span>
+    int AIndex, attIndex, clss;
+    int inst;
+<span class="fc" id="L1041">    int errors = 0;</span>
+    int instIndex;
+    
+<span class="fc" id="L1044">    instanceIndex.setSequentialDataset(true);</span>
+    int tempInstanceClassValue;
+<span class="fc" id="L1046">    int [] tempAttributeValues = new int[(int)instanceIndex.m_NumSeqAttsSet+1];</span>
+    Instance tempInstance;
+<span class="fc bfc" id="L1048" title="All 2 branches covered.">    for(inst = 0; inst &lt; instanceIndex.m_NumSeqInstsSet; inst++) {</span>
+<span class="fc" id="L1049">      instIndex = instanceIndex.m_SequentialInstIndexes[inst];</span>
+      //get the leave-one-out instance
+<span class="fc" id="L1051">      tempInstance = (Instance) m_Instances.instance(instIndex);</span>
+<span class="pc bpc" id="L1052" title="1 of 2 branches missed.">      if (!tempInstance.classIsMissing()) {</span>
+<span class="fc" id="L1053">      tempInstanceClassValue = (int)tempInstance.classValue();</span>
+      // pointer to first index of counts matrix for efficiency
+<span class="fc" id="L1055">      int [][] countsPointer = counts[tempInstanceClassValue];</span>
+      // Compute the counts and priors for (n-1) instances.
+<span class="fc bfc" id="L1057" title="All 2 branches covered.">      for(attIndex = 0; attIndex &lt; instanceIndex.m_NumSeqAttsSet; attIndex++) {</span>
+<span class="fc" id="L1058">        AIndex = instanceIndex.m_SequentialAttIndexes[attIndex];</span>
+<span class="fc" id="L1059">        tempAttributeValues[attIndex] = (int)tempInstance.value(AIndex);</span>
+<span class="fc" id="L1060">        countsPointer[AIndex][tempAttributeValues[attIndex]]--;</span>
+      }
+      
+<span class="fc" id="L1063">      priors[tempInstanceClassValue]--;</span>
+<span class="fc" id="L1064">      max = 0;</span>
+<span class="fc" id="L1065">      maxIndex= 0;</span>
+      // ###### LOCAL CLASSIFY INSTANCE ###########
+<span class="fc" id="L1067">      sumForPriors = Utils.sum(priors);</span>
+<span class="fc bfc" id="L1068" title="All 2 branches covered.">      for (clss = 0; clss &lt; m_numClasses; clss++) {</span>
+<span class="fc" id="L1069">        posteriors = 0.0;</span>
+<span class="fc" id="L1070">        posteriors = (priors[clss] + 1) / (sumForPriors + m_numClasses);</span>
+        
+<span class="fc" id="L1072">	countsPointer = counts[clss];</span>
+<span class="fc bfc" id="L1073" title="All 2 branches covered.">        for(attIndex = 0; attIndex &lt; instanceIndex.m_NumSeqAttsSet; attIndex++) {</span>
+<span class="fc" id="L1074">          AIndex = instanceIndex.m_SequentialAttIndexes[attIndex];</span>
+<span class="fc bfc" id="L1075" title="All 2 branches covered.">          if (!tempInstance.isMissing(AIndex)) {</span>
+<span class="fc" id="L1076">            sumForCounts = Utils.sum(countsPointer[AIndex]);</span>
+<span class="fc" id="L1077">            posteriors *= ((countsPointer[AIndex][tempAttributeValues[attIndex]] + 1) / (sumForCounts + (double)tempInstance.attribute(AIndex).numValues()));</span>
+          }
+        }
+        
+<span class="fc bfc" id="L1081" title="All 2 branches covered.">        if (posteriors &gt; max) {</span>
+<span class="fc" id="L1082">          maxIndex = clss;</span>
+<span class="fc" id="L1083">          max = posteriors;</span>
+        }
+      } // end of for
+      
+<span class="pc bpc" id="L1087" title="1 of 2 branches missed.">      if (max &gt; 0) {</span>
+<span class="fc" id="L1088">        tempClassValue = maxIndex;</span>
+      } else {
+<span class="nc" id="L1090">        tempClassValue = (int)Instance.missingValue();</span>
+      }
+      // ###### END LOCAL CLASSIFY INSTANCE ###########
+      
+      // Adjudge error. Here using classIndex is incorrect,
+      // it is index of the class attribute.
+<span class="fc bfc" id="L1096" title="All 2 branches covered.">      if(tempClassValue == tempInstanceClassValue){</span>
+<span class="fc" id="L1097">        errorFlags[instIndex] = true;</span>
+      } else {
+<span class="fc" id="L1099">        errorFlags[instIndex] = false;</span>
+<span class="fc" id="L1100">        errors++;</span>
+      }
+      
+<span class="fc" id="L1103">      countsPointer = counts[tempInstanceClassValue];</span>
+<span class="fc bfc" id="L1104" title="All 2 branches covered.">      for(attIndex = 0; attIndex &lt; instanceIndex.m_NumSeqAttsSet; attIndex++) {</span>
+<span class="fc" id="L1105">        AIndex = instanceIndex.m_SequentialAttIndexes[attIndex];</span>
+<span class="fc" id="L1106">        counts[tempInstanceClassValue][AIndex][tempAttributeValues[attIndex]]++;</span>
+      }
+      
+<span class="fc" id="L1109">      priors[tempInstanceClassValue]++;</span>
+      }
+    } // end of for
+    // ###### END LEAVE ONE OUT #############
+<span class="fc" id="L1113">    return errors;</span>
+  }
+ 
+  /**
+   * Class for building and using a simple Naive Bayes classifier.
+   * For more information, see&lt;p&gt;
+   *
+   * Richard Duda and Peter Hart (1973).&lt;i&gt;Pattern
+   * Classification and Scene Analysis&lt;/i&gt;. Wiley, New York.
+   *
+   * This method only get m_Counts and m_Priors.
+   *
+   * @param instanceIndex set of instances serving as training data
+   * @throws Exception if m_Counts and m_Priors have not been
+   *  generated successfully
+   */
+  public void localNaiveBayes(Indexes instanceIndex) throws Exception {
+<span class="fc" id="L1130">    int attIndex = 0;</span>
+    int i, AIndex;
+<span class="fc" id="L1132">    int attVal = 0;</span>
+<span class="fc" id="L1133">    int classVal = 0;</span>
+    Instance instance;
+
+<span class="fc" id="L1136">    instanceIndex.setSequentialDataset(true);</span>
+
+    // reset local counts
+<span class="fc bfc" id="L1139" title="All 2 branches covered.">    for(classVal = 0; classVal &lt; m_numClasses; classVal++) {</span>
+      // counts pointer mcTimesaver
+<span class="fc" id="L1141">      int [][] countsPointer1 = m_Counts[classVal];</span>
+<span class="fc bfc" id="L1142" title="All 2 branches covered.">      for(attIndex = 0; attIndex &lt; m_numAtts; attIndex++) {</span>
+<span class="fc" id="L1143">        Attribute attribute = m_Instances.attribute(attIndex);</span>
+         // love those pointers for saving time
+<span class="fc" id="L1145">         int [] countsPointer2 = countsPointer1[attIndex];</span>
+<span class="fc bfc" id="L1146" title="All 2 branches covered.">        for(attVal = 0; attVal &lt; attribute.numValues(); attVal++)  {</span>
+<span class="fc" id="L1147">          countsPointer2[attVal] = 0;</span>
+        }
+     }
+<span class="fc" id="L1150">     m_Priors[classVal] = 0;</span>
+   }
+
+<span class="fc bfc" id="L1153" title="All 2 branches covered.">    for(i = 0; i &lt; instanceIndex.m_NumSeqInstsSet; i++) {</span>
+<span class="fc" id="L1154">      instance = (Instance) m_Instances.instance(instanceIndex.m_SequentialInstIndexes[i]);</span>
+<span class="fc bfc" id="L1155" title="All 2 branches covered.">      for(attIndex = 0; attIndex &lt; instanceIndex.m_NumSeqAttsSet; attIndex++) {</span>
+<span class="fc" id="L1156">        AIndex = instanceIndex.m_SequentialAttIndexes[attIndex];</span>
+<span class="fc" id="L1157">        m_Counts[(int)instance.classValue()][AIndex][(int)instance.value(AIndex)]++;</span>
+      }
+<span class="fc" id="L1159">      m_Priors[(int)instance.classValue()]++;</span>
+    }
+<span class="fc" id="L1161">  }</span>
+    
+  /**
+   * Calculates the class membership probabilities.
+   * for the given test instance.
+   *
+   * @param instance the instance to be classified
+   * @param instanceIndex 
+   *
+   * @return predicted class probability distribution
+   * @throws Exception if distribution can't be computed
+   */
+  public double[] localDistributionForInstance(Instance instance, Indexes instanceIndex) throws Exception {
+    
+<span class="fc" id="L1175">    double sumForPriors = 0;</span>
+<span class="fc" id="L1176">    double sumForCounts = 0;</span>
+    int attIndex, AIndex;
+<span class="fc" id="L1178">    int numClassesOfInstance = instance.numClasses();</span>
+    
+<span class="fc" id="L1180">    sumForPriors = 0;</span>
+<span class="fc" id="L1181">    sumForCounts = 0;</span>
+<span class="fc" id="L1182">    instanceIndex.setSequentialDataset(true);</span>
+    // Calculate all of conditional probabilities.
+<span class="fc" id="L1184">    sumForPriors = Utils.sum(m_Priors) + numClassesOfInstance;</span>
+<span class="fc bfc" id="L1185" title="All 2 branches covered.">    for (int j = 0; j &lt; numClassesOfInstance; j++) {</span>
+      // pointer to counts to make access more efficient in loop
+<span class="fc" id="L1187">      int [][] countsPointer = m_Counts[j];</span>
+<span class="fc" id="L1188">      posteriorsArray[j] = (m_Priors[j] + 1) / (sumForPriors);</span>
+<span class="fc bfc" id="L1189" title="All 2 branches covered.">      for(attIndex = 0; attIndex &lt; instanceIndex.m_NumSeqAttsSet; attIndex++) {</span>
+<span class="fc" id="L1190">        AIndex = instanceIndex.m_SequentialAttIndexes[attIndex];</span>
+<span class="fc" id="L1191">        sumForCounts = Utils.sum(countsPointer[AIndex]);</span>
+<span class="fc bfc" id="L1192" title="All 2 branches covered.">        if (!instance.isMissing(AIndex)) {</span>
+<span class="fc" id="L1193">          posteriorsArray[j] *= ((countsPointer[AIndex][(int)instance.value(AIndex)] + 1) / (sumForCounts + (double)instance.attribute(AIndex).numValues()));</span>
+        }
+      }
+    }
+    
+    // Normalize probabilities
+<span class="fc" id="L1199">    Utils.normalize(posteriorsArray);</span>
+    
+<span class="fc" id="L1201">    return posteriorsArray;</span>
+  }
+  
+  /**
+   * Significance test
+   * binomp:
+   *
+   * @param r
+   * @param n
+   * @param p
+   * @return returns the probability of obtaining r or fewer out of n
+   * if the probability of an event is p.
+   * @throws Exception if computation fails
+   */
+  public double binomP(double r, double n, double p) throws Exception {
+    
+<span class="fc bfc" id="L1217" title="All 2 branches covered.">    if (n == r) return 1.0;</span>
+<span class="fc" id="L1218">    return Statistics.incompleteBeta(n-r, r+1.0, 1.0-p);</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L1227">    return RevisionUtils.extract(&quot;$Revision: 5525 $&quot;);</span>
+  }
+  
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L1236">    runClassifier(new LBR(), argv);</span>
+<span class="nc" id="L1237">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

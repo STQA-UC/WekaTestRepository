@@ -1,0 +1,425 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Reorder.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.filters.unsupervised.attribute</a> &gt; <span class="el_source">Reorder.java</span></div><h1>Reorder.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ * Reorder.java
+ * Copyright (C) 2005 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+
+package weka.filters.unsupervised.attribute;
+
+import weka.core.Attribute;
+import weka.core.Capabilities;
+import weka.core.FastVector;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.Range;
+import weka.core.RevisionUtils;
+import weka.core.SparseInstance;
+import weka.core.Utils;
+import weka.core.Capabilities.Capability;
+import weka.filters.Filter;
+import weka.filters.StreamableFilter;
+import weka.filters.UnsupervisedFilter;
+
+import java.util.Enumeration;
+import java.util.StringTokenizer;
+import java.util.Vector;
+
+/** 
+ &lt;!-- globalinfo-start --&gt;
+ * A filter that generates output with a new order of the attributes. Useful if one wants to move an attribute to the end to use it as class attribute (e.g. with using &quot;-R 2-last,1&quot;).&lt;br/&gt;
+ * But it's not only possible to change the order of all the attributes, but also to leave out attributes. E.g. if you have 10 attributes, you can generate the following output order: 1,3,5,7,9,10 or 10,1-5.&lt;br/&gt;
+ * You can also duplicate attributes, e.g. for further processing later on: e.g. 1,1,1,4,4,4,2,2,2 where the second and the third column of each attribute are processed differently and the first one, i.e. the original one is kept.&lt;br/&gt;
+ * One can simply inverse the order of the attributes via 'last-first'.&lt;br/&gt;
+ * After appyling the filter, the index of the class attribute is the last attribute.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ * 
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -R &amp;lt;index1,index2-index4,...&amp;gt;
+ *  Specify list of columns to copy. First and last are valid
+ *  indexes. (default first-last)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ *
+ * @author FracPete (fracpete at waikato dot ac dot nz)
+ * @version $Revision: 6249 $
+ */
+<span class="nc" id="L68">public class Reorder </span>
+  extends Filter 
+  implements UnsupervisedFilter, StreamableFilter, OptionHandler {
+  
+  /** for serialization */
+  static final long serialVersionUID = -1135571321097202292L;
+
+  /** Stores which columns to reorder */
+<span class="nc" id="L76">  protected String m_NewOrderCols = &quot;first-last&quot;;</span>
+
+  /**
+   * Stores the indexes of the selected attributes in order, once the
+   * dataset is seen
+   */
+  protected int[] m_SelectedAttributes;
+
+  /** 
+   * Contains an index of string attributes in the input format
+   * that survive the filtering process -- some entries may be duplicated 
+   */
+  protected int[] m_InputStringIndex;
+
+  /**
+   * Returns an enumeration describing the available options.
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L96">    Vector newVector = new Vector();</span>
+
+<span class="nc" id="L98">    newVector.addElement(new Option(</span>
+<span class="nc" id="L99">              &quot;\tSpecify list of columns to copy. First and last are valid\n&quot;</span>
+	      +&quot;\tindexes. (default first-last)&quot;,
+<span class="nc" id="L101">              &quot;R&quot;, 1, &quot;-R &lt;index1,index2-index4,...&gt;&quot;));</span>
+
+<span class="nc" id="L103">    return newVector.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   * 
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -R &amp;lt;index1,index2-index4,...&amp;gt;
+   *  Specify list of columns to copy. First and last are valid
+   *  indexes. (default first-last)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+<span class="nc" id="L122">    String orderList = Utils.getOption('R', options);</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">    if (orderList.length() != 0) {</span>
+<span class="nc" id="L124">      setAttributeIndices(orderList);</span>
+    }
+    
+<span class="nc bnc" id="L127" title="All 2 branches missed.">    if (getInputFormat() != null) {</span>
+<span class="nc" id="L128">      setInputFormat(getInputFormat());</span>
+    }
+<span class="nc" id="L130">  }</span>
+
+  /**
+   * Gets the current settings of the filter.
+   *
+   * @return an array of strings suitable for passing to setOptions
+   */
+  public String [] getOptions() {
+<span class="nc" id="L138">    String [] options = new String [2];</span>
+<span class="nc" id="L139">    int current = 0;</span>
+
+<span class="nc bnc" id="L141" title="All 2 branches missed.">    if (!getAttributeIndices().equals(&quot;&quot;)) {</span>
+<span class="nc" id="L142">      options[current++] = &quot;-R&quot;; </span>
+<span class="nc" id="L143">      options[current++] = getAttributeIndices();</span>
+    }
+
+<span class="nc bnc" id="L146" title="All 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L147">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="nc" id="L149">    return options;</span>
+  }
+  
+  /**
+   * parses the index string and returns the corresponding int index
+   * 
+   * @param s			the index string to parse
+   * @param numAttributes	necessary for &quot;last&quot; and OutOfBounds checks
+   * @return			the int index determined form the index string
+   * @throws Exception		if index is not valid
+   */
+  protected int determineIndex(String s, int numAttributes) throws Exception {
+    int		result;
+    
+<span class="nc bnc" id="L163" title="All 2 branches missed.">    if (s.equals(&quot;first&quot;))</span>
+<span class="nc" id="L164">      result = 0;</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">    else if (s.equals(&quot;last&quot;))</span>
+<span class="nc" id="L166">      result = numAttributes - 1;</span>
+    else
+<span class="nc" id="L168">      result = Integer.parseInt(s) - 1;</span>
+    
+    // out of bounds?
+<span class="nc bnc" id="L171" title="All 4 branches missed.">    if ( (result &lt; 0) || (result &gt; numAttributes - 1) )</span>
+<span class="nc" id="L172">      throw new IllegalArgumentException(</span>
+<span class="nc" id="L173">	  &quot;'&quot; + s + &quot;' is not a valid index for the range '1-&quot; + numAttributes + &quot;'!&quot;);</span>
+    
+<span class="nc" id="L175">    return result;</span>
+  }
+  
+  /**
+   * parses the range string and returns an array with the indices
+   * 
+   * @param numAttributes	necessary for &quot;last&quot; and OutOfBounds checks
+   * @return			the indices determined form the range string
+   * @see			#m_NewOrderCols
+   * @throws Exception		if range is not valid
+   */
+  protected int[] determineIndices(int numAttributes) throws Exception {
+    int[]		result;
+    Vector&lt;Integer&gt;	list;
+    int			i;
+    StringTokenizer	tok;
+    String		token;
+    String[]		range;
+    int			from;
+    int			to;
+    
+<span class="nc" id="L196">    list = new Vector&lt;Integer&gt;();</span>
+    
+    // parse range
+<span class="nc" id="L199">    tok = new StringTokenizer(m_NewOrderCols, &quot;,&quot;);</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">    while (tok.hasMoreTokens()) {</span>
+<span class="nc" id="L201">      token = tok.nextToken();</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">      if (token.indexOf(&quot;-&quot;) &gt; -1) {</span>
+<span class="nc" id="L203">	range = token.split(&quot;-&quot;);</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">	if (range.length != 2)</span>
+<span class="nc" id="L205">	  throw new IllegalArgumentException(&quot;'&quot; + token + &quot;' is not a valid range!&quot;);</span>
+<span class="nc" id="L206">	from = determineIndex(range[0], numAttributes);</span>
+<span class="nc" id="L207">	to   = determineIndex(range[1], numAttributes);</span>
+
+<span class="nc bnc" id="L209" title="All 2 branches missed.">	if (from &lt;= to) {</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">	  for (i = from; i &lt;= to; i++)</span>
+<span class="nc" id="L211">	    list.add(i);</span>
+	}
+	else {
+<span class="nc bnc" id="L214" title="All 2 branches missed.">	  for (i = from; i &gt;= to; i--)</span>
+<span class="nc" id="L215">	    list.add(i);</span>
+	}
+      }
+      else {
+<span class="nc" id="L219">	list.add(determineIndex(token, numAttributes));</span>
+      }
+    }
+    
+    // turn vector into int array
+<span class="nc" id="L224">    result = new int[list.size()];</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">    for (i = 0; i &lt; list.size(); i++)</span>
+<span class="nc" id="L226">      result[i] = list.get(i);</span>
+    
+<span class="nc" id="L228">    return result;</span>
+  }
+
+  /** 
+   * Returns the Capabilities of this filter.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+<span class="nc" id="L238">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L239">    result.disableAll();</span>
+
+    // attribute
+<span class="nc" id="L242">    result.enableAllAttributes();</span>
+<span class="nc" id="L243">    result.enable(Capability.MISSING_VALUES);</span>
+    
+    // class
+<span class="nc" id="L246">    result.enableAllClasses();</span>
+<span class="nc" id="L247">    result.enable(Capability.NO_CLASS);</span>
+<span class="nc" id="L248">    result.enable(Capability.MISSING_CLASS_VALUES);</span>
+    
+<span class="nc" id="L250">    return result;</span>
+  }
+
+  /**
+   * Sets the format of the input instances.
+   *
+   * @param instanceInfo an Instances object containing the input instance
+   * structure (any instances contained in the object are ignored - only the
+   * structure is required).
+   * @return true if the outputFormat may be collected immediately
+   * @throws Exception if a problem occurs setting the input format
+   */
+  public boolean setInputFormat(Instances instanceInfo) throws Exception {
+<span class="nc" id="L263">    super.setInputFormat(instanceInfo);</span>
+    
+<span class="nc" id="L265">    FastVector attributes = new FastVector();</span>
+<span class="nc" id="L266">    int outputClass = -1;</span>
+<span class="nc" id="L267">    m_SelectedAttributes = determineIndices(instanceInfo.numAttributes());</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">    for (int i = 0; i &lt; m_SelectedAttributes.length; i++) {</span>
+<span class="nc" id="L269">      int current = m_SelectedAttributes[i];</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">      if (instanceInfo.classIndex() == current) {</span>
+<span class="nc" id="L271">	outputClass = attributes.size();</span>
+      }
+<span class="nc" id="L273">      Attribute keep = (Attribute)instanceInfo.attribute(current).copy();</span>
+<span class="nc" id="L274">      attributes.addElement(keep);</span>
+    }
+    
+<span class="nc" id="L277">    initInputLocators(instanceInfo, m_SelectedAttributes);</span>
+
+<span class="nc" id="L279">    Instances outputFormat = new Instances(instanceInfo.relationName(),</span>
+<span class="nc" id="L280">					   attributes, 0); </span>
+<span class="nc" id="L281">    outputFormat.setClassIndex(outputClass);</span>
+<span class="nc" id="L282">    setOutputFormat(outputFormat);</span>
+    
+<span class="nc" id="L284">    return true;</span>
+  }
+  
+
+  /**
+   * Input an instance for filtering. Ordinarily the instance is processed
+   * and made available for output immediately. Some filters require all
+   * instances be read before producing output.
+   *
+   * @param instance the input instance
+   * @return true if the filtered instance may now be
+   * collected with output().
+   * @throws IllegalStateException if no input format has been defined.
+   */
+  public boolean input(Instance instance) {
+<span class="nc bnc" id="L299" title="All 2 branches missed.">    if (getInputFormat() == null) {</span>
+<span class="nc" id="L300">      throw new IllegalStateException(&quot;No input instance format defined&quot;);</span>
+    }
+<span class="nc bnc" id="L302" title="All 2 branches missed.">    if (m_NewBatch) {</span>
+<span class="nc" id="L303">      resetQueue();</span>
+<span class="nc" id="L304">      m_NewBatch = false;</span>
+    }
+
+<span class="nc" id="L307">    double[] vals = new double[outputFormatPeek().numAttributes()];</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">    for (int i = 0; i &lt; m_SelectedAttributes.length; i++) {</span>
+<span class="nc" id="L309">      int current = m_SelectedAttributes[i];</span>
+<span class="nc" id="L310">      vals[i] = instance.value(current);</span>
+    }
+<span class="nc" id="L312">    Instance inst = null;</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">    if (instance instanceof SparseInstance)</span>
+<span class="nc" id="L314">      inst = new SparseInstance(instance.weight(), vals);</span>
+    else
+<span class="nc" id="L316">      inst = new Instance(instance.weight(), vals);</span>
+
+<span class="nc" id="L318">    inst.setDataset(getOutputFormat());</span>
+<span class="nc" id="L319">    copyValues(inst, false, instance.dataset(), getOutputFormat());</span>
+<span class="nc" id="L320">    inst.setDataset(getOutputFormat());</span>
+    
+<span class="nc" id="L322">    push(inst);</span>
+    
+<span class="nc" id="L324">    return true;</span>
+  }
+
+  /**
+   * Returns a string describing this filter
+   *
+   * @return a description of the filter suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L334">    return </span>
+<span class="nc" id="L335">        &quot;A filter that generates output with a new order of the &quot;</span>
+      + &quot;attributes. Useful if one wants to move an attribute to the end to &quot;
+      + &quot;use it as class attribute (e.g. with using \&quot;-R 2-last,1\&quot;).\n&quot;
+      + &quot;But it's not only possible to change the order of all the attributes, &quot;
+      + &quot;but also to leave out attributes. E.g. if you have 10 attributes, you &quot;
+      + &quot;can generate the following output order: 1,3,5,7,9,10 or 10,1-5.\n&quot;
+      + &quot;You can also duplicate attributes, e.g. for further processing later &quot;
+      + &quot;on: e.g. 1,1,1,4,4,4,2,2,2 where the second and the third column of &quot;
+      + &quot;each attribute are processed differently and the first one, i.e. the &quot;
+      + &quot;original one is kept.\n&quot;
+      + &quot;One can simply inverse the order of the attributes via 'last-first'.\n&quot;
+      + &quot;After appyling the filter, the index of the class attribute is the &quot;
+      + &quot;last attribute.&quot;;
+  }
+
+  /**
+   * Get the current range selection
+   *
+   * @return a string containing a comma separated list of ranges
+   */
+  public String getAttributeIndices() {
+<span class="nc" id="L356">    return m_NewOrderCols;</span>
+  }
+
+  /**
+   * Returns the tip text for this property
+   *
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String attributeIndicesTipText() {
+<span class="nc" id="L366">    return &quot;Specify range of attributes to act on.&quot;</span>
+      + &quot; This is a comma separated list of attribute indices, with&quot;
+      + &quot; \&quot;first\&quot; and \&quot;last\&quot; valid values. Specify an inclusive&quot;
+      + &quot; range with \&quot;-\&quot;. E.g: \&quot;first-3,5,6-10,last\&quot;.&quot;;
+  }
+
+  /**
+   * Set which attributes are to be copied (or kept if invert is true)
+   *
+   * @param rangeList a string representing the list of attributes.  Since
+   * the string will typically come from a user, attributes are indexed from
+   * 1. &lt;br&gt;
+   * eg: first-3,5,6-last&lt;br&gt;
+   * Note: use this method before you call 
+   * &lt;code&gt;setInputFormat(Instances)&lt;/code&gt;, since the output format is
+   * determined in that method.
+   * @throws Exception if an invalid range list is supplied
+   */
+  public void setAttributeIndices(String rangeList) throws Exception {
+    // simple test
+<span class="nc bnc" id="L386" title="All 2 branches missed.">    if (rangeList.replaceAll(&quot;[afilrst0-9\\-,]*&quot;, &quot;&quot;).length() != 0)</span>
+<span class="nc" id="L387">      throw new IllegalArgumentException(&quot;Not a valid range string!&quot;);</span>
+    
+<span class="nc" id="L389">    m_NewOrderCols = rangeList;</span>
+<span class="nc" id="L390">  }</span>
+
+  /**
+   * Set which attributes are to be copied (or kept if invert is true)
+   *
+   * @param attributes an array containing indexes of attributes to select.
+   * Since the array will typically come from a program, attributes are indexed
+   * from 0.&lt;br&gt;
+   * Note: use this method before you call 
+   * &lt;code&gt;setInputFormat(Instances)&lt;/code&gt;, since the output format is
+   * determined in that method.
+   * @throws Exception if an invalid set of ranges is supplied
+   */
+  public void setAttributeIndicesArray(int [] attributes) throws Exception {
+<span class="nc" id="L404">    setAttributeIndices(Range.indicesToRangeList(attributes));</span>
+<span class="nc" id="L405">  }</span>
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L413">    return RevisionUtils.extract(&quot;$Revision: 6249 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv should contain arguments to the filter: use -h for help
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L422">    runFilter(new Reorder(), argv);</span>
+<span class="nc" id="L423">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

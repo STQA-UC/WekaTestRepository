@@ -1,0 +1,602 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>MakeDensityBasedClusterer.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.clusterers</a> &gt; <span class="el_source">MakeDensityBasedClusterer.java</span></div><h1>MakeDensityBasedClusterer.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    MakeDensityBasedClusterer.java
+ *    Copyright (C) 2002 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.clusterers;
+
+import weka.core.Capabilities;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.RevisionUtils;
+import weka.core.Utils;
+import weka.core.WeightedInstancesHandler;
+import weka.core.Capabilities.Capability;
+import weka.estimators.DiscreteEstimator;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
+
+import java.util.Enumeration;
+import java.util.Vector;
+
+/**
+ &lt;!-- globalinfo-start --&gt;
+ * Class for wrapping a Clusterer to make it return a distribution and density. Fits normal distributions and discrete distributions within each cluster produced by the wrapped clusterer. Supports the NumberOfClustersRequestable interface only if the wrapped Clusterer does.
+ * &lt;p/&gt;
+ &lt;!-- globalinfo-end --&gt;
+ *
+ &lt;!-- options-start --&gt;
+ * Valid options are: &lt;p/&gt;
+ * 
+ * &lt;pre&gt; -M &amp;lt;num&amp;gt;
+ *  minimum allowable standard deviation for normal density computation 
+ *  (default 1e-6)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -W &amp;lt;clusterer name&amp;gt;
+ *  Clusterer to wrap.
+ *  (default weka.clusterers.SimpleKMeans)&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; 
+ * Options specific to clusterer weka.clusterers.SimpleKMeans:
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+ *  number of clusters.
+ *  (default 2).&lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -V
+ *  Display std. deviations for centroids.
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -M
+ *  Replace missing values with mean/mode.
+ * &lt;/pre&gt;
+ * 
+ * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+ *  Random number seed.
+ *  (default 10)&lt;/pre&gt;
+ * 
+ &lt;!-- options-end --&gt;
+ * 
+ * Options after &quot;--&quot; are passed on to the base clusterer.
+ *
+ * @author Richard Kirkby (rkirkby@cs.waikato.ac.nz)
+ * @author Mark Hall (mhall@cs.waikato.ac.nz)
+ * @author Eibe Frank (eibe@cs.waikato.ac.nz)
+ * @version $Revision: 5538 $
+ */
+<span class="fc" id="L86">public class MakeDensityBasedClusterer </span>
+  extends AbstractDensityBasedClusterer
+  implements NumberOfClustersRequestable, 
+	     OptionHandler, 
+	     WeightedInstancesHandler {
+
+  /** for serialization */
+  static final long serialVersionUID = -5643302427972186631L;
+  
+  /** holds training instances header information */
+  private Instances m_theInstances;
+  /** prior probabilities for the fitted clusters */
+  private double [] m_priors;
+  /** normal distributions fitted to each numeric attribute in each cluster */
+  private double [][][] m_modelNormal;
+  /** discrete distributions fitted to each discrete attribute in each cluster */
+  private DiscreteEstimator [][] m_model;
+  /** default minimum standard deviation */
+<span class="pc" id="L104">  private double m_minStdDev = 1e-6;</span>
+  /** The clusterer being wrapped */
+<span class="pc" id="L106">  private Clusterer m_wrappedClusterer = new weka.clusterers.SimpleKMeans();</span>
+  /** globally replace missing values */
+  private ReplaceMissingValues m_replaceMissing;
+
+  /**
+   * Default constructor.
+   * 
+   */  
+  public MakeDensityBasedClusterer() {
+<span class="fc" id="L115">    super();</span>
+<span class="fc" id="L116">  }</span>
+   
+  /**
+   * Contructs a MakeDensityBasedClusterer wrapping a given Clusterer.
+   * 
+   * @param toWrap the clusterer to wrap around
+   */    
+<span class="nc" id="L123">  public MakeDensityBasedClusterer(Clusterer toWrap) {</span>
+
+<span class="nc" id="L125">    setClusterer(toWrap);</span>
+<span class="nc" id="L126">  }</span>
+  
+  /**
+   * Returns a string describing classifier
+   * @return a description suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String globalInfo() {
+<span class="nc" id="L134">    return </span>
+<span class="nc" id="L135">        &quot;Class for wrapping a Clusterer to make it return a distribution &quot;</span>
+      + &quot;and density. Fits normal distributions and discrete distributions &quot;
+      + &quot;within each cluster produced by the wrapped clusterer. Supports the &quot;
+      + &quot;NumberOfClustersRequestable interface only if the wrapped Clusterer &quot;
+      + &quot;does.&quot;;
+  }
+
+  /**
+   * String describing default clusterer.
+   * 
+   * @return 		the default clusterer classname
+   */
+  protected String defaultClustererString() {
+<span class="nc" id="L148">    return SimpleKMeans.class.getName();</span>
+  }
+
+  /**
+   * Set the number of clusters to generate.
+   *
+   * @param n the number of clusters to generate
+   * @throws Exception if the wrapped clusterer has not been set, or if
+   * the wrapped clusterer does not implement this facility.
+   */
+  public void setNumClusters(int n) throws Exception {
+<span class="nc bnc" id="L159" title="All 2 branches missed.">    if (m_wrappedClusterer == null) {</span>
+<span class="nc" id="L160">      throw new Exception(&quot;Can't set the number of clusters to generate - &quot;</span>
+			  +&quot;no clusterer has been set yet.&quot;);
+    }
+<span class="nc bnc" id="L163" title="All 2 branches missed.">    if (!(m_wrappedClusterer instanceof NumberOfClustersRequestable)) {</span>
+<span class="nc" id="L164">      throw new Exception(&quot;Can't set the number of clusters to generate - &quot;</span>
+			  +&quot;wrapped clusterer does not support this facility.&quot;);
+    }
+
+<span class="nc" id="L168">    ((NumberOfClustersRequestable)m_wrappedClusterer).setNumClusters(n);</span>
+<span class="nc" id="L169">  }</span>
+
+  /**
+   * Returns default capabilities of the clusterer (i.e., of the wrapper
+   * clusterer).
+   *
+   * @return      the capabilities of this clusterer
+   */
+  public Capabilities getCapabilities() {
+<span class="pc bpc" id="L178" title="1 of 2 branches missed.">    if (m_wrappedClusterer != null) {</span>
+<span class="fc" id="L179">      return m_wrappedClusterer.getCapabilities();</span>
+    }
+<span class="nc" id="L181">    Capabilities result = super.getCapabilities();</span>
+<span class="nc" id="L182">    result.disableAll();</span>
+<span class="nc" id="L183">    result.enable(Capability.NO_CLASS);</span>
+    
+<span class="nc" id="L185">    return result;</span>
+  }
+  
+  /**
+   * Builds a clusterer for a set of instances.
+   *
+   * @param data the instances to train the clusterer with
+   * @throws Exception if the clusterer hasn't been set or something goes wrong
+   */  
+  public void buildClusterer(Instances data) throws Exception {
+    // can clusterer handle the data?
+<span class="fc" id="L196">    getCapabilities().testWithFail(data);</span>
+
+<span class="fc" id="L198">    m_replaceMissing = new ReplaceMissingValues();</span>
+<span class="fc" id="L199">    m_replaceMissing.setInputFormat(data);</span>
+<span class="fc" id="L200">    data = weka.filters.Filter.useFilter(data, m_replaceMissing);</span>
+
+<span class="fc" id="L202">    m_theInstances = new Instances(data, 0);</span>
+<span class="pc bpc" id="L203" title="1 of 2 branches missed.">    if (m_wrappedClusterer == null) {</span>
+<span class="nc" id="L204">      throw new Exception(&quot;No clusterer has been set&quot;);</span>
+    }
+<span class="fc" id="L206">    m_wrappedClusterer.buildClusterer(data);</span>
+<span class="fc" id="L207">    m_model = </span>
+<span class="fc" id="L208">       new DiscreteEstimator[m_wrappedClusterer.numberOfClusters()][data.numAttributes()];</span>
+<span class="fc" id="L209">    m_modelNormal = </span>
+<span class="fc" id="L210">      new double[m_wrappedClusterer.numberOfClusters()][data.numAttributes()][2];</span>
+<span class="fc" id="L211">    double[][] weights =  new double[m_wrappedClusterer.numberOfClusters()][data.numAttributes()];</span>
+<span class="fc" id="L212">    m_priors = new double[m_wrappedClusterer.numberOfClusters()]; </span>
+<span class="fc bfc" id="L213" title="All 2 branches covered.">     for (int i = 0; i &lt; m_wrappedClusterer.numberOfClusters(); i++) {</span>
+<span class="fc" id="L214">       m_priors[i] = 1.0; // laplace correction</span>
+<span class="fc bfc" id="L215" title="All 2 branches covered.">       for (int j = 0; j &lt; data.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L216" title="All 2 branches covered.">	 if (data.attribute(j).isNominal()) {</span>
+<span class="fc" id="L217">	   m_model[i][j] = new DiscreteEstimator(data.attribute(j).numValues(),</span>
+<span class="fc" id="L218">						 true);</span>
+	 }
+       }
+     }
+     
+<span class="fc" id="L223">     Instance inst = null;</span>
+
+     // Compute mean, etc.
+<span class="fc" id="L226">     int[] clusterIndex = new int[data.numInstances()];</span>
+<span class="fc bfc" id="L227" title="All 2 branches covered.">     for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="fc" id="L228">       inst = data.instance(i);</span>
+<span class="fc" id="L229">       int cluster = m_wrappedClusterer.clusterInstance(inst);</span>
+<span class="fc" id="L230">       m_priors[cluster] += inst.weight();</span>
+<span class="fc bfc" id="L231" title="All 2 branches covered.">       for (int j = 0; j &lt; data.numAttributes(); j++) {</span>
+<span class="pc bpc" id="L232" title="1 of 2 branches missed.">	 if (!inst.isMissing(j)) {</span>
+<span class="fc bfc" id="L233" title="All 2 branches covered.">	   if (data.attribute(j).isNominal()) {</span>
+<span class="fc" id="L234">	     m_model[cluster][j].addValue(inst.value(j),inst.weight());</span>
+	   } else {
+<span class="fc" id="L236">	     m_modelNormal[cluster][j][0] += inst.weight() * inst.value(j);</span>
+<span class="fc" id="L237">	     weights[cluster][j] += inst.weight();</span>
+	   }
+	 }
+       }
+<span class="fc" id="L241">       clusterIndex[i] = cluster;</span>
+     }
+
+<span class="fc bfc" id="L244" title="All 2 branches covered.">     for (int j = 0; j &lt; data.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L245" title="All 2 branches covered.">       if (data.attribute(j).isNumeric()) {</span>
+<span class="fc bfc" id="L246" title="All 2 branches covered.">	 for (int i = 0; i &lt; m_wrappedClusterer.numberOfClusters(); i++) {	   </span>
+<span class="pc bpc" id="L247" title="1 of 2 branches missed.">	   if (weights[i][j] &gt; 0) {</span>
+<span class="fc" id="L248">	     m_modelNormal[i][j][0] /= weights[i][j];</span>
+	   }
+	 }
+       }
+     }
+
+     // Compute standard deviations
+<span class="fc bfc" id="L255" title="All 2 branches covered.">     for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="fc" id="L256">       inst = data.instance(i);</span>
+<span class="fc bfc" id="L257" title="All 2 branches covered.">       for (int j = 0; j &lt; data.numAttributes(); j++) {</span>
+<span class="pc bpc" id="L258" title="1 of 2 branches missed.">	 if (!inst.isMissing(j)) {</span>
+<span class="fc bfc" id="L259" title="All 2 branches covered.">	   if (data.attribute(j).isNumeric()) {</span>
+<span class="fc" id="L260">	     double diff = m_modelNormal[clusterIndex[i]][j][0] - inst.value(j);</span>
+<span class="fc" id="L261">	     m_modelNormal[clusterIndex[i]][j][1] += inst.weight() * diff * diff;</span>
+	   }
+	 }
+       }
+     }
+
+<span class="fc bfc" id="L267" title="All 2 branches covered.">     for (int j = 0; j &lt; data.numAttributes(); j++) {</span>
+<span class="fc bfc" id="L268" title="All 2 branches covered.">       if (data.attribute(j).isNumeric()) {</span>
+<span class="fc bfc" id="L269" title="All 2 branches covered.">	 for (int i = 0; i &lt; m_wrappedClusterer.numberOfClusters(); i++) {	   </span>
+<span class="pc bpc" id="L270" title="1 of 2 branches missed.">	   if (weights[i][j] &gt; 0) {</span>
+<span class="fc" id="L271">	     m_modelNormal[i][j][1] = </span>
+<span class="fc" id="L272">	       Math.sqrt(m_modelNormal[i][j][1] / weights[i][j]);</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">	   } else if (weights[i][j] &lt;= 0) {</span>
+<span class="nc" id="L274">	     m_modelNormal[i][j][1] = Double.MAX_VALUE;</span>
+	   }
+<span class="fc bfc" id="L276" title="All 2 branches covered.">	   if (m_modelNormal[i][j][1] &lt;= m_minStdDev) {</span>
+<span class="fc" id="L277">	     m_modelNormal[i][j][1] = data.attributeStats(j).numericStats.stdDev;</span>
+<span class="fc bfc" id="L278" title="All 2 branches covered.">	     if (m_modelNormal[i][j][1] &lt;= m_minStdDev) {</span>
+<span class="fc" id="L279">	       m_modelNormal[i][j][1] = m_minStdDev;</span>
+	     }
+	   }
+	 }
+       }
+     }
+     
+<span class="fc" id="L286">     Utils.normalize(m_priors);</span>
+<span class="fc" id="L287">  }</span>
+
+  /**
+   * Returns the cluster priors.
+   * 
+   * @return the cluster priors
+   */
+  public double[] clusterPriors() {
+
+<span class="fc" id="L296">    double[] n = new double[m_priors.length];</span>
+  
+<span class="fc" id="L298">    System.arraycopy(m_priors, 0, n, 0, n.length);</span>
+<span class="fc" id="L299">    return n;</span>
+  }
+
+  /**
+   * Computes the log of the conditional density (per cluster) for a given instance.
+   * 
+   * @param inst the instance to compute the density for
+   * @return an array containing the estimated densities
+   * @throws Exception if the density could not be computed
+   * successfully
+   */
+  public double[] logDensityPerClusterForInstance(Instance inst) throws Exception {
+
+    int i, j;
+    double logprob;
+<span class="fc" id="L314">    double[] wghts = new double[m_wrappedClusterer.numberOfClusters()];</span>
+    
+<span class="fc" id="L316">    m_replaceMissing.input(inst);</span>
+<span class="fc" id="L317">    inst = m_replaceMissing.output();</span>
+
+<span class="fc bfc" id="L319" title="All 2 branches covered.">    for (i = 0; i &lt; m_wrappedClusterer.numberOfClusters(); i++) {</span>
+<span class="fc" id="L320">      logprob = 0;</span>
+<span class="fc bfc" id="L321" title="All 2 branches covered.">      for (j = 0; j &lt; inst.numAttributes(); j++) {</span>
+<span class="pc bpc" id="L322" title="1 of 2 branches missed.">	if (!inst.isMissing(j)) {</span>
+<span class="fc bfc" id="L323" title="All 2 branches covered.">	  if (inst.attribute(j).isNominal()) {</span>
+<span class="fc" id="L324">	    logprob += Math.log(m_model[i][j].getProbability(inst.value(j)));</span>
+	  } else { // numeric attribute
+<span class="fc" id="L326">	    logprob += logNormalDens(inst.value(j), </span>
+<span class="fc" id="L327">				     m_modelNormal[i][j][0], </span>
+<span class="fc" id="L328">				     m_modelNormal[i][j][1]);</span>
+	  }
+	}
+      }
+<span class="fc" id="L332">      wghts[i] = logprob;</span>
+    }
+<span class="fc" id="L334">    return  wghts;</span>
+  }
+
+  /** Constant for normal distribution. */
+<span class="fc" id="L338">  private static double m_normConst = 0.5 * Math.log(2 * Math.PI);</span>
+
+  /**
+   * Density function of normal distribution.
+   * @param x input value
+   * @param mean mean of distribution
+   * @param stdDev standard deviation of distribution
+   * @return the density
+   */
+  private double logNormalDens (double x, double mean, double stdDev) {
+
+<span class="fc" id="L349">    double diff = x - mean;</span>
+    
+<span class="fc" id="L351">    return - (diff * diff / (2 * stdDev * stdDev))  - m_normConst - Math.log(stdDev);</span>
+  }
+  
+  /**
+   * Returns the number of clusters.
+   *
+   * @return the number of clusters generated for a training dataset.
+   * @throws Exception if number of clusters could not be returned successfully
+   */
+  public int numberOfClusters() throws Exception {
+
+<span class="fc" id="L362">    return m_wrappedClusterer.numberOfClusters();</span>
+  }
+
+  /**
+   * Returns a description of the clusterer.
+   *
+   * @return a string containing a description of the clusterer
+   */
+  public String toString() {
+<span class="nc bnc" id="L371" title="All 2 branches missed.">    if (m_priors == null) {</span>
+<span class="nc" id="L372">      return &quot;No clusterer built yet!&quot;;</span>
+    }
+
+<span class="nc" id="L375">    StringBuffer text = new StringBuffer();</span>
+<span class="nc" id="L376">    text.append(&quot;MakeDensityBasedClusterer: \n\nWrapped clusterer: &quot; </span>
+<span class="nc" id="L377">		+ m_wrappedClusterer.toString());</span>
+
+<span class="nc" id="L379">    text.append(&quot;\nFitted estimators (with ML estimates of variance):\n&quot;);</span>
+    
+<span class="nc bnc" id="L381" title="All 2 branches missed.">    for (int j = 0; j &lt; m_priors.length; j++) {</span>
+<span class="nc" id="L382">      text.append(&quot;\nCluster: &quot; + j + &quot; Prior probability: &quot; </span>
+<span class="nc" id="L383">		  + Utils.doubleToString(m_priors[j], 4) + &quot;\n\n&quot;);</span>
+      
+<span class="nc bnc" id="L385" title="All 2 branches missed.">      for (int i = 0; i &lt; m_model[0].length; i++) {</span>
+<span class="nc" id="L386">        text.append(&quot;Attribute: &quot; + m_theInstances.attribute(i).name() + &quot;\n&quot;);</span>
+	
+<span class="nc bnc" id="L388" title="All 2 branches missed.">        if (m_theInstances.attribute(i).isNominal()) {</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">          if (m_model[j][i] != null) {</span>
+<span class="nc" id="L390">            text.append(m_model[j][i].toString());</span>
+          }
+        }
+        else {
+<span class="nc" id="L394">          text.append(&quot;Normal Distribution. Mean = &quot; </span>
+<span class="nc" id="L395">		      + Utils.doubleToString(m_modelNormal[j][i][0], 4) </span>
+<span class="nc" id="L396">		      + &quot; StdDev = &quot; </span>
+<span class="nc" id="L397">		      + Utils.doubleToString(m_modelNormal[j][i][1], 4) </span>
+<span class="nc" id="L398">		      + &quot;\n&quot;);</span>
+        }
+      }
+    }
+
+<span class="nc" id="L403">    return  text.toString();</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String clustererTipText() {
+<span class="nc" id="L412">    return &quot;the clusterer to wrap&quot;;</span>
+  }
+
+  /**
+   * Sets the clusterer to wrap.
+   *
+   * @param toWrap the clusterer
+   */
+  public void setClusterer(Clusterer toWrap) {
+
+<span class="fc" id="L422">    m_wrappedClusterer = toWrap;</span>
+<span class="fc" id="L423">  }</span>
+
+  /**
+   * Gets the clusterer being wrapped.
+   *
+   * @return the clusterer
+   */
+  public Clusterer getClusterer() {
+
+<span class="fc" id="L432">    return m_wrappedClusterer;</span>
+  }
+  
+  /**
+   * Returns the tip text for this property
+   * @return tip text for this property suitable for
+   * displaying in the explorer/experimenter gui
+   */
+  public String minStdDevTipText() {
+<span class="nc" id="L441">    return &quot;set minimum allowable standard deviation&quot;;</span>
+  }
+
+  /**
+   * Set the minimum value for standard deviation when calculating
+   * normal density. Reducing this value can help prevent arithmetic
+   * overflow resulting from multiplying large densities (arising from small
+   * standard deviations) when there are many singleton or near singleton
+   * values.
+   * @param m minimum value for standard deviation
+   */
+  public void setMinStdDev(double m) {
+<span class="fc" id="L453">    m_minStdDev = m;</span>
+<span class="fc" id="L454">  }</span>
+
+  /**
+   * Get the minimum allowable standard deviation.
+   * @return the minumum allowable standard deviation
+   */
+  public double getMinStdDev() {
+<span class="fc" id="L461">    return m_minStdDev;</span>
+  }
+
+  /**
+   * Returns an enumeration describing the available options..
+   *
+   * @return an enumeration of all the available options.
+   */
+  public Enumeration listOptions() {
+<span class="nc" id="L470">    Vector result = new Vector();</span>
+
+<span class="nc" id="L472">    result.addElement(new Option(</span>
+<span class="nc" id="L473">	&quot;\tminimum allowable standard deviation for normal density computation &quot;</span>
+	+&quot;\n\t(default 1e-6)&quot;
+<span class="nc" id="L475">	,&quot;M&quot;,1,&quot;-M &lt;num&gt;&quot;));</span>
+	
+<span class="nc" id="L477">    result.addElement(new Option(</span>
+<span class="nc" id="L478">	&quot;\tClusterer to wrap.\n&quot;</span>
+<span class="nc" id="L479">	+ &quot;\t(default &quot; + defaultClustererString() + &quot;)&quot;,</span>
+<span class="nc" id="L480">	&quot;W&quot;, 1,&quot;-W &lt;clusterer name&gt;&quot;));</span>
+
+<span class="nc bnc" id="L482" title="All 2 branches missed.">    if ((m_wrappedClusterer != null) &amp;&amp;</span>
+<span class="nc bnc" id="L483" title="All 2 branches missed.">	(m_wrappedClusterer instanceof OptionHandler)) {</span>
+<span class="nc" id="L484">      result.addElement(new Option(</span>
+<span class="nc" id="L485">	  &quot;&quot;,</span>
+<span class="nc" id="L486">	  &quot;&quot;, 0, &quot;\nOptions specific to clusterer &quot;</span>
+<span class="nc" id="L487">	  + m_wrappedClusterer.getClass().getName() + &quot;:&quot;));</span>
+<span class="nc" id="L488">      Enumeration enu = ((OptionHandler)m_wrappedClusterer).listOptions();</span>
+<span class="nc bnc" id="L489" title="All 2 branches missed.">      while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L490">	result.addElement(enu.nextElement());</span>
+      }
+    }
+    
+<span class="nc" id="L494">    return result.elements();</span>
+  }
+
+  /**
+   * Parses a given list of options. &lt;p/&gt;
+   *
+   &lt;!-- options-start --&gt;
+   * Valid options are: &lt;p/&gt;
+   * 
+   * &lt;pre&gt; -M &amp;lt;num&amp;gt;
+   *  minimum allowable standard deviation for normal density computation 
+   *  (default 1e-6)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -W &amp;lt;clusterer name&amp;gt;
+   *  Clusterer to wrap.
+   *  (default weka.clusterers.SimpleKMeans)&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; 
+   * Options specific to clusterer weka.clusterers.SimpleKMeans:
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -N &amp;lt;num&amp;gt;
+   *  number of clusters.
+   *  (default 2).&lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -V
+   *  Display std. deviations for centroids.
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -M
+   *  Replace missing values with mean/mode.
+   * &lt;/pre&gt;
+   * 
+   * &lt;pre&gt; -S &amp;lt;num&amp;gt;
+   *  Random number seed.
+   *  (default 10)&lt;/pre&gt;
+   * 
+   &lt;!-- options-end --&gt;
+   *
+   * @param options the list of options as an array of strings
+   * @throws Exception if an option is not supported
+   */
+  public void setOptions(String[] options) throws Exception {
+
+<span class="nc" id="L538">    String optionString = Utils.getOption('M', options);</span>
+<span class="nc bnc" id="L539" title="All 2 branches missed.">    if (optionString.length() != 0)</span>
+<span class="nc" id="L540">      setMinStdDev((new Double(optionString)).doubleValue());</span>
+    else
+<span class="nc" id="L542">      setMinStdDev(1e-6);</span>
+     
+<span class="nc" id="L544">    String wString = Utils.getOption('W', options);</span>
+<span class="nc bnc" id="L545" title="All 2 branches missed.">    if (wString.length() == 0)</span>
+<span class="nc" id="L546">      wString = defaultClustererString();</span>
+<span class="nc" id="L547">    setClusterer(AbstractClusterer.forName(wString, Utils.partitionOptions(options)));</span>
+<span class="nc" id="L548">  }</span>
+
+  /**
+   * Gets the current settings of the clusterer.
+   *
+   * @return an array of strings suitable for passing to setOptions()
+   */
+  public String[] getOptions() {
+
+<span class="fc" id="L557">    String [] clustererOptions = new String [0];</span>
+<span class="pc bpc" id="L558" title="1 of 2 branches missed.">    if ((m_wrappedClusterer != null) &amp;&amp;</span>
+<span class="pc bpc" id="L559" title="1 of 2 branches missed.">	(m_wrappedClusterer instanceof OptionHandler)) {</span>
+<span class="fc" id="L560">      clustererOptions = ((OptionHandler)m_wrappedClusterer).getOptions();</span>
+    }
+<span class="fc" id="L562">    String [] options = new String [clustererOptions.length + 5];</span>
+<span class="fc" id="L563">    int current = 0;</span>
+
+<span class="fc" id="L565">    options[current++] = &quot;-M&quot;;</span>
+<span class="fc" id="L566">    options[current++] = &quot;&quot;+getMinStdDev();</span>
+
+<span class="pc bpc" id="L568" title="1 of 2 branches missed.">    if (getClusterer() != null) {</span>
+<span class="fc" id="L569">      options[current++] = &quot;-W&quot;;</span>
+<span class="fc" id="L570">      options[current++] = getClusterer().getClass().getName();</span>
+    }
+<span class="fc" id="L572">    options[current++] = &quot;--&quot;;</span>
+
+<span class="fc" id="L574">    System.arraycopy(clustererOptions, 0, options, current, </span>
+<span class="fc" id="L575">		     clustererOptions.length);</span>
+<span class="fc" id="L576">    current += clustererOptions.length;</span>
+<span class="pc bpc" id="L577" title="1 of 2 branches missed.">    while (current &lt; options.length) {</span>
+<span class="nc" id="L578">      options[current++] = &quot;&quot;;</span>
+    }
+<span class="fc" id="L580">    return options;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return		the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L589">    return RevisionUtils.extract(&quot;$Revision: 5538 $&quot;);</span>
+  }
+
+  /**
+   * Main method for testing this class.
+   *
+   * @param argv the options
+   */
+  public static void main(String [] argv) {
+<span class="nc" id="L598">    runClusterer(new MakeDensityBasedClusterer(), argv);</span>
+<span class="nc" id="L599">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>

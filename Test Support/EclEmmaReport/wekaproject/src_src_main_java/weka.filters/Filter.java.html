@@ -1,0 +1,1353 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../../.resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../../.resources/report.gif" type="image/gif"/><title>Filter.java</title><link rel="stylesheet" href="../../../.resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../../.resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../../.sessions.html" class="el_session">Sessions</a></span><a href="../../../index.html" class="el_report">AllTests (Nov 28, 2015 2:34:31 PM)</a> &gt; <a href="../../index.html" class="el_group">wekaproject</a> &gt; <a href="../index.html" class="el_bundle">src/src/main/java</a> &gt; <a href="index.source.html" class="el_package">weka.filters</a> &gt; <span class="el_source">Filter.java</span></div><h1>Filter.java</h1><pre class="source lang-java linenums">/*
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
+/*
+ *    Filter.java
+ *    Copyright (C) 1999 University of Waikato, Hamilton, New Zealand
+ *
+ */
+
+package weka.filters;
+
+import weka.core.Capabilities;
+import weka.core.CapabilitiesHandler;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.Option;
+import weka.core.OptionHandler;
+import weka.core.Queue;
+import weka.core.RelationalLocator;
+import weka.core.RevisionHandler;
+import weka.core.RevisionUtils;
+import weka.core.SerializedObject;
+import weka.core.StringLocator;
+import weka.core.UnsupportedAttributeTypeException;
+import weka.core.Utils;
+import weka.core.Version;
+import weka.core.Capabilities.Capability;
+import weka.core.converters.ConverterUtils.DataSource;
+
+import java.io.FileOutputStream;
+import java.io.PrintWriter;
+import java.io.Serializable;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.Iterator;
+
+/** 
+ * An abstract class for instance filters: objects that take instances
+ * as input, carry out some transformation on the instance and then
+ * output the instance. The method implementations in this class
+ * assume that most of the work will be done in the methods overridden
+ * by subclasses.&lt;p&gt;
+ *
+ * A simple example of filter use. This example doesn't remove
+ * instances from the output queue until all instances have been
+ * input, so has higher memory consumption than an approach that
+ * uses output instances as they are made available:&lt;p&gt;
+ *
+ * &lt;code&gt; &lt;pre&gt;
+ *  Filter filter = ..some type of filter..
+ *  Instances instances = ..some instances..
+ *  for (int i = 0; i &lt; data.numInstances(); i++) {
+ *    filter.input(data.instance(i));
+ *  }
+ *  filter.batchFinished();
+ *  Instances newData = filter.outputFormat();
+ *  Instance processed;
+ *  while ((processed = filter.output()) != null) {
+ *    newData.add(processed);
+ *  }
+ *  ..do something with newData..
+ * &lt;/pre&gt; &lt;/code&gt;
+ *
+ * @author Len Trigg (trigg@cs.waikato.ac.nz)
+ * @version $Revision: 7880 $
+ */
+<span class="fc" id="L80">public abstract class Filter</span>
+  implements Serializable, CapabilitiesHandler, RevisionHandler {
+
+  /** for serialization */
+  private static final long serialVersionUID = -8835063755891851218L;
+
+  /** The output format for instances */
+<span class="fc" id="L87">  private Instances m_OutputFormat = null;</span>
+
+  /** The output instance queue */
+<span class="fc" id="L90">  private Queue m_OutputQueue = null;</span>
+
+  /** Indices of string attributes in the output format */
+<span class="fc" id="L93">  protected StringLocator m_OutputStringAtts = null;</span>
+
+  /** Indices of string attributes in the input format */
+<span class="fc" id="L96">  protected StringLocator m_InputStringAtts = null;</span>
+
+  /** Indices of relational attributes in the output format */
+<span class="fc" id="L99">  protected RelationalLocator m_OutputRelAtts = null;</span>
+
+  /** Indices of relational attributes in the input format */
+<span class="fc" id="L102">  protected RelationalLocator m_InputRelAtts = null;</span>
+
+  /** The input format for instances */
+<span class="fc" id="L105">  private Instances m_InputFormat = null;</span>
+
+  /** Record whether the filter is at the start of a batch */
+<span class="fc" id="L108">  protected boolean m_NewBatch = true;</span>
+
+  /** True if the first batch has been done */
+<span class="fc" id="L111">  protected boolean m_FirstBatchDone = false;</span>
+
+  /**
+   * Returns true if the a new batch was started, either a new instance of the 
+   * filter was created or the batchFinished() method got called.
+   * 
+   * @return true if a new batch has been initiated
+   * @see #m_NewBatch
+   * @see #batchFinished()
+   */
+  public boolean isNewBatch() {
+<span class="fc" id="L122">    return m_NewBatch;</span>
+  }
+  
+  /**
+   * Returns true if the first batch of instances got processed. Necessary for
+   * supervised filters, which &quot;learn&quot; from the first batch and then shouldn't
+   * get updated with subsequent calls of batchFinished().
+   * 
+   * @return true if the first batch has been processed
+   * @see #m_FirstBatchDone
+   * @see #batchFinished()
+   */
+  public boolean isFirstBatchDone() {
+<span class="fc" id="L135">    return m_FirstBatchDone;</span>
+  }
+
+  /** 
+   * Returns the Capabilities of this filter. Derived filters have to
+   * override this method to enable capabilities.
+   *
+   * @return            the capabilities of this object
+   * @see               Capabilities
+   */
+  public Capabilities getCapabilities() {
+    Capabilities 	result;
+
+<span class="fc" id="L148">    result = new Capabilities(this);</span>
+<span class="fc" id="L149">    result.enableAll();</span>
+    
+<span class="fc" id="L151">    result.setMinimumNumberInstances(0);</span>
+    
+<span class="fc" id="L153">    return result;</span>
+  }
+  
+  /**
+   * Returns the revision string.
+   * 
+   * @return            the revision
+   */
+  public String getRevision() {
+<span class="nc" id="L162">    return RevisionUtils.extract(&quot;$Revision: 7880 $&quot;);</span>
+  }
+
+  /** 
+   * Returns the Capabilities of this filter, customized based on the data.
+   * I.e., if removes all class capabilities, in case there's not class
+   * attribute present or removes the NO_CLASS capability, in case that
+   * there's a class present.
+   *
+   * @param data	the data to use for customization
+   * @return            the capabilities of this object, based on the data
+   * @see               #getCapabilities()
+   */
+  public Capabilities getCapabilities(Instances data) {
+    Capabilities 	result;
+    Capabilities 	classes;
+    Iterator		iter;
+    Capability		cap;
+
+<span class="fc" id="L181">    result = getCapabilities();</span>
+
+    // no class? -&gt; remove all class capabilites apart from NO_CLASS
+<span class="fc bfc" id="L184" title="All 2 branches covered.">    if (data.classIndex() == -1) {</span>
+<span class="fc" id="L185">      classes = result.getClassCapabilities();</span>
+<span class="fc" id="L186">      iter    = classes.capabilities();</span>
+<span class="fc bfc" id="L187" title="All 2 branches covered.">      while (iter.hasNext()) {</span>
+<span class="fc" id="L188">	cap = (Capability) iter.next();</span>
+<span class="fc bfc" id="L189" title="All 2 branches covered.">	if (cap != Capability.NO_CLASS) {</span>
+<span class="fc" id="L190">	  result.disable(cap);</span>
+<span class="fc" id="L191">	  result.disableDependency(cap);</span>
+	}
+      }
+    }
+    // class? -&gt; remove NO_CLASS
+    else {
+<span class="fc" id="L197">      result.disable(Capability.NO_CLASS);</span>
+<span class="fc" id="L198">      result.disableDependency(Capability.NO_CLASS);</span>
+    }
+    
+<span class="fc" id="L201">    return result;</span>
+  }
+
+  /**
+   * Sets the format of output instances. The derived class should use this
+   * method once it has determined the outputformat. The 
+   * output queue is cleared.
+   *
+   * @param outputFormat the new output format
+   */
+  protected void setOutputFormat(Instances outputFormat) {
+
+<span class="fc bfc" id="L213" title="All 2 branches covered.">    if (outputFormat != null) {</span>
+<span class="fc" id="L214">      m_OutputFormat = outputFormat.stringFreeStructure();</span>
+<span class="fc" id="L215">      initOutputLocators(m_OutputFormat, null);</span>
+
+      // Rename the relation
+<span class="fc" id="L218">      String relationName = outputFormat.relationName() </span>
+<span class="fc" id="L219">        + &quot;-&quot; + this.getClass().getName();</span>
+<span class="pc bpc" id="L220" title="1 of 2 branches missed.">      if (this instanceof OptionHandler) {</span>
+<span class="fc" id="L221">        String [] options = ((OptionHandler)this).getOptions();</span>
+<span class="fc bfc" id="L222" title="All 2 branches covered.">        for (int i = 0; i &lt; options.length; i++) {</span>
+<span class="fc" id="L223">          relationName += options[i].trim();</span>
+        }
+      }
+<span class="fc" id="L226">      m_OutputFormat.setRelationName(relationName);</span>
+    } else {
+<span class="fc" id="L228">      m_OutputFormat = null;</span>
+    }
+<span class="fc" id="L230">    m_OutputQueue = new Queue();</span>
+<span class="fc" id="L231">  }</span>
+
+  /**
+   * Gets the currently set inputformat instances. This dataset may contain
+   * buffered instances.
+   *
+   * @return the input Instances.
+   */
+  protected Instances getInputFormat() {
+
+<span class="fc" id="L241">    return m_InputFormat;</span>
+  }
+
+  /**
+   * Returns a reference to the current input format without
+   * copying it.
+   *
+   * @return a reference to the current input format
+   */
+  protected Instances inputFormatPeek() {
+
+<span class="fc" id="L252">    return m_InputFormat;</span>
+  }
+
+  /**
+   * Returns a reference to the current output format without
+   * copying it.
+   *
+   * @return a reference to the current output format
+   */
+  protected Instances outputFormatPeek() {
+
+<span class="fc" id="L263">    return m_OutputFormat;</span>
+  }
+
+  /**
+   * Adds an output instance to the queue. The derived class should use this
+   * method for each output instance it makes available. 
+   *
+   * @param instance the instance to be added to the queue.
+   */
+  protected void push(Instance instance) {
+
+<span class="pc bpc" id="L274" title="1 of 2 branches missed.">    if (instance != null) {</span>
+<span class="fc bfc" id="L275" title="All 2 branches covered.">      if (instance.dataset() != null)</span>
+<span class="fc" id="L276">	copyValues(instance, false);</span>
+<span class="fc" id="L277">      instance.setDataset(m_OutputFormat);</span>
+<span class="fc" id="L278">      m_OutputQueue.push(instance);</span>
+    }
+<span class="fc" id="L280">  }</span>
+
+  /**
+   * Clears the output queue.
+   */
+  protected void resetQueue() {
+
+<span class="fc" id="L287">    m_OutputQueue = new Queue();</span>
+<span class="fc" id="L288">  }</span>
+
+  /**
+   * Adds the supplied input instance to the inputformat dataset for
+   * later processing.  Use this method rather than
+   * getInputFormat().add(instance). Or else. Note that the provided
+   * instance gets copied when buffered. 
+   *
+   * @param instance the &lt;code&gt;Instance&lt;/code&gt; to buffer.  
+   */
+  protected void bufferInput(Instance instance) {
+
+<span class="pc bpc" id="L300" title="1 of 2 branches missed.">    if (instance != null) {</span>
+<span class="fc" id="L301">      copyValues(instance, true);</span>
+<span class="fc" id="L302">      m_InputFormat.add(instance);</span>
+    }
+<span class="fc" id="L304">  }</span>
+
+  /**
+   * Initializes the input attribute locators. If indices is null then all 
+   * attributes of the data will be considered, otherwise only the ones
+   * that were provided.
+   * 
+   * @param data		the data to initialize the locators with
+   * @param indices		if not null, the indices to which to restrict
+   * 				the locating
+   */
+  protected void initInputLocators(Instances data, int[] indices) {
+<span class="fc bfc" id="L316" title="All 2 branches covered.">    if (indices == null) {</span>
+<span class="fc" id="L317">      m_InputStringAtts = new StringLocator(data);</span>
+<span class="fc" id="L318">      m_InputRelAtts    = new RelationalLocator(data);</span>
+    }
+    else {
+<span class="fc" id="L321">      m_InputStringAtts = new StringLocator(data, indices);</span>
+<span class="fc" id="L322">      m_InputRelAtts    = new RelationalLocator(data, indices);</span>
+    }
+<span class="fc" id="L324">  }</span>
+
+  /**
+   * Initializes the output attribute locators. If indices is null then all 
+   * attributes of the data will be considered, otherwise only the ones
+   * that were provided.
+   * 
+   * @param data		the data to initialize the locators with
+   * @param indices		if not null, the indices to which to restrict
+   * 				the locating
+   */
+  protected void initOutputLocators(Instances data, int[] indices) {
+<span class="pc bpc" id="L336" title="1 of 2 branches missed.">    if (indices == null) {</span>
+<span class="fc" id="L337">      m_OutputStringAtts = new StringLocator(data);</span>
+<span class="fc" id="L338">      m_OutputRelAtts    = new RelationalLocator(data);</span>
+    }
+    else {
+<span class="nc" id="L341">      m_OutputStringAtts = new StringLocator(data, indices);</span>
+<span class="nc" id="L342">      m_OutputRelAtts    = new RelationalLocator(data, indices);</span>
+    }
+<span class="fc" id="L344">  }</span>
+  
+  /**
+   * Copies string/relational values contained in the instance copied to a new
+   * dataset. The Instance must already be assigned to a dataset. This
+   * dataset and the destination dataset must have the same structure.
+   *
+   * @param instance		the Instance containing the string/relational 
+   * 				values to copy.
+   * @param isInput		if true the input format and input attribute 
+   * 				locators are used otherwise the output format 
+   * 				and output locators
+   */
+  protected void copyValues(Instance instance, boolean isInput) {
+
+<span class="fc" id="L359">    RelationalLocator.copyRelationalValues(</span>
+<span class="fc" id="L360">	instance, </span>
+<span class="fc bfc" id="L361" title="All 2 branches covered.">	(isInput) ? m_InputFormat : m_OutputFormat, </span>
+<span class="fc bfc" id="L362" title="All 2 branches covered.">	(isInput) ? m_InputRelAtts : m_OutputRelAtts);</span>
+
+<span class="fc" id="L364">    StringLocator.copyStringValues(</span>
+<span class="fc" id="L365">	instance, </span>
+<span class="fc bfc" id="L366" title="All 2 branches covered.">	(isInput) ? m_InputFormat : m_OutputFormat, </span>
+<span class="fc bfc" id="L367" title="All 2 branches covered.">	(isInput) ? m_InputStringAtts : m_OutputStringAtts);</span>
+<span class="fc" id="L368">  }</span>
+
+  /**
+   * Takes string/relational values referenced by an Instance and copies them 
+   * from a source dataset to a destination dataset. The instance references are
+   * updated to be valid for the destination dataset. The instance may have the 
+   * structure (i.e. number and attribute position) of either dataset (this
+   * affects where references are obtained from). Only works if the number
+   * of string/relational attributes is the same in both indices (implicitly 
+   * these string/relational attributes should be semantically same but just 
+   * with shifted positions).
+   *
+   * @param instance 		the instance containing references to strings/
+   * 				relational values in the source dataset that 
+   * 				will have references updated to be valid for 
+   * 				the destination dataset.
+   * @param instSrcCompat 	true if the instance structure is the same as 
+   * 				the source, or false if it is the same as the 
+   * 				destination (i.e. which of the string/relational 
+   * 				attribute indices contains the correct locations 
+   * 				for this instance).
+   * @param srcDataset 		the dataset for which the current instance 
+   * 				string/relational value references are valid 
+   * 				(after any position mapping if needed)
+   * @param destDataset 	the dataset for which the current instance 
+   * 				string/relational value references need to be 
+   * 				inserted (after any position mapping if needed)
+   */
+  protected void copyValues(Instance instance, boolean instSrcCompat,
+                         Instances srcDataset, Instances destDataset) {
+
+<span class="fc" id="L399">    RelationalLocator.copyRelationalValues(</span>
+<span class="fc" id="L400">	instance, instSrcCompat, </span>
+<span class="fc" id="L401">	srcDataset, m_InputRelAtts,</span>
+<span class="fc" id="L402">	destDataset, m_OutputRelAtts);</span>
+
+<span class="fc" id="L404">    StringLocator.copyStringValues(</span>
+<span class="fc" id="L405">	instance, instSrcCompat, </span>
+<span class="fc" id="L406">	srcDataset, m_InputStringAtts,</span>
+<span class="fc" id="L407">	getOutputFormat(), m_OutputStringAtts);</span>
+<span class="fc" id="L408">  }</span>
+
+  /**
+   * This will remove all buffered instances from the inputformat dataset.
+   * Use this method rather than getInputFormat().delete();
+   */
+  protected void flushInput() {
+
+<span class="fc bfc" id="L416" title="All 2 branches covered.">    if (    (m_InputStringAtts.getAttributeIndices().length &gt; 0) </span>
+<span class="fc bfc" id="L417" title="All 2 branches covered.">	 || (m_InputRelAtts.getAttributeIndices().length &gt; 0) ) {</span>
+<span class="fc" id="L418">      m_InputFormat = m_InputFormat.stringFreeStructure();</span>
+<span class="fc" id="L419">      m_InputStringAtts = new StringLocator(m_InputFormat, m_InputStringAtts.getAllowedIndices());</span>
+<span class="fc" id="L420">      m_InputRelAtts = new RelationalLocator(m_InputFormat, m_InputRelAtts.getAllowedIndices());</span>
+    } else {
+      // This more efficient than new Instances(m_InputFormat, 0);
+<span class="fc" id="L423">      m_InputFormat.delete();</span>
+    }
+<span class="fc" id="L425">  }</span>
+  
+  /**
+   * tests the data whether the filter can actually handle it
+   * 
+   * @param instanceInfo	the data to test
+   * @throws Exception		if the test fails
+   */
+  protected void testInputFormat(Instances instanceInfo) throws Exception {
+<span class="fc" id="L434">    getCapabilities(instanceInfo).testWithFail(instanceInfo);</span>
+<span class="fc" id="L435">  }</span>
+
+  /**
+   * Sets the format of the input instances. If the filter is able to
+   * determine the output format before seeing any input instances, it
+   * does so here. This default implementation clears the output format
+   * and output queue, and the new batch flag is set. Overriders should
+   * call &lt;code&gt;super.setInputFormat(Instances)&lt;/code&gt;
+   *
+   * @param instanceInfo an Instances object containing the input instance
+   * structure (any instances contained in the object are ignored - only the
+   * structure is required).
+   * @return true if the outputFormat may be collected immediately
+   * @throws Exception if the inputFormat can't be set successfully 
+   */
+  public boolean setInputFormat(Instances instanceInfo) throws Exception {
+
+<span class="fc" id="L452">    testInputFormat(instanceInfo);</span>
+    
+<span class="fc" id="L454">    m_InputFormat = instanceInfo.stringFreeStructure();</span>
+<span class="fc" id="L455">    m_OutputFormat = null;</span>
+<span class="fc" id="L456">    m_OutputQueue = new Queue();</span>
+<span class="fc" id="L457">    m_NewBatch = true;</span>
+<span class="fc" id="L458">    m_FirstBatchDone = false;</span>
+<span class="fc" id="L459">    initInputLocators(m_InputFormat, null);</span>
+<span class="fc" id="L460">    return false;</span>
+  }
+
+  /**
+   * Gets the format of the output instances. This should only be called
+   * after input() or batchFinished() has returned true. The relation
+   * name of the output instances should be changed to reflect the
+   * action of the filter (eg: add the filter name and options).
+   *
+   * @return an Instances object containing the output instance
+   * structure only.
+   * @throws NullPointerException if no input structure has been
+   * defined (or the output format hasn't been determined yet) 
+   */
+  public Instances getOutputFormat() {
+
+<span class="pc bpc" id="L476" title="1 of 2 branches missed.">    if (m_OutputFormat == null) {</span>
+<span class="nc" id="L477">      throw new NullPointerException(&quot;No output format defined.&quot;);</span>
+    }
+<span class="fc" id="L479">    return new Instances(m_OutputFormat, 0);</span>
+  }
+
+  /**
+   * Input an instance for filtering. Ordinarily the instance is
+   * processed and made available for output immediately. Some filters
+   * require all instances be read before producing output, in which
+   * case output instances should be collected after calling
+   * batchFinished(). If the input marks the start of a new batch, the
+   * output queue is cleared. This default implementation assumes all
+   * instance conversion will occur when batchFinished() is called.
+   *
+   * @param instance the input instance
+   * @return true if the filtered instance may now be
+   * collected with output().
+   * @throws NullPointerException if the input format has not been
+   * defined.
+   * @throws Exception if the input instance was not of the correct 
+   * format or if there was a problem with the filtering.  
+   */
+  public boolean input(Instance instance) throws Exception {
+
+<span class="pc bpc" id="L501" title="1 of 2 branches missed.">    if (m_InputFormat == null) {</span>
+<span class="nc" id="L502">      throw new NullPointerException(&quot;No input instance format defined&quot;);</span>
+    }
+<span class="fc bfc" id="L504" title="All 2 branches covered.">    if (m_NewBatch) {</span>
+<span class="fc" id="L505">      m_OutputQueue = new Queue();</span>
+<span class="fc" id="L506">      m_NewBatch = false;</span>
+    }
+<span class="fc" id="L508">    bufferInput(instance);</span>
+<span class="fc" id="L509">    return false;</span>
+  }
+
+  /**
+   * Signify that this batch of input to the filter is finished. If
+   * the filter requires all instances prior to filtering, output()
+   * may now be called to retrieve the filtered instances. Any
+   * subsequent instances filtered should be filtered based on setting
+   * obtained from the first batch (unless the inputFormat has been
+   * re-assigned or new options have been set). This default
+   * implementation assumes all instance processing occurs during
+   * inputFormat() and input().
+   *
+   * @return true if there are instances pending output
+   * @throws NullPointerException if no input structure has been defined,
+   * @throws Exception if there was a problem finishing the batch.
+   */
+  public boolean batchFinished() throws Exception {
+
+<span class="pc bpc" id="L528" title="1 of 2 branches missed.">    if (m_InputFormat == null) {</span>
+<span class="nc" id="L529">      throw new NullPointerException(&quot;No input instance format defined&quot;);</span>
+    }
+<span class="fc" id="L531">    flushInput();</span>
+<span class="fc" id="L532">    m_NewBatch = true;</span>
+<span class="fc" id="L533">    m_FirstBatchDone = true;</span>
+    
+<span class="fc bfc" id="L535" title="All 2 branches covered.">    if (m_OutputQueue.empty()) {</span>
+      // Clear out references to old strings/relationals occasionally
+<span class="pc bpc" id="L537" title="1 of 2 branches missed.">      if (    (m_OutputStringAtts.getAttributeIndices().length &gt; 0)</span>
+<span class="pc bpc" id="L538" title="1 of 2 branches missed.">          || (m_OutputRelAtts.getAttributeIndices().length &gt; 0) ) {</span>
+<span class="nc" id="L539">        m_OutputFormat = m_OutputFormat.stringFreeStructure();</span>
+<span class="nc" id="L540">        m_OutputStringAtts = new StringLocator(m_OutputFormat, m_OutputStringAtts.getAllowedIndices());</span>
+      }
+    }
+    
+<span class="fc bfc" id="L544" title="All 2 branches covered.">    return (numPendingOutput() != 0);</span>
+  }
+
+
+  /**
+   * Output an instance after filtering and remove from the output queue.
+   *
+   * @return the instance that has most recently been filtered (or null if
+   * the queue is empty).
+   * @throws NullPointerException if no output structure has been defined
+   */
+  public Instance output() {
+
+<span class="pc bpc" id="L557" title="1 of 2 branches missed.">    if (m_OutputFormat == null) {</span>
+<span class="nc" id="L558">      throw new NullPointerException(&quot;No output instance format defined&quot;);</span>
+    }
+<span class="fc bfc" id="L560" title="All 2 branches covered.">    if (m_OutputQueue.empty()) {</span>
+<span class="fc" id="L561">      return null;</span>
+    }
+<span class="fc" id="L563">    Instance result = (Instance)m_OutputQueue.pop();</span>
+
+<span class="fc" id="L565">    return result;</span>
+  }
+  
+  /**
+   * Output an instance after filtering but do not remove from the
+   * output queue.
+   *
+   * @return the instance that has most recently been filtered (or null if
+   * the queue is empty).
+   * @throws NullPointerException if no input structure has been defined 
+   */
+  public Instance outputPeek() {
+
+<span class="nc bnc" id="L578" title="All 2 branches missed.">    if (m_OutputFormat == null) {</span>
+<span class="nc" id="L579">      throw new NullPointerException(&quot;No output instance format defined&quot;);</span>
+    }
+<span class="nc bnc" id="L581" title="All 2 branches missed.">    if (m_OutputQueue.empty()) {</span>
+<span class="nc" id="L582">      return null;</span>
+    }
+<span class="nc" id="L584">    Instance result = (Instance)m_OutputQueue.peek();</span>
+<span class="nc" id="L585">    return result;</span>
+  }
+
+  /**
+   * Returns the number of instances pending output
+   *
+   * @return the number of instances  pending output
+   * @throws NullPointerException if no input structure has been defined
+   */
+  public int numPendingOutput() {
+
+<span class="pc bpc" id="L596" title="1 of 2 branches missed.">    if (m_OutputFormat == null) {</span>
+<span class="nc" id="L597">      throw new NullPointerException(&quot;No output instance format defined&quot;);</span>
+    }
+<span class="fc" id="L599">    return m_OutputQueue.size();</span>
+  }
+
+  /**
+   * Returns whether the output format is ready to be collected
+   *
+   * @return true if the output format is set
+   */
+  public boolean isOutputFormatDefined() {
+
+<span class="nc bnc" id="L609" title="All 2 branches missed.">    return (m_OutputFormat != null);</span>
+  }
+
+  /**
+   * Creates a deep copy of the given filter using serialization.
+   *
+   * @param model 	the filter to copy
+   * @return 		a deep copy of the filter
+   * @throws Exception 	if an error occurs
+   */
+  public static Filter makeCopy(Filter model) throws Exception {
+<span class="fc" id="L620">    return (Filter)new SerializedObject(model).getObject();</span>
+  }
+
+  /**
+   * Creates a given number of deep copies of the given filter using 
+   * serialization.
+   * 
+   * @param model 	the filter to copy
+   * @param num 	the number of filter copies to create.
+   * @return 		an array of filters.
+   * @throws Exception 	if an error occurs
+   */
+  public static Filter[] makeCopies(Filter model, int num) throws Exception {
+
+<span class="pc bpc" id="L634" title="1 of 2 branches missed.">    if (model == null) {</span>
+<span class="nc" id="L635">      throw new Exception(&quot;No model filter set&quot;);</span>
+    }
+<span class="fc" id="L637">    Filter[] filters = new Filter[num];</span>
+<span class="fc" id="L638">    SerializedObject so = new SerializedObject(model);</span>
+<span class="fc bfc" id="L639" title="All 2 branches covered.">    for (int i = 0; i &lt; filters.length; i++) {</span>
+<span class="fc" id="L640">      filters[i] = (Filter) so.getObject();</span>
+    }
+<span class="fc" id="L642">    return filters;</span>
+  }
+  
+  /**
+   * Filters an entire set of instances through a filter and returns
+   * the new set. 
+   *
+   * @param data the data to be filtered
+   * @param filter the filter to be used
+   * @return the filtered set of data
+   * @throws Exception if the filter can't be used successfully
+   */
+  public static Instances useFilter(Instances data,
+				    Filter filter) throws Exception {
+    /*
+    System.err.println(filter.getClass().getName() 
+                       + &quot; in:&quot; + data.numInstances());
+    */
+<span class="fc bfc" id="L660" title="All 2 branches covered.">    for (int i = 0; i &lt; data.numInstances(); i++) {</span>
+<span class="fc" id="L661">      filter.input(data.instance(i));</span>
+    }
+<span class="fc" id="L663">    filter.batchFinished();</span>
+<span class="fc" id="L664">    Instances newData = filter.getOutputFormat();</span>
+    Instance processed;
+<span class="fc bfc" id="L666" title="All 2 branches covered.">    while ((processed = filter.output()) != null) {</span>
+<span class="fc" id="L667">      newData.add(processed);</span>
+    }
+
+    /*
+    System.err.println(filter.getClass().getName() 
+                       + &quot; out:&quot; + newData.numInstances());
+    */
+<span class="fc" id="L674">    return newData;</span>
+  }
+
+  /**
+   * Returns a description of the filter, by default only the classname.
+   * 
+   * @return a string describing the filter
+   */
+  public String toString() {
+<span class="nc" id="L683">    return this.getClass().getName();</span>
+  }
+  
+  /**
+   * generates source code from the filter
+   * 
+   * @param filter the filter to output as source
+   * @param className the name of the generated class
+   * @param input the input data the header is generated for
+   * @param output the output data the header is generated for
+   * @return the generated source code
+   * @throws Exception if source code cannot be generated
+   */
+  public static String wekaStaticWrapper(
+      Sourcable filter, String className, Instances input, Instances output) 
+    throws Exception {
+    
+    StringBuffer	result;
+    int			i;
+    int			n;
+    
+<span class="nc" id="L704">    result = new StringBuffer();</span>
+    
+<span class="nc" id="L706">    result.append(&quot;// Generated with Weka &quot; + Version.VERSION + &quot;\n&quot;);</span>
+<span class="nc" id="L707">    result.append(&quot;//\n&quot;);</span>
+<span class="nc" id="L708">    result.append(&quot;// This code is public domain and comes with no warranty.\n&quot;);</span>
+<span class="nc" id="L709">    result.append(&quot;//\n&quot;);</span>
+<span class="nc" id="L710">    result.append(&quot;// Timestamp: &quot; + new Date() + &quot;\n&quot;);</span>
+<span class="nc" id="L711">    result.append(&quot;// Relation: &quot; + input.relationName() + &quot;\n&quot;);</span>
+<span class="nc" id="L712">    result.append(&quot;\n&quot;);</span>
+    
+<span class="nc" id="L714">    result.append(&quot;package weka.filters;\n&quot;);</span>
+<span class="nc" id="L715">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L716">    result.append(&quot;import weka.core.Attribute;\n&quot;);</span>
+<span class="nc" id="L717">    result.append(&quot;import weka.core.Capabilities;\n&quot;);</span>
+<span class="nc" id="L718">    result.append(&quot;import weka.core.Capabilities.Capability;\n&quot;);</span>
+<span class="nc" id="L719">    result.append(&quot;import weka.core.FastVector;\n&quot;);</span>
+<span class="nc" id="L720">    result.append(&quot;import weka.core.Instance;\n&quot;);</span>
+<span class="nc" id="L721">    result.append(&quot;import weka.core.Instances;\n&quot;);</span>
+<span class="nc" id="L722">    result.append(&quot;import weka.filters.Filter;\n&quot;);</span>
+<span class="nc" id="L723">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L724">    result.append(&quot;public class WekaWrapper\n&quot;);</span>
+<span class="nc" id="L725">    result.append(&quot;  extends Filter {\n&quot;);</span>
+
+    // globalInfo
+<span class="nc" id="L728">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L729">    result.append(&quot;  /**\n&quot;);</span>
+<span class="nc" id="L730">    result.append(&quot;   * Returns only the toString() method.\n&quot;);</span>
+<span class="nc" id="L731">    result.append(&quot;   *\n&quot;);</span>
+<span class="nc" id="L732">    result.append(&quot;   * @return a string describing the filter\n&quot;);</span>
+<span class="nc" id="L733">    result.append(&quot;   */\n&quot;);</span>
+<span class="nc" id="L734">    result.append(&quot;  public String globalInfo() {\n&quot;);</span>
+<span class="nc" id="L735">    result.append(&quot;    return toString();\n&quot;);</span>
+<span class="nc" id="L736">    result.append(&quot;  }\n&quot;);</span>
+    
+    // getCapabilities
+<span class="nc" id="L739">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L740">    result.append(&quot;  /**\n&quot;);</span>
+<span class="nc" id="L741">    result.append(&quot;   * Returns the capabilities of this filter.\n&quot;);</span>
+<span class="nc" id="L742">    result.append(&quot;   *\n&quot;);</span>
+<span class="nc" id="L743">    result.append(&quot;   * @return the capabilities\n&quot;);</span>
+<span class="nc" id="L744">    result.append(&quot;   */\n&quot;);</span>
+<span class="nc" id="L745">    result.append(&quot;  public Capabilities getCapabilities() {\n&quot;);</span>
+<span class="nc" id="L746">    result.append(((Filter) filter).getCapabilities().toSource(&quot;result&quot;, 4));</span>
+<span class="nc" id="L747">    result.append(&quot;    return result;\n&quot;);</span>
+<span class="nc" id="L748">    result.append(&quot;  }\n&quot;);</span>
+
+    // objectsToInstance
+<span class="nc" id="L751">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L752">    result.append(&quot;  /**\n&quot;);</span>
+<span class="nc" id="L753">    result.append(&quot;   * turns array of Objects into an Instance object\n&quot;);</span>
+<span class="nc" id="L754">    result.append(&quot;   *\n&quot;);</span>
+<span class="nc" id="L755">    result.append(&quot;   * @param obj	the Object array to turn into an Instance\n&quot;);</span>
+<span class="nc" id="L756">    result.append(&quot;   * @param format	the data format to use\n&quot;);</span>
+<span class="nc" id="L757">    result.append(&quot;   * @return		the generated Instance object\n&quot;);</span>
+<span class="nc" id="L758">    result.append(&quot;   */\n&quot;);</span>
+<span class="nc" id="L759">    result.append(&quot;  protected Instance objectsToInstance(Object[] obj, Instances format) {\n&quot;);</span>
+<span class="nc" id="L760">    result.append(&quot;    Instance		result;\n&quot;);</span>
+<span class="nc" id="L761">    result.append(&quot;    double[]		values;\n&quot;);</span>
+<span class="nc" id="L762">    result.append(&quot;    int		i;\n&quot;);</span>
+<span class="nc" id="L763">    result.append(&quot;\n&quot;);  </span>
+<span class="nc" id="L764">    result.append(&quot;    values = new double[obj.length];\n&quot;);</span>
+<span class="nc" id="L765">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L766">    result.append(&quot;    for (i = 0 ; i &lt; obj.length; i++) {\n&quot;);</span>
+<span class="nc" id="L767">    result.append(&quot;      if (obj[i] == null)\n&quot;);</span>
+<span class="nc" id="L768">    result.append(&quot;        values[i] = Instance.missingValue();\n&quot;);</span>
+<span class="nc" id="L769">    result.append(&quot;      else if (format.attribute(i).isNumeric())\n&quot;);</span>
+<span class="nc" id="L770">    result.append(&quot;        values[i] = (Double) obj[i];\n&quot;);</span>
+<span class="nc" id="L771">    result.append(&quot;      else if (format.attribute(i).isNominal())\n&quot;);</span>
+<span class="nc" id="L772">    result.append(&quot;        values[i] = format.attribute(i).indexOfValue((String) obj[i]);\n&quot;);</span>
+<span class="nc" id="L773">    result.append(&quot;    }\n&quot;);</span>
+<span class="nc" id="L774">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L775">    result.append(&quot;    // create new instance\n&quot;);</span>
+<span class="nc" id="L776">    result.append(&quot;    result = new Instance(1.0, values);\n&quot;);</span>
+<span class="nc" id="L777">    result.append(&quot;    result.setDataset(format);\n&quot;);</span>
+<span class="nc" id="L778">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L779">    result.append(&quot;    return result;\n&quot;);</span>
+<span class="nc" id="L780">    result.append(&quot;  }\n&quot;);</span>
+
+    // instanceToObjects
+<span class="nc" id="L783">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L784">    result.append(&quot;  /**\n&quot;);</span>
+<span class="nc" id="L785">    result.append(&quot;   * turns the Instance object into an array of Objects\n&quot;);</span>
+<span class="nc" id="L786">    result.append(&quot;   *\n&quot;);</span>
+<span class="nc" id="L787">    result.append(&quot;   * @param inst	the instance to turn into an array\n&quot;);</span>
+<span class="nc" id="L788">    result.append(&quot;   * @return		the Object array representing the instance\n&quot;);</span>
+<span class="nc" id="L789">    result.append(&quot;   */\n&quot;);</span>
+<span class="nc" id="L790">    result.append(&quot;  protected Object[] instanceToObjects(Instance inst) {\n&quot;);</span>
+<span class="nc" id="L791">    result.append(&quot;    Object[]	result;\n&quot;);</span>
+<span class="nc" id="L792">    result.append(&quot;    int		i;\n&quot;);</span>
+<span class="nc" id="L793">    result.append(&quot;\n&quot;);  </span>
+<span class="nc" id="L794">    result.append(&quot;    result = new Object[inst.numAttributes()];\n&quot;);</span>
+<span class="nc" id="L795">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L796">    result.append(&quot;    for (i = 0 ; i &lt; inst.numAttributes(); i++) {\n&quot;);</span>
+<span class="nc" id="L797">    result.append(&quot;      if (inst.isMissing(i))\n&quot;);</span>
+<span class="nc" id="L798">    result.append(&quot;  	result[i] = null;\n&quot;);</span>
+<span class="nc" id="L799">    result.append(&quot;      else if (inst.attribute(i).isNumeric())\n&quot;);</span>
+<span class="nc" id="L800">    result.append(&quot;  	result[i] = inst.value(i);\n&quot;);</span>
+<span class="nc" id="L801">    result.append(&quot;      else\n&quot;);</span>
+<span class="nc" id="L802">    result.append(&quot;  	result[i] = inst.stringValue(i);\n&quot;);</span>
+<span class="nc" id="L803">    result.append(&quot;    }\n&quot;);</span>
+<span class="nc" id="L804">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L805">    result.append(&quot;    return result;\n&quot;);</span>
+<span class="nc" id="L806">    result.append(&quot;  }\n&quot;);</span>
+
+    // instancesToObjects
+<span class="nc" id="L809">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L810">    result.append(&quot;  /**\n&quot;);</span>
+<span class="nc" id="L811">    result.append(&quot;   * turns the Instances object into an array of Objects\n&quot;);</span>
+<span class="nc" id="L812">    result.append(&quot;   *\n&quot;);</span>
+<span class="nc" id="L813">    result.append(&quot;   * @param data	the instances to turn into an array\n&quot;);</span>
+<span class="nc" id="L814">    result.append(&quot;   * @return		the Object array representing the instances\n&quot;);</span>
+<span class="nc" id="L815">    result.append(&quot;   */\n&quot;);</span>
+<span class="nc" id="L816">    result.append(&quot;  protected Object[][] instancesToObjects(Instances data) {\n&quot;);</span>
+<span class="nc" id="L817">    result.append(&quot;    Object[][]	result;\n&quot;);</span>
+<span class="nc" id="L818">    result.append(&quot;    int		i;\n&quot;);</span>
+<span class="nc" id="L819">    result.append(&quot;\n&quot;);  </span>
+<span class="nc" id="L820">    result.append(&quot;    result = new Object[data.numInstances()][];\n&quot;);</span>
+<span class="nc" id="L821">    result.append(&quot;\n&quot;);  </span>
+<span class="nc" id="L822">    result.append(&quot;    for (i = 0; i &lt; data.numInstances(); i++)\n&quot;);</span>
+<span class="nc" id="L823">    result.append(&quot;      result[i] = instanceToObjects(data.instance(i));\n&quot;);</span>
+<span class="nc" id="L824">    result.append(&quot;\n&quot;);  </span>
+<span class="nc" id="L825">    result.append(&quot;    return result;\n&quot;);</span>
+<span class="nc" id="L826">    result.append(&quot;  }\n&quot;);</span>
+    
+    // setInputFormat
+<span class="nc" id="L829">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L830">    result.append(&quot;  /**\n&quot;);</span>
+<span class="nc" id="L831">    result.append(&quot;   * Only tests the input data.\n&quot;);</span>
+<span class="nc" id="L832">    result.append(&quot;   *\n&quot;);</span>
+<span class="nc" id="L833">    result.append(&quot;   * @param instanceInfo the format of the data to convert\n&quot;);</span>
+<span class="nc" id="L834">    result.append(&quot;   * @return always true, to indicate that the output format can \n&quot;);</span>
+<span class="nc" id="L835">    result.append(&quot;   *         be collected immediately.\n&quot;);</span>
+<span class="nc" id="L836">    result.append(&quot;   */\n&quot;);</span>
+<span class="nc" id="L837">    result.append(&quot;  public boolean setInputFormat(Instances instanceInfo) throws Exception {\n&quot;);</span>
+<span class="nc" id="L838">    result.append(&quot;    super.setInputFormat(instanceInfo);\n&quot;);</span>
+<span class="nc" id="L839">    result.append(&quot;    \n&quot;);</span>
+<span class="nc" id="L840">    result.append(&quot;    // generate output format\n&quot;);</span>
+<span class="nc" id="L841">    result.append(&quot;    FastVector atts = new FastVector();\n&quot;);</span>
+<span class="nc" id="L842">    result.append(&quot;    FastVector attValues;\n&quot;);</span>
+<span class="nc bnc" id="L843" title="All 2 branches missed.">    for (i = 0; i &lt; output.numAttributes(); i++) {</span>
+<span class="nc" id="L844">      result.append(&quot;    // &quot; + output.attribute(i).name() + &quot;\n&quot;);</span>
+<span class="nc bnc" id="L845" title="All 2 branches missed.">      if (output.attribute(i).isNumeric()) {</span>
+<span class="nc" id="L846">	result.append(&quot;    atts.addElement(new Attribute(\&quot;&quot; </span>
+<span class="nc" id="L847">	    + output.attribute(i).name() + &quot;\&quot;));\n&quot;);</span>
+      }
+<span class="nc bnc" id="L849" title="All 2 branches missed.">      else if (output.attribute(i).isNominal()) {</span>
+<span class="nc" id="L850">	result.append(&quot;    attValues = new FastVector();\n&quot;);</span>
+<span class="nc bnc" id="L851" title="All 2 branches missed.">	for (n = 0; n &lt; output.attribute(i).numValues(); n++) {</span>
+<span class="nc" id="L852">	  result.append(&quot;    attValues.addElement(\&quot;&quot; + output.attribute(i).value(n) + &quot;\&quot;);\n&quot;);</span>
+	}
+<span class="nc" id="L854">	result.append(&quot;    atts.addElement(new Attribute(\&quot;&quot; </span>
+<span class="nc" id="L855">	    + output.attribute(i).name() + &quot;\&quot;, attValues));\n&quot;);</span>
+      }
+      else {
+<span class="nc" id="L858">	throw new UnsupportedAttributeTypeException(</span>
+<span class="nc" id="L859">	    &quot;Attribute type '&quot; + output.attribute(i).type() + &quot;' (position &quot; </span>
+<span class="nc" id="L860">	    + (i+1) + &quot;) is not supported!&quot;);</span>
+      }
+    }
+<span class="nc" id="L863">    result.append(&quot;    \n&quot;);</span>
+<span class="nc" id="L864">    result.append(&quot;    Instances format = new Instances(\&quot;&quot; + output.relationName() + &quot;\&quot;, atts, 0);\n&quot;);</span>
+<span class="nc" id="L865">    result.append(&quot;    format.setClassIndex(&quot; + output.classIndex() + &quot;);\n&quot;);</span>
+<span class="nc" id="L866">    result.append(&quot;    setOutputFormat(format);\n&quot;);</span>
+<span class="nc" id="L867">    result.append(&quot;    \n&quot;);</span>
+<span class="nc" id="L868">    result.append(&quot;    return true;\n&quot;);</span>
+<span class="nc" id="L869">    result.append(&quot;  }\n&quot;);</span>
+    
+    // input
+<span class="nc" id="L872">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L873">    result.append(&quot;  /**\n&quot;);</span>
+<span class="nc" id="L874">    result.append(&quot;   * Directly filters the instance.\n&quot;);</span>
+<span class="nc" id="L875">    result.append(&quot;   *\n&quot;);</span>
+<span class="nc" id="L876">    result.append(&quot;   * @param instance the instance to convert\n&quot;);</span>
+<span class="nc" id="L877">    result.append(&quot;   * @return always true, to indicate that the output can \n&quot;);</span>
+<span class="nc" id="L878">    result.append(&quot;   *         be collected immediately.\n&quot;);</span>
+<span class="nc" id="L879">    result.append(&quot;   */\n&quot;);</span>
+<span class="nc" id="L880">    result.append(&quot;  public boolean input(Instance instance) throws Exception {\n&quot;);</span>
+<span class="nc" id="L881">    result.append(&quot;    Object[] filtered = &quot; + className + &quot;.filter(instanceToObjects(instance));\n&quot;);</span>
+<span class="nc" id="L882">    result.append(&quot;    push(objectsToInstance(filtered, getOutputFormat()));\n&quot;);</span>
+<span class="nc" id="L883">    result.append(&quot;    return true;\n&quot;);</span>
+<span class="nc" id="L884">    result.append(&quot;  }\n&quot;);</span>
+    
+    // batchFinished
+<span class="nc" id="L887">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L888">    result.append(&quot;  /**\n&quot;);</span>
+<span class="nc" id="L889">    result.append(&quot;   * Performs a batch filtering of the buffered data, if any available.\n&quot;);</span>
+<span class="nc" id="L890">    result.append(&quot;   *\n&quot;);</span>
+<span class="nc" id="L891">    result.append(&quot;   * @return true if instances were filtered otherwise false\n&quot;);</span>
+<span class="nc" id="L892">    result.append(&quot;   */\n&quot;);</span>
+<span class="nc" id="L893">    result.append(&quot;  public boolean batchFinished() throws Exception {\n&quot;);</span>
+<span class="nc" id="L894">    result.append(&quot;    if (getInputFormat() == null)\n&quot;);</span>
+<span class="nc" id="L895">    result.append(&quot;      throw new NullPointerException(\&quot;No input instance format defined\&quot;);;\n&quot;);</span>
+<span class="nc" id="L896">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L897">    result.append(&quot;    Instances inst = getInputFormat();\n&quot;);</span>
+<span class="nc" id="L898">    result.append(&quot;    if (inst.numInstances() &gt; 0) {\n&quot;);</span>
+<span class="nc" id="L899">    result.append(&quot;      Object[][] filtered = &quot; + className + &quot;.filter(instancesToObjects(inst));\n&quot;);</span>
+<span class="nc" id="L900">    result.append(&quot;      for (int i = 0; i &lt; filtered.length; i++) {\n&quot;);</span>
+<span class="nc" id="L901">    result.append(&quot;        push(objectsToInstance(filtered[i], getOutputFormat()));\n&quot;);</span>
+<span class="nc" id="L902">    result.append(&quot;      }\n&quot;);</span>
+<span class="nc" id="L903">    result.append(&quot;    }\n&quot;);</span>
+<span class="nc" id="L904">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L905">    result.append(&quot;    flushInput();\n&quot;);</span>
+<span class="nc" id="L906">    result.append(&quot;    m_NewBatch = true;\n&quot;);</span>
+<span class="nc" id="L907">    result.append(&quot;    m_FirstBatchDone = true;\n&quot;);</span>
+<span class="nc" id="L908">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L909">    result.append(&quot;    return (inst.numInstances() &gt; 0);\n&quot;);</span>
+<span class="nc" id="L910">    result.append(&quot;  }\n&quot;);</span>
+
+    // toString
+<span class="nc" id="L913">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L914">    result.append(&quot;  /**\n&quot;);</span>
+<span class="nc" id="L915">    result.append(&quot;   * Returns only the classnames and what filter it is based on.\n&quot;);</span>
+<span class="nc" id="L916">    result.append(&quot;   *\n&quot;);</span>
+<span class="nc" id="L917">    result.append(&quot;   * @return a short description\n&quot;);</span>
+<span class="nc" id="L918">    result.append(&quot;   */\n&quot;);</span>
+<span class="nc" id="L919">    result.append(&quot;  public String toString() {\n&quot;);</span>
+<span class="nc" id="L920">    result.append(&quot;    return \&quot;Auto-generated filter wrapper, based on &quot; </span>
+<span class="nc" id="L921">	+ filter.getClass().getName() + &quot; (generated with Weka &quot; + Version.VERSION + &quot;).\\n&quot; </span>
+<span class="nc" id="L922">	+ &quot;\&quot; + this.getClass().getName() + \&quot;/&quot; + className + &quot;\&quot;;\n&quot;);</span>
+<span class="nc" id="L923">    result.append(&quot;  }\n&quot;);</span>
+    
+    // main
+<span class="nc" id="L926">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L927">    result.append(&quot;  /**\n&quot;);</span>
+<span class="nc" id="L928">    result.append(&quot;   * Runs the filter from commandline.\n&quot;);</span>
+<span class="nc" id="L929">    result.append(&quot;   *\n&quot;);</span>
+<span class="nc" id="L930">    result.append(&quot;   * @param args the commandline arguments\n&quot;);</span>
+<span class="nc" id="L931">    result.append(&quot;   */\n&quot;);</span>
+<span class="nc" id="L932">    result.append(&quot;  public static void main(String args[]) {\n&quot;);</span>
+<span class="nc" id="L933">    result.append(&quot;    runFilter(new WekaWrapper(), args);\n&quot;);</span>
+<span class="nc" id="L934">    result.append(&quot;  }\n&quot;);</span>
+<span class="nc" id="L935">    result.append(&quot;}\n&quot;);</span>
+
+    // actual filter code
+<span class="nc" id="L938">    result.append(&quot;\n&quot;);</span>
+<span class="nc" id="L939">    result.append(filter.toSource(className, input));</span>
+    
+<span class="nc" id="L941">    return result.toString();</span>
+  }
+  
+  /**
+   * Method for testing filters.
+   *
+   * @param filter the filter to use
+   * @param options should contain the following arguments: &lt;br/&gt;
+   * -i input_file &lt;br/&gt;
+   * -o output_file &lt;br/&gt;
+   * -c class_index &lt;br/&gt;
+   * -z classname (for filters implementing weka.filters.Sourcable) &lt;br/&gt;
+   * or -h for help on options
+   * @throws Exception if something goes wrong or the user requests help on
+   * command options
+   */
+  public static void filterFile(Filter filter, String [] options) 
+    throws Exception {
+
+<span class="nc" id="L960">    boolean debug = false;</span>
+<span class="nc" id="L961">    Instances data = null;</span>
+<span class="nc" id="L962">    DataSource input = null;</span>
+<span class="nc" id="L963">    PrintWriter output = null;</span>
+    boolean helpRequest;
+<span class="nc" id="L965">    String sourceCode = &quot;&quot;;</span>
+
+    try {
+<span class="nc" id="L968">       helpRequest = Utils.getFlag('h', options);</span>
+
+<span class="nc bnc" id="L970" title="All 2 branches missed.">      if (Utils.getFlag('d', options)) {</span>
+<span class="nc" id="L971">	debug = true;</span>
+      }
+<span class="nc" id="L973">      String infileName = Utils.getOption('i', options);</span>
+<span class="nc" id="L974">      String outfileName = Utils.getOption('o', options); </span>
+<span class="nc" id="L975">      String classIndex = Utils.getOption('c', options);</span>
+<span class="nc bnc" id="L976" title="All 2 branches missed.">      if (filter instanceof Sourcable)</span>
+<span class="nc" id="L977">	sourceCode = Utils.getOption('z', options);</span>
+      
+<span class="nc bnc" id="L979" title="All 2 branches missed.">      if (filter instanceof OptionHandler) {</span>
+<span class="nc" id="L980">	((OptionHandler)filter).setOptions(options);</span>
+      }
+
+<span class="nc" id="L983">      Utils.checkForRemainingOptions(options);</span>
+<span class="nc bnc" id="L984" title="All 2 branches missed.">      if (helpRequest) {</span>
+<span class="nc" id="L985">	throw new Exception(&quot;Help requested.\n&quot;);</span>
+      }
+<span class="nc bnc" id="L987" title="All 2 branches missed.">      if (infileName.length() != 0) {</span>
+<span class="nc" id="L988">	input = new DataSource(infileName);</span>
+      } else {
+<span class="nc" id="L990">	input = new DataSource(System.in);</span>
+      }
+<span class="nc bnc" id="L992" title="All 2 branches missed.">      if (outfileName.length() != 0) {</span>
+<span class="nc" id="L993">	output = new PrintWriter(new FileOutputStream(outfileName));</span>
+      } else { 
+<span class="nc" id="L995">	output = new PrintWriter(System.out);</span>
+      }
+
+<span class="nc" id="L998">      data = input.getStructure();</span>
+<span class="nc bnc" id="L999" title="All 2 branches missed.">      if (classIndex.length() != 0) {</span>
+<span class="nc bnc" id="L1000" title="All 2 branches missed.">	if (classIndex.equals(&quot;first&quot;)) {</span>
+<span class="nc" id="L1001">	  data.setClassIndex(0);</span>
+<span class="nc bnc" id="L1002" title="All 2 branches missed.">	} else if (classIndex.equals(&quot;last&quot;)) {</span>
+<span class="nc" id="L1003">	  data.setClassIndex(data.numAttributes() - 1);</span>
+	} else {
+<span class="nc" id="L1005">	  data.setClassIndex(Integer.parseInt(classIndex) - 1);</span>
+	}
+      }
+<span class="nc" id="L1008">    } catch (Exception ex) {</span>
+<span class="nc" id="L1009">      String filterOptions = &quot;&quot;;</span>
+      // Output the error and also the valid options
+<span class="nc bnc" id="L1011" title="All 2 branches missed.">      if (filter instanceof OptionHandler) {</span>
+<span class="nc" id="L1012">	filterOptions += &quot;\nFilter options:\n\n&quot;;</span>
+<span class="nc" id="L1013">	Enumeration enu = ((OptionHandler)filter).listOptions();</span>
+<span class="nc bnc" id="L1014" title="All 2 branches missed.">	while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L1015">	  Option option = (Option) enu.nextElement();</span>
+<span class="nc" id="L1016">	  filterOptions += option.synopsis() + '\n'</span>
+<span class="nc" id="L1017">	    + option.description() + &quot;\n&quot;;</span>
+	}
+      }
+
+<span class="nc" id="L1021">      String genericOptions = &quot;\nGeneral options:\n\n&quot;</span>
+	+ &quot;-h\n&quot;
+	+ &quot;\tGet help on available options.\n&quot;
+	+ &quot;\t(use -b -h for help on batch mode.)\n&quot;
+	+ &quot;-i &lt;file&gt;\n&quot;
+	+ &quot;\tThe name of the file containing input instances.\n&quot;
+	+ &quot;\tIf not supplied then instances will be read from stdin.\n&quot;
+	+ &quot;-o &lt;file&gt;\n&quot;
+	+ &quot;\tThe name of the file output instances will be written to.\n&quot;
+	+ &quot;\tIf not supplied then instances will be written to stdout.\n&quot;
+	+ &quot;-c &lt;class index&gt;\n&quot;
+	+ &quot;\tThe number of the attribute to use as the class.\n&quot;
+	+ &quot;\t\&quot;first\&quot; and \&quot;last\&quot; are also valid entries.\n&quot;
+	+ &quot;\tIf not supplied then no class is assigned.\n&quot;;
+
+<span class="nc bnc" id="L1036" title="All 2 branches missed.">      if (filter instanceof Sourcable) {</span>
+<span class="nc" id="L1037">	genericOptions +=</span>
+<span class="nc" id="L1038">	  &quot;-z &lt;class name&gt;\n&quot;</span>
+	  + &quot;\tOutputs the source code representing the trained filter.\n&quot;;
+      }
+      
+<span class="nc" id="L1042">      throw new Exception('\n' + ex.getMessage()</span>
+<span class="nc" id="L1043">			  + filterOptions+genericOptions);</span>
+    }
+    
+<span class="nc bnc" id="L1046" title="All 2 branches missed.">    if (debug) {</span>
+<span class="nc" id="L1047">      System.err.println(&quot;Setting input format&quot;);</span>
+    }
+<span class="nc" id="L1049">    boolean printedHeader = false;</span>
+<span class="nc bnc" id="L1050" title="All 2 branches missed.">    if (filter.setInputFormat(data)) {</span>
+<span class="nc bnc" id="L1051" title="All 2 branches missed.">      if (debug) {</span>
+<span class="nc" id="L1052">	System.err.println(&quot;Getting output format&quot;);</span>
+      }
+<span class="nc" id="L1054">      output.println(filter.getOutputFormat().toString());</span>
+<span class="nc" id="L1055">      printedHeader = true;</span>
+    }
+    
+    // Pass all the instances to the filter
+    Instance inst;
+<span class="nc bnc" id="L1060" title="All 2 branches missed.">    while (input.hasMoreElements(data)) {</span>
+<span class="nc" id="L1061">      inst = input.nextElement(data);</span>
+<span class="nc bnc" id="L1062" title="All 2 branches missed.">      if (debug) {</span>
+<span class="nc" id="L1063">	System.err.println(&quot;Input instance to filter&quot;);</span>
+      }
+<span class="nc bnc" id="L1065" title="All 2 branches missed.">      if (filter.input(inst)) {</span>
+<span class="nc bnc" id="L1066" title="All 2 branches missed.">	if (debug) {</span>
+<span class="nc" id="L1067">	  System.err.println(&quot;Filter said collect immediately&quot;);</span>
+	}
+<span class="nc bnc" id="L1069" title="All 2 branches missed.">	if (!printedHeader) {</span>
+<span class="nc" id="L1070">	  throw new Error(&quot;Filter didn't return true from setInputFormat() &quot;</span>
+			  + &quot;earlier!&quot;);
+	}
+<span class="nc bnc" id="L1073" title="All 2 branches missed.">	if (debug) {</span>
+<span class="nc" id="L1074">	  System.err.println(&quot;Getting output instance&quot;);</span>
+	}
+<span class="nc" id="L1076">	output.println(filter.output().toString());</span>
+      }
+    }
+
+    // Say that input has finished, and print any pending output instances
+<span class="nc bnc" id="L1081" title="All 2 branches missed.">    if (debug) {</span>
+<span class="nc" id="L1082">      System.err.println(&quot;Setting end of batch&quot;);</span>
+    }
+<span class="nc bnc" id="L1084" title="All 2 branches missed.">    if (filter.batchFinished()) {</span>
+<span class="nc bnc" id="L1085" title="All 2 branches missed.">      if (debug) {</span>
+<span class="nc" id="L1086">	System.err.println(&quot;Filter said collect output&quot;);</span>
+      }
+<span class="nc bnc" id="L1088" title="All 2 branches missed.">      if (!printedHeader) {</span>
+<span class="nc bnc" id="L1089" title="All 2 branches missed.">	if (debug) {</span>
+<span class="nc" id="L1090">	  System.err.println(&quot;Getting output format&quot;);</span>
+	}
+<span class="nc" id="L1092">	output.println(filter.getOutputFormat().toString());</span>
+      }
+<span class="nc bnc" id="L1094" title="All 2 branches missed.">      if (debug) {</span>
+<span class="nc" id="L1095">	System.err.println(&quot;Getting output instance&quot;);</span>
+      }
+<span class="nc bnc" id="L1097" title="All 2 branches missed.">      while (filter.numPendingOutput() &gt; 0) {</span>
+<span class="nc" id="L1098">	output.println(filter.output().toString());</span>
+<span class="nc bnc" id="L1099" title="All 2 branches missed.">	if (debug){</span>
+<span class="nc" id="L1100">	  System.err.println(&quot;Getting output instance&quot;);</span>
+	}
+      }
+    }
+<span class="nc bnc" id="L1104" title="All 2 branches missed.">    if (debug) {</span>
+<span class="nc" id="L1105">      System.err.println(&quot;Done&quot;);</span>
+    }
+    
+    if (output != null) {
+<span class="nc" id="L1109">      output.close();</span>
+    }
+    
+<span class="nc bnc" id="L1112" title="All 2 branches missed.">    if (sourceCode.length() != 0)</span>
+<span class="nc" id="L1113">      System.out.println(</span>
+<span class="nc" id="L1114">	  wekaStaticWrapper(</span>
+<span class="nc" id="L1115">	      (Sourcable) filter, sourceCode, data, filter.getOutputFormat()));</span>
+<span class="nc" id="L1116">  }</span>
+
+  /**
+   * Method for testing filters ability to process multiple batches.
+   *
+   * @param filter the filter to use
+   * @param options should contain the following arguments: &lt;br/&gt;
+   * -i (first) input file &lt;br/&gt;
+   * -o (first) output file &lt;br/&gt;
+   * -r (second) input file &lt;br/&gt;
+   * -s (second) output file &lt;br/&gt;
+   * -c class_index &lt;br/&gt;
+   * -z classname (for filters implementing weka.filters.Sourcable) &lt;br/&gt;
+   * or -h for help on options
+   * @throws Exception if something goes wrong or the user requests help on
+   * command options
+   */
+  public static void batchFilterFile(Filter filter, String [] options) 
+    throws Exception {
+
+<span class="nc" id="L1136">    Instances firstData = null;</span>
+<span class="nc" id="L1137">    Instances secondData = null;</span>
+<span class="nc" id="L1138">    DataSource firstInput = null;</span>
+<span class="nc" id="L1139">    DataSource secondInput = null;</span>
+<span class="nc" id="L1140">    PrintWriter firstOutput = null;</span>
+<span class="nc" id="L1141">    PrintWriter secondOutput = null;</span>
+    boolean helpRequest;
+<span class="nc" id="L1143">    String sourceCode = &quot;&quot;;</span>
+
+    try {
+<span class="nc" id="L1146">      helpRequest = Utils.getFlag('h', options);</span>
+
+<span class="nc" id="L1148">      String fileName = Utils.getOption('i', options); </span>
+<span class="nc bnc" id="L1149" title="All 2 branches missed.">      if (fileName.length() != 0) {</span>
+<span class="nc" id="L1150">	firstInput = new DataSource(fileName);</span>
+      } else {
+<span class="nc" id="L1152">	throw new Exception(&quot;No first input file given.\n&quot;);</span>
+      }
+
+<span class="nc" id="L1155">      fileName = Utils.getOption('r', options); </span>
+<span class="nc bnc" id="L1156" title="All 2 branches missed.">      if (fileName.length() != 0) {</span>
+<span class="nc" id="L1157">	secondInput = new DataSource(fileName);</span>
+      } else {
+<span class="nc" id="L1159">	throw new Exception(&quot;No second input file given.\n&quot;);</span>
+      }
+
+<span class="nc" id="L1162">      fileName = Utils.getOption('o', options); </span>
+<span class="nc bnc" id="L1163" title="All 2 branches missed.">      if (fileName.length() != 0) {</span>
+<span class="nc" id="L1164">	firstOutput = new PrintWriter(new FileOutputStream(fileName));</span>
+      } else {
+<span class="nc" id="L1166">	firstOutput = new PrintWriter(System.out);</span>
+      }
+      
+<span class="nc" id="L1169">      fileName = Utils.getOption('s', options); </span>
+<span class="nc bnc" id="L1170" title="All 2 branches missed.">      if (fileName.length() != 0) {</span>
+<span class="nc" id="L1171">	secondOutput = new PrintWriter(new FileOutputStream(fileName));</span>
+      } else {
+<span class="nc" id="L1173">	secondOutput = new PrintWriter(System.out);</span>
+      }
+<span class="nc" id="L1175">      String classIndex = Utils.getOption('c', options);</span>
+<span class="nc bnc" id="L1176" title="All 2 branches missed.">      if (filter instanceof Sourcable)</span>
+<span class="nc" id="L1177">	sourceCode = Utils.getOption('z', options);</span>
+
+<span class="nc bnc" id="L1179" title="All 2 branches missed.">      if (filter instanceof OptionHandler) {</span>
+<span class="nc" id="L1180">	((OptionHandler)filter).setOptions(options);</span>
+      }
+<span class="nc" id="L1182">      Utils.checkForRemainingOptions(options);</span>
+      
+<span class="nc bnc" id="L1184" title="All 2 branches missed.">      if (helpRequest) {</span>
+<span class="nc" id="L1185">	throw new Exception(&quot;Help requested.\n&quot;);</span>
+      }
+<span class="nc" id="L1187">      firstData = firstInput.getStructure();</span>
+<span class="nc" id="L1188">      secondData = secondInput.getStructure();</span>
+<span class="nc bnc" id="L1189" title="All 2 branches missed.">      if (!secondData.equalHeaders(firstData)) {</span>
+<span class="nc" id="L1190">	throw new Exception(&quot;Input file formats differ.\n&quot;);</span>
+      }
+<span class="nc bnc" id="L1192" title="All 2 branches missed.">      if (classIndex.length() != 0) {</span>
+<span class="nc bnc" id="L1193" title="All 2 branches missed.">	if (classIndex.equals(&quot;first&quot;)) {</span>
+<span class="nc" id="L1194">	  firstData.setClassIndex(0);</span>
+<span class="nc" id="L1195">	  secondData.setClassIndex(0);</span>
+<span class="nc bnc" id="L1196" title="All 2 branches missed.">	} else if (classIndex.equals(&quot;last&quot;)) {</span>
+<span class="nc" id="L1197">	  firstData.setClassIndex(firstData.numAttributes() - 1);</span>
+<span class="nc" id="L1198">	  secondData.setClassIndex(secondData.numAttributes() - 1);</span>
+	} else {
+<span class="nc" id="L1200">	  firstData.setClassIndex(Integer.parseInt(classIndex) - 1);</span>
+<span class="nc" id="L1201">	  secondData.setClassIndex(Integer.parseInt(classIndex) - 1);</span>
+	}
+      }
+<span class="nc" id="L1204">    } catch (Exception ex) {</span>
+<span class="nc" id="L1205">      String filterOptions = &quot;&quot;;</span>
+      // Output the error and also the valid options
+<span class="nc bnc" id="L1207" title="All 2 branches missed.">      if (filter instanceof OptionHandler) {</span>
+<span class="nc" id="L1208">	filterOptions += &quot;\nFilter options:\n\n&quot;;</span>
+<span class="nc" id="L1209">	Enumeration enu = ((OptionHandler)filter).listOptions();</span>
+<span class="nc bnc" id="L1210" title="All 2 branches missed.">	while (enu.hasMoreElements()) {</span>
+<span class="nc" id="L1211">	  Option option = (Option) enu.nextElement();</span>
+<span class="nc" id="L1212">	  filterOptions += option.synopsis() + '\n'</span>
+<span class="nc" id="L1213">	    + option.description() + &quot;\n&quot;;</span>
+	}
+      }
+
+<span class="nc" id="L1217">      String genericOptions = &quot;\nGeneral options:\n\n&quot;</span>
+	+ &quot;-h\n&quot;
+	+ &quot;\tGet help on available options.\n&quot;
+	+ &quot;-i &lt;filename&gt;\n&quot;
+	+ &quot;\tThe file containing first input instances.\n&quot;
+	+ &quot;-o &lt;filename&gt;\n&quot;
+	+ &quot;\tThe file first output instances will be written to.\n&quot;
+	+ &quot;-r &lt;filename&gt;\n&quot;
+	+ &quot;\tThe file containing second input instances.\n&quot;
+	+ &quot;-s &lt;filename&gt;\n&quot;
+	+ &quot;\tThe file second output instances will be written to.\n&quot;
+	+ &quot;-c &lt;class index&gt;\n&quot;
+	+ &quot;\tThe number of the attribute to use as the class.\n&quot;
+	+ &quot;\t\&quot;first\&quot; and \&quot;last\&quot; are also valid entries.\n&quot;
+	+ &quot;\tIf not supplied then no class is assigned.\n&quot;;
+
+<span class="nc bnc" id="L1233" title="All 2 branches missed.">      if (filter instanceof Sourcable) {</span>
+<span class="nc" id="L1234">	genericOptions +=</span>
+<span class="nc" id="L1235">	  &quot;-z &lt;class name&gt;\n&quot;</span>
+	  + &quot;\tOutputs the source code representing the trained filter.\n&quot;;
+      }
+      
+<span class="nc" id="L1239">      throw new Exception('\n' + ex.getMessage()</span>
+<span class="nc" id="L1240">			  + filterOptions+genericOptions);</span>
+    }
+<span class="nc" id="L1242">    boolean printedHeader = false;</span>
+<span class="nc bnc" id="L1243" title="All 2 branches missed.">    if (filter.setInputFormat(firstData)) {</span>
+<span class="nc" id="L1244">      firstOutput.println(filter.getOutputFormat().toString());</span>
+<span class="nc" id="L1245">      printedHeader = true;</span>
+    }
+    
+    // Pass all the instances to the filter
+    Instance inst;
+<span class="nc bnc" id="L1250" title="All 2 branches missed.">    while (firstInput.hasMoreElements(firstData)) {</span>
+<span class="nc" id="L1251">      inst = firstInput.nextElement(firstData);</span>
+<span class="nc bnc" id="L1252" title="All 2 branches missed.">      if (filter.input(inst)) {</span>
+<span class="nc bnc" id="L1253" title="All 2 branches missed.">	if (!printedHeader) {</span>
+<span class="nc" id="L1254">	  throw new Error(&quot;Filter didn't return true from setInputFormat() &quot;</span>
+			  + &quot;earlier!&quot;);
+	}
+<span class="nc" id="L1257">	firstOutput.println(filter.output().toString());</span>
+      }
+    }
+    
+    // Say that input has finished, and print any pending output instances
+<span class="nc bnc" id="L1262" title="All 2 branches missed.">    if (filter.batchFinished()) {</span>
+<span class="nc bnc" id="L1263" title="All 2 branches missed.">      if (!printedHeader) {</span>
+<span class="nc" id="L1264">	firstOutput.println(filter.getOutputFormat().toString());</span>
+      }
+<span class="nc bnc" id="L1266" title="All 2 branches missed.">      while (filter.numPendingOutput() &gt; 0) {</span>
+<span class="nc" id="L1267">	firstOutput.println(filter.output().toString());</span>
+      }
+    }
+    
+    if (firstOutput != null) {
+<span class="nc" id="L1272">      firstOutput.close();</span>
+    }    
+<span class="nc" id="L1274">    printedHeader = false;</span>
+<span class="nc bnc" id="L1275" title="All 2 branches missed.">    if (filter.isOutputFormatDefined()) {</span>
+<span class="nc" id="L1276">      secondOutput.println(filter.getOutputFormat().toString());</span>
+<span class="nc" id="L1277">      printedHeader = true;</span>
+    }
+    // Pass all the second instances to the filter
+<span class="nc bnc" id="L1280" title="All 2 branches missed.">    while (secondInput.hasMoreElements(secondData)) {</span>
+<span class="nc" id="L1281">      inst = secondInput.nextElement(secondData);</span>
+<span class="nc bnc" id="L1282" title="All 2 branches missed.">      if (filter.input(inst)) {</span>
+<span class="nc bnc" id="L1283" title="All 2 branches missed.">	if (!printedHeader) {</span>
+<span class="nc" id="L1284">	  throw new Error(&quot;Filter didn't return true from&quot;</span>
+			  + &quot; isOutputFormatDefined() earlier!&quot;);
+	}
+<span class="nc" id="L1287">	secondOutput.println(filter.output().toString());</span>
+      }
+    }
+    
+    // Say that input has finished, and print any pending output instances
+<span class="nc bnc" id="L1292" title="All 2 branches missed.">    if (filter.batchFinished()) {</span>
+<span class="nc bnc" id="L1293" title="All 2 branches missed.">      if (!printedHeader) {</span>
+<span class="nc" id="L1294">	secondOutput.println(filter.getOutputFormat().toString());</span>
+      }
+<span class="nc bnc" id="L1296" title="All 2 branches missed.">      while (filter.numPendingOutput() &gt; 0) {</span>
+<span class="nc" id="L1297">	secondOutput.println(filter.output().toString());</span>
+      }
+    }
+    if (secondOutput != null) {
+<span class="nc" id="L1301">      secondOutput.close();</span>
+    }
+
+<span class="nc bnc" id="L1304" title="All 2 branches missed.">    if (sourceCode.length() != 0)</span>
+<span class="nc" id="L1305">      System.out.println(</span>
+<span class="nc" id="L1306">	  wekaStaticWrapper(</span>
+<span class="nc" id="L1307">	      (Sourcable) filter, sourceCode, firstData, filter.getOutputFormat()));</span>
+<span class="nc" id="L1308">  }</span>
+
+  /**
+   * runs the filter instance with the given options.
+   * 
+   * @param filter	the filter to run
+   * @param options	the commandline options
+   */
+  protected static void runFilter(Filter filter, String[] options) {
+    try {
+<span class="nc bnc" id="L1318" title="All 2 branches missed.">      if (Utils.getFlag('b', options)) {</span>
+<span class="nc" id="L1319">	Filter.batchFilterFile(filter, options);</span>
+      } else {
+<span class="nc" id="L1321">	Filter.filterFile(filter, options);</span>
+      }
+<span class="nc" id="L1323">    } catch (Exception e) {</span>
+<span class="nc bnc" id="L1324" title="All 2 branches missed.">      if (    (e.toString().indexOf(&quot;Help requested&quot;) == -1) </span>
+<span class="nc bnc" id="L1325" title="All 2 branches missed.">	   &amp;&amp; (e.toString().indexOf(&quot;Filter options&quot;) == -1) )</span>
+<span class="nc" id="L1326">	e.printStackTrace();</span>
+      else
+<span class="nc" id="L1328">	System.err.println(e.getMessage());</span>
+    }
+<span class="nc" id="L1330">  }</span>
+  
+  /**
+   * Main method for testing this class.
+   *
+   * @param args should contain arguments to the filter: use -h for help
+   */
+  public static void main(String [] args) {
+    
+    try {
+<span class="nc bnc" id="L1340" title="All 2 branches missed.">      if (args.length == 0) {</span>
+<span class="nc" id="L1341">        throw new Exception(&quot;First argument must be the class name of a Filter&quot;);</span>
+      }
+<span class="nc" id="L1343">      String fname = args[0];</span>
+<span class="nc" id="L1344">      Filter f = (Filter)Class.forName(fname).newInstance();</span>
+<span class="nc" id="L1345">      args[0] = &quot;&quot;;</span>
+<span class="nc" id="L1346">      runFilter(f, args);</span>
+<span class="nc" id="L1347">    } catch (Exception ex) {</span>
+<span class="nc" id="L1348">      ex.printStackTrace();</span>
+<span class="nc" id="L1349">      System.err.println(ex.getMessage());</span>
+    }
+<span class="nc" id="L1351">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.eclemma.org/jacoco">JaCoCo</a> 0.7.2.201409121644</span>AllTests (Nov 28, 2015 2:34:31 PM)</div></body></html>
